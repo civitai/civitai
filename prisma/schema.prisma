@@ -46,13 +46,16 @@ model Session {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  emailVerified DateTime?
-  image         String?
-  accounts      Account[]
-  sessions      Session[]
+  id             String           @id @default(cuid())
+  name           String?
+  email          String?          @unique
+  emailVerified  DateTime?
+  image          String?
+  accounts       Account[]
+  sessions       Session[]
+  Review         Review[]
+  ReviewReaction ReviewReaction[]
+  Image          Image[]
 }
 
 model VerificationToken {
@@ -61,4 +64,134 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+enum ModelType {
+  Checkpoint
+  TextualInversion
+}
+
+model Model {
+  id           String    @id @default(cuid())
+  name         String
+  description  String
+  type         ModelType
+  trainedWords String[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  ModelVersions  ModelVersion[]
+  Reviews        Review[]
+  ImagesOnModels ImagesOnModels[]
+  TagsOnModels   TagsOnModels[]
+}
+
+model ModelVersion {
+  id             String           @id @default(cuid())
+  name           String
+  description    String?
+  url            String
+  model          Model            @relation(fields: [modelId], references: [id])
+  modelId        String
+  steps          Int?
+  epochs         Int?
+  Review         Review[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  ImagesOnModels ImagesOnModels[]
+}
+
+model Review {
+  id              String            @id @default(cuid())
+  model           Model             @relation(fields: [modelId], references: [id])
+  modelId         String
+  modelVersion    ModelVersion?     @relation(fields: [modelVersionId], references: [id])
+  modelVersionId  String?
+  user            User              @relation(fields: [userId], references: [id])
+  userId          String
+  text            String
+  rating          Int
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  ReviewReactions ReviewReaction[]
+  ImagesOnReviews ImagesOnReviews[]
+}
+
+enum ReviewReactions {
+  Like
+  Dislike
+  Laugh
+  Cry
+  Heart
+}
+
+model ReviewReaction {
+  id        String          @id @default(cuid())
+  review    Review          @relation(fields: [reviewId], references: [id])
+  reviewId  String
+  user      User            @relation(fields: [userId], references: [id])
+  userId    String
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+}
+
+model Image {
+  id              String            @id @default(cuid())
+  name            String?
+  url             String
+  user            User              @relation(fields: [userId], references: [id])
+  userId          String
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  prompt          String?
+  hash            String?
+  nsfw            Boolean           @default(false)
+  ImagesOnModels  ImagesOnModels[]
+  ImagesOnReviews ImagesOnReviews[]
+}
+
+enum ImageOnModelType {
+  Example
+  Training
+}
+
+model ImagesOnModels {
+  model          Model            @relation(fields: [modelId], references: [id])
+  modelId        String
+  modelVersion   ModelVersion     @relation(fields: [modelVersionId], references: [id])
+  modelVersionId String
+  image          Image            @relation(fields: [imageId], references: [id])
+  imageId        String
+  type           ImageOnModelType
+
+  @@id([imageId, modelId, modelVersionId])
+}
+
+model ImagesOnReviews {
+  review   Review @relation(fields: [reviewId], references: [id])
+  reviewId String
+  image    Image  @relation(fields: [imageId], references: [id])
+  imageId  String
+
+  @@id([imageId, reviewId])
+}
+
+model Tag {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  color     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  TagsOnModels TagsOnModels[]
+}
+
+model TagsOnModels {
+  model   Model  @relation(fields: [modelId], references: [id])
+  modelId String
+  tag     Tag    @relation(fields: [tagId], references: [id])
+  tagId   String
+
+  @@id([modelId, tagId])
 }
