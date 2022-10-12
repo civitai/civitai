@@ -47,6 +47,8 @@
     "@typescript-eslint/eslint-plugin": "^5.33.0",
     "@typescript-eslint/parser": "^5.33.0",
     "eslint": "8.22.0",
+    "eslint-config-airbnb": "^19.0.4",
+    "eslint-config-airbnb-typescript": "^17.0.0",
     "eslint-config-mantine": "2.0.0",
     "eslint-config-next": "12.3.1",
     "eslint-config-prettier": "^8.5.0",

@@ -25,6 +25,7 @@ module.exports = {
     // prettier overrides
     'prettier/prettier': ['error', {
       printWidth: 100,
+      endOfLine: 'auto'
     }],
   },
   settings: {
