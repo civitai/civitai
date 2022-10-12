@@ -146,6 +146,8 @@ model Image {
   updatedAt       DateTime          @updatedAt
   prompt          String?
   hash            String?
+  height          String?
+  width           String?
   nsfw            Boolean           @default(false)
   ImagesOnModels  ImagesOnModels[]
   ImagesOnReviews ImagesOnReviews[]

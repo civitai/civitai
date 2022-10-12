@@ -7,12 +7,22 @@ import type { AppProps } from 'next/app';
 import { trpc } from '~/utils/trpc';
 
 import { NotificationsProvider } from '@mantine/notifications';
-import { GetServerSidePropsContext } from 'next';
+import { GetServerSidePropsContext, NextPage } from 'next';
 import Head from 'next/head';
-import { useState } from 'react';
+import { ReactElement, ReactNode, useState } from 'react';
+import { AppLayout } from '~/components/AppLayout/AppLayout';
 import '~/styles/globals.css';
 
-function App(props: AppProps<{ session: Session | null }> & { colorScheme: ColorScheme }) {
+type CustomNextPage = NextPage & {
+  getLayout?: (page: ReactElement) => ReactNode;
+};
+
+type CustomAppProps<P> = AppProps<P> & {
+  Component: CustomNextPage;
+  colorScheme: ColorScheme;
+};
+
+function App(props: CustomAppProps<{ session: Session | null }>) {
   const {
     Component,
     pageProps: { session, ...pageProps },
@@ -25,6 +35,8 @@ function App(props: AppProps<{ session: Session | null }> & { colorScheme: Color
     setCookie('mantine-color-scheme', nextColorScheme, { maxAge: 60 * 60 * 24 * 30 });
   };
 
+  const getLayout = Component.getLayout ?? ((page) => <AppLayout>{page}</AppLayout>);
+
   return (
     <>
       <Head>
@@ -36,7 +48,7 @@ function App(props: AppProps<{ session: Session | null }> & { colorScheme: Color
         <MantineProvider theme={{ colorScheme }} withGlobalStyles withNormalizeCSS>
           <NotificationsProvider>
             <SessionProvider session={session}>
-              <Component {...pageProps} />
+              {getLayout(<Component {...pageProps} />)}
             </SessionProvider>
           </NotificationsProvider>
         </MantineProvider>

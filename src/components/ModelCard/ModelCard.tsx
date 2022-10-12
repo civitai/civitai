@@ -15,7 +15,7 @@ export function ModelCard({ id, name, description }: ModelCardProps) {
     <Link href={`models/${id}`}>
       <Card withBorder shadow="sm" className={classes.card}>
         <Image
-          src="/images/star-trek.png"
+          src="/images/forest.webp"
           alt={name}
           layout="fill"
           objectFit="cover"
