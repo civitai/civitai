@@ -1,7 +1,7 @@
 import { Group, Paper, PaperProps, Text } from '@mantine/core';
 import { DiscordButton, GitHubButton } from '~/components/SocialButtons/SocialButtons';
 
-export default function AuthForm(props: PaperProps) {
+export function AuthForm(props: PaperProps) {
   return (
     <Paper radius="md" p="xl" withBorder {...props}>
       <Text size="lg" weight={500}>

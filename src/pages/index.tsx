@@ -1,29 +1,9 @@
-import { Group, Title } from '@mantine/core';
+import { Button, Group, Title } from '@mantine/core';
 import { signIn, signOut, useSession } from 'next-auth/react';
 import Head from 'next/head';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { trpc } from '~/utils/trpc';
 import styles from './index.module.css';
-
-function AuthShowcase() {
-  const { data: secretMessage } = trpc.auth.getSecretMessage.useQuery();
-
-  const { data: sessionData } = useSession();
-
-  return (
-    <div className={styles.authShowcase}>
-      {sessionData && <p>Logged in as {sessionData?.user?.name}</p>}
-      {secretMessage && <p>{secretMessage}</p>}
-      <button
-        type="button"
-        className={styles.signInButton}
-        onClick={sessionData ? () => signOut() : () => signIn()}
-      >
-        {sessionData ? 'Sign out' : 'Sign in'}
-      </button>
-    </div>
-  );
-}
 
 function Home() {
   const { data } = trpc.example.hello.useQuery({ text: 'from tRPC' });
