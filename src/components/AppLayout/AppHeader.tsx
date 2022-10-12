@@ -1,13 +1,17 @@
 import { Autocomplete, Button, Group, Header, Title } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import { IconSearch } from '@tabler/icons';
+import Link from 'next/link';
 import { ColorSchemeToggle } from '~/components/ColorSchemeToggle/ColorSchemeToggle';
 
 export function AppHeader({ links }: Props) {
   return (
-    <Header height={60} p="sm">
+    <Header p="sm" height={70}>
       <Group align="center" sx={{ justifyContent: 'space-between' }}>
         <Group>
-          <Title>MS</Title>
+          <Link href="/">
+            <Title>MS</Title>
+          </Link>
           <Autocomplete
             placeholder="Search"
             icon={<IconSearch size={16} stroke={1.5} />}
@@ -23,7 +27,9 @@ export function AppHeader({ links }: Props) {
             ))}
           </Group>
           <ColorSchemeToggle />
-          <Button>Sign In</Button>
+          <Button component={NextLink} href="/login">
+            Sign In
+          </Button>
         </Group>
       </Group>
     </Header>
