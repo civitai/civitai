@@ -27,6 +27,8 @@ module.exports = {
       printWidth: 100,
       endOfLine: 'auto'
     }],
+    "no-use-before-define": "off",
+    "@typescript-eslint/no-use-before-define": "off"
   },
   settings: {
     'import/parsers': {

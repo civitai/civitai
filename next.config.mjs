@@ -22,4 +22,8 @@ export default defineNextConfig({
   eslint: {
     ignoreDuringBuilds: true,
   },
+  images: {
+    // TODO - determine if we need to add any domains to fetch images
+    domains: [],
+  },
 });

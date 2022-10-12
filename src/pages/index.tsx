@@ -1,7 +1,8 @@
-import { Group, Title } from '@mantine/core';
+import { createStyles, Group, Title } from '@mantine/core';
 import { signIn, signOut, useSession } from 'next-auth/react';
 import Head from 'next/head';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
+import { ModelCard } from '~/components/ModelCard/ModelCard';
 import { trpc } from '~/utils/trpc';
 import styles from './index.module.css';
 
@@ -27,6 +28,7 @@ function AuthShowcase() {
 
 function Home() {
   const { data } = trpc.example.hello.useQuery({ text: 'from tRPC' });
+  const { classes, cx } = useStyles();
 
   return (
     <>
@@ -38,9 +40,26 @@ function Home() {
         <Group p="md">
           <Title>This is the home page</Title>
         </Group>
+        <div className={classes.gridLayout}>
+          <ModelCard id={1} name="bob" />
+          <ModelCard id={1} name="bob" />
+          <ModelCard id={1} name="bob" />
+          <ModelCard id={1} name="bob" />
+          <ModelCard id={1} name="bob" />
+          <ModelCard id={1} name="bob" />
+        </div>
       </AppLayout>
     </>
   );
 }
 
 export default Home;
+
+const useStyles = createStyles((theme) => ({
+  gridLayout: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, 300px)',
+    gap: '16px',
+    justifyContent: 'center',
+  },
+}));
