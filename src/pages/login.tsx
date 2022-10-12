@@ -1,10 +1,13 @@
-import { Paper, Group, Text, ButtonProps } from '@mantine/core';
+import { ButtonProps, Group, Paper, Text } from '@mantine/core';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
-import { OAuthProviderType } from 'next-auth/providers';
 import { getCsrfToken, getProviders, signIn } from 'next-auth/react';
 import React, { MouseEventHandler } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
-import { GitHubButton, DiscordButton } from '~/components/SocialButtons/SocialButtons';
+import {
+  DiscordButton,
+  GitHubButton,
+  GoogleButton,
+} from '~/components/SocialButtons/SocialButtons';
 
 const mapProviderSignInButton = {
   github: (props: ButtonProps & { onClick: MouseEventHandler }) => (
@@ -16,6 +19,11 @@ const mapProviderSignInButton = {
     <DiscordButton radius="xl" {...props}>
       Sign In With Discord
     </DiscordButton>
+  ),
+  google: (props: ButtonProps & { onClick: MouseEventHandler }) => (
+    <GoogleButton radius="xl" {...props}>
+      Sign In With Google
+    </GoogleButton>
   ),
 };
 
