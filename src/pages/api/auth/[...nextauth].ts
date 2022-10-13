@@ -1,4 +1,4 @@
-import NextAuth, { type NextAuthOptions } from 'next-auth';
+import NextAuth, { unstable_getServerSession, type NextAuthOptions } from 'next-auth';
 import DiscordProvider from 'next-auth/providers/discord';
 import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
@@ -7,6 +7,8 @@ import GoogleProvider from 'next-auth/providers/google';
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import { env } from '~/env/server.mjs';
 import { prisma } from '~/server/db/client';
+import { GetServerSidePropsContext, PreviewData } from 'next';
+import { ParsedUrlQuery } from 'querystring';
 
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
@@ -41,5 +43,8 @@ export const authOptions: NextAuthOptions = {
     signIn: '/login',
   },
 };
+
+export const getSessionUser = async (ctx: GetServerSidePropsContext<ParsedUrlQuery, PreviewData>) =>
+  unstable_getServerSession(ctx.req, ctx.res, authOptions);
 
 export default NextAuth(authOptions);

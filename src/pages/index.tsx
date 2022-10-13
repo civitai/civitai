@@ -1,11 +1,12 @@
 import { createStyles, Group, Title } from '@mantine/core';
+import { GetServerSideProps } from 'next';
 import Head from 'next/head';
 import { ModelCard } from '~/components/ModelCard/ModelCard';
-import { trpc } from '~/utils/trpc';
 
 function Home() {
-  const { data } = trpc.example.hello.useQuery({ text: 'from tRPC' });
-  const { classes, cx } = useStyles();
+  // const { data: session, status } = useSession();
+  // const { data } = trpc.example.hello.useQuery({ text: 'from tRPC' });
+  const { classes } = useStyles();
 
   return (
     <>
@@ -33,6 +34,13 @@ function Home() {
     </>
   );
 }
+
+export const getServerSideProps: GetServerSideProps = async (ctx) => ({
+  props: {
+    test: true,
+  },
+});
+
 // Home.getLayout = (page: React.ReactElement) => <>{page}</>;
 export default Home;
 
