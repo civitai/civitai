@@ -2,8 +2,6 @@ import { Container } from '@mantine/core';
 import { useForm, zodResolver } from '@mantine/form';
 import { modelSchema } from '~/server/validation/model';
 
-const initial;
-
 const Create = () => {
   const form = useForm({
     validate: zodResolver(modelSchema),
