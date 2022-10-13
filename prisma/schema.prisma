@@ -42,16 +42,18 @@ model Session {
 }
 
 model User {
-  id             Int              @id @default(autoincrement())
-  name           String?
-  email          String?          @unique
-  emailVerified  DateTime?
-  image          String?
-  accounts       Account[]
-  sessions       Session[]
-  Review         Review[]
-  ReviewReaction ReviewReaction[]
-  Image          Image[]
+  id            Int       @id @default(autoincrement())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+
+  accounts        Account[]
+  sessions        Session[]
+  reviews         Review[]
+  reviewReactions ReviewReaction[]
+  images          Image[]
+  models          Model[]
 }
 
 model VerificationToken {
@@ -77,44 +79,48 @@ model Model {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   nsfw         Boolean   @default(false)
+  userId       Int
+  User         User      @relation(fields: [userId], references: [id])
 
-  ModelVersions  ModelVersion[]
-  Reviews        Review[]
-  ImagesOnModels ImagesOnModels[]
-  TagsOnModels   TagsOnModels[]
+  modelVersions  ModelVersion[]
+  reviews        Review[]
+  imagesOnModels ImagesOnModels[]
+  tagsOnModels   TagsOnModels[]
 }
 
 model ModelVersion {
-  id             Int              @id @default(autoincrement())
-  name           String
-  description    String?
-  url            String
-  sizeKB         Int
-  model          Model            @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  modelId        Int
-  steps          Int?
-  epochs         Int?
-  Review         Review[]
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  ImagesOnModels ImagesOnModels[]
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  url         String
+  sizeKB      Int
+  modelId     Int
+  model       Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  steps       Int?
+  epochs      Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  reviews        Review[]
+  imagesOnModels ImagesOnModels[]
 }
 
 model Review {
-  id              Int               @id @default(autoincrement())
-  model           Model             @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  modelId         Int
-  modelVersion    ModelVersion?     @relation(fields: [modelVersionId], references: [id])
-  modelVersionId  Int?
-  user            User              @relation(fields: [userId], references: [id])
-  userId          Int
-  text            String
-  rating          Int
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  nsfw            Boolean           @default(false)
-  ReviewReactions ReviewReaction[]
-  ImagesOnReviews ImagesOnReviews[]
+  id             Int           @id @default(autoincrement())
+  model          Model         @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelId        Int
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id])
+  modelVersionId Int?
+  user           User          @relation(fields: [userId], references: [id])
+  userId         Int
+  text           String
+  rating         Int
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  nsfw           Boolean       @default(false)
+
+  reviewReactions ReviewReaction[]
+  imagesOnReviews ImagesOnReviews[]
 }
 
 enum ReviewReactions {
@@ -137,20 +143,21 @@ model ReviewReaction {
 }
 
 model Image {
-  id              Int               @id @default(autoincrement())
-  name            String?
-  url             String
-  user            User              @relation(fields: [userId], references: [id])
-  userId          Int
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  prompt          String?
-  hash            String?
-  height          String?
-  width           String?
-  nsfw            Boolean           @default(false)
-  ImagesOnModels  ImagesOnModels[]
-  ImagesOnReviews ImagesOnReviews[]
+  id        Int      @id @default(autoincrement())
+  name      String?
+  url       String
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  prompt    String?
+  hash      String?
+  height    Int?
+  width     Int?
+  nsfw      Boolean  @default(false)
+
+  imagesOnModels  ImagesOnModels[]
+  imagesOnReviews ImagesOnReviews[]
 }
 
 enum ImageOnModelType {
@@ -186,7 +193,7 @@ model Tag {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  TagsOnModels TagsOnModels[]
+  tagsOnModels TagsOnModels[]
 }
 
 model TagsOnModels {

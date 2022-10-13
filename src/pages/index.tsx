@@ -1,7 +1,6 @@
 import { createStyles, Group, Title } from '@mantine/core';
 import Head from 'next/head';
 import { ModelCard } from '~/components/ModelCard/ModelCard';
-import { trpc } from '~/utils/trpc';
 
 // export const getServerSideProps: GetServerSideProps<ServerSideProps> = async (ctx) => {
 //   console.log('FETCHING');

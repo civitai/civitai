@@ -24,6 +24,6 @@ export default defineNextConfig({
   },
   images: {
     // TODO - determine if we need to add any domains to fetch images
-    domains: [],
+    domains: ['https://s3.us-west-1.wasabisys.com/'],
   },
 });
