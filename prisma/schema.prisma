@@ -90,7 +90,7 @@ model ModelVersion {
   description    String?
   url            String
   sizeKB         Int
-  model          Model            @relation(fields: [modelId], references: [id])
+  model          Model            @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId        Int
   steps          Int?
   epochs         Int?
@@ -102,7 +102,7 @@ model ModelVersion {
 
 model Review {
   id              Int               @id @default(autoincrement())
-  model           Model             @relation(fields: [modelId], references: [id])
+  model           Model             @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId         Int
   modelVersion    ModelVersion?     @relation(fields: [modelVersionId], references: [id])
   modelVersionId  Int?
@@ -127,9 +127,9 @@ enum ReviewReactions {
 
 model ReviewReaction {
   id        Int             @id @default(autoincrement())
-  review    Review          @relation(fields: [reviewId], references: [id])
+  review    Review          @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   reviewId  Int
-  user      User            @relation(fields: [userId], references: [id])
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    Int
   reaction  ReviewReactions
   createdAt DateTime        @default(now())
@@ -159,7 +159,7 @@ enum ImageOnModelType {
 }
 
 model ImagesOnModels {
-  model          Model            @relation(fields: [modelId], references: [id])
+  model          Model            @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId        Int
   modelVersion   ModelVersion     @relation(fields: [modelVersionId], references: [id])
   modelVersionId Int
@@ -171,7 +171,7 @@ model ImagesOnModels {
 }
 
 model ImagesOnReviews {
-  review   Review @relation(fields: [reviewId], references: [id])
+  review   Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   reviewId Int
   image    Image  @relation(fields: [imageId], references: [id])
   imageId  Int
@@ -190,9 +190,9 @@ model Tag {
 }
 
 model TagsOnModels {
-  model   Model @relation(fields: [modelId], references: [id])
+  model   Model @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId Int
-  tag     Tag   @relation(fields: [tagId], references: [id])
+  tag     Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
   tagId   Int
 
   @@id([modelId, tagId])
