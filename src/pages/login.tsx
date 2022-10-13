@@ -2,11 +2,10 @@ import { ButtonProps, Group, Paper, Text } from '@mantine/core';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { getCsrfToken, getProviders, signIn } from 'next-auth/react';
 import React, { MouseEventHandler } from 'react';
-import { AppLayout } from '~/components/AppLayout/AppLayout';
 import {
   DiscordButton,
   GitHubButton,
-  GoogleButton
+  GoogleButton,
 } from '~/components/SocialButtons/SocialButtons';
 
 const mapProviderSignInButton = {
@@ -31,7 +30,7 @@ export default function Login({
   providers,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   return (
-    <AppLayout>
+    <>
       <Paper radius="md" p="xl" withBorder>
         <Text size="lg" weight={500}>
           Welcome to Model Share, sign in with
@@ -54,7 +53,7 @@ export default function Login({
             : null}
         </Group>
       </Paper>
-    </AppLayout>
+    </>
   );
 }
 
