@@ -3,11 +3,12 @@ import { ColorScheme, ColorSchemeProvider, MantineProvider } from '@mantine/core
 import { getCookie, setCookie } from 'cookies-next';
 import type { Session } from 'next-auth';
 import { SessionProvider } from 'next-auth/react';
-import type { AppProps } from 'next/app';
+import type { AppContext, AppProps } from 'next/app';
 import { trpc } from '~/utils/trpc';
+import App from 'next/app';
 
 import { NotificationsProvider } from '@mantine/notifications';
-import { GetServerSidePropsContext, NextPage } from 'next';
+import type { NextPage } from 'next';
 import Head from 'next/head';
 import { ReactElement, ReactNode, useState } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
@@ -22,7 +23,7 @@ type CustomAppProps<P> = AppProps<P> & {
   colorScheme: ColorScheme;
 };
 
-function App(props: CustomAppProps<{ session: Session | null }>) {
+function MyApp(props: CustomAppProps<{ session: Session | null }>) {
   const {
     Component,
     pageProps: { session, ...pageProps },
@@ -57,8 +58,13 @@ function App(props: CustomAppProps<{ session: Session | null }>) {
   );
 }
 
-App.getInitialProps = ({ ctx }: { ctx: GetServerSidePropsContext }) => ({
-  colorScheme: getCookie('mantine-color-scheme', ctx) || 'light',
-});
+MyApp.getInitialProps = async (appContext: AppContext) => {
+  const appProps = await App.getInitialProps(appContext);
 
-export default trpc.withTRPC(App);
+  return {
+    colorScheme: getCookie('mantine-color-scheme', appContext.ctx) || 'light',
+    ...appProps,
+  };
+};
+
+export default trpc.withTRPC(MyApp);
