@@ -69,6 +69,7 @@ model VerificationToken {
 enum ModelType {
   Checkpoint
   TextualInversion
+  Hypernetwork
 }
 
 model Model {
@@ -79,6 +80,7 @@ model Model {
   trainedWords String[]
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+  nsfw         Boolean   @default(false)
 
   ModelVersions  ModelVersion[]
   Reviews        Review[]
@@ -113,6 +115,7 @@ model Review {
   rating          Int
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
+  nsfw            Boolean           @default(false)
   ReviewReactions ReviewReaction[]
   ImagesOnReviews ImagesOnReviews[]
 }
