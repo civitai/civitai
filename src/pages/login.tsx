@@ -6,7 +6,7 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import {
   DiscordButton,
   GitHubButton,
-  GoogleButton,
+  GoogleButton
 } from '~/components/SocialButtons/SocialButtons';
 
 const mapProviderSignInButton = {
@@ -45,7 +45,9 @@ export default function Login({
 
                 return (
                   <React.Fragment key={provider.name}>
-                    {ProviderButton && <ProviderButton onClick={() => signIn(provider.id)} />}
+                    {ProviderButton && (
+                      <ProviderButton onClick={() => signIn(provider.id, { callbackUrl: '/' })} />
+                    )}
                   </React.Fragment>
                 );
               })
@@ -60,14 +62,14 @@ type NextAuthProviders = AsyncReturnType<typeof getProviders>;
 type NextAuthCsrfToken = AsyncReturnType<typeof getCsrfToken>;
 type Props = {
   providers: NextAuthProviders;
-  // csrfToken: NextAuthCsrfToken;
+  csrfToken: NextAuthCsrfToken;
 };
 
 export const getServerSideProps: GetServerSideProps<Props> = async () => {
   const providers = await getProviders();
-  // const csrfToken = await getCsrfToken();
+  const csrfToken = await getCsrfToken();
 
   return {
-    props: { providers },
+    props: { providers, csrfToken },
   };
 };

@@ -1,10 +1,13 @@
 import { Autocomplete, Button, Group, Header, Title } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconSearch } from '@tabler/icons';
+import { signOut, useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { ColorSchemeToggle } from '~/components/ColorSchemeToggle/ColorSchemeToggle';
 
 export function AppHeader({ links }: Props) {
+  const { data: session } = useSession();
+
   return (
     <Header p="sm" height={70}>
       <Group align="center" sx={{ justifyContent: 'space-between' }}>
@@ -27,9 +30,13 @@ export function AppHeader({ links }: Props) {
             ))}
           </Group>
           <ColorSchemeToggle />
-          <Button component={NextLink} href="/login">
-            Sign In
-          </Button>
+          {session ? (
+            <Button onClick={() => signOut({ callbackUrl: '/' })}>Sign Out</Button>
+          ) : (
+            <Button component={NextLink} href="/login">
+              Sign In
+            </Button>
+          )}
         </Group>
       </Group>
     </Header>

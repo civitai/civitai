@@ -28,7 +28,12 @@ module.exports = {
       endOfLine: 'auto'
     }],
     "no-use-before-define": "off",
-    "@typescript-eslint/no-use-before-define": "off"
+    "@typescript-eslint/no-use-before-define": "off",
+    'no-restricted-syntax': [
+      'error',
+      'LabeledStatement',
+      'WithStatement',
+    ],
   },
   settings: {
     'import/parsers': {
