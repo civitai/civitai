@@ -4,7 +4,6 @@ import { ModelCard } from '~/components/ModelCard/ModelCard';
 
 function Home() {
   const { classes } = useStyles();
-  const { data: models = [] } = trpc.model.getAll.useQuery();
 
   return (
     <>
