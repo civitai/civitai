@@ -28,13 +28,20 @@ export function GitHubButton(props: ButtonProps) {
     <Button
       {...props}
       leftIcon={<IconBrandGithub size={16} />}
-      sx={(theme) => ({
-        backgroundColor: theme.colors.dark?.[theme.colorScheme === 'dark' ? 9 : 6],
-        color: '#fff',
-        '&:hover': {
-          backgroundColor: theme.colors.dark?.[theme.colorScheme === 'dark' ? 9 : 6],
-        },
-      })}
+      sx={(theme) => {
+        const backgroundColor = theme.colors.dark?.[theme.colorScheme === 'dark' ? 9 : 6];
+
+        return {
+          backgroundColor,
+          color: '#fff',
+          '&:hover': {
+            backgroundColor:
+              theme.colorScheme === 'dark'
+                ? theme.fn.lighten(backgroundColor, 0.02)
+                : theme.fn.lighten(backgroundColor, 0.05),
+          },
+        };
+      }}
     />
   );
 }

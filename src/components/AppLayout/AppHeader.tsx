@@ -1,4 +1,4 @@
-import { Autocomplete, Button, Group, Header, Title } from '@mantine/core';
+import { Anchor, Autocomplete, Button, Group, Header, Title } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconSearch } from '@tabler/icons';
 import { signOut, useSession } from 'next-auth/react';
@@ -12,8 +12,10 @@ export function AppHeader({ links }: Props) {
     <Header p="sm" height={70}>
       <Group align="center" sx={{ justifyContent: 'space-between' }}>
         <Group>
-          <Link href="/">
-            <Title>MS</Title>
+          <Link href="/" passHref>
+            <Anchor variant="text">
+              <Title>MS</Title>
+            </Anchor>
           </Link>
           <Autocomplete
             placeholder="Search"

@@ -1,6 +1,6 @@
-import { ButtonProps, Group, Paper, Text } from '@mantine/core';
+import { ButtonProps, Container, Paper, Stack, Text } from '@mantine/core';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
-import { getCsrfToken, getProviders, signIn } from 'next-auth/react';
+import { getCsrfToken, getProviders, getSession, signIn } from 'next-auth/react';
 import React, { MouseEventHandler } from 'react';
 import {
   DiscordButton,
@@ -11,17 +11,17 @@ import {
 const mapProviderSignInButton = {
   github: (props: ButtonProps & { onClick: MouseEventHandler }) => (
     <GitHubButton radius="xl" {...props}>
-      Sign In With GitHub
+      GitHub
     </GitHubButton>
   ),
   discord: (props: ButtonProps & { onClick: MouseEventHandler }) => (
     <DiscordButton radius="xl" {...props}>
-      Sign In With Discord
+      Discord
     </DiscordButton>
   ),
   google: (props: ButtonProps & { onClick: MouseEventHandler }) => (
     <GoogleButton radius="xl" {...props}>
-      Sign In With Google
+      Google
     </GoogleButton>
   ),
 };
@@ -30,13 +30,13 @@ export default function Login({
   providers,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   return (
-    <>
+    <Container size="xs">
       <Paper radius="md" p="xl" withBorder>
         <Text size="lg" weight={500}>
           Welcome to Model Share, sign in with
         </Text>
 
-        <Group grow mb="md" mt="md">
+        <Stack mb="md" mt="md">
           {providers
             ? Object.values(providers).map((provider) => {
                 const ProviderButton =
@@ -44,20 +44,17 @@ export default function Login({
 
                 return (
                   <React.Fragment key={provider.name}>
-                    {ProviderButton && (
-                      <ProviderButton onClick={() => signIn(provider.id, { callbackUrl: '/' })} />
-                    )}
+                    <ProviderButton onClick={() => signIn(provider.id, { callbackUrl: '/' })} />
                   </React.Fragment>
                 );
               })
             : null}
-        </Group>
+        </Stack>
       </Paper>
-    </>
+    </Container>
   );
 }
 
-type NextAuthProviders = AsyncReturnType<typeof getProviders>;
 type NextAuthCsrfToken = AsyncReturnType<typeof getCsrfToken>;
 type Props = {
   providers: NextAuthProviders;
@@ -65,6 +62,17 @@ type Props = {
 };
 
 export const getServerSideProps: GetServerSideProps<Props> = async () => {
+  const session = await getSession();
+
+  if (!session) {
+    return {
+      redirect: {
+        destination: '/',
+        permanent: false,
+      },
+    };
+  }
+
   const providers = await getProviders();
   const csrfToken = await getCsrfToken();
 
