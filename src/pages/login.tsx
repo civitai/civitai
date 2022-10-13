@@ -1,6 +1,5 @@
 import { ButtonProps, Container, Paper, Stack, Text } from '@mantine/core';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
-import { unstable_getServerSession } from 'next-auth';
 import { getCsrfToken, getProviders, signIn } from 'next-auth/react';
 import React, { MouseEventHandler } from 'react';
 import {
@@ -8,7 +7,7 @@ import {
   GitHubButton,
   GoogleButton,
 } from '~/components/SocialButtons/SocialButtons';
-import { authOptions } from '~/pages/api/auth/[...nextauth]';
+import { getServerAuthSession } from '~/server/common/get-server-auth-session';
 
 const mapProviderSignInButton = {
   github: (props: ButtonProps & { onClick: MouseEventHandler }) => (
@@ -65,7 +64,7 @@ type Props = {
 };
 
 export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
-  const session = await unstable_getServerSession(ctx.req, ctx.res, authOptions);
+  const session = await getServerAuthSession(ctx);
 
   if (session) {
     return {

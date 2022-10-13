@@ -1,88 +1,138 @@
+import { ModelType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
+import { handleDbError } from '~/server/services/errorHandling';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
 
+const baseQuerySelect = {
+  ModelVersions: { select: { url: true, description: true } },
+  Reviews: { select: { text: true, rating: true, user: true } },
+  TagsOnModels: { select: { tag: true } },
+  ImagesOnModels: { select: { image: true } },
+};
+
 export const modelRouter = router({
-  hello: publicProcedure
-    .input(z.object({ text: z.string().nullish() }).nullish())
-    .query(({ input }) => ({
-      greeting: `Hello ${input?.text ?? 'world'}`,
-    })),
   getAll: publicProcedure
     .input(
       z
-        .object({ query: z.string().nullish(), type: z.enum(['Checkpoint', 'TextualInversion']) })
-        .nullish()
+        .object({
+          query: z.string().optional(),
+          type: z.nativeEnum(ModelType).optional(),
+        })
+        .optional()
     )
-    .query(async ({ ctx, input }) =>
-      ctx.prisma.model.findMany({
-        where: {
-          OR: {
-            name: { contains: input?.query ?? '' },
-            type: { equals: input?.type },
+    .query(async ({ ctx, input }) => {
+      try {
+        return await ctx.prisma.model.findMany({
+          where: {
+            OR: {
+              name: { contains: input?.query },
+              type: { equals: input?.type },
+            },
           },
-        },
-      })
-    ),
-  byId: publicProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
-    const { id } = input;
-    const model = await ctx.prisma.model.findUnique({ where: { id } });
+          select: baseQuerySelect,
+        });
+      } catch (error) {
+        return handleDbError('INTERNAL_SERVER_ERROR', error);
+      }
+    }),
+  getById: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
+    try {
+      const { id } = input;
+      const model = await ctx.prisma.model.findUnique({ where: { id }, select: baseQuerySelect });
 
-    if (!model) {
-      return new TRPCError({
-        code: 'NOT_FOUND',
-        message: `No model with id ${id}`,
-      });
+      if (!model) {
+        return new TRPCError({
+          code: 'NOT_FOUND',
+          message: `No model with id ${id}`,
+        });
+      }
+
+      return model;
+    } catch (error) {
+      return handleDbError('INTERNAL_SERVER_ERROR', error);
     }
-
-    return model;
   }),
   add: protectedProcedure
     .input(
       z.object({
         name: z.string(),
         description: z.string(),
-        type: z.enum(['Checkpoint', 'TextualInversion']),
+        type: z.nativeEnum(ModelType),
         trainedWords: z.array(z.string()),
+        modelVersions: z.array(
+          z.object({
+            name: z.string(),
+            description: z.string().optional(),
+            url: z.string().url(),
+            stepCount: z.number().optional(),
+            epochs: z.number().optional(),
+            sizeKB: z.number(),
+          })
+        ),
       })
     )
-    .mutation(({ ctx, input }) => ctx.prisma.model.create({ data: input })),
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const { modelVersions, ...data } = input;
+        const createdModels = await ctx.prisma.model.create({
+          data: {
+            ...data,
+            ModelVersions: {
+              create: modelVersions,
+            },
+          },
+        });
+
+        return createdModels;
+      } catch (error) {
+        return handleDbError('INTERNAL_SERVER_ERROR', error);
+      }
+    }),
   update: protectedProcedure
     .input(
       z.object({
-        id: z.string(),
+        id: z.number(),
         name: z.string(),
         description: z.string(),
-        type: z.enum(['Checkpoint', 'TextualInversion']),
+        type: z.nativeEnum(ModelType),
         trainedWords: z.array(z.string()),
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const { id, ...data } = input;
-      const model = await ctx.prisma.model.update({ where: { id }, data });
+      try {
+        const { id, ...data } = input;
+        const model = await ctx.prisma.model.update({ where: { id }, data });
 
-      if (!model) {
-        return new TRPCError({
-          code: 'NOT_FOUND',
-          message: `No model with id ${id}`,
-        });
+        if (!model) {
+          return new TRPCError({
+            code: 'NOT_FOUND',
+            message: `No model with id ${id}`,
+          });
+        }
+
+        return model;
+      } catch (error) {
+        return handleDbError('INTERNAL_SERVER_ERROR', error);
       }
-
-      return model;
     }),
   delete: protectedProcedure
-    .input(z.object({ id: z.string() }))
+    .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      const { id } = input;
-      const model = await ctx.prisma.model.delete({ where: { id } });
+      try {
+        const { id } = input;
+        const model = await ctx.prisma.model.delete({ where: { id } });
 
-      if (!model) {
-        return new TRPCError({
-          code: 'NOT_FOUND',
-          message: `No model with id ${id}`,
-        });
+        if (!model) {
+          return new TRPCError({
+            code: 'NOT_FOUND',
+            message: `No model with id ${id}`,
+          });
+        }
+
+        return model;
+      } catch (error) {
+        return handleDbError('INTERNAL_SERVER_ERROR', error);
       }
-
-      return model;
     }),
 });
