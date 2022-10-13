@@ -25,7 +25,7 @@ export const modelSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
   type: z.nativeEnum(ModelType),
-  trainedWords: z.string(),
+  trainedWords: z.string().array(),
   tags: z.string().array(),
   nsfw: z.boolean(),
   modelVersions: z.array(modelVersionSchema).min(1, 'At least one model version is required'),

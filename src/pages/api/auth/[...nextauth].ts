@@ -18,7 +18,7 @@ export const authOptions: NextAuthOptions = {
       const localSession = { ...session };
 
       if (localSession.user) {
-        localSession.user.id = user.id;
+        localSession.user.id = Number(user.id);
       }
 
       return localSession;

@@ -1,24 +1,21 @@
 import { createStyles, Group, Title } from '@mantine/core';
-import { GetServerSideProps } from 'next';
 import Head from 'next/head';
 import { ModelCard } from '~/components/ModelCard/ModelCard';
-import { getUsers } from '../server/services/users';
+import { trpc } from '~/utils/trpc';
 
-type ServerSideProps = {
-  users: Awaited<ReturnType<typeof getUsers>>;
-};
+// export const getServerSideProps: GetServerSideProps<ServerSideProps> = async (ctx) => {
+//   console.log('FETCHING');
+//   return {
+//     props: {
+//       users: await getUsers(),
+//     },
+//   };
+// };
 
-export const getServerSideProps: GetServerSideProps<ServerSideProps> = async (ctx) => ({
-  props: {
-    users: await getUsers(),
-  },
-});
-
-function Home(props: ServerSideProps) {
+function Home() {
   // const { data: session, status } = useSession();
-  // const { data } = trpc.example.hello.useQuery({ text: 'from tRPC' });
+  // const { data, isLoading } = trpc.example.getAll.useQuery({ text: 'from tRPC' });
   const { classes } = useStyles();
-  console.log(props.users);
 
   return (
     <>
