@@ -64,7 +64,7 @@ type Props = {
 export const getServerSideProps: GetServerSideProps<Props> = async () => {
   const session = await getSession();
 
-  if (!session) {
+  if (session) {
     return {
       redirect: {
         destination: '/',
