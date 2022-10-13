@@ -14,14 +14,10 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Example {
-  id String @id @default(cuid())
-}
-
 // Necessary for Next auth
 model Account {
-  id                String  @id @default(cuid())
-  userId            String
+  id                Int     @id @default(autoincrement())
+  userId            Int
   type              String
   provider          String
   providerAccountId String
@@ -38,15 +34,15 @@ model Account {
 }
 
 model Session {
-  id           String   @id @default(cuid())
+  id           Int      @id @default(autoincrement())
   sessionToken String   @unique
-  userId       String
+  userId       Int
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model User {
-  id             String           @id @default(cuid())
+  id             Int              @id @default(autoincrement())
   name           String?
   email          String?          @unique
   emailVerified  DateTime?
@@ -73,7 +69,7 @@ enum ModelType {
 }
 
 model Model {
-  id           String    @id @default(cuid())
+  id           Int       @id @default(autoincrement())
   name         String
   description  String
   type         ModelType
@@ -89,12 +85,13 @@ model Model {
 }
 
 model ModelVersion {
-  id             String           @id @default(cuid())
+  id             Int              @id @default(autoincrement())
   name           String
   description    String?
   url            String
+  sizeKB         Int
   model          Model            @relation(fields: [modelId], references: [id])
-  modelId        String
+  modelId        Int
   steps          Int?
   epochs         Int?
   Review         Review[]
@@ -104,13 +101,13 @@ model ModelVersion {
 }
 
 model Review {
-  id              String            @id @default(cuid())
+  id              Int               @id @default(autoincrement())
   model           Model             @relation(fields: [modelId], references: [id])
-  modelId         String
+  modelId         Int
   modelVersion    ModelVersion?     @relation(fields: [modelVersionId], references: [id])
-  modelVersionId  String?
+  modelVersionId  Int?
   user            User              @relation(fields: [userId], references: [id])
-  userId          String
+  userId          Int
   text            String
   rating          Int
   createdAt       DateTime          @default(now())
@@ -129,22 +126,22 @@ enum ReviewReactions {
 }
 
 model ReviewReaction {
-  id        String          @id @default(cuid())
+  id        Int             @id @default(autoincrement())
   review    Review          @relation(fields: [reviewId], references: [id])
-  reviewId  String
+  reviewId  Int
   user      User            @relation(fields: [userId], references: [id])
-  userId    String
+  userId    Int
   reaction  ReviewReactions
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
 }
 
 model Image {
-  id              String            @id @default(cuid())
+  id              Int               @id @default(autoincrement())
   name            String?
   url             String
   user            User              @relation(fields: [userId], references: [id])
-  userId          String
+  userId          Int
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   prompt          String?
@@ -163,11 +160,11 @@ enum ImageOnModelType {
 
 model ImagesOnModels {
   model          Model            @relation(fields: [modelId], references: [id])
-  modelId        String
+  modelId        Int
   modelVersion   ModelVersion     @relation(fields: [modelVersionId], references: [id])
-  modelVersionId String
+  modelVersionId Int
   image          Image            @relation(fields: [imageId], references: [id])
-  imageId        String
+  imageId        Int
   type           ImageOnModelType
 
   @@id([imageId, modelId, modelVersionId])
@@ -175,15 +172,15 @@ model ImagesOnModels {
 
 model ImagesOnReviews {
   review   Review @relation(fields: [reviewId], references: [id])
-  reviewId String
+  reviewId Int
   image    Image  @relation(fields: [imageId], references: [id])
-  imageId  String
+  imageId  Int
 
   @@id([imageId, reviewId])
 }
 
 model Tag {
-  id        String   @id @default(cuid())
+  id        Int      @id @default(autoincrement())
   name      String   @unique
   color     String?
   createdAt DateTime @default(now())
@@ -193,10 +190,10 @@ model Tag {
 }
 
 model TagsOnModels {
-  model   Model  @relation(fields: [modelId], references: [id])
-  modelId String
-  tag     Tag    @relation(fields: [tagId], references: [id])
-  tagId   String
+  model   Model @relation(fields: [modelId], references: [id])
+  modelId Int
+  tag     Tag   @relation(fields: [tagId], references: [id])
+  tagId   Int
 
   @@id([modelId, tagId])
 }
