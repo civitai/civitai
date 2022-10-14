@@ -126,21 +126,23 @@ export function AppHeader({ links }: Props) {
           </Group>
           <Group spacing="xs">
             {session ? (
-              <Button component={NextLink} href="/models/create">
+              <Button component={NextLink} href="/models/create" variant="subtle">
                 Upload a model
               </Button>
             ) : null}
             <ColorSchemeToggle />
             {session ? (
               <Menu
+                width={260}
+                opened={userMenuOpened}
                 position="bottom-end"
                 transition="pop-top-right"
                 onClose={() => setUserMenuOpened(false)}
-                onOpen={() => setUserMenuOpened(true)}
               >
                 <Menu.Target>
                   <UnstyledButton
                     className={cx(classes.user, { [classes.userActive]: userMenuOpened })}
+                    onClick={() => setUserMenuOpened(true)}
                   >
                     <Group spacing={7}>
                       <Avatar

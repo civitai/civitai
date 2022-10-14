@@ -81,6 +81,9 @@ export const modelRouter = router({
             modelVersions: {
               create: modelVersions,
             },
+            User: {
+              connect: { id: ctx.session.user.id },
+            },
           },
         });
 
