@@ -6,7 +6,13 @@ import { trpc } from './../utils/trpc';
 function Home() {
   const { classes } = useStyles();
 
-  const { data, isLoading } = trpc.model.getAll.useQuery();
+  const { data, isLoading } = trpc.model.getAll.useInfiniteQuery(
+    { limit: 5 },
+    {
+      getNextPageParam: (lastPage: any) => lastPage.nextCursor,
+      getPreviousPageParam: (firstPage: any) => firstPage.prevCursor,
+    }
+  );
   console.log({ data });
 
   return (

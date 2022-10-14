@@ -1,5 +1,5 @@
 import { ModelType } from '@prisma/client';
-import { TRPCError } from '@trpc/server';
+import { TRPCError, initTRPC } from '@trpc/server';
 import { z } from 'zod';
 import { handleDbError } from '~/server/services/errorHandling';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
@@ -14,16 +14,14 @@ const baseQuerySelect = {
 export const modelRouter = router({
   getAll: publicProcedure
     .input(
-      z
-        .object({
-          limit: z.number().min(1).max(100),
-          cursor: z.number(),
-          query: z.string().optional(),
-          tags: z.number().array().optional(),
-          users: z.number().array().optional(),
-          type: z.nativeEnum(ModelType).optional(),
-        })
-        .optional()
+      z.object({
+        limit: z.number().min(1).max(100).nullish(),
+        cursor: z.number().nullish(),
+        query: z.string().optional(),
+        tags: z.number().array().optional(),
+        users: z.number().array().optional(),
+        type: z.nativeEnum(ModelType).optional(),
+      })
     )
     .query(async ({ ctx, input = {} }) => {
       try {
@@ -52,13 +50,15 @@ export const modelRouter = router({
                 equals: input?.type,
               },
             },
-            AND: {},
           },
           select: {
             id: true,
             name: true,
             type: true,
             imagesOnModels: {
+              orderBy: {
+                index: 'desc',
+              },
               take: 1,
               select: {
                 image: {
@@ -82,20 +82,23 @@ export const modelRouter = router({
           },
         });
 
-        const models = items.map(({ metrics, imagesOnModels, ...item }) => ({
-          ...item,
-          image: imagesOnModels[0]?.image,
-          metrics: {
-            rating: metrics.reduce((a, b) => a + b.rating, 0) / metrics.length,
-            ...metrics.reduce(
-              (a, b) => ({
-                ratingCount: a.ratingCount + b.ratingCount,
-                downloadCount: a.downloadCount + b.downloadCount,
-              }),
-              { ratingCount: 0, downloadCount: 0 }
-            ),
-          },
-        }));
+        const models = items.map(({ metrics, imagesOnModels, ...item }) => {
+          const rating = Math.ceil(metrics.reduce((a, b) => a + b.rating, 0) / metrics.length);
+          return {
+            ...item,
+            image: imagesOnModels[0]?.image ?? {},
+            metrics: {
+              rating: !isNaN(rating) ? rating : 0,
+              ...metrics.reduce(
+                (a, b) => ({
+                  ratingCount: a.ratingCount + b.ratingCount,
+                  downloadCount: a.downloadCount + b.downloadCount,
+                }),
+                { ratingCount: 0, downloadCount: 0 }
+              ),
+            },
+          };
+        });
 
         let nextCursor: typeof cursor | undefined = undefined;
         if (items.length > limit) {
@@ -157,9 +160,9 @@ export const modelRouter = router({
             modelVersions: {
               create: modelVersions,
             },
-            user: {
-              connect: { id: ctx.session.user.id },
-            },
+            // user: {
+            //   connect: { id: ctx.session.user.id },
+            // },
           },
         });
 

@@ -1,4 +1,4 @@
-import { ImageOnModelType, ModelType, ReviewReactions, PrismaClient } from '@prisma/client';
+import { ModelType, ReviewReactions, PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -41,7 +41,6 @@ const reviewText = [
 const rating = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const tags = ['Pokemon', 'Lightning', 'Sunset', 'Orange', 'Kachow', 'Cute', 'Yellow'];
 
-const imageTypes: ImageOnModelType[] = ['Example', 'Training'];
 const images = [
   {
     name: 'Pikachu',
@@ -189,7 +188,7 @@ async function seed() {
        * MODEL VERSION IMAGES
        ************/
       await Promise.all(
-        modelVersions.map(async ({ id: modelVersionId }) =>
+        modelVersions.map(async ({ id: modelVersionId }, i) =>
           prisma.image.create({
             data: {
               userId,
@@ -198,7 +197,7 @@ async function seed() {
                 create: {
                   modelId,
                   modelVersionId,
-                  type: getRandomItem(imageTypes),
+                  index: i,
                 },
               },
             },
