@@ -113,7 +113,7 @@ model Review {
   modelVersionId Int?
   user           User          @relation(fields: [userId], references: [id])
   userId         Int
-  text           String
+  text           String?
   rating         Int
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
