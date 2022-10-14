@@ -54,6 +54,8 @@ model User {
   reviewReactions ReviewReaction[]
   images          Image[]
   models          Model[]
+  activities      UserActivity[]
+  saves           SavedModel[]
 }
 
 model VerificationToken {
@@ -80,12 +82,14 @@ model Model {
   updatedAt    DateTime  @updatedAt
   nsfw         Boolean   @default(false)
   userId       Int
-  User         User      @relation(fields: [userId], references: [id])
+  user         User      @relation(fields: [userId], references: [id])
 
   modelVersions  ModelVersion[]
   reviews        Review[]
   imagesOnModels ImagesOnModels[]
   tagsOnModels   TagsOnModels[]
+  metrics        ModelMetric[]
+  saves          SavedModel[]
 }
 
 model ModelVersion {
@@ -103,6 +107,32 @@ model ModelVersion {
 
   reviews        Review[]
   imagesOnModels ImagesOnModels[]
+  metrics        ModelMetric[]
+}
+
+model ModelMetric {
+  model          Model        @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelId        Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id])
+  modelVersionId Int
+  rating         Int
+  ratingCount    Int
+  downloadCount  Int
+
+  @@id([modelId, modelVersionId])
+}
+
+enum UserActivityType {
+  ModelDownload
+}
+
+model UserActivity {
+  id        Int              @id @default(autoincrement())
+  userId    Int
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activity  UserActivityType
+  details   Json?
+  createdAt DateTime         @default(now())
 }
 
 model Review {
@@ -203,4 +233,15 @@ model TagsOnModels {
   tagId   Int
 
   @@id([modelId, tagId])
+}
+
+model SavedModel {
+  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelId   Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([modelId, userId])
 }
