@@ -24,7 +24,7 @@ module.exports = {
     // prettier overrides
     'prettier/prettier': ['error', {
       printWidth: 100,
-      endOfLine: 'auto',
+      endOfLine: 'lf',
       singleQuote: true,
       trailingComma: "es5",
     }],

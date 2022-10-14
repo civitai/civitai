@@ -16,22 +16,93 @@ export const modelRouter = router({
     .input(
       z
         .object({
+          limit: z.number().min(1).max(100),
+          cursor: z.number(),
           query: z.string().optional(),
+          tags: z.number().array().optional(),
+          users: z.number().array().optional(),
           type: z.nativeEnum(ModelType).optional(),
         })
         .optional()
     )
-    .query(async ({ ctx, input }) => {
+    .query(async ({ ctx, input = {} }) => {
       try {
-        return await ctx.prisma.model.findMany({
+        const limit = input.limit ?? 50;
+        const { cursor } = input;
+        const items = await ctx.prisma.model.findMany({
+          take: limit + 1, // get an extra item at the end which we'll use as next cursor
+          cursor: cursor ? { id: cursor } : undefined,
           where: {
             OR: {
-              name: { contains: input?.query },
-              type: { equals: input?.type },
+              name: {
+                contains: input.query,
+                mode: 'insensitive',
+              },
+              tagsOnModels: {
+                some: {
+                  tagId: {
+                    in: input.tags,
+                  },
+                },
+              },
+              userId: {
+                in: input.users,
+              },
+              type: {
+                equals: input?.type,
+              },
+            },
+            AND: {},
+          },
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            imagesOnModels: {
+              take: 1,
+              select: {
+                image: {
+                  select: {
+                    width: true,
+                    url: true,
+                    height: true,
+                    prompt: true,
+                    hash: true,
+                  },
+                },
+              },
+            },
+            metrics: {
+              select: {
+                rating: true,
+                ratingCount: true,
+                downloadCount: true,
+              },
             },
           },
-          select: baseQuerySelect,
         });
+
+        const models = items.map(({ metrics, imagesOnModels, ...item }) => ({
+          ...item,
+          image: imagesOnModels[0]?.image,
+          metrics: {
+            rating: metrics.reduce((a, b) => a + b.rating, 0) / metrics.length,
+            ...metrics.reduce(
+              (a, b) => ({
+                ratingCount: a.ratingCount + b.ratingCount,
+                downloadCount: a.downloadCount + b.downloadCount,
+              }),
+              { ratingCount: 0, downloadCount: 0 }
+            ),
+          },
+        }));
+
+        let nextCursor: typeof cursor | undefined = undefined;
+        if (items.length > limit) {
+          const nextItem = items.pop();
+          nextCursor = nextItem?.id;
+        }
+        return { items: models, nextCursor };
       } catch (error) {
         return handleDbError('INTERNAL_SERVER_ERROR', error);
       }
@@ -39,7 +110,10 @@ export const modelRouter = router({
   getById: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     try {
       const { id } = input;
-      const model = await ctx.prisma.model.findUnique({ where: { id }, select: baseQuerySelect });
+      const model = await ctx.prisma.model.findUnique({
+        where: { id },
+        select: baseQuerySelect,
+      });
 
       if (!model) {
         return new TRPCError({
@@ -74,10 +148,12 @@ export const modelRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       try {
+        const userId = ctx.session.user.id;
         const { modelVersions, ...data } = input;
         const createdModels = await ctx.prisma.model.create({
           data: {
             ...data,
+            userId,
             modelVersions: {
               create: modelVersions,
             },

@@ -1,9 +1,13 @@
 import { createStyles, Group, Title } from '@mantine/core';
 import Head from 'next/head';
 import { ModelCard } from '~/components/ModelCard/ModelCard';
+import { trpc } from './../utils/trpc';
 
 function Home() {
   const { classes } = useStyles();
+
+  const { data, isLoading } = trpc.model.getAll.useQuery();
+  console.log({ data });
 
   return (
     <>
