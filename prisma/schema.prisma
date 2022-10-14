@@ -93,17 +93,18 @@ model Model {
 }
 
 model ModelVersion {
-  id          Int      @id @default(autoincrement())
-  name        String
-  description String?
-  url         String
-  sizeKB      Int
-  modelId     Int
-  model       Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  steps       Int?
-  epochs      Int?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id              Int      @id @default(autoincrement())
+  name            String
+  description     String?
+  url             String
+  sizeKB          Int
+  modelId         Int
+  model           Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  steps           Int?
+  epochs          Int?
+  trainingDataUrl String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   reviews        Review[]
   imagesOnModels ImagesOnModels[]
@@ -196,13 +197,13 @@ enum ImageOnModelType {
 }
 
 model ImagesOnModels {
-  model          Model            @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model          Model        @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId        Int
-  modelVersion   ModelVersion     @relation(fields: [modelVersionId], references: [id])
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id])
   modelVersionId Int
-  image          Image            @relation(fields: [imageId], references: [id])
+  image          Image        @relation(fields: [imageId], references: [id])
   imageId        Int
-  type           ImageOnModelType
+  index          Int?
 
   @@id([imageId, modelId, modelVersionId])
 }
@@ -212,6 +213,7 @@ model ImagesOnReviews {
   reviewId Int
   image    Image  @relation(fields: [imageId], references: [id])
   imageId  Int
+  index    Int?
 
   @@id([imageId, reviewId])
 }
