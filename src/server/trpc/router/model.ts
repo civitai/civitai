@@ -5,10 +5,10 @@ import { handleDbError } from '~/server/services/errorHandling';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
 
 const baseQuerySelect = {
-  ModelVersions: { select: { url: true, description: true } },
-  Reviews: { select: { text: true, rating: true, user: true } },
-  TagsOnModels: { select: { tag: true } },
-  ImagesOnModels: { select: { image: true } },
+  modelVersions: { select: { url: true, description: true } },
+  reviews: { select: { text: true, rating: true, user: true } },
+  tagsOnModels: { select: { tag: true } },
+  imagesOnModels: { select: { image: true } },
 };
 
 export const modelRouter = router({
@@ -78,7 +78,7 @@ export const modelRouter = router({
         const createdModels = await ctx.prisma.model.create({
           data: {
             ...data,
-            ModelVersions: {
+            modelVersions: {
               create: modelVersions,
             },
           },

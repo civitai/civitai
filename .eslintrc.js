@@ -9,7 +9,6 @@ module.exports = {
     'import',
   ],
   extends: [
-    'mantine',
     'next/core-web-vitals',
     'prettier',
     'plugin:@next/next/recommended',
@@ -25,15 +24,12 @@ module.exports = {
     // prettier overrides
     'prettier/prettier': ['error', {
       printWidth: 100,
-      endOfLine: 'auto'
+      endOfLine: 'auto',
+      singleQuote: true,
+      trailingComma: "es5",
     }],
     "no-use-before-define": "off",
     "@typescript-eslint/no-use-before-define": "off",
-    'no-restricted-syntax': [
-      'error',
-      'LabeledStatement',
-      'WithStatement',
-    ],
   },
   settings: {
     'import/parsers': {

@@ -6,7 +6,14 @@ export function AppLayout({ children, showNavbar }: Props) {
   return (
     <AppShell
       padding="md"
-      header={<AppHeader />}
+      header={
+        <AppHeader
+          links={[
+            { label: 'Models', url: '#' },
+            { label: 'Link 2', url: '#' },
+          ]}
+        />
+      }
       navbar={showNavbar ? <SideNavigation /> : undefined}
     >
       {children}

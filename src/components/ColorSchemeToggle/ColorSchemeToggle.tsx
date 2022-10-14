@@ -8,12 +8,9 @@ export function ColorSchemeToggle() {
     <Group position="center">
       <ActionIcon
         onClick={() => toggleColorScheme()}
-        size="xl"
-        sx={(theme) => ({
-          backgroundColor:
-            theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-          color: theme.colorScheme === 'dark' ? theme.colors.yellow[4] : theme.colors.blue[6],
-        })}
+        size="lg"
+        variant="outline"
+        color={colorScheme === 'dark' ? 'yellow' : 'blue'}
       >
         {colorScheme === 'dark' ? (
           <IconSun size={20} stroke={1.5} />
