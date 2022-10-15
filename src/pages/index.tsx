@@ -16,8 +16,6 @@ function Home() {
     }
   );
 
-  console.log({ data });
-
   const models = useMemo(
     (): GetAllModelsReturnType['items'] => data?.pages.flatMap((x) => x.items) ?? [],
     [data]
