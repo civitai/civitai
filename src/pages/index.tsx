@@ -1,19 +1,27 @@
 import { createStyles, Group, Title } from '@mantine/core';
 import Head from 'next/head';
+import { useMemo } from 'react';
 import { ModelCard } from '~/components/ModelCard/ModelCard';
 import { trpc } from './../utils/trpc';
+import { GetAllModelsReturnType } from '~/server/services/models/getAllModels';
 
 function Home() {
   const { classes } = useStyles();
 
-  const { data, isLoading } = trpc.model.getAll.useInfiniteQuery(
-    { limit: 5 },
+  const { data } = trpc.model.getAll.useInfiniteQuery(
+    { limit: 30 },
     {
       getNextPageParam: (lastPage: any) => lastPage.nextCursor,
       getPreviousPageParam: (firstPage: any) => firstPage.prevCursor,
     }
   );
+
   console.log({ data });
+
+  const models = useMemo(
+    (): GetAllModelsReturnType['items'] => data?.pages.flatMap((x) => x.items) ?? [],
+    [data]
+  );
 
   return (
     <>
@@ -25,18 +33,9 @@ function Home() {
         <Title>This is the home page</Title>
       </Group>
       <div className={classes.gridLayout}>
-        <ModelCard id={1} name="bob" />
-        <ModelCard id={1} name="bob" />
-        <ModelCard id={1} name="bob" />
-        <ModelCard id={1} name="bob" />
-        <ModelCard id={1} name="bob" />
-        <ModelCard id={1} name="bob" />
-        <ModelCard id={1} name="bob" />
-        <ModelCard id={1} name="bob" />
-        <ModelCard id={1} name="bob" />
-        <ModelCard id={1} name="bob" />
-        <ModelCard id={1} name="bob" />
-        <ModelCard id={1} name="bob" />
+        {models.map((model) => (
+          <ModelCard key={model.id} {...model} />
+        ))}
       </div>
     </>
   );

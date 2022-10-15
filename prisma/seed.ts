@@ -117,7 +117,7 @@ async function seed() {
    * MODELS AND MODEL VERSIONS
    ************/
   const modelResults = await Promise.all(
-    [...Array(10)].map((x, i) =>
+    [...Array(200)].map((x, i) =>
       prisma.model.create({
         data: {
           userId: getRandomItem(userIds),
