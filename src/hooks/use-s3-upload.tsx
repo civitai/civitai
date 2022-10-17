@@ -1,18 +1,17 @@
 import React, { ChangeEvent, ReactElement, useRef, useState, forwardRef } from 'react';
-import { CompleteMultipartUploadCommandOutput, S3Client } from '@aws-sdk/client-s3';
-import { Upload } from '@aws-sdk/lib-storage';
+import { UploadType, UploadTypeUnion } from '~/pages/api/s3-upload';
 
 type FileInputProps = {
-  onChange: (file: File | undefined, event: ChangeEvent<HTMLInputElement>) => void;
+  onChange: (file: File[] | undefined, event: ChangeEvent<HTMLInputElement>) => void;
   [index: string]: any; // Indexer to spread props
 };
 
 // eslint-disable-next-line react/display-name
 const FileInput = forwardRef<HTMLInputElement, FileInputProps>(
-  ({ onChange = () => {}, ...restOfProps }, forwardedRef) => {
+  ({ onChange, ...restOfProps }, forwardedRef) => {
     const handleChange = (event: ChangeEvent<HTMLInputElement>): void => {
-      const file = event.target?.files?.[0];
-      onChange(file, event);
+      const files = Array.from(event.target?.files ?? []);
+      onChange?.(files, event);
     };
 
     return <input onChange={handleChange} {...restOfProps} ref={forwardedRef} type="file" />;
@@ -49,7 +48,11 @@ type UploadToS3Options = {
   endpoint?: EndpointOptions;
 };
 
-type UploadToS3 = (file: File, options?: UploadToS3Options) => Promise<UploadResult>;
+type UploadToS3 = (
+  file: File,
+  type?: UploadType | UploadTypeUnion,
+  options?: UploadToS3Options
+) => Promise<UploadResult>;
 
 type UseS3UploadTools = {
   FileInput: (props: any) => ReactElement<HTMLInputElement>;
@@ -79,7 +82,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
   const endpoint = options.endpoint ?? '/api/s3-upload';
 
   // eslint-disable-next-line @typescript-eslint/no-shadow
-  const uploadToS3: UploadToS3 = async (file, options = {}) => {
+  const uploadToS3: UploadToS3 = async (file, type = UploadType.Default, options = {}) => {
     const filename = encodeURIComponent(file.name);
 
     const requestExtras = options?.endpoint?.request ?? {
@@ -89,6 +92,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
 
     const body = {
       filename,
+      type,
       ...requestExtras.body,
     };
 
@@ -109,64 +113,35 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       console.error(data.error);
       throw data.error;
     } else {
-      const client = new S3Client({
-        credentials: {
-          accessKeyId: data.token.Credentials.AccessKeyId,
-          secretAccessKey: data.token.Credentials.SecretAccessKey,
-          sessionToken: data.token.Credentials.SessionToken,
-        },
-        region: data.region,
-        endpoint: data.endpoint,
-      });
+      const { url, bucket, key } = data;
 
-      const params = {
-        Bucket: data.bucket,
-        Key: data.key,
-        Body: file,
-        CacheControl: 'max-age=630720000, public',
-        ContentType: file.type,
-      };
-
-      // at some point make this configurable
-      // let uploadOptions = {
-      //   partSize: 100 * 1024 * 1024,
-      //   queueSize: 1,
-      // };
-
-      const s3Upload = new Upload({
-        client,
-        params,
-      });
-
+      const xhr = new XMLHttpRequest();
       setFiles((x) => [...x, { file, progress: 0, uploaded: 0, size: file.size }]);
 
-      s3Upload.on('httpUploadProgress', (progress) => {
-        const uploaded = progress.loaded ?? 0;
-        const size = progress.total ?? 0;
+      await new Promise((resolve) => {
+        xhr.upload.addEventListener('progress', (progress) => {
+          const uploaded = progress.loaded ?? 0;
+          const size = progress.total ?? 0;
 
-        if (uploaded) {
-          setFiles((x) =>
-            x.map((trackedFile) =>
-              trackedFile.file === file
-                ? {
-                    file,
-                    uploaded,
-                    size,
-                    progress: size ? (uploaded / size) * 100 : 0,
-                  }
-                : trackedFile
-            )
-          );
-        }
+          if (uploaded) {
+            setFiles((x) =>
+              x.map((trackedFile) =>
+                trackedFile.file === file
+                  ? { file, uploaded, size, progress: size ? (uploaded / size) * 100 : 0 }
+                  : trackedFile
+              )
+            );
+          }
+        });
+        xhr.addEventListener('loadend', () => {
+          resolve(xhr.readyState === 4 && xhr.status === 200);
+        });
+        xhr.open('PUT', url, true);
+        xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+        xhr.send(file);
       });
 
-      const uploadResult = (await s3Upload.done()) as CompleteMultipartUploadCommandOutput;
-
-      return {
-        url: uploadResult.Location ?? '',
-        bucket: uploadResult.Bucket ?? '',
-        key: uploadResult.Key ?? '',
-      };
+      return { url: url.split('?')[0], bucket, key };
     }
   };
 

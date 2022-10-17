@@ -1,6 +1,15 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { STSClient, GetSessionTokenCommand, STSClientConfig } from '@aws-sdk/client-sts';
+import { PutObjectCommand, S3 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
+
+export enum UploadType {
+  Image = 'image',
+  TrainingImages = 'training-images',
+  Model = 'model',
+  Default = 'default',
+}
+export type UploadTypeUnion = `${UploadType}`;
 
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   const missing = missingEnvs();
@@ -16,45 +25,29 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     return;
   }
 
-  const config: STSClientConfig = {
+  const s3 = new S3({
     credentials: {
       accessKeyId: process.env.S3_UPLOAD_KEY as string,
       secretAccessKey: process.env.S3_UPLOAD_SECRET as string,
     },
-    region: 'us-east-1',
-    endpoint: 'https://sts.wasabisys.com',
-  };
-
-  const bucket = process.env.S3_UPLOAD_BUCKET;
-
-  const { filename, type } = req.body;
-  const key = `${userId}/${type ?? 'default'}/${filename}`;
-
-  // TODO S3: Secure the bucket so that only the user can access their own files
-  // const policy = {
-  //   Statement: [
-  //     {
-  //       Sid: 'Stmt1S3UploadAssets',
-  //       Effect: 'Allow',
-  //       Action: ['s3:PutObject'],
-  //       Resource: [`arn:aws:s3:::${bucket}/${key}`],
-  //     },
-  //   ],
-  // };
-
-  const sts = new STSClient(config);
-  const command = new GetSessionTokenCommand({
-    DurationSeconds: 60 * 60, // 1 hour
+    region: process.env.S3_UPLOAD_REGION as string,
+    endpoint: process.env.S3_UPLOAD_ENDPOINT as string,
   });
-  console.log('test3');
 
-  const token = await sts.send(command);
+  const { filename } = req.body;
+  let { type } = req.body;
+  if (!type || !(type in UploadType)) type = UploadType.Default;
+  const bucket = process.env.S3_UPLOAD_BUCKET;
+  const key = `${userId}/${type ?? UploadType.Default}/${filename}`;
+
+  const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket: bucket, Key: key }), {
+    expiresIn: 60 * 60, // 1 hour
+  });
+
   res.status(200).json({
-    token,
-    key,
+    url,
     bucket,
-    region: process.env.S3_UPLOAD_REGION,
-    endpoint: process.env.S3_UPLOAD_ENDPOINT,
+    key,
   });
 };
 
@@ -66,7 +59,7 @@ export default upload;
 // Why does this code look like this? See this issue!
 // https://github.com/ryanto/next-s3-upload/issues/50
 //
-let missingEnvs = (): string[] => {
+const missingEnvs = (): string[] => {
   const keys = [];
   if (!process.env.S3_UPLOAD_KEY) {
     keys.push('S3_UPLOAD_KEY');
