@@ -1,29 +1,22 @@
-import { Box, createStyles, Group, Loader, Title, Text, Card } from '@mantine/core';
+import { Group, Loader, Title, Text } from '@mantine/core';
 import Head from 'next/head';
 import { useEffect, useMemo } from 'react';
-import { ModelCard } from '~/components/ModelCard/ModelCard';
 import { trpc } from './../utils/trpc';
 import { GetAllModelsReturnType } from '~/server/services/models/getAllModels';
 import { useInView } from 'react-intersection-observer';
-import { useSessionStorage } from '@mantine/hooks';
-import { UniformList } from '~/components/UniformList/UniformList';
+import { MasonryList } from '~/components/MasonryList/MasonryList';
 
 function Home() {
   const { ref, inView } = useInView();
 
-  // const [scrollY, setScrollY] = useSessionStorage({
-  //   key: 'sessionScroll',
-  //   defaultValue: window?.scrollY ?? 0,
-  // });
-
   const {
     data,
     isLoading,
-    isFetching,
+    // isFetching,
     fetchNextPage,
-    fetchPreviousPage,
+    // fetchPreviousPage,
     hasNextPage,
-    hasPreviousPage,
+    // hasPreviousPage,
   } = trpc.model.getAll.useInfiniteQuery(
     { limit: 100 },
     {
@@ -31,10 +24,6 @@ function Home() {
       getPreviousPageParam: (firstPage: any) => firstPage.prevCursor,
     }
   );
-
-  // useEffect(() => {
-  //   window.scrollTo({ top: scrollY });
-  // }, []); //eslint-disable-line
 
   useEffect(() => {
     if (inView) {
@@ -56,13 +45,11 @@ function Home() {
       <Group p="md">
         <Title>This is the home page</Title>
       </Group>
-      <UniformList columnWidth={300} data={models} />
+      <MasonryList columnWidth={300} data={models} />
       {!isLoading && (
-        <Card withBorder shadow="xm">
-          <Group position="center" ref={ref}>
-            {hasNextPage ? <Loader /> : <Text>This is the end</Text>}
-          </Group>
-        </Card>
+        <Group position="center" ref={ref}>
+          {hasNextPage ? <Loader /> : <Text>This is the end</Text>}
+        </Group>
       )}
     </>
   );

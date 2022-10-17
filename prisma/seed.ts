@@ -41,14 +41,24 @@ const reviewText = [
 const rating = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const tags = ['Pokemon', 'Lightning', 'Sunset', 'Orange', 'Kachow', 'Cute', 'Yellow'];
 
-const images = [
-  {
-    name: 'Pikachu',
-    url: 'https://s3.us-west-1.wasabisys.com/model-share/images/00009-3915424379-cf10-Euler%20a-s20.png',
+// const images = [
+//   {
+//     name: 'Pikachu',
+//     url: 'https://s3.us-west-1.wasabisys.com/model-share/images/00009-3915424379-cf10-Euler%20a-s20.png',
+//     height: 512,
+//     width: 512,
+//   },
+// ];
+
+const images = [...Array(50)].map((x, i) => {
+  const index = i + 1 < 10 ? `0${i + 1}` : i + 1;
+  return {
+    name: `demo-image-${index}`,
+    url: `https://s3.us-west-1.wasabisys.com/model-share/images/demo-image-${index}.png`,
     height: 512,
     width: 512,
-  },
-];
+  };
+});
 
 const reactions: ReviewReactions[] = ['Like', 'Dislike', 'Laugh', 'Cry', 'Heart'];
 
@@ -240,6 +250,12 @@ async function seed() {
       );
     })
   );
+}
+
+async function clearSeed() {
+  await prisma.tag.deleteMany();
+  await prisma.model.deleteMany();
+  await prisma.image.deleteMany();
 }
 
 seed()
