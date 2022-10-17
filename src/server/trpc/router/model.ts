@@ -1,7 +1,8 @@
 import { ModelType } from '@prisma/client';
-import { TRPCError, initTRPC } from '@trpc/server';
+import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { handleDbError } from '~/server/services/errorHandling';
+import { getAllModels, getAllModelsSchema } from '~/server/services/models/getAllModels';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
 
 const baseQuerySelect = {
@@ -12,104 +13,13 @@ const baseQuerySelect = {
 };
 
 export const modelRouter = router({
-  getAll: publicProcedure
-    .input(
-      z.object({
-        limit: z.number().min(1).max(100).nullish(),
-        cursor: z.number().nullish(),
-        query: z.string().optional(),
-        tags: z.number().array().optional(),
-        users: z.number().array().optional(),
-        type: z.nativeEnum(ModelType).optional(),
-      })
-    )
-    .query(async ({ ctx, input = {} }) => {
-      try {
-        const limit = input.limit ?? 50;
-        const { cursor } = input;
-        const items = await ctx.prisma.model.findMany({
-          take: limit + 1, // get an extra item at the end which we'll use as next cursor
-          cursor: cursor ? { id: cursor } : undefined,
-          where: {
-            OR: {
-              name: {
-                contains: input.query,
-                mode: 'insensitive',
-              },
-              tagsOnModels: {
-                some: {
-                  tagId: {
-                    in: input.tags,
-                  },
-                },
-              },
-              userId: {
-                in: input.users,
-              },
-              type: {
-                equals: input?.type,
-              },
-            },
-          },
-          select: {
-            id: true,
-            name: true,
-            type: true,
-            imagesOnModels: {
-              orderBy: {
-                index: 'desc',
-              },
-              take: 1,
-              select: {
-                image: {
-                  select: {
-                    width: true,
-                    url: true,
-                    height: true,
-                    prompt: true,
-                    hash: true,
-                  },
-                },
-              },
-            },
-            metrics: {
-              select: {
-                rating: true,
-                ratingCount: true,
-                downloadCount: true,
-              },
-            },
-          },
-        });
-
-        const models = items.map(({ metrics, imagesOnModels, ...item }) => {
-          const rating = Math.ceil(metrics.reduce((a, b) => a + b.rating, 0) / metrics.length);
-          return {
-            ...item,
-            image: imagesOnModels[0]?.image ?? {},
-            metrics: {
-              rating: !isNaN(rating) ? rating : 0,
-              ...metrics.reduce(
-                (a, b) => ({
-                  ratingCount: a.ratingCount + b.ratingCount,
-                  downloadCount: a.downloadCount + b.downloadCount,
-                }),
-                { ratingCount: 0, downloadCount: 0 }
-              ),
-            },
-          };
-        });
-
-        let nextCursor: typeof cursor | undefined = undefined;
-        if (items.length > limit) {
-          const nextItem = items.pop();
-          nextCursor = nextItem?.id;
-        }
-        return { items: models, nextCursor };
-      } catch (error) {
-        return handleDbError('INTERNAL_SERVER_ERROR', error);
-      }
-    }),
+  getAll: publicProcedure.input(getAllModelsSchema).query(async ({ input = {} }) => {
+    try {
+      return await getAllModels(input);
+    } catch (error) {
+      return handleDbError('INTERNAL_SERVER_ERROR', error);
+    }
+  }),
   getById: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     try {
       const { id } = input;

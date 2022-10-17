@@ -1,28 +1,34 @@
-import { Box, Card, createStyles } from '@mantine/core';
+import { Box, Card, createStyles, Group, Stack, Text } from '@mantine/core';
 import Image from 'next/image';
 import Link from 'next/link';
+import { StarRating } from '~/components/StarRating/StarRating';
+import { GetAllModelsReturnType } from '~/server/services/models/getAllModels';
 
-type ModelCardProps = {
-  id: number;
-  name: string;
-  description?: string;
-};
-
-export function ModelCard({ id, name, description }: ModelCardProps) {
+export function ModelCard({ id, name, image, metrics }: GetAllModelsReturnType['items'][0]) {
   const { classes, cx } = useStyles();
+
+  // const hasDimensions = !!image.width && !!image.height;
 
   return (
     <Link href={`models/${id}`}>
       <Card withBorder shadow="sm" className={classes.card}>
         <Image
-          src="/images/forest.webp"
+          src={image.url}
           alt={name}
-          layout="fill"
           objectFit="cover"
           objectPosition="top"
+          // height={hasDimensions ? `${image.height}px` : undefined}
+          // width={hasDimensions ? `${image.width}px` : undefined}
+          // layout={!hasDimensions ? 'fill' : undefined}
+          layout="fill"
         />
-        <Box p="md" className={classes.content}>
-          Content
+        <Box p="sm" className={classes.content}>
+          <Stack spacing="xs">
+            <Text size={14}>{name}</Text>
+            <Group position="apart">
+              <StarRating rating={metrics.rating} />
+            </Group>
+          </Stack>
         </Box>
       </Card>
     </Link>
@@ -32,7 +38,9 @@ export function ModelCard({ id, name, description }: ModelCardProps) {
 const useStyles = createStyles((theme) => ({
   card: {
     height: '300px',
+    cursor: 'pointer',
   },
+
   content: {
     background: 'inherit',
     position: 'absolute',
