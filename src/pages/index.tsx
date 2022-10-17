@@ -1,20 +1,46 @@
-import { createStyles, Group, Title } from '@mantine/core';
+import { Box, createStyles, Group, Loader, Title, Text, Card } from '@mantine/core';
 import Head from 'next/head';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { ModelCard } from '~/components/ModelCard/ModelCard';
 import { trpc } from './../utils/trpc';
 import { GetAllModelsReturnType } from '~/server/services/models/getAllModels';
+import { useInView } from 'react-intersection-observer';
+import { useSessionStorage } from '@mantine/hooks';
+import { UniformList } from '~/components/UniformList/UniformList';
 
 function Home() {
-  const { classes } = useStyles();
+  const { ref, inView } = useInView();
 
-  const { data } = trpc.model.getAll.useInfiniteQuery(
-    { limit: 30 },
+  // const [scrollY, setScrollY] = useSessionStorage({
+  //   key: 'sessionScroll',
+  //   defaultValue: window?.scrollY ?? 0,
+  // });
+
+  const {
+    data,
+    isLoading,
+    isFetching,
+    fetchNextPage,
+    fetchPreviousPage,
+    hasNextPage,
+    hasPreviousPage,
+  } = trpc.model.getAll.useInfiniteQuery(
+    { limit: 100 },
     {
       getNextPageParam: (lastPage: any) => lastPage.nextCursor,
       getPreviousPageParam: (firstPage: any) => firstPage.prevCursor,
     }
   );
+
+  // useEffect(() => {
+  //   window.scrollTo({ top: scrollY });
+  // }, []); //eslint-disable-line
+
+  useEffect(() => {
+    if (inView) {
+      fetchNextPage();
+    }
+  }, [inView]);
 
   const models = useMemo(
     (): GetAllModelsReturnType['items'] => data?.pages.flatMap((x) => x.items) ?? [],
@@ -30,23 +56,17 @@ function Home() {
       <Group p="md">
         <Title>This is the home page</Title>
       </Group>
-      <div className={classes.gridLayout}>
-        {models.map((model) => (
-          <ModelCard key={model.id} {...model} />
-        ))}
-      </div>
+      <UniformList columnWidth={300} data={models} />
+      {!isLoading && (
+        <Card withBorder shadow="xm">
+          <Group position="center" ref={ref}>
+            {hasNextPage ? <Loader /> : <Text>This is the end</Text>}
+          </Group>
+        </Card>
+      )}
     </>
   );
 }
 
 // Home.getLayout = (page: React.ReactElement) => <>{page}</>;
 export default Home;
-
-const useStyles = createStyles((theme) => ({
-  gridLayout: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, 300px)',
-    gap: '16px',
-    justifyContent: 'center',
-  },
-}));
