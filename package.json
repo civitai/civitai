@@ -18,6 +18,9 @@
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.188.0",
+    "@aws-sdk/lib-storage": "^3.188.0",
+    "@aws-sdk/s3-request-presigner": "^3.188.0",
     "@emotion/react": "^11.10.4",
     "@emotion/server": "^11.10.0",
     "@mantine/core": "^5.5.5",
