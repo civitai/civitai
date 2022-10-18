@@ -75,7 +75,7 @@ enum ModelType {
 model Model {
   id           Int       @id @default(autoincrement())
   name         String
-  description  String
+  description  String?
   type         ModelType
   trainedWords String[]
   createdAt    DateTime  @default(now())
