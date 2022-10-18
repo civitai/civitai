@@ -3,14 +3,6 @@ import { PutObjectCommand, S3 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
 
-export enum UploadType {
-  Image = 'image',
-  TrainingImages = 'training-images',
-  Model = 'model',
-  Default = 'default',
-}
-export type UploadTypeUnion = `${UploadType}`;
-
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   const missing = missingEnvs();
   if (missing.length > 0) {

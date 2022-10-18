@@ -1,32 +1,42 @@
+import { DragEndEvent } from '@dnd-kit/core';
+import { arrayMove } from '@dnd-kit/sortable';
 import {
   ActionIcon,
   Button,
   Checkbox,
   Container,
   Divider,
-  FileInput,
+  FileButton,
+  FileInput as MantineFileInput,
   Grid,
   Group,
+  Image,
   MultiSelect,
   NumberInput,
   Paper,
   Select,
   Stack,
+  Text,
   Textarea,
   TextInput,
   Title,
 } from '@mantine/core';
+import { Dropzone, FileWithPath, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useForm, zodResolver } from '@mantine/form';
+import { randomId } from '@mantine/hooks';
 import { IconArrowLeft, IconPlus, IconTrash, IconUpload } from '@tabler/icons';
 import { GetServerSideProps } from 'next';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { z } from 'zod';
+import { SortableGrid } from '~/components/SortableGrid/SortableGrid';
+import { useS3Upload } from '~/hooks/use-s3-upload';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
 import { modelSchema } from '~/server/common/validation/model';
 
 type CreateModelProps = Partial<z.infer<typeof modelSchema>>;
 type MultiSelectCreatable = Array<{ value: string; label: string }>;
+type ImageFile = { id: string; url: string; name: string };
 
 export default function Create() {
   const router = useRouter();
@@ -52,14 +62,62 @@ export default function Create() {
       ],
     },
   });
+  const { FileInput, uploadToS3 } = useS3Upload();
 
   const [trainedWords, setTrainedWords] = useState<MultiSelectCreatable>([]);
   const [tags, setTags] = useState<MultiSelectCreatable>([]);
+  const [trainingImages, setTrainingImages] = useState<ImageFile[]>([]);
+  const [exampleImages, setExampleImages] = useState<ImageFile[]>([]);
 
   const handleSubmit = (data: CreateModelProps) => {
     console.log({ data });
   };
 
+  const handleDragEnd = (type: 'training' | 'example') => (event: DragEndEvent) => {
+    const { active, over } = event;
+    const setItems = type === 'training' ? setTrainingImages : setExampleImages;
+
+    if (active.id !== over?.id) {
+      setItems((items) => {
+        const ids = items.map(({ id }) => id);
+        const oldIndex = ids.indexOf(active.id as string);
+        const newIndex = ids.indexOf(over?.id as string);
+
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
+
+  const handleOnDrop = (type: 'training' | 'example') => (files: FileWithPath[]) => {
+    const images = files.map((file) => ({
+      id: randomId(),
+      url: URL.createObjectURL(file),
+      name: file.name,
+    }));
+    const setItems = type === 'training' ? setTrainingImages : setExampleImages;
+
+    setItems((current) => [...current, ...images]);
+  };
+
+  const handleFileChange = async (files: File[], index: number) => {
+    const [uploaded] = await Promise.all(files.map((file) => uploadToS3(file, 'model')));
+
+    form.setFieldValue(`modelVersions.${index}.url`, uploaded.url);
+  };
+
+  const renderPreview = (image: ImageFile) => {
+    return (
+      <Paper radius="sm" withBorder>
+        <Image
+          key={image.id}
+          src={image.url}
+          alt={image.name}
+          imageProps={{ onLoad: () => URL.revokeObjectURL(image.url) }}
+          fit="contain"
+        />
+      </Paper>
+    );
+  };
   const versionsCount = form.values.modelVersions?.length ?? 0;
 
   return (
@@ -90,7 +148,7 @@ export default function Create() {
                   />
                 </Stack>
               </Paper>
-              <Paper radius="md" p="xl" withBorder title="Model Versions">
+              <Paper radius="md" p="xl" withBorder>
                 <Stack>
                   <Group sx={{ justifyContent: 'space-between' }}>
                     <Title order={4}>Model Versions</Title>
@@ -163,18 +221,64 @@ export default function Create() {
                             </Grid.Col>
                             <Grid.Col span={12}>
                               <FileInput
-                                label="Model File"
-                                placeholder="Pick a file"
-                                icon={<IconUpload size={16} />}
-                                withAsterisk
+                                onChange={(file: File[]) => handleFileChange(file, index)}
                                 {...form.getInputProps(`modelVersions.${index}.url`)}
                               />
+                              <FileButton
+                                onChange={(file) =>
+                                  file ? handleFileChange([file], index) : undefined
+                                }
+                                multiple={false}
+                                accept="image/png,image/jpeg"
+                              >
+                                {(props) => (
+                                  <Button leftIcon={<IconUpload size={16} />} {...props}>
+                                    Pick a file
+                                  </Button>
+                                )}
+                              </FileButton>
                             </Grid.Col>
                           </Grid>
                         </Group>
                       </React.Fragment>
                     ))}
                   </Stack>
+                </Stack>
+              </Paper>
+              <Paper radius="md" p="xl" withBorder>
+                <Stack>
+                  <Title order={4}>Training Images</Title>
+                  <Dropzone accept={IMAGE_MIME_TYPE} onDrop={handleOnDrop('training')}>
+                    <Text align="center">Drop images here</Text>
+                  </Dropzone>
+                  <SortableGrid
+                    items={trainingImages}
+                    onDragEnd={handleDragEnd('training')}
+                    gridProps={{
+                      cols: 3,
+                      breakpoints: [{ maxWidth: 'sm', cols: 1 }],
+                    }}
+                  >
+                    {renderPreview}
+                  </SortableGrid>
+                </Stack>
+              </Paper>
+              <Paper radius="md" p="xl" withBorder>
+                <Stack>
+                  <Title order={4}>Example Images</Title>
+                  <Dropzone accept={IMAGE_MIME_TYPE} onDrop={handleOnDrop('example')}>
+                    <Text align="center">Drop images here</Text>
+                  </Dropzone>
+                  <SortableGrid
+                    items={exampleImages}
+                    onDragEnd={handleDragEnd('example')}
+                    gridProps={{
+                      cols: 3,
+                      breakpoints: [{ maxWidth: 'sm', cols: 1 }],
+                    }}
+                  >
+                    {renderPreview}
+                  </SortableGrid>
                 </Stack>
               </Paper>
             </Stack>

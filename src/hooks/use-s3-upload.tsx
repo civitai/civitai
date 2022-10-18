@@ -1,5 +1,4 @@
 import React, { ChangeEvent, ReactElement, useRef, useState, forwardRef } from 'react';
-import { UploadType, UploadTypeUnion } from '~/pages/api/s3-upload';
 
 type FileInputProps = {
   onChange: (file: File[] | undefined, event: ChangeEvent<HTMLInputElement>) => void;

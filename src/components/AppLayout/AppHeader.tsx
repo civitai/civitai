@@ -115,7 +115,7 @@ export function AppHeader({ links }: Props) {
           />
         </Group>
         <Group spacing="sm">
-          <Group spacing="sm">
+          <Group spacing="sm" className={classes.links}>
             {links?.map((link) => (
               <Link key={link.label} href={link.url} passHref>
                 <Anchor className={classes.link} variant="text">

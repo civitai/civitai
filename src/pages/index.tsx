@@ -1,7 +1,7 @@
 import { Group, Loader, Title, Text } from '@mantine/core';
 import Head from 'next/head';
 import { useEffect, useMemo } from 'react';
-import { trpc } from './../utils/trpc';
+import { trpc } from '~/utils/trpc';
 import { GetAllModelsReturnType } from '~/server/services/models/getAllModels';
 import { useInView } from 'react-intersection-observer';
 import { MasonryList } from '~/components/MasonryList/MasonryList';
