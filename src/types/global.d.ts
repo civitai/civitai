@@ -11,12 +11,4 @@ declare global {
     : any;
 
   type BaseEntity = { id: string } & Record<string, any>;
-
-  enum UploadType {
-    Image = 'image',
-    TrainingImages = 'training-images',
-    Model = 'model',
-    Default = 'default',
-  }
-  type UploadTypeUnion = `${UploadType}`;
 }

@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { PutObjectCommand, S3 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
+import { UploadType } from '~/server/common/enums';
 
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   const missing = missingEnvs();
@@ -28,10 +29,10 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
 
   const { filename } = req.body;
   let { type } = req.body;
-  if (!type || !(type in UploadType)) type = UploadType.Default;
+  if (!type || !Object.values(UploadType).includes(type)) type = UploadType.Default;
+
   const bucket = process.env.S3_UPLOAD_BUCKET;
   const key = `${userId}/${type ?? UploadType.Default}/${filename}`;
-
   const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket: bucket, Key: key }), {
     expiresIn: 60 * 60, // 1 hour
   });

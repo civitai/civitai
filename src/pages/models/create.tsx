@@ -5,15 +5,17 @@ import {
   Button,
   Checkbox,
   Container,
+  createStyles,
   Divider,
-  FileButton,
-  FileInput as MantineFileInput,
+  FileInput,
   Grid,
   Group,
   Image,
   MultiSelect,
   NumberInput,
   Paper,
+  Progress,
+  RingProgress,
   Select,
   Stack,
   Text,
@@ -23,8 +25,19 @@ import {
 } from '@mantine/core';
 import { Dropzone, FileWithPath, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useForm, zodResolver } from '@mantine/form';
-import { randomId } from '@mantine/hooks';
-import { IconArrowLeft, IconPlus, IconTrash, IconUpload } from '@tabler/icons';
+import { randomId, useListState } from '@mantine/hooks';
+import { showNotification } from '@mantine/notifications';
+import {
+  IconArrowLeft,
+  IconCheck,
+  IconCircleCheck,
+  IconGripVertical,
+  IconPlus,
+  IconTrash,
+  IconUpload,
+  IconX,
+  IconZoomIn,
+} from '@tabler/icons';
 import { GetServerSideProps } from 'next';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
@@ -33,12 +46,53 @@ import { SortableGrid } from '~/components/SortableGrid/SortableGrid';
 import { useS3Upload } from '~/hooks/use-s3-upload';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
 import { modelSchema } from '~/server/common/validation/model';
+import { trpc } from '~/utils/trpc';
 
-type CreateModelProps = Partial<z.infer<typeof modelSchema>>;
+type CreateModelProps = z.infer<typeof modelSchema>;
 type MultiSelectCreatable = Array<{ value: string; label: string }>;
-type ImageFile = { id: string; url: string; name: string };
+type ImageFile = { id: string; url: string; name: string; file: FileWithPath };
+
+const useStyles = createStyles((_theme, _params, getRef) => ({
+  sortItem: {
+    cursor: 'pointer',
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+
+    [`&:hover .${getRef('actionsGroup')}`]: {
+      opacity: 1,
+      transition: 'all 0.2s ease',
+    },
+  },
+
+  draggableIcon: {
+    position: 'absolute',
+    top: '4px',
+    right: 0,
+  },
+
+  checkbox: {
+    position: 'absolute',
+    top: '4px',
+    left: '4px',
+  },
+
+  actionsGroup: {
+    ref: getRef('actionsGroup'),
+    opacity: 0,
+    position: 'absolute',
+    background: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    width: '100%',
+    height: '100%',
+    top: 0,
+    left: 0,
+  },
+}));
 
 export default function Create() {
+  const { classes, cx } = useStyles();
   const router = useRouter();
   const form = useForm<CreateModelProps>({
     validate: zodResolver(modelSchema.passthrough()),
@@ -53,24 +107,50 @@ export default function Create() {
         {
           name: '',
           description: '',
-          url: undefined,
+          url: '',
           epochs: 0,
           steps: 0,
+          sizeKB: 0,
           trainingImages: [],
           exampleImages: [],
         },
       ],
     },
   });
-  const { FileInput, uploadToS3 } = useS3Upload();
+  const { uploadToS3, files, resetFiles } = useS3Upload();
 
   const [trainedWords, setTrainedWords] = useState<MultiSelectCreatable>([]);
   const [tags, setTags] = useState<MultiSelectCreatable>([]);
   const [trainingImages, setTrainingImages] = useState<ImageFile[]>([]);
   const [exampleImages, setExampleImages] = useState<ImageFile[]>([]);
+  const [selectedTrainingImages, setSelectedTrainingImages] = useState<string[]>([]);
+  const [selectedExampleImages, setSelectedExampleImages] = useState<string[]>([]);
+  const [uploadedModelFiles, uploadedModelFilesHandlers] = useListState<File>([]);
 
-  const handleSubmit = (data: CreateModelProps) => {
-    console.log({ data });
+  const { mutateAsync, isLoading } = trpc.model.add.useMutation();
+
+  const handleSubmit = async (data: CreateModelProps) => {
+    await mutateAsync(data, {
+      onSuccess(results) {
+        showNotification({
+          title: 'Your model was uploaded',
+          message: 'Successfully created the model',
+          color: 'teal',
+          icon: <IconCheck size={18} />,
+        });
+        router.push(`/models/${results.id}`);
+      },
+      onError(error) {
+        const message = error.message;
+
+        showNotification({
+          title: 'Could not upload model',
+          message: `An error occurred while uploading the model: ${message}`,
+          color: 'red',
+          icon: <IconX size={18} />,
+        });
+      },
+    });
   };
 
   const handleDragEnd = (type: 'training' | 'example') => (event: DragEndEvent) => {
@@ -88,37 +168,126 @@ export default function Create() {
     }
   };
 
-  const handleOnDrop = (type: 'training' | 'example') => (files: FileWithPath[]) => {
-    const images = files.map((file) => ({
-      id: randomId(),
-      url: URL.createObjectURL(file),
-      name: file.name,
-    }));
-    const setItems = type === 'training' ? setTrainingImages : setExampleImages;
+  const handleOnDrop = (type: 'training' | 'example') => async (files: FileWithPath[]) => {
+    const isTrainingImages = type === 'training';
+    const setItems = isTrainingImages ? setTrainingImages : setExampleImages;
+    setItems((current) => [
+      ...current,
+      ...files.map((file) => ({
+        id: randomId(),
+        url: URL.createObjectURL(file),
+        name: file.name,
+        file,
+      })),
+    ]);
 
-    setItems((current) => [...current, ...images]);
+    await Promise.all(
+      files.map(async (file) => {
+        const { url } = await uploadToS3(file, isTrainingImages ? 'training-images' : 'image');
+
+        setItems((items) => {
+          const currentItem = items.find((image) => image.file === file);
+          if (!currentItem) return items;
+
+          currentItem.url = url;
+          return items.filter((item) => item !== currentItem).concat(currentItem);
+        });
+      })
+    );
+    resetFiles();
   };
 
-  const handleFileChange = async (files: File[], index: number) => {
-    const [uploaded] = await Promise.all(files.map((file) => uploadToS3(file, 'model')));
+  const handleFileChange = async (file: File | null, index: number) => {
+    if (file) {
+      uploadedModelFilesHandlers.setItem(index, file);
+      const uploaded = await uploadToS3(file, 'model');
 
-    form.setFieldValue(`modelVersions.${index}.url`, uploaded.url);
+      resetFiles();
+      form.setFieldValue(`modelVersions.${index}.url`, uploaded.url);
+      form.setFieldValue(`modelVersions.${index}.sizeKB`, file.size);
+    } else {
+      uploadedModelFilesHandlers.remove(index);
+      form.setFieldValue(`modelVersions.${index}.url`, null);
+      form.setFieldValue(`modelVersions.${index}.sizeKB`, 0);
+      resetFiles();
+    }
   };
 
   const renderPreview = (image: ImageFile) => {
+    const match = files.find((file) => image.file === file.file);
+    const { progress } = match ?? { progress: 0 };
+    const showLoading = match && progress < 100;
+
     return (
-      <Paper radius="sm" withBorder>
+      <Paper
+        className={cx({ [classes.sortItem]: !showLoading })}
+        radius="sm"
+        sx={{
+          position: 'relative',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}
+      >
         <Image
           key={image.id}
           src={image.url}
+          radius="sm"
           alt={image.name}
+          sx={showLoading ? { filter: 'blur(2px)' } : undefined}
           imageProps={{ onLoad: () => URL.revokeObjectURL(image.url) }}
           fit="contain"
         />
+        {showLoading && (
+          <RingProgress
+            sx={{ position: 'absolute' }}
+            sections={[{ value: progress, color: 'blue' }]}
+            size={48}
+            thickness={4}
+            roundCaps
+          />
+        )}
+        <Group align="center" className={classes.actionsGroup}>
+          <IconZoomIn size={32} stroke={1.5} color="white" />
+          <IconGripVertical
+            size={24}
+            stroke={1.5}
+            className={classes.draggableIcon}
+            color="white"
+          />
+          <Checkbox
+            className={classes.checkbox}
+            size="xs"
+            checked={selectedTrainingImages.includes(image.id)}
+            onClick={(event) => {
+              console.log('clicking', event.target);
+            }}
+            onChange={(event) => {
+              console.log('changed', image, event.target.checked);
+              setSelectedTrainingImages((current) =>
+                current.includes(image.id)
+                  ? current.filter((id) => id !== image.id)
+                  : [...current, image.id]
+              );
+            }}
+          />
+        </Group>
       </Paper>
     );
   };
   const versionsCount = form.values.modelVersions?.length ?? 0;
+
+  const selectedTrainingImagesCount = selectedTrainingImages.length;
+  const allTrainingImagesSelected =
+    selectedTrainingImages.length === trainingImages.length && trainingImages.length !== 0;
+  const partialTrainingImagesSelected =
+    !allTrainingImagesSelected && selectedTrainingImages.length !== 0;
+
+  const selectedExampleImagesCount = selectedExampleImages.length;
+  const allExampleImagesSelected =
+    selectedExampleImages.length === exampleImages.length && exampleImages.length !== 0;
+  const partialExampleImagesSelected =
+    !allExampleImagesSelected && selectedExampleImages.length !== 0;
 
   return (
     <Container>
@@ -162,6 +331,7 @@ export default function Create() {
                           description: '',
                           epochs: 0,
                           steps: 0,
+                          sizeKB: 0,
                           url: '',
                         })
                       }
@@ -178,7 +348,10 @@ export default function Create() {
                             <ActionIcon
                               color="red"
                               sx={{ position: 'absolute', top: 0, right: 0 }}
-                              onClick={() => form.removeListItem('modelVersions', index)}
+                              onClick={() => {
+                                form.removeListItem('modelVersions', index);
+                                uploadedModelFilesHandlers.remove(index);
+                              }}
                             >
                               <IconTrash size={16} stroke={1.5} />
                             </ActionIcon>
@@ -220,23 +393,33 @@ export default function Create() {
                               />
                             </Grid.Col>
                             <Grid.Col span={12}>
-                              <FileInput
-                                onChange={(file: File[]) => handleFileChange(file, index)}
-                                {...form.getInputProps(`modelVersions.${index}.url`)}
-                              />
-                              <FileButton
-                                onChange={(file) =>
-                                  file ? handleFileChange([file], index) : undefined
-                                }
-                                multiple={false}
-                                accept="image/png,image/jpeg"
-                              >
-                                {(props) => (
-                                  <Button leftIcon={<IconUpload size={16} />} {...props}>
-                                    Pick a file
-                                  </Button>
-                                )}
-                              </FileButton>
+                              <Stack>
+                                <FileInput
+                                  {...form.getInputProps(`modelVersions.${index}.url`)}
+                                  label="Model File"
+                                  icon={<IconUpload size={16} />}
+                                  placeholder="Pick a file"
+                                  onChange={(file) => handleFileChange(file, index)}
+                                  value={uploadedModelFiles[index]}
+                                  rightSection={
+                                    form.values.modelVersions?.[index].url ? (
+                                      <IconCircleCheck color="green" size={24} />
+                                    ) : null
+                                  }
+                                  withAsterisk
+                                />
+                                {files.map(({ file, progress }, i) => {
+                                  return file === uploadedModelFiles[index] ? (
+                                    <Progress
+                                      key={i}
+                                      size="xl"
+                                      value={progress}
+                                      label={`${Math.floor(progress)}%`}
+                                      color={progress < 100 ? 'blue' : 'green'}
+                                    />
+                                  ) : null;
+                                })}
+                              </Stack>
                             </Grid.Col>
                           </Grid>
                         </Group>
@@ -247,7 +430,41 @@ export default function Create() {
               </Paper>
               <Paper radius="md" p="xl" withBorder>
                 <Stack>
-                  <Title order={4}>Training Images</Title>
+                  <Group sx={{ justifyContent: 'space-between' }}>
+                    {selectedTrainingImagesCount > 0 ? (
+                      <>
+                        <Group>
+                          <Checkbox
+                            checked={allTrainingImagesSelected}
+                            indeterminate={partialTrainingImagesSelected}
+                            onChange={() =>
+                              setSelectedTrainingImages(
+                                allTrainingImagesSelected
+                                  ? []
+                                  : trainingImages.map((image) => image.id)
+                              )
+                            }
+                          />
+                          <Title order={4}>{`${selectedTrainingImagesCount} ${
+                            selectedTrainingImagesCount > 1 ? 'files' : 'file '
+                          } selected`}</Title>
+                        </Group>
+                        <Button
+                          color="red"
+                          variant="subtle"
+                          size="sm"
+                          onClick={() => {
+                            setTrainingImages([]);
+                            setSelectedTrainingImages([]);
+                          }}
+                        >
+                          {selectedTrainingImagesCount > 1 ? 'Delete Files' : 'Delete File'}
+                        </Button>
+                      </>
+                    ) : (
+                      <Title order={4}>Training Images</Title>
+                    )}
+                  </Group>
                   <Dropzone accept={IMAGE_MIME_TYPE} onDrop={handleOnDrop('training')}>
                     <Text align="center">Drop images here</Text>
                   </Dropzone>
@@ -258,6 +475,7 @@ export default function Create() {
                       cols: 3,
                       breakpoints: [{ maxWidth: 'sm', cols: 1 }],
                     }}
+                    disabled={partialTrainingImagesSelected}
                   >
                     {renderPreview}
                   </SortableGrid>
@@ -265,7 +483,41 @@ export default function Create() {
               </Paper>
               <Paper radius="md" p="xl" withBorder>
                 <Stack>
-                  <Title order={4}>Example Images</Title>
+                  <Group sx={{ justifyContent: 'space-between' }}>
+                    {selectedExampleImagesCount > 0 ? (
+                      <>
+                        <Group>
+                          <Checkbox
+                            checked={allExampleImagesSelected}
+                            indeterminate={partialExampleImagesSelected}
+                            onChange={() =>
+                              setSelectedExampleImages(
+                                allExampleImagesSelected
+                                  ? []
+                                  : exampleImages.map((image) => image.id)
+                              )
+                            }
+                          />
+                          <Title order={4}>{`${selectedExampleImagesCount} ${
+                            selectedExampleImagesCount > 1 ? 'files' : 'file '
+                          } selected`}</Title>
+                        </Group>
+                        <Button
+                          color="red"
+                          variant="subtle"
+                          size="sm"
+                          onClick={() => {
+                            setExampleImages([]);
+                            setSelectedExampleImages([]);
+                          }}
+                        >
+                          {selectedExampleImagesCount > 1 ? 'Delete Files' : 'Delete File'}
+                        </Button>
+                      </>
+                    ) : (
+                      <Title order={4}>Example Images</Title>
+                    )}
+                  </Group>
                   <Dropzone accept={IMAGE_MIME_TYPE} onDrop={handleOnDrop('example')}>
                     <Text align="center">Drop images here</Text>
                   </Dropzone>
@@ -276,6 +528,7 @@ export default function Create() {
                       cols: 3,
                       breakpoints: [{ maxWidth: 'sm', cols: 1 }],
                     }}
+                    disabled={partialExampleImagesSelected}
                   >
                     {renderPreview}
                   </SortableGrid>
@@ -341,7 +594,12 @@ export default function Create() {
         </Grid>
 
         <Group position="right" mt="lg">
-          <Button type="submit">Submit</Button>
+          <Button variant="outline" onClick={() => router.back()}>
+            Discard changes
+          </Button>
+          <Button type="submit" loading={isLoading}>
+            Save
+          </Button>
         </Group>
       </form>
     </Container>

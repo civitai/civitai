@@ -1,6 +1,7 @@
 import { ModelType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
+import { modelSchema } from '~/server/common/validation/model';
 import { handleDbError } from '~/server/services/errorHandling';
 import { getAllModels, getAllModelsSchema } from '~/server/services/models/getAllModels';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
@@ -44,7 +45,7 @@ export const modelRouter = router({
     .input(
       z.object({
         name: z.string(),
-        description: z.string(),
+        description: z.string().optional(),
         type: z.nativeEnum(ModelType),
         trainedWords: z.array(z.string()),
         modelVersions: z.array(
@@ -52,7 +53,7 @@ export const modelRouter = router({
             name: z.string(),
             description: z.string().optional(),
             url: z.string().url(),
-            stepCount: z.number().optional(),
+            steps: z.number().optional(),
             epochs: z.number().optional(),
             sizeKB: z.number(),
           })
@@ -70,9 +71,6 @@ export const modelRouter = router({
             modelVersions: {
               create: modelVersions,
             },
-            // user: {
-            //   connect: { id: ctx.session.user.id },
-            // },
           },
         });
 

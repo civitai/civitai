@@ -1,4 +1,5 @@
 import React, { ChangeEvent, ReactElement, useRef, useState, forwardRef } from 'react';
+import { UploadType, UploadTypeUnion } from '~/server/common/enums';
 
 type FileInputProps = {
   onChange: (file: File[] | undefined, event: ChangeEvent<HTMLInputElement>) => void;

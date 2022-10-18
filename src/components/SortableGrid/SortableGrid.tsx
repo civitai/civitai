@@ -8,9 +8,8 @@ import {
   DndContextProps,
 } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates, SortableContext, useSortable } from '@dnd-kit/sortable';
-import { CSS, Transform } from '@dnd-kit/utilities';
-import { createStyles, Group, SimpleGrid, SimpleGridProps } from '@mantine/core';
-import { IconGripVertical, IconZoomIn } from '@tabler/icons';
+import { CSS } from '@dnd-kit/utilities';
+import { SimpleGrid, SimpleGridProps } from '@mantine/core';
 import React from 'react';
 import useIsClient from '~/hooks/useIsClient';
 
@@ -18,6 +17,7 @@ export function SortableGrid<T extends BaseEntity = BaseEntity>({
   children,
   items,
   gridProps,
+  disabled = false,
   ...props
 }: SortableGridProps<T>) {
   const isClient = useIsClient();
@@ -35,7 +35,7 @@ export function SortableGrid<T extends BaseEntity = BaseEntity>({
       <SortableContext items={ids}>
         <SimpleGrid {...gridProps}>
           {items.map((item, index) => (
-            <SortableItem key={item.id} id={item.id}>
+            <SortableItem key={item.id} id={item.id} disabled={disabled}>
               {children(item, index)}
             </SortableItem>
           ))}
@@ -49,58 +49,24 @@ type SortableGridProps<T extends BaseEntity = BaseEntity> = Pick<DndContextProps
   children: (item: T, index: number) => React.ReactNode;
   items: T[];
   gridProps?: SimpleGridProps;
+  disabled?: boolean;
 };
 
-const useStyles = createStyles(
-  (theme, params: { transform: Transform | null; transition: string | undefined }, getRef) => ({
-    sortableWrapper: {
-      transform: CSS.Transform.toString(params.transform),
-      transition: params.transition ?? '',
-      cursor: 'pointer',
-      position: 'relative',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-
-      [`&:hover .${getRef('actionsGroup')}`]: {
-        opacity: 1,
-        transition: 'all 0.2s ease',
-      },
-    },
-
-    draggableIcon: {
-      position: 'absolute',
-      top: '4px',
-      right: 0,
-    },
-
-    actionsGroup: {
-      ref: getRef('actionsGroup'),
-      opacity: 0,
-      position: 'absolute',
-      background: 'rgba(0, 0, 0, 0.6)',
-      justifyContent: 'center',
-      width: '100%',
-      height: '100%',
-      top: 0,
-      left: 0,
-    },
-  })
-);
-
-function SortableItem({ id, children }: SortableItemProps) {
-  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id });
-  const { classes } = useStyles({ transform, transition });
+function SortableItem({ id, children, disabled = false }: SortableItemProps) {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
+    id,
+    disabled,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
 
   return (
-    <div ref={setNodeRef} className={classes.sortableWrapper} {...attributes} {...listeners}>
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
       {children}
-      <Group align="center" className={classes.actionsGroup}>
-        <IconZoomIn size={32} stroke={1.5} color="white" />
-        <IconGripVertical size={24} stroke={1.5} className={classes.draggableIcon} color="white" />
-      </Group>
     </div>
   );
 }
 
-type SortableItemProps = { id: string; children: React.ReactNode };
+type SortableItemProps = { id: string; children: React.ReactNode; disabled: boolean };
