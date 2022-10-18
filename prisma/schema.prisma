@@ -111,16 +111,26 @@ model ModelVersion {
   metrics        ModelMetric[]
 }
 
+enum MetricTimeframe {
+  Day
+  Week
+  Month
+  Year
+  AllTime
+}
+
 model ModelMetric {
-  model          Model        @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  id             Int             @id @default(autoincrement())
+  model          Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId        Int
-  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id])
-  modelVersionId Int
+  modelVersion   ModelVersion?   @relation(fields: [modelVersionId], references: [id])
+  modelVersionId Int?
+  timeframe      MetricTimeframe
   rating         Int
   ratingCount    Int
   downloadCount  Int
 
-  @@id([modelId, modelVersionId])
+  @@unique([modelId, modelVersionId, timeframe], map: "model_metric_unique")
 }
 
 enum UserActivityType {
@@ -246,4 +256,9 @@ model SavedModel {
   updatedAt DateTime @updatedAt
 
   @@id([modelId, userId])
+}
+
+model KeyValue {
+  key   String @id
+  value Json
 }
