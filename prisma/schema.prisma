@@ -108,7 +108,7 @@ model ModelVersion {
 
   reviews        Review[]
   imagesOnModels ImagesOnModels[]
-  metrics        ModelMetric[]
+  metrics        ModelVersionMetric[]
 }
 
 enum MetricTimeframe {
@@ -120,17 +120,25 @@ enum MetricTimeframe {
 }
 
 model ModelMetric {
-  id             Int             @id @default(autoincrement())
-  model          Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  modelId        Int
-  modelVersion   ModelVersion?   @relation(fields: [modelVersionId], references: [id])
-  modelVersionId Int?
+  model         Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelId       Int
+  timeframe     MetricTimeframe
+  rating        Int
+  ratingCount   Int
+  downloadCount Int
+
+  @@id([modelId, timeframe])
+}
+
+model ModelVersionMetric {
+  modelVersion   ModelVersion    @relation(fields: [modelVersionId], references: [id])
+  modelVersionId Int
   timeframe      MetricTimeframe
   rating         Int
   ratingCount    Int
   downloadCount  Int
 
-  @@unique([modelId, modelVersionId, timeframe], map: "model_metric_unique")
+  @@id([modelVersionId, timeframe])
 }
 
 enum UserActivityType {
