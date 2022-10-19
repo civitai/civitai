@@ -10,7 +10,7 @@ import {
 import { sortableKeyboardCoordinates, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { SimpleGrid, SimpleGridProps } from '@mantine/core';
-import React from 'react';
+import React, { CSSProperties } from 'react';
 import useIsClient from '~/hooks/useIsClient';
 
 export function SortableGrid<T extends BaseEntity = BaseEntity>({
@@ -22,7 +22,12 @@ export function SortableGrid<T extends BaseEntity = BaseEntity>({
 }: SortableGridProps<T>) {
   const isClient = useIsClient();
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        delay: 100,
+        tolerance: 5,
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
@@ -53,13 +58,14 @@ type SortableGridProps<T extends BaseEntity = BaseEntity> = Pick<DndContextProps
 };
 
 function SortableItem({ id, children, disabled = false }: SortableItemProps) {
-  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
     disabled,
   });
-  const style = {
+  const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
+    cursor: isDragging ? 'grabbing' : 'pointer',
   };
 
   return (

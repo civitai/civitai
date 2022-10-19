@@ -39,8 +39,10 @@ import {
   IconZoomIn,
 } from '@tabler/icons';
 import { GetServerSideProps } from 'next';
+import { Session } from 'next-auth';
+import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { SortableGrid } from '~/components/SortableGrid/SortableGrid';
 import { useS3Upload } from '~/hooks/use-s3-upload';
@@ -50,11 +52,16 @@ import { trpc } from '~/utils/trpc';
 
 type CreateModelProps = z.infer<typeof modelSchema>;
 type MultiSelectCreatable = Array<{ value: string; label: string }>;
-type ImageFile = { id: string; url: string; name: string; file: FileWithPath };
+type ImageFile = {
+  id: string;
+  url: string;
+  name: string;
+  file: FileWithPath;
+  preview?: string;
+};
 
 const useStyles = createStyles((_theme, _params, getRef) => ({
   sortItem: {
-    cursor: 'pointer',
     position: 'relative',
     display: 'flex',
     alignItems: 'center',
@@ -92,6 +99,7 @@ const useStyles = createStyles((_theme, _params, getRef) => ({
 }));
 
 export default function Create() {
+  const { data: session } = useSession();
   const { classes, cx } = useStyles();
   const router = useRouter();
   const form = useForm<CreateModelProps>({
@@ -111,21 +119,26 @@ export default function Create() {
           epochs: 0,
           steps: 0,
           sizeKB: 0,
-          trainingImages: [],
-          exampleImages: [],
+          trainingDataUrl: '',
+          images: [],
         },
       ],
     },
   });
-  const { uploadToS3, files, resetFiles } = useS3Upload();
+  const {
+    uploadToS3: uploadImageFiles,
+    files: imageFiles,
+    resetFiles: resetImageFiles,
+  } = useS3Upload();
+  const { uploadToS3: uploadModelFile, files: modelFiles } = useS3Upload();
+  const { uploadToS3: uploadTrainingDataFile, files: trainingDataFiles } = useS3Upload();
 
   const [trainedWords, setTrainedWords] = useState<MultiSelectCreatable>([]);
   const [tags, setTags] = useState<MultiSelectCreatable>([]);
-  const [trainingImages, setTrainingImages] = useState<ImageFile[]>([]);
-  const [exampleImages, setExampleImages] = useState<ImageFile[]>([]);
-  const [selectedTrainingImages, setSelectedTrainingImages] = useState<string[]>([]);
-  const [selectedExampleImages, setSelectedExampleImages] = useState<string[]>([]);
+  const [exampleImages, exampleImagesHandlers] = useListState<ImageFile[]>([]);
+  const [selectedImages, selectedImagesHandlers] = useListState<string[]>([]);
   const [uploadedModelFiles, uploadedModelFilesHandlers] = useListState<File>([]);
+  const [uploadedTrainingFiles, uploadedTrainingFilesHandlers] = useListState<File>([]);
 
   const { mutateAsync, isLoading } = trpc.model.add.useMutation();
 
@@ -153,26 +166,22 @@ export default function Create() {
     });
   };
 
-  const handleDragEnd = (type: 'training' | 'example') => (event: DragEndEvent) => {
+  const handleDragEnd = (modelIndex: number) => (event: DragEndEvent) => {
     const { active, over } = event;
-    const setItems = type === 'training' ? setTrainingImages : setExampleImages;
 
     if (active.id !== over?.id) {
-      setItems((items) => {
-        const ids = items.map(({ id }) => id);
-        const oldIndex = ids.indexOf(active.id as string);
-        const newIndex = ids.indexOf(over?.id as string);
+      const items = [...(exampleImages[modelIndex] ?? [])];
+      const ids = items.map(({ id }) => id);
+      const oldIndex = ids.indexOf(active.id as string);
+      const newIndex = ids.indexOf(over?.id as string);
 
-        return arrayMove(items, oldIndex, newIndex);
-      });
+      exampleImagesHandlers.setItem(modelIndex, arrayMove(items, oldIndex, newIndex));
     }
   };
 
-  const handleOnDrop = (type: 'training' | 'example') => async (files: FileWithPath[]) => {
-    const isTrainingImages = type === 'training';
-    const setItems = isTrainingImages ? setTrainingImages : setExampleImages;
-    setItems((current) => [
-      ...current,
+  const handleOnDrop = (modelIndex: number) => async (files: FileWithPath[]) => {
+    exampleImagesHandlers.setItem(modelIndex, [
+      ...(exampleImages[modelIndex] ?? []),
       ...files.map((file) => ({
         id: randomId(),
         url: URL.createObjectURL(file),
@@ -181,40 +190,71 @@ export default function Create() {
       })),
     ]);
 
-    await Promise.all(
+    const uploadedImages = await Promise.all(
       files.map(async (file) => {
-        const { url } = await uploadToS3(file, isTrainingImages ? 'training-images' : 'image');
+        const { url } = await uploadImageFiles(file, 'image');
 
-        setItems((items) => {
-          const currentItem = items.find((image) => image.file === file);
-          if (!currentItem) return items;
+        const items = [...(exampleImages[modelIndex] ?? [])];
+        const currentItem = items.find((image) => image.file === file);
+        if (!currentItem) return items;
 
-          currentItem.url = url;
-          return items.filter((item) => item !== currentItem).concat(currentItem);
-        });
+        // clear previously created preview to prevent memory leaks
+        URL.revokeObjectURL(currentItem.url);
+        currentItem.url = url;
+
+        exampleImagesHandlers.setItem(
+          modelIndex,
+          items.filter((item) => item !== currentItem).concat(currentItem)
+        );
+
+        return { url, name: file.name, userId: session?.user?.id };
       })
     );
-    resetFiles();
+
+    form.setFieldValue(`modelVersions.${modelIndex}.images`, uploadedImages);
+    resetImageFiles();
   };
 
-  const handleFileChange = async (file: File | null, index: number) => {
-    if (file) {
-      uploadedModelFilesHandlers.setItem(index, file);
-      const uploaded = await uploadToS3(file, 'model');
+  const handleFileChange = async ({
+    file,
+    type,
+    index,
+  }: {
+    file: File | null;
+    type: 'training-images' | 'model';
+    index: number;
+  }) => {
+    const isModelType = type === 'model';
+    const uploadedFilesHandlers = isModelType
+      ? uploadedModelFilesHandlers
+      : uploadedTrainingFilesHandlers;
 
-      resetFiles();
-      form.setFieldValue(`modelVersions.${index}.url`, uploaded.url);
-      form.setFieldValue(`modelVersions.${index}.sizeKB`, file.size);
+    if (file) {
+      uploadedFilesHandlers.setItem(index, file);
+
+      const uploadFile = isModelType ? uploadModelFile : uploadTrainingDataFile;
+      const uploaded = await uploadFile(file, type);
+
+      if (isModelType) {
+        form.setFieldValue(`modelVersions.${index}.sizeKB`, file.size);
+        form.setFieldValue(`modelVersions.${index}.url`, uploaded.url);
+      } else {
+        form.setFieldValue(`modelVersions.${index}.trainingDataUrl`, uploaded.url);
+      }
     } else {
-      uploadedModelFilesHandlers.remove(index);
-      form.setFieldValue(`modelVersions.${index}.url`, null);
-      form.setFieldValue(`modelVersions.${index}.sizeKB`, 0);
-      resetFiles();
+      uploadedFilesHandlers.remove(index);
+
+      if (isModelType) {
+        form.setFieldValue(`modelVersions.${index}.url`, null);
+        form.setFieldValue(`modelVersions.${index}.sizeKB`, 0);
+      } else {
+        form.setFieldValue(`modelVersions.${index}.trainingDataUrl`, null);
+      }
     }
   };
 
-  const renderPreview = (image: ImageFile) => {
-    const match = files.find((file) => image.file === file.file);
+  const renderPreview = (image: ImageFile, modelIndex: number) => {
+    const match = imageFiles.find((file) => image.file === file.file);
     const { progress } = match ?? { progress: 0 };
     const showLoading = match && progress < 100;
 
@@ -232,10 +272,10 @@ export default function Create() {
         <Image
           key={image.id}
           src={image.url}
-          radius="sm"
           alt={image.name}
           sx={showLoading ? { filter: 'blur(2px)' } : undefined}
-          imageProps={{ onLoad: () => URL.revokeObjectURL(image.url) }}
+          onLoad={() => URL.revokeObjectURL(image.url)}
+          radius="sm"
           fit="contain"
         />
         {showLoading && (
@@ -258,16 +298,14 @@ export default function Create() {
           <Checkbox
             className={classes.checkbox}
             size="xs"
-            checked={selectedTrainingImages.includes(image.id)}
-            onClick={(event) => {
-              console.log('clicking', event.target);
-            }}
-            onChange={(event) => {
-              console.log('changed', image, event.target.checked);
-              setSelectedTrainingImages((current) =>
-                current.includes(image.id)
-                  ? current.filter((id) => id !== image.id)
-                  : [...current, image.id]
+            checked={selectedImages[modelIndex]?.includes(image.id)}
+            onChange={() => {
+              const items = selectedImages[modelIndex] ?? [];
+              selectedImagesHandlers.setItem(
+                modelIndex,
+                items.includes(image.id)
+                  ? items.filter((id) => id !== image.id)
+                  : [...items, image.id]
               );
             }}
           />
@@ -275,19 +313,22 @@ export default function Create() {
       </Paper>
     );
   };
+
+  useEffect(() => {
+    // clear any remaining urls when unmounting
+    return () =>
+      exampleImages.forEach((images) => images.forEach((image) => URL.revokeObjectURL(image.url)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exampleImages]);
+
   const versionsCount = form.values.modelVersions?.length ?? 0;
 
-  const selectedTrainingImagesCount = selectedTrainingImages.length;
-  const allTrainingImagesSelected =
-    selectedTrainingImages.length === trainingImages.length && trainingImages.length !== 0;
-  const partialTrainingImagesSelected =
-    !allTrainingImagesSelected && selectedTrainingImages.length !== 0;
-
-  const selectedExampleImagesCount = selectedExampleImages.length;
-  const allExampleImagesSelected =
-    selectedExampleImages.length === exampleImages.length && exampleImages.length !== 0;
-  const partialExampleImagesSelected =
-    !allExampleImagesSelected && selectedExampleImages.length !== 0;
+  const selectedImagesCount = (modelIndex: number) => selectedImages[modelIndex]?.length;
+  const allImagesSelected = (modelIndex: number) =>
+    selectedImages[modelIndex]?.length === exampleImages[modelIndex]?.length &&
+    exampleImages[modelIndex]?.length !== 0;
+  const partialImagesSelected = (modelIndex: number) =>
+    !allImagesSelected(modelIndex) && selectedImages[modelIndex]?.length !== 0;
 
   return (
     <Container>
@@ -329,12 +370,15 @@ export default function Create() {
                         form.insertListItem('modelVersions', {
                           name: '',
                           description: '',
+                          url: '',
                           epochs: 0,
                           steps: 0,
                           sizeKB: 0,
-                          url: '',
+                          trainingDataUrl: '',
+                          images: [],
                         })
                       }
+                      compact
                     >
                       Add Version
                     </Button>
@@ -398,8 +442,10 @@ export default function Create() {
                                   {...form.getInputProps(`modelVersions.${index}.url`)}
                                   label="Model File"
                                   icon={<IconUpload size={16} />}
-                                  placeholder="Pick a file"
-                                  onChange={(file) => handleFileChange(file, index)}
+                                  placeholder="Pick your model"
+                                  onChange={(file) =>
+                                    handleFileChange({ file, index, type: 'model' })
+                                  }
                                   value={uploadedModelFiles[index]}
                                   rightSection={
                                     form.values.modelVersions?.[index].url ? (
@@ -408,7 +454,7 @@ export default function Create() {
                                   }
                                   withAsterisk
                                 />
-                                {files.map(({ file, progress }, i) => {
+                                {modelFiles.map(({ file, progress }, i) => {
                                   return file === uploadedModelFiles[index] ? (
                                     <Progress
                                       key={i}
@@ -421,117 +467,125 @@ export default function Create() {
                                 })}
                               </Stack>
                             </Grid.Col>
+                            <Grid.Col span={12}>
+                              <Stack>
+                                <FileInput
+                                  {...form.getInputProps(`modelVersions.${index}.trainingDataUrl`)}
+                                  label="Training Data"
+                                  icon={<IconUpload size={16} />}
+                                  placeholder="Pick your training data"
+                                  description="The data you used to train your model (in .zip format)"
+                                  accept="application/zip"
+                                  onChange={(file) =>
+                                    handleFileChange({ file, index, type: 'training-images' })
+                                  }
+                                  value={uploadedTrainingFiles[index]}
+                                  rightSection={
+                                    form.values.modelVersions?.[index].trainingDataUrl ? (
+                                      <IconCircleCheck color="green" size={24} />
+                                    ) : null
+                                  }
+                                />
+                                {trainingDataFiles.map(({ file, progress }, i) => {
+                                  return file === uploadedTrainingFiles[index] ? (
+                                    <Progress
+                                      key={i}
+                                      size="xl"
+                                      value={progress}
+                                      label={`${Math.floor(progress)}%`}
+                                      color={progress < 100 ? 'blue' : 'green'}
+                                    />
+                                  ) : null;
+                                })}
+                              </Stack>
+                            </Grid.Col>
+                            <Grid.Col span={12}>
+                              <Stack>
+                                <Group sx={{ justifyContent: 'space-between' }}>
+                                  {selectedImagesCount(index) > 0 ? (
+                                    <>
+                                      <Group>
+                                        <Checkbox
+                                          checked={allImagesSelected(index)}
+                                          indeterminate={partialImagesSelected(index)}
+                                          onChange={() =>
+                                            selectedImagesHandlers.setItem(
+                                              index,
+                                              allImagesSelected(index)
+                                                ? []
+                                                : exampleImages[index].map((image) => image.id)
+                                            )
+                                          }
+                                        />
+                                        <Title order={5}>{`${selectedImagesCount(index)} ${
+                                          selectedImagesCount(index) > 1 ? 'files' : 'file '
+                                        } selected`}</Title>
+                                      </Group>
+                                      <Button
+                                        color="red"
+                                        variant="subtle"
+                                        size="sm"
+                                        onClick={() => {
+                                          const items = [...exampleImages[index]];
+                                          exampleImagesHandlers.setItem(
+                                            index,
+                                            items.filter(
+                                              (item) => !selectedImages[index]?.includes(item.id)
+                                            )
+                                          );
+                                          selectedImagesHandlers.setItem(index, []);
+                                          form.setFieldValue(
+                                            `modelVersions.${index}.exampleImages`,
+                                            []
+                                          );
+                                        }}
+                                      >
+                                        {selectedImagesCount(index) > 1
+                                          ? 'Delete Files'
+                                          : 'Delete File'}
+                                      </Button>
+                                    </>
+                                  ) : (
+                                    <Title order={5}>Example Images</Title>
+                                  )}
+                                </Group>
+                                <Dropzone
+                                  accept={IMAGE_MIME_TYPE}
+                                  onDrop={handleOnDrop(index)}
+                                  maxFiles={10}
+                                  styles={(theme) => ({
+                                    root: {
+                                      borderColor: form.errors[`modelVersions.${index}.images`]
+                                        ? theme.colors.red[6]
+                                        : undefined,
+                                    },
+                                  })}
+                                >
+                                  <Text align="center">Drop images here</Text>
+                                </Dropzone>
+                                {form.errors[`modelVersions.${index}.images`] ? (
+                                  <Text color="red" size="xs">
+                                    {form.errors[`modelVersions.${index}.images`]}
+                                  </Text>
+                                ) : null}
+                                <SortableGrid
+                                  items={exampleImages[index] ?? []}
+                                  onDragEnd={handleDragEnd(index)}
+                                  gridProps={{
+                                    cols: 3,
+                                    breakpoints: [{ maxWidth: 'sm', cols: 1 }],
+                                  }}
+                                  disabled={partialImagesSelected(index)}
+                                >
+                                  {renderPreview}
+                                </SortableGrid>
+                              </Stack>
+                            </Grid.Col>
                           </Grid>
                         </Group>
                       </React.Fragment>
                     ))}
                   </Stack>
-                </Stack>
-              </Paper>
-              <Paper radius="md" p="xl" withBorder>
-                <Stack>
-                  <Group sx={{ justifyContent: 'space-between' }}>
-                    {selectedTrainingImagesCount > 0 ? (
-                      <>
-                        <Group>
-                          <Checkbox
-                            checked={allTrainingImagesSelected}
-                            indeterminate={partialTrainingImagesSelected}
-                            onChange={() =>
-                              setSelectedTrainingImages(
-                                allTrainingImagesSelected
-                                  ? []
-                                  : trainingImages.map((image) => image.id)
-                              )
-                            }
-                          />
-                          <Title order={4}>{`${selectedTrainingImagesCount} ${
-                            selectedTrainingImagesCount > 1 ? 'files' : 'file '
-                          } selected`}</Title>
-                        </Group>
-                        <Button
-                          color="red"
-                          variant="subtle"
-                          size="sm"
-                          onClick={() => {
-                            setTrainingImages([]);
-                            setSelectedTrainingImages([]);
-                          }}
-                        >
-                          {selectedTrainingImagesCount > 1 ? 'Delete Files' : 'Delete File'}
-                        </Button>
-                      </>
-                    ) : (
-                      <Title order={4}>Training Images</Title>
-                    )}
-                  </Group>
-                  <Dropzone accept={IMAGE_MIME_TYPE} onDrop={handleOnDrop('training')}>
-                    <Text align="center">Drop images here</Text>
-                  </Dropzone>
-                  <SortableGrid
-                    items={trainingImages}
-                    onDragEnd={handleDragEnd('training')}
-                    gridProps={{
-                      cols: 3,
-                      breakpoints: [{ maxWidth: 'sm', cols: 1 }],
-                    }}
-                    disabled={partialTrainingImagesSelected}
-                  >
-                    {renderPreview}
-                  </SortableGrid>
-                </Stack>
-              </Paper>
-              <Paper radius="md" p="xl" withBorder>
-                <Stack>
-                  <Group sx={{ justifyContent: 'space-between' }}>
-                    {selectedExampleImagesCount > 0 ? (
-                      <>
-                        <Group>
-                          <Checkbox
-                            checked={allExampleImagesSelected}
-                            indeterminate={partialExampleImagesSelected}
-                            onChange={() =>
-                              setSelectedExampleImages(
-                                allExampleImagesSelected
-                                  ? []
-                                  : exampleImages.map((image) => image.id)
-                              )
-                            }
-                          />
-                          <Title order={4}>{`${selectedExampleImagesCount} ${
-                            selectedExampleImagesCount > 1 ? 'files' : 'file '
-                          } selected`}</Title>
-                        </Group>
-                        <Button
-                          color="red"
-                          variant="subtle"
-                          size="sm"
-                          onClick={() => {
-                            setExampleImages([]);
-                            setSelectedExampleImages([]);
-                          }}
-                        >
-                          {selectedExampleImagesCount > 1 ? 'Delete Files' : 'Delete File'}
-                        </Button>
-                      </>
-                    ) : (
-                      <Title order={4}>Example Images</Title>
-                    )}
-                  </Group>
-                  <Dropzone accept={IMAGE_MIME_TYPE} onDrop={handleOnDrop('example')}>
-                    <Text align="center">Drop images here</Text>
-                  </Dropzone>
-                  <SortableGrid
-                    items={exampleImages}
-                    onDragEnd={handleDragEnd('example')}
-                    gridProps={{
-                      cols: 3,
-                      breakpoints: [{ maxWidth: 'sm', cols: 1 }],
-                    }}
-                    disabled={partialExampleImagesSelected}
-                  >
-                    {renderPreview}
-                  </SortableGrid>
                 </Stack>
               </Paper>
             </Stack>
@@ -606,7 +660,9 @@ export default function Create() {
   );
 }
 
-export const getServerSideProps: GetServerSideProps = async (ctx) => {
+type Props = { session: Session };
+
+export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
   const session = await getServerAuthSession(ctx);
 
   if (!session) {
@@ -618,5 +674,5 @@ export const getServerSideProps: GetServerSideProps = async (ctx) => {
     };
   }
 
-  return { props: {} };
+  return { props: { session } };
 };

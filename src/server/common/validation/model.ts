@@ -18,9 +18,9 @@ export const modelVersionSchema = z.object({
   url: z.string().url().min(1, 'You must select a file'),
   steps: z.number().optional(),
   epochs: z.number().optional(),
-  trainingImages: z.array(imageSchema),
-  exampleImages: z.array(imageSchema),
   sizeKB: z.number(),
+  images: z.array(imageSchema).min(1, 'At least one example image must be uploaded'),
+  trainingDataUrl: z.string().url().optional(),
 });
 
 export const modelSchema = z.object({

@@ -40,44 +40,36 @@ export const modelRouter = router({
       return handleDbError('INTERNAL_SERVER_ERROR', error);
     }
   }),
-  add: protectedProcedure
-    .input(
-      z.object({
-        name: z.string(),
-        description: z.string().optional(),
-        type: z.nativeEnum(ModelType),
-        trainedWords: z.array(z.string()),
-        modelVersions: z.array(
-          z.object({
-            name: z.string(),
-            description: z.string().optional(),
-            url: z.string().url(),
-            steps: z.number().optional(),
-            epochs: z.number().optional(),
-            sizeKB: z.number(),
-          })
-        ),
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      try {
-        const userId = ctx.session.user.id;
-        const { modelVersions, ...data } = input;
-        const createdModels = await ctx.prisma.model.create({
-          data: {
-            ...data,
-            userId,
-            modelVersions: {
-              create: modelVersions,
-            },
+  add: protectedProcedure.input(modelSchema).mutation(async ({ ctx, input }) => {
+    try {
+      const userId = ctx.session.user.id;
+      const { id, modelVersions, tags, ...data } = input;
+      const createdModels = await ctx.prisma.model.create({
+        data: {
+          ...data,
+          userId,
+          modelVersions: {
+            create: modelVersions.map(({ images, ...version }) => ({
+              ...version,
+              imagesOnModels: {
+                create: images.map((image, index) => ({
+                  index,
+                  image,
+                })),
+              },
+            })),
           },
-        });
+          tagsOnModels: {
+            create: tags?.map((tag) => ({ tag })),
+          },
+        },
+      });
 
-        return createdModels;
-      } catch (error) {
-        return handleDbError('INTERNAL_SERVER_ERROR', error);
-      }
-    }),
+      return createdModels;
+    } catch (error) {
+      return handleDbError('INTERNAL_SERVER_ERROR', error);
+    }
+  }),
   update: protectedProcedure
     .input(
       z.object({
