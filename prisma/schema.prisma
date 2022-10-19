@@ -90,6 +90,7 @@ model Model {
   tagsOnModels   TagsOnModels[]
   metrics        ModelMetric[]
   saves          SavedModel[]
+  rank           ModelRank?
 }
 
 model ModelVersion {
@@ -109,6 +110,7 @@ model ModelVersion {
   reviews        Review[]
   imagesOnModels ImagesOnModels[]
   metrics        ModelVersionMetric[]
+  rank           ModelVersionRank?
 }
 
 enum MetricTimeframe {
@@ -269,4 +271,44 @@ model SavedModel {
 model KeyValue {
   key   String @id
   value Json
+}
+
+model ModelRank {
+  model                Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
+  modelId              Int   @id
+  downloadCountDay     Int
+  downloadCountWeek    Int
+  downloadCountMonth   Int
+  downloadCountYear    Int
+  downloadCountAllTime Int
+  ratingCountDay       Int
+  ratingCountWeek      Int
+  ratingCountMonth     Int
+  ratingCountYear      Int
+  ratingCountAllTime   Int
+  ratingDay            Int
+  ratingWeek           Int
+  ratingMonth          Int
+  ratingYear           Int
+  ratingAllTime        Int
+}
+
+model ModelVersionRank {
+  modelVersion         ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
+  modelVersionId       Int          @id
+  downloadCountDay     Int
+  downloadCountWeek    Int
+  downloadCountMonth   Int
+  downloadCountYear    Int
+  downloadCountAllTime Int
+  ratingCountDay       Int
+  ratingCountWeek      Int
+  ratingCountMonth     Int
+  ratingCountYear      Int
+  ratingCountAllTime   Int
+  ratingDay            Int
+  ratingWeek           Int
+  ratingMonth          Int
+  ratingYear           Int
+  ratingAllTime        Int
 }
