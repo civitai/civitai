@@ -270,6 +270,7 @@ model KeyValue {
   value Json
 }
 
+/// @view
 model ModelRank {
   model                Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
   modelId              Int   @id
@@ -290,6 +291,7 @@ model ModelRank {
   ratingAllTime        Int
 }
 
+/// @view
 model ModelVersionRank {
   modelVersion         ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
   modelVersionId       Int          @id

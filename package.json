@@ -14,7 +14,7 @@
     "db:ui": "prisma studio",
     "db:pull": "prisma db pull",
     "db:push": "prisma db push",
-    "db:migrate": "prisma migrate dev",
+    "db:migrate": "node scripts/prisma-migrate-with-views-workaround.mjs",
     "db:generate": "prisma generate"
   },
   "prisma": {
