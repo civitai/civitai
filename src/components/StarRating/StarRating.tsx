@@ -3,7 +3,7 @@ import { IconStar, IconStarHalf } from '@tabler/icons';
 import { useState, useMemo } from 'react';
 
 export type StarRatingProps = {
-  rating: number;
+  rating?: number;
 };
 
 export function StarRating({ rating: initialRating = 0 }: StarRatingProps) {

@@ -4,12 +4,10 @@ import {
   createStyles,
   DefaultMantineColor,
   Group,
-  MantineTheme,
   Stack,
   Text,
   useMantineTheme,
 } from '@mantine/core';
-import { useSessionStorage } from '@mantine/hooks';
 import {
   useContainerPosition,
   useMasonry,
@@ -25,6 +23,7 @@ import { StarRating } from '~/components/StarRating/StarRating';
 import { GetAllModelsReturnType } from '~/server/services/models/getAllModels';
 import { useWindowSize } from '@react-hook/window-size';
 import { getRandom } from './../../utils/array-helpers';
+import { useModelStore } from '~/hooks/useModelStore';
 
 type MasonryListProps = {
   columnWidth: number;
@@ -33,16 +32,18 @@ type MasonryListProps = {
 
 // https://github.com/jaredLunde/masonic
 export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
-  const [selected] = useSessionStorage({
-    key: 'selectedIndex',
-    getInitialValueInEffect: false,
-    deserialize: (value) => (!!value ? Number(value) : undefined),
-  });
+  // use stringified filters as key for positioner dependency array
+  const filters = useModelStore((state) => state.filters);
+  const stringified = JSON.stringify(filters);
+
+  const selectedIndex = useModelStore((state) => state.index);
+  const setSelectedIndex = useModelStore((state) => state.setIndex);
 
   const containerRef = useRef(null);
   const [windowWidth, height] = useWindowSize();
   const { offset, width } = useContainerPosition(containerRef, [windowWidth, height]);
-  const positioner = usePositioner({ width, columnGutter: 16, columnWidth });
+  // with 'stringified' in the dependency array, masonic knows to expect layout changes
+  const positioner = usePositioner({ width, columnGutter: 16, columnWidth }, [stringified]);
   const { scrollTop, isScrolling } = useScroller(offset);
   const resizeObserver = useResizeObserver(positioner);
   const scrollToIndex = useScrollToIndex(positioner, {
@@ -52,11 +53,11 @@ export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
   });
 
   useEffect(() => {
-    if (!data?.length || !selected || data.length < selected) return;
-    scrollToIndex(selected);
-  }, []); //eslint-disable-line
+    if (!data?.length || !selectedIndex || data.length < selectedIndex) return;
 
-  useEffect(() => console.log({ data }), [data]);
+    scrollToIndex(selectedIndex);
+    setSelectedIndex(undefined);
+  }, []); //eslint-disable-line
 
   return useMasonry({
     resizeObserver,
@@ -95,14 +96,12 @@ const MasonryItem = ({
   data: GetAllModelsReturnType['items'][0];
   width: number;
 }) => {
-  const { id, image, name, metrics } = data ?? {};
+  const { id, image, name, rank } = data ?? {};
   const { classes } = useStyles();
 
   const hasDimensions = image.width && image.height;
-  const [, setSelected] = useSessionStorage({
-    key: 'selectedIndex',
-    serialize: (value: number) => value.toString(),
-  });
+
+  const setSelectedIndex = useModelStore((state) => state.setIndex);
 
   // const height = useMemo(() => {
   //   if (!image.url) return undefined;
@@ -125,7 +124,7 @@ const MasonryItem = ({
         shadow="sm"
         className={classes.card}
         style={{ background }}
-        onClick={() => setSelected(index)}
+        onClick={() => setSelectedIndex(index)}
         p={0}
       >
         <Image
@@ -144,7 +143,7 @@ const MasonryItem = ({
               {name}
             </Text>
             <Group position="apart">
-              <StarRating rating={metrics.rating} />
+              <StarRating rating={rank.rating} />
             </Group>
           </Stack>
         </Box>

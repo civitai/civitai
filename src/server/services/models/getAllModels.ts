@@ -1,71 +1,112 @@
-import { ModelType } from '@prisma/client';
+import { MetricTimeframe, ModelType } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '~/server/db/client';
+import { ModelSort } from '~/server/common/enums';
 
 export type GetAllModelsReturnType = Awaited<ReturnType<typeof getAllModels>>;
 
 export const getAllModelsSchema = z.object({
-  limit: z.number().min(1).max(100).nullish(),
+  limit: z.number().min(1).max(100).optional(),
   cursor: z.number().nullish(),
   query: z.string().optional(),
   tags: z.number().array().optional(),
   users: z.number().array().optional(),
   type: z.nativeEnum(ModelType).optional(),
+  sort: z.nativeEnum(ModelSort).optional(), // TODO - determine proper types for this
+  period: z.nativeEnum(MetricTimeframe).optional(),
 });
 
 export const getAllModels = async (input: z.infer<typeof getAllModelsSchema>) => {
-  const limit = input.limit ?? 50;
-  const { cursor } = input;
+  const { cursor, limit = 50, period = 'AllTime' } = input;
   const items = await prisma.model.findMany({
     take: limit + 1, // get an extra item at the end which we'll use as next cursor
     cursor: cursor ? { id: cursor } : undefined,
     where: {
-      OR: {
-        name: {
-          contains: input.query,
-          mode: 'insensitive',
-        },
-        tagsOnModels: {
-          some: {
-            tagId: {
-              in: input.tags,
+      // only return items that have been ranked
+      rank: input.sort ? { modelId: { not: undefined } } : undefined,
+      name: input.query
+        ? {
+            contains: input.query,
+            mode: 'insensitive',
+          }
+        : undefined,
+      tagsOnModels: input.tags
+        ? {
+            some: {
+              tagId: {
+                in: input.tags,
+              },
             },
-          },
-        },
-        userId: {
-          in: input.users,
-        },
-        type: {
-          equals: input?.type,
-        },
-      },
+          }
+        : undefined,
+      userId: input.users
+        ? {
+            in: input.users,
+          }
+        : undefined,
+      type: input.type
+        ? {
+            equals: input?.type,
+          }
+        : undefined,
     },
+    orderBy: [
+      ...(input.sort === ModelSort.HighestRated
+        ? [
+            {
+              rank: {
+                [`rating${period}`]: 'desc',
+              },
+            },
+          ]
+        : []),
+      ...(input.sort === ModelSort.MostDownloaded
+        ? [
+            {
+              rank: {
+                [`downloadCount${period}`]: 'desc',
+              },
+            },
+          ]
+        : []),
+      {
+        createdAt: 'asc',
+      },
+    ],
     select: {
       id: true,
       name: true,
       type: true,
-      imagesOnModels: {
+      modelVersions: {
         orderBy: {
-          index: 'desc',
+          id: 'asc',
         },
         take: 1,
         select: {
-          image: {
+          images: {
+            orderBy: {
+              index: 'asc',
+            },
+            take: 1,
             select: {
-              width: true,
-              url: true,
-              height: true,
-              prompt: true,
-              hash: true,
+              image: {
+                select: {
+                  width: true,
+                  url: true,
+                  height: true,
+                  prompt: true,
+                  hash: true,
+                },
+              },
             },
           },
         },
       },
-      metrics: {
+      rank: {
         select: {
-          rating: true,
-          ratingCount: true,
-          downloadCount: true,
+          downloadCountAllTime: true,
+          ratingCountAllTime: true,
+          ratingAllTime: true,
         },
       },
     },
@@ -77,20 +118,14 @@ export const getAllModels = async (input: z.infer<typeof getAllModelsSchema>) =>
     nextCursor = nextItem?.id;
   }
 
-  const models = items.map(({ metrics, imagesOnModels, ...item }) => {
-    const rating = Math.ceil(metrics.reduce((a, b) => a + b.rating, 0) / metrics.length);
+  const models = items.map(({ rank, modelVersions, ...item }) => {
     return {
       ...item,
-      image: imagesOnModels[0]?.image ?? {},
-      metrics: {
-        rating: !isNaN(rating) ? rating : 0,
-        ...metrics.reduce(
-          (a, b) => ({
-            ratingCount: a.ratingCount + b.ratingCount,
-            downloadCount: a.downloadCount + b.downloadCount,
-          }),
-          { ratingCount: 0, downloadCount: 0 }
-        ),
+      image: modelVersions[0]?.images[0]?.image ?? {},
+      rank: {
+        downloadCount: rank?.downloadCountAllTime,
+        ratingCount: rank?.ratingCountAllTime,
+        rating: rank?.ratingAllTime,
       },
     };
   });

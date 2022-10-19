@@ -178,19 +178,21 @@ async function seed() {
   /************
    * REVIEWS
    ************/
-  await prisma.review.createMany({
-    data: [...Array(15)].map((x) => {
-      const { id: modelId, modelVersions } = getRandomItem(modelResults);
+  await Promise.all(
+    modelResults.map(async (result) => {
+      const { id: modelId, modelVersions } = result;
       const { id: modelVersionId } = getRandomItem(modelVersions);
-      return {
-        modelId,
-        modelVersionId,
-        userId: getRandomItem(userIds),
-        text: getRandomItem(reviewText),
-        rating: getRandomItem(rating),
-      };
-    }),
-  });
+      await prisma.review.createMany({
+        data: [...Array(getRandomInt(1, 5))].map((x) => ({
+          modelId,
+          modelVersionId,
+          userId: getRandomItem(userIds),
+          text: getRandomItem(reviewText),
+          rating: getRandomItem(rating),
+        })),
+      });
+    })
+  );
 
   await Promise.all(
     modelResults.map(async ({ id: modelId, userId, modelVersions }) => {
