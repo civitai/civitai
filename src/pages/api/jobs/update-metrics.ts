@@ -103,8 +103,6 @@ export default JobEndpoint(async (req, res) => {
 
     // Update the metrics for each affected model
     for (const modelId of affectedModels) {
-      const timeframe = MetricTimeframe.Day;
-
       // Compute download metrics
       const modelActivity = modelActivities.filter((a) => {
         if (a.createdAt < sinceDate) return false;
@@ -152,8 +150,6 @@ export default JobEndpoint(async (req, res) => {
 
     // Update the metrics for each affected version
     for (const modelVersionId of affectedVersions) {
-      const timeframe = MetricTimeframe.Day;
-
       // Compute download metrics
       const modelActivity = modelActivities.filter((a) => {
         if (a.createdAt < sinceDate) return false;

@@ -84,13 +84,12 @@ model Model {
   userId       Int
   user         User      @relation(fields: [userId], references: [id])
 
-  modelVersions  ModelVersion[]
-  reviews        Review[]
-  imagesOnModels ImagesOnModels[]
-  tagsOnModels   TagsOnModels[]
-  metrics        ModelMetric[]
-  saves          SavedModel[]
-  rank           ModelRank?
+  modelVersions ModelVersion[]
+  reviews       Review[]
+  tagsOnModels  TagsOnModels[]
+  metrics       ModelMetric[]
+  saves         SavedModel[]
+  rank          ModelRank?
 }
 
 model ModelVersion {
@@ -107,10 +106,10 @@ model ModelVersion {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  reviews        Review[]
-  imagesOnModels ImagesOnModels[]
-  metrics        ModelVersionMetric[]
-  rank           ModelVersionRank?
+  reviews Review[]
+  images  ImagesOnModels[]
+  metrics ModelVersionMetric[]
+  rank    ModelVersionRank?
 }
 
 enum MetricTimeframe {
@@ -217,15 +216,13 @@ enum ImageOnModelType {
 }
 
 model ImagesOnModels {
-  model          Model        @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  modelId        Int
-  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id])
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   modelVersionId Int
   image          Image        @relation(fields: [imageId], references: [id])
   imageId        Int
   index          Int?
 
-  @@id([imageId, modelId, modelVersionId])
+  @@id([imageId, modelVersionId])
 }
 
 model ImagesOnReviews {
