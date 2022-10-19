@@ -14,7 +14,8 @@
     "db:ui": "prisma studio",
     "db:pull": "prisma db pull",
     "db:push": "prisma db push",
-    "db:migrate": "prisma migrate dev"
+    "db:migrate": "prisma migrate dev",
+    "db:generate": "prisma generate"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"

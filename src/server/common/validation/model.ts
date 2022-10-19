@@ -15,11 +15,12 @@ export const modelVersionSchema = z.object({
   id: z.number().nullish(),
   name: z.string().min(1, 'Name cannot be empty.'),
   description: z.string().optional(),
-  url: z.string().url().min(1, 'You must select a file').nullish(),
+  url: z.string().url().min(1, 'You must select a file'),
   steps: z.number().optional(),
   epochs: z.number().optional(),
   trainingImages: z.array(imageSchema),
   exampleImages: z.array(imageSchema),
+  sizeKB: z.number(),
 });
 
 export const modelSchema = z.object({
