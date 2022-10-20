@@ -125,7 +125,7 @@ model ModelMetric {
   model         Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId       Int
   timeframe     MetricTimeframe
-  rating        Int
+  rating        Float
   ratingCount   Int
   downloadCount Int
 
@@ -136,7 +136,7 @@ model ModelVersionMetric {
   modelVersion   ModelVersion    @relation(fields: [modelVersionId], references: [id])
   modelVersionId Int
   timeframe      MetricTimeframe
-  rating         Int
+  rating         Float
   ratingCount    Int
   downloadCount  Int
 
