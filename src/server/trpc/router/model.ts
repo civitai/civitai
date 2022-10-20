@@ -1,6 +1,7 @@
 import { ModelType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
+import { modelSchema } from '~/server/common/validation/model';
 import { handleDbError } from '~/server/services/errorHandling';
 import { getAllModels, getAllModelsSchema } from '~/server/services/models/getAllModels';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
