@@ -21,7 +21,7 @@ export const userRouter = router({
           where: { email: input.email },
         });
       } catch (error) {
-        return handleDbError('INTERNAL_SERVER_ERROR', error);
+        return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
       }
     }),
   getById: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
@@ -30,7 +30,7 @@ export const userRouter = router({
       const user = await ctx.prisma.user.findUnique({ where: { id } });
 
       if (!user) {
-        return new TRPCError({
+        throw new TRPCError({
           code: 'NOT_FOUND',
           message: `No user with id ${id}`,
         });
@@ -38,7 +38,7 @@ export const userRouter = router({
 
       return user;
     } catch (error) {
-      return handleDbError('INTERNAL_SERVER_ERROR', error);
+      return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
     }
   }),
   update: protectedProcedure
@@ -54,7 +54,7 @@ export const userRouter = router({
         const user = await ctx.prisma.user.update({ where: { id }, data });
 
         if (!user) {
-          return new TRPCError({
+          throw new TRPCError({
             code: 'NOT_FOUND',
             message: `No user with id ${id}`,
           });
@@ -62,7 +62,7 @@ export const userRouter = router({
 
         return user;
       } catch (error) {
-        return handleDbError('INTERNAL_SERVER_ERROR', error);
+        return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
       }
     }),
   delete: protectedProcedure
@@ -73,7 +73,7 @@ export const userRouter = router({
         const user = await ctx.prisma.user.delete({ where: { id } });
 
         if (!user) {
-          return new TRPCError({
+          throw new TRPCError({
             code: 'NOT_FOUND',
             message: `No user with id ${id}`,
           });
@@ -81,7 +81,7 @@ export const userRouter = router({
 
         return user;
       } catch (error) {
-        return handleDbError('INTERNAL_SERVER_ERROR', error);
+        return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
       }
     }),
 });

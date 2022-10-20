@@ -10,5 +10,13 @@ declare global {
     ? R
     : any;
 
-  type BaseEntity = { id: string } & Record<string, any>;
+  type MixedObject = Record<string, any>;
+  type BaseEntity = { id: string } & MixedObject;
+
+  type CustomFile = {
+    id: string;
+    url: string;
+    name: string;
+    file: FileWithPath;
+  };
 }

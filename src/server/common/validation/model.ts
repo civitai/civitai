@@ -11,6 +11,12 @@ export const imageSchema = z.object({
   width: z.string().optional(),
 });
 
+export const tagSchema = z.object({
+  id: z.number().nullish(),
+  name: z.string().min(1, 'Name cannot be empty.'),
+  color: z.string().optional(),
+});
+
 export const modelVersionSchema = z.object({
   id: z.number().nullish(),
   name: z.string().min(1, 'Name cannot be empty.'),
@@ -20,7 +26,7 @@ export const modelVersionSchema = z.object({
   epochs: z.number().optional(),
   sizeKB: z.number(),
   images: z.array(imageSchema).min(1, 'At least one example image must be uploaded'),
-  trainingDataUrl: z.string().url().optional(),
+  trainingDataUrl: z.string().optional(),
 });
 
 export const modelSchema = z.object({

@@ -65,7 +65,7 @@ function SortableItem({ id, children, disabled = false }: SortableItemProps) {
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    cursor: isDragging ? 'grabbing' : 'pointer',
+    cursor: isDragging ? 'grabbing' : !disabled ? 'pointer' : 'auto',
   };
 
   return (

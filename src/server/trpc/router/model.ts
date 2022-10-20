@@ -18,7 +18,7 @@ export const modelRouter = router({
     try {
       return await getAllModels(input);
     } catch (error) {
-      return handleDbError('INTERNAL_SERVER_ERROR', error);
+      return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
     }
   }),
   getById: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
@@ -30,7 +30,7 @@ export const modelRouter = router({
       });
 
       if (!model) {
-        return new TRPCError({
+        return handleDbError({
           code: 'NOT_FOUND',
           message: `No model with id ${id}`,
         });
@@ -38,7 +38,7 @@ export const modelRouter = router({
 
       return model;
     } catch (error) {
-      return handleDbError('INTERNAL_SERVER_ERROR', error);
+      return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
     }
   }),
   add: protectedProcedure.input(modelSchema).mutation(async ({ ctx, input }) => {
@@ -52,23 +52,23 @@ export const modelRouter = router({
           modelVersions: {
             create: modelVersions.map(({ images, ...version }) => ({
               ...version,
-              imagesOnModels: {
+              images: {
                 create: images.map((image, index) => ({
                   index,
-                  image,
+                  image: { create: { name: image.name, url: image.url, userId: image.userId } },
                 })),
               },
             })),
           },
           tagsOnModels: {
-            create: tags?.map((tag) => ({ tag })),
+            create: tags?.map((tag) => ({ tag: { create: { name: tag } } })),
           },
         },
       });
 
       return createdModels;
     } catch (error) {
-      return handleDbError('INTERNAL_SERVER_ERROR', error);
+      return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
     }
   }),
   update: protectedProcedure
@@ -87,7 +87,7 @@ export const modelRouter = router({
         const model = await ctx.prisma.model.update({ where: { id }, data });
 
         if (!model) {
-          return new TRPCError({
+          return handleDbError({
             code: 'NOT_FOUND',
             message: `No model with id ${id}`,
           });
@@ -95,7 +95,7 @@ export const modelRouter = router({
 
         return model;
       } catch (error) {
-        return handleDbError('INTERNAL_SERVER_ERROR', error);
+        return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
       }
     }),
   delete: protectedProcedure
@@ -106,7 +106,7 @@ export const modelRouter = router({
         const model = await ctx.prisma.model.delete({ where: { id } });
 
         if (!model) {
-          return new TRPCError({
+          return handleDbError({
             code: 'NOT_FOUND',
             message: `No model with id ${id}`,
           });
@@ -114,7 +114,7 @@ export const modelRouter = router({
 
         return model;
       } catch (error) {
-        return handleDbError('INTERNAL_SERVER_ERROR', error);
+        return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
       }
     }),
 });
