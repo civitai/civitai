@@ -68,7 +68,7 @@ function Home() {
         <MasonryList columnWidth={300} data={models} />
         {!isLoading && (
           <Group position="center" ref={ref}>
-            {hasNextPage ? <Loader /> : <Text>This is the end</Text>}
+            {hasNextPage && <Loader />}
           </Group>
         )}
       </Stack>

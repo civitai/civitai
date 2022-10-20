@@ -26,7 +26,7 @@ export const getAllModelsSchema = z.object({
   tags: z.number().array().optional(),
   users: z.number().array().optional(),
   type: z.nativeEnum(ModelType).optional(),
-  sort: z.nativeEnum(ModelSort).optional(), // TODO - determine proper types for this
+  sort: z.nativeEnum(ModelSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
 });
 
