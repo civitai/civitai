@@ -117,7 +117,7 @@ export default function Create() {
 
     if (file) {
       if (isModelType) {
-        form.setFieldValue(`modelVersions.${modelIndex}.sizeKB`, Math.floor(file.size / 1024)); // bytes to kb
+        form.setFieldValue(`modelVersions.${modelIndex}.sizeKB`, file.size);
         form.setFieldValue(`modelVersions.${modelIndex}.url`, url);
       } else {
         form.setFieldValue(`modelVersions.${modelIndex}.trainingDataUrl`, url);

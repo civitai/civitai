@@ -25,7 +25,7 @@ export const serverSchema = z.object({
   S3_UPLOAD_KEY: z.string(),
   S3_UPLOAD_SECRET: z.string(),
   S3_UPLOAD_REGION: z.string(),
-  S3_UPLOAD_ENDPOINT: z.string(),
+  S3_UPLOAD_ENDPOINT: z.string().url(),
   S3_UPLOAD_BUCKET: z.string(),
 });
 
