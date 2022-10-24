@@ -23,17 +23,17 @@ type CustomAppProps<P> = AppProps<P> & {
   colorScheme: ColorScheme;
 };
 
-function MyApp(props: CustomAppProps<{ session: Session | null }>) {
+function MyApp(props: CustomAppProps<{ session: Session | null; colorScheme: ColorScheme }>) {
   const {
     Component,
-    pageProps: { session, ...pageProps },
+    pageProps: { session, colorScheme: initialColorScheme, ...pageProps },
   } = props;
-  const [colorScheme, setColorScheme] = useState<ColorScheme>(props.colorScheme);
+  const [colorScheme, setColorScheme] = useState<ColorScheme>(initialColorScheme);
 
   const toggleColorScheme = (value?: ColorScheme) => {
     const nextColorScheme = value || (colorScheme === 'dark' ? 'light' : 'dark');
     setColorScheme(nextColorScheme);
-    setCookie('mantine-color-scheme', nextColorScheme, { maxAge: 60 * 60 * 24 * 30 });
+    setCookie('mantine-color-scheme', nextColorScheme);
   };
 
   const getLayout = Component.getLayout ?? ((page) => <AppLayout>{page}</AppLayout>);
@@ -59,10 +59,13 @@ function MyApp(props: CustomAppProps<{ session: Session | null }>) {
 }
 
 MyApp.getInitialProps = async (appContext: AppContext) => {
-  const appProps = await App.getInitialProps(appContext);
+  const { pageProps, ...appProps } = await App.getInitialProps(appContext);
 
   return {
-    colorScheme: getCookie('mantine-color-scheme', appContext.ctx) || 'light',
+    pageProps: {
+      ...pageProps,
+      colorScheme: getCookie('mantine-color-scheme', appContext.ctx) || 'light',
+    },
     ...appProps,
   };
 };

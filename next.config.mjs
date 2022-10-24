@@ -24,6 +24,6 @@ export default defineNextConfig({
   },
   images: {
     // TODO - determine if we need to add any domains to fetch images
-    domains: ['model-share.s3.us-west-1.wasabisys.com'],
+    domains: ['s3.us-west-1.wasabisys.com', 'model-share.s3.us-west-1.wasabisys.com'],
   },
 });

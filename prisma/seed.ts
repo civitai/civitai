@@ -79,18 +79,18 @@ async function seed() {
     },
   });
 
-  const user2 = await prisma.user.upsert({
-    where: { email: 'just.maier@gmail.com' },
-    update: {},
-    create: {
-      name: 'Justin Maier',
-      email: 'just.maier@gmail.com',
-      image: 'https://avatars.githubusercontent.com/u/607609?v=4',
-    },
-    select: {
-      id: true,
-    },
-  });
+  // const user2 = await prisma.user.upsert({
+  //   where: { email: 'just.maier@gmail.com' },
+  //   update: {},
+  //   create: {
+  //     name: 'Justin Maier',
+  //     email: 'just.maier@gmail.com',
+  //     image: 'https://avatars.githubusercontent.com/u/607609?v=4',
+  //   },
+  //   select: {
+  //     id: true,
+  //   },
+  // });
 
   const user3 = await prisma.user.upsert({
     where: { email: 'manuel.ureh@hotmail.com' },
@@ -105,7 +105,7 @@ async function seed() {
     },
   });
 
-  const userIds = [user1, user2, user3].map((x) => x.id);
+  const userIds = [user1, user3].map((x) => x.id);
 
   /************
    * TAGS
@@ -207,7 +207,6 @@ async function seed() {
               ...getRandomItem(images),
               imagesOnModels: {
                 create: {
-                  modelId,
                   modelVersionId,
                   index: i,
                 },

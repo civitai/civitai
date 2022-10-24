@@ -8,10 +8,12 @@ export function AppLayout({ children, showNavbar }: Props) {
       padding="md"
       header={
         <AppHeader
-          links={[
-            { label: 'Models', url: '#' },
-            { label: 'Link 2', url: '#' },
-          ]}
+          links={
+            [
+              // { label: 'Models', url: '#' },
+              // { label: 'Link 2', url: '#' },
+            ]
+          }
         />
       }
       navbar={showNavbar ? <SideNavigation /> : undefined}

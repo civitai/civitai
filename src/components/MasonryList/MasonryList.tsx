@@ -1,13 +1,4 @@
-import {
-  Box,
-  Card,
-  createStyles,
-  DefaultMantineColor,
-  Group,
-  Stack,
-  Text,
-  useMantineTheme,
-} from '@mantine/core';
+import { Box, Card, createStyles, DefaultMantineColor, Group, Stack, Text } from '@mantine/core';
 import {
   useContainerPosition,
   useMasonry,
@@ -19,11 +10,11 @@ import {
 import Image from 'next/image';
 import Link from 'next/link';
 import React, { useMemo, useEffect, useRef } from 'react';
-import { StarRating } from '~/components/StarRating/StarRating';
 import { GetAllModelsReturnType } from '~/server/services/models/getAllModels';
 import { useWindowSize } from '@react-hook/window-size';
 import { getRandom } from './../../utils/array-helpers';
 import { useModelStore } from '~/hooks/useModelStore';
+import { useInView } from 'react-intersection-observer';
 
 type MasonryListProps = {
   columnWidth: number;
@@ -67,7 +58,7 @@ export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
     height,
     containerRef,
     items: data,
-    overscanBy: 3,
+    overscanBy: Infinity,
     render: MasonryItem,
   });
 }
@@ -102,67 +93,69 @@ const MasonryItem = ({
   const hasDimensions = image.width && image.height;
 
   const setSelectedIndex = useModelStore((state) => state.setIndex);
+  const { ref, inView } = useInView();
 
-  // const height = useMemo(() => {
-  //   if (!image.url) return undefined;
-  //   if (!image.width || !image.height) return 300;
-  //   const aspectRatio = image.width / image.height;
-  //   const heightT = width / aspectRatio;
-  //   return heightT + 72;
-  // }, [width, image.width, image.height, image.url]);
-
-  const theme = useMantineTheme();
-  const background = useMemo(() => {
-    const base = theme.colors[getRandom(mantineColors)];
-    return theme.fn.gradient({ from: base[6], to: base[3] });
-  }, []);
+  const height = useMemo(() => {
+    if (!image.width || !image.height) return 300;
+    const aspectRatio = image.width / image.height;
+    const heightT = width / aspectRatio;
+    return heightT + 72;
+  }, [width, image.width, image.height]);
 
   return (
     <Link href={`models/${id}`}>
       <Card
+        ref={ref}
         withBorder
         shadow="sm"
         className={classes.card}
-        style={{ background }}
+        // style={{ height: image.url ? `${height}px` : undefined }}
         onClick={() => setSelectedIndex(index)}
         p={0}
       >
-        <Image
-          src={image.url}
-          alt={name}
-          objectFit="cover"
-          objectPosition="top"
-          height={hasDimensions ? `${image.height}px` : undefined}
-          width={hasDimensions ? `${image.width}px` : undefined}
-          layout={!hasDimensions ? 'fill' : undefined}
-          placeholder="empty"
-        />
-        <Box p="xs" className={classes.content}>
-          <Stack spacing={6}>
-            <Text size={14} lineClamp={2}>
-              {name}
-            </Text>
-            <Group position="apart">
-              <StarRating rating={rank.rating} />
-            </Group>
-          </Stack>
-        </Box>
+        {inView && (
+          <>
+            <Image
+              src={image.url}
+              alt={name}
+              objectFit="cover"
+              objectPosition="top"
+              height={hasDimensions ? `${image.height}px` : undefined}
+              width={hasDimensions ? `${image.width}px` : undefined}
+              layout={!hasDimensions ? 'fill' : undefined}
+              placeholder="empty"
+            />
+            <Box p="xs" className={classes.content}>
+              <Stack spacing={6}>
+                <Text size={14} lineClamp={2}>
+                  {name}
+                </Text>
+                {/* <Group position="apart"></Group> */}
+              </Stack>
+            </Box>
+          </>
+        )}
       </Card>
     </Link>
   );
 };
 
-const useStyles = createStyles((theme) => ({
-  card: {
-    height: '300px',
-    cursor: 'pointer',
-  },
+const useStyles = createStyles((theme) => {
+  const base = theme.colors[getRandom(mantineColors)];
 
-  content: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    left: 0,
-  },
-}));
+  return {
+    card: {
+      height: '300px',
+      cursor: 'pointer',
+      background: theme.fn.gradient({ from: base[6], to: base[3] }),
+    },
+
+    content: {
+      background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+      position: 'absolute',
+      bottom: 0,
+      right: 0,
+      left: 0,
+    },
+  };
+});
