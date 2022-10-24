@@ -1,5 +1,4 @@
 import { ModelType } from '@prisma/client';
-import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { modelSchema } from '~/server/common/validation/model';
 import { handleDbError } from '~/server/services/errorHandling';
@@ -7,10 +6,48 @@ import { getAllModels, getAllModelsSchema } from '~/server/services/models/getAl
 import { protectedProcedure, publicProcedure, router } from '../trpc';
 
 const baseQuerySelect = {
-  modelVersions: { select: { url: true, description: true } },
+  id: true,
+  name: true,
+  description: true,
+  trainedWords: true,
+  nsfw: true,
+  type: true,
+  user: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      image: true,
+    },
+  },
+  modelVersions: {
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      steps: true,
+      epochs: true,
+      trainingDataUrl: true,
+      url: true,
+      sizeKB: true,
+      images: {
+        select: {
+          index: true,
+          image: {
+            select: {
+              id: true,
+              name: true,
+              url: true,
+              nsfw: true,
+              prompt: true,
+            },
+          },
+        },
+      },
+    },
+  },
   reviews: { select: { text: true, rating: true, user: true } },
   tagsOnModels: { select: { tag: true } },
-  imagesOnModels: { select: { image: true } },
 };
 
 export const modelRouter = router({
