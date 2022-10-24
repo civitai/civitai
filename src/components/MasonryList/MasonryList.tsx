@@ -1,4 +1,13 @@
-import { Box, Card, createStyles, DefaultMantineColor, Group, Stack, Text } from '@mantine/core';
+import {
+  Box,
+  Card,
+  createStyles,
+  DefaultMantineColor,
+  Group,
+  Rating,
+  Stack,
+  Text,
+} from '@mantine/core';
 import {
   useContainerPosition,
   useMasonry,
@@ -15,6 +24,8 @@ import { useWindowSize } from '@react-hook/window-size';
 import { getRandom } from './../../utils/array-helpers';
 import { useModelStore } from '~/hooks/useModelStore';
 import { useInView } from 'react-intersection-observer';
+import { IconDownload } from '@tabler/icons';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
 type MasonryListProps = {
   columnWidth: number;
@@ -95,12 +106,12 @@ const MasonryItem = ({
   const setSelectedIndex = useModelStore((state) => state.setIndex);
   const { ref, inView } = useInView();
 
-  const height = useMemo(() => {
-    if (!image.width || !image.height) return 300;
-    const aspectRatio = image.width / image.height;
-    const heightT = width / aspectRatio;
-    return heightT + 72;
-  }, [width, image.width, image.height]);
+  // const height = useMemo(() => {
+  //   if (!image.width || !image.height) return 300;
+  //   const aspectRatio = image.width / image.height;
+  //   const heightT = width / aspectRatio;
+  //   return heightT + 72;
+  // }, [width, image.width, image.height]);
 
   return (
     <Link href={`models/${id}`}>
@@ -130,7 +141,16 @@ const MasonryItem = ({
                 <Text size={14} lineClamp={2}>
                   {name}
                 </Text>
-                {/* <Group position="apart"></Group> */}
+                <Group position="apart">
+                  <Group spacing={5}>
+                    <Rating value={rank.rating} fractions={2} readOnly size="xs" />
+                    <Text size="xs">({rank.ratingCount})</Text>
+                  </Group>
+                  <Group spacing={5} align="bottom">
+                    <Text size="xs">{abbreviateNumber(rank.downloadCount ?? 0)}</Text>
+                    <IconDownload size={16} />
+                  </Group>
+                </Group>
               </Stack>
             </Box>
           </>
@@ -151,7 +171,7 @@ const useStyles = createStyles((theme) => {
     },
 
     content: {
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+      background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
       position: 'absolute',
       bottom: 0,
       right: 0,

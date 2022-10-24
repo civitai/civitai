@@ -33,7 +33,6 @@ function Home() {
 
   useEffect(() => {
     if (inView) {
-      console.log('in view');
       fetchNextPage();
     }
   }, [inView]); //eslint-disable-line
@@ -57,9 +56,9 @@ function Home() {
             </Group>
           </IsHydrated>
           <MasonryList columnWidth={300} data={models} />
-          {!isLoading && (
+          {!isLoading && hasNextPage && (
             <Group position="center" ref={ref}>
-              {hasNextPage && <Loader />}
+              <Loader />
             </Group>
           )}
         </Stack>

@@ -73,24 +73,24 @@ export const getAllModels = async (input: z.infer<typeof getAllModelsSchema>) =>
         : undefined,
     },
     orderBy: [
-      // ...(input.sort === ModelSort.HighestRated
-      //   ? [
-      //       {
-      //         rank: {
-      //           [`rating${period}`]: 'desc',
-      //         },
-      //       },
-      //     ]
-      //   : []),
-      // ...(input.sort === ModelSort.MostDownloaded
-      //   ? [
-      //       {
-      //         rank: {
-      //           [`downloadCount${period}`]: 'desc',
-      //         },
-      //       },
-      //     ]
-      //   : []),
+      ...(input.sort === ModelSort.HighestRated
+        ? [
+            {
+              rank: {
+                [`rating${period}`]: 'desc',
+              },
+            },
+          ]
+        : []),
+      ...(input.sort === ModelSort.MostDownloaded
+        ? [
+            {
+              rank: {
+                [`downloadCount${period}`]: 'desc',
+              },
+            },
+          ]
+        : []),
       {
         createdAt: 'desc',
       },
