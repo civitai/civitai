@@ -12,6 +12,7 @@ const baseQuerySelect = {
   trainedWords: true,
   nsfw: true,
   type: true,
+  updatedAt: true,
   user: {
     select: {
       id: true,
