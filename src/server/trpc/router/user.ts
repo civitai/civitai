@@ -7,18 +7,29 @@ export const userRouter = router({
   getAll: publicProcedure
     .input(
       z.object({
-        email: z.string(),
+        limit: z.number().optional(),
+        query: z.string().optional(),
+        email: z.string().optional(),
       })
     )
     .query(async ({ input, ctx }) => {
       try {
         return await ctx.prisma.user.findMany({
+          take: input.limit,
           select: {
             name: true,
             id: true,
             email: true,
           },
-          where: { email: input.email },
+          where: {
+            name: input.query
+              ? {
+                  contains: input.query,
+                  mode: 'insensitive',
+                }
+              : undefined,
+            email: input.email,
+          },
         });
       } catch (error) {
         return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });

@@ -9,6 +9,7 @@ import { useModelStore } from '~/hooks/useModelStore';
 import { ListSort } from '~/components/ListSort/ListSort';
 import { IsHydrated } from '~/components/IsHydrated/IsHydrated';
 import { ListPeriod } from '~/components/ListPeriod/ListPeriod';
+import { ListSearch } from '~/components/ListSearch/ListSearch';
 
 function Home() {
   const { ref, inView } = useInView();
@@ -52,6 +53,7 @@ function Home() {
           <IsHydrated>
             <Group position="apart">
               <ListSort />
+              <ListSearch />
               <ListPeriod />
             </Group>
           </IsHydrated>

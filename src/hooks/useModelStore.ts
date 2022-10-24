@@ -10,8 +10,8 @@ type ModelStoreState = {
     sort?: ModelSort;
     period?: MetricTimeframe;
     query?: string;
-    users?: number[];
-    tags?: number[];
+    user?: string;
+    tag?: string;
   };
   index?: number;
   setIndex: (value?: number) => void;
@@ -19,8 +19,8 @@ type ModelStoreState = {
   setSort: (value?: ModelSort) => void;
   setPeriod: (value?: MetricTimeframe) => void;
   setQuery: (value?: string) => void;
-  setUsers: (value?: number[]) => void;
-  setTags: (value?: number[]) => void;
+  setUsers: (value?: string) => void;
+  setTags: (value?: string) => void;
 };
 
 export const useModelStore = create(
@@ -58,13 +58,13 @@ export const useModelStore = create(
         setTags: (value) =>
           set(
             produce((state: ModelStoreState) => {
-              state.filters.tags = value;
+              state.filters.tag = value;
             })
           ),
         setUsers: (value?) =>
           set(
             produce((state: ModelStoreState) => {
-              state.filters.users = value;
+              state.filters.user = value;
             })
           ),
         setQuery: (value) =>

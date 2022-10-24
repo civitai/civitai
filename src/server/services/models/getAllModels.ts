@@ -23,8 +23,8 @@ export const getAllModelsSchema = z.object({
   limit: z.number().min(1).max(200).optional(),
   cursor: z.number().nullish(),
   query: z.string().optional(),
-  tags: z.number().array().optional(),
-  users: z.number().array().optional(),
+  tag: z.string().optional(),
+  user: z.string().optional(),
   type: z.nativeEnum(ModelType).optional(),
   sort: z.nativeEnum(ModelSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
@@ -32,8 +32,6 @@ export const getAllModelsSchema = z.object({
 
 export const getAllModels = async (input: z.infer<typeof getAllModelsSchema>) => {
   const { cursor, limit = 50, period = MetricTimeframe.AllTime } = input;
-  console.log('___INPUT___');
-  console.log({ input });
   const items = await prisma.model.findMany({
     take: limit + 1, // get an extra item at the end which we'll use as next cursor
     cursor: cursor ? { id: cursor } : undefined,
@@ -52,20 +50,21 @@ export const getAllModels = async (input: z.infer<typeof getAllModelsSchema>) =>
             mode: 'insensitive',
           }
         : undefined,
-      tagsOnModels: input.tags
+      tagsOnModels: input.tag
         ? {
             some: {
-              tagId: {
-                in: input.tags,
+              tag: {
+                name: input.tag,
               },
             },
           }
         : undefined,
-      userId: input.users
+      user: input.user
         ? {
-            in: input.users,
+            name: input.user,
           }
         : undefined,
+
       type: input.type
         ? {
             equals: input?.type,
