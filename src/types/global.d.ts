@@ -11,12 +11,12 @@ declare global {
     : any;
 
   type MixedObject = Record<string, any>;
-  type BaseEntity = { id: string } & MixedObject;
+  type BaseEntity = { id: number | string } & MixedObject;
 
   type CustomFile = {
-    id: string;
     url: string;
     name: string;
-    file: FileWithPath;
+    id: number;
+    file?: FileWithPath;
   };
 }

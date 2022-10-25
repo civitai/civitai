@@ -7,7 +7,8 @@ export function DescriptionTable({ items, title, ...props }: Props) {
       <Box
         component="td"
         sx={(theme) => ({
-          backgroundColor: theme.colors.gray[0],
+          backgroundColor:
+            theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
         })}
       >
         {typeof item.label === 'string' ? <Text weight="500">{item.label}</Text> : item.label}
@@ -28,7 +29,13 @@ export function DescriptionTable({ items, title, ...props }: Props) {
       <Table
         withColumnBorders
         {...props}
-        sx={{ borderTop: title ? '1px rgb(222, 226, 230) solid' : undefined }}
+        sx={(theme) => ({
+          borderTop: title
+            ? `1px ${
+                theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+              } solid`
+            : undefined,
+        })}
       >
         <Box component="tbody">{rows}</Box>
       </Table>

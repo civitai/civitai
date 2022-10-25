@@ -13,7 +13,7 @@ import {
   Title,
 } from '@mantine/core';
 import { Dropzone, FileWithPath, IMAGE_MIME_TYPE } from '@mantine/dropzone';
-import { randomId, useListState } from '@mantine/hooks';
+import { useListState } from '@mantine/hooks';
 import { IconZoomIn, IconGripVertical } from '@tabler/icons';
 import React, { useEffect } from 'react';
 import { SortableGrid } from '~/components/SortableGrid/SortableGrid';
@@ -65,9 +65,16 @@ const useStyles = createStyles((_theme, _params, getRef) => ({
   },
 }));
 
-export function FileDrop({ title, errors, onDrop, onDragEnd, onDeleteFiles }: Props) {
+export function FileDrop({
+  title,
+  errors,
+  files: initialFiles = [],
+  onDrop,
+  onDragEnd,
+  onDeleteFiles,
+}: Props) {
   const { classes, cx } = useStyles();
-  const [files, filesHandlers] = useListState<CustomFile>([]);
+  const [files, filesHandlers] = useListState<CustomFile>(initialFiles);
   const [selectedFiles, selectedFilesHandlers] = useListState<string>([]);
 
   const { uploadToS3, files: imageFiles } = useS3Upload();
@@ -76,7 +83,8 @@ export function FileDrop({ title, errors, onDrop, onDragEnd, onDeleteFiles }: Pr
     filesHandlers.setState((current) => [
       ...current,
       ...droppedFiles.map((file) => ({
-        id: randomId(),
+        // TODO: revisit unique number generator if it's giving issues
+        id: Math.floor((Date.now() * Math.random()) / 1000),
         name: file.name,
         url: URL.createObjectURL(file),
         file,
@@ -108,8 +116,8 @@ export function FileDrop({ title, errors, onDrop, onDragEnd, onDeleteFiles }: Pr
     if (active.id !== over?.id) {
       filesHandlers.setState((items) => {
         const ids = items.map(({ id }) => id);
-        const oldIndex = ids.indexOf(active.id as string);
-        const newIndex = ids.indexOf(over?.id as string);
+        const oldIndex = ids.indexOf(active.id as number);
+        const newIndex = ids.indexOf(over?.id as number);
         const sorted = arrayMove(items, oldIndex, newIndex);
 
         onDragEnd?.(sorted);
@@ -266,9 +274,10 @@ export function FileDrop({ title, errors, onDrop, onDragEnd, onDeleteFiles }: Pr
 }
 
 type Props = {
-  title?: string;
   onDrop: (files: Array<{ name: string; url: string }>) => void;
-  onDragEnd?: (files: CustomFile[]) => void;
   onDeleteFiles: (fileIds: string[]) => void;
+  title?: string;
+  onDragEnd?: (files: CustomFile[]) => void;
   errors?: string;
+  files?: CustomFile[];
 };

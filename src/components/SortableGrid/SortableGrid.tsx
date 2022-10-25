@@ -75,4 +75,4 @@ function SortableItem({ id, children, disabled = false }: SortableItemProps) {
   );
 }
 
-type SortableItemProps = { id: string; children: React.ReactNode; disabled: boolean };
+type SortableItemProps = { id: number | string; children: React.ReactNode; disabled: boolean };
