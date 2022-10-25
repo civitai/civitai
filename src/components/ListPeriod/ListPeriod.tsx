@@ -1,19 +1,21 @@
-import { useModelStore } from '~/hooks/useModelStore';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { MetricTimeframe } from '@prisma/client';
 import { splitUppercase } from './../../utils/string-helpers';
+import { useModelFilters } from '~/hooks/useModelFilters';
 
 const periodOptions = Object.values(MetricTimeframe);
 
 export function ListPeriod() {
-  const period = useModelStore((state) => state.filters.period);
-  const setPeriod = useModelStore((state) => state.setPeriod);
+  const {
+    filters: { period },
+    setFilters,
+  } = useModelFilters();
 
   return (
     <SelectMenu
       label={period && splitUppercase(period.toString())}
       options={periodOptions.map((option) => ({ label: splitUppercase(option), value: option }))}
-      onClick={setPeriod}
+      onClick={(period) => setFilters((state) => ({ ...state, period }))}
       value={period}
     />
   );

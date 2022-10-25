@@ -5,16 +5,16 @@ import { trpc } from '~/utils/trpc';
 import { GetAllModelsReturnType } from '~/server/services/models/getAllModels';
 import { useInView } from 'react-intersection-observer';
 import { MasonryList } from '~/components/MasonryList/MasonryList';
-import { useModelStore } from '~/hooks/useModelStore';
 import { ListSort } from '~/components/ListSort/ListSort';
 import { IsHydrated } from '~/components/IsHydrated/IsHydrated';
 import { ListPeriod } from '~/components/ListPeriod/ListPeriod';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
+import { useModelFilters } from '~/hooks/useModelFilters';
 
 function Home() {
   const { ref, inView } = useInView();
 
-  const filters = useModelStore((state) => state.filters);
+  const { filters } = useModelFilters();
 
   const {
     data,

@@ -1,6 +1,5 @@
 import {
   Anchor,
-  Autocomplete,
   Avatar,
   Burger,
   Button,
@@ -18,7 +17,6 @@ import {
   IconFile,
   IconHeart,
   IconLogout,
-  IconSearch,
   IconSettings,
   IconStar,
 } from '@tabler/icons';
@@ -26,6 +24,8 @@ import { signOut, useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { ColorSchemeToggle } from '~/components/ColorSchemeToggle/ColorSchemeToggle';
+import { IsHydrated } from '~/components/IsHydrated/IsHydrated';
+import { ListSearch } from '~/components/ListSearch/ListSearch';
 
 const useStyles = createStyles((theme) => ({
   inner: {
@@ -107,12 +107,15 @@ export function AppHeader({ links }: Props) {
               <Title>MS</Title>
             </Anchor>
           </Link>
-          <Autocomplete
+          {/* <Autocomplete
             className={classes.search}
             placeholder="Search"
             icon={<IconSearch size={16} stroke={1.5} />}
             data={['React', 'Angular', 'Vue', 'Next.js', 'Riot.js', 'Svelte', 'Blitz.js']}
-          />
+          /> */}
+          <IsHydrated>
+            <ListSearch />
+          </IsHydrated>
         </Group>
         <Group spacing="sm">
           <Group spacing="sm" className={classes.links}>

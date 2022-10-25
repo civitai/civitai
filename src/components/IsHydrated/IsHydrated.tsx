@@ -1,8 +1,8 @@
-import { useHasHydrated } from '../../hooks/useHasHydrated';
 import { ReactNode } from 'react';
+import useIsClient from '~/hooks/useIsClient';
 
 export function IsHydrated({ children }: { children: ReactNode }) {
-  const isHydrated = useHasHydrated();
-  if (!isHydrated) return null;
+  const isClient = useIsClient();
+  if (!isClient) return null;
   return <>{children}</>;
 }

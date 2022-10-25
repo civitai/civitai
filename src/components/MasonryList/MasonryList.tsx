@@ -18,7 +18,7 @@ import {
 } from 'masonic';
 import Image from 'next/image';
 import Link from 'next/link';
-import React, { useMemo, useEffect, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { GetAllModelsReturnType } from '~/server/services/models/getAllModels';
 import { useWindowSize } from '@react-hook/window-size';
 import { getRandom } from './../../utils/array-helpers';
@@ -26,6 +26,7 @@ import { useModelStore } from '~/hooks/useModelStore';
 import { useInView } from 'react-intersection-observer';
 import { IconDownload } from '@tabler/icons';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { useModelFilters } from '~/hooks/useModelFilters';
 
 type MasonryListProps = {
   columnWidth: number;
@@ -35,7 +36,7 @@ type MasonryListProps = {
 // https://github.com/jaredLunde/masonic
 export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
   // use stringified filters as key for positioner dependency array
-  const filters = useModelStore((state) => state.filters);
+  const { filters } = useModelFilters();
   const stringified = JSON.stringify(filters);
 
   const selectedIndex = useModelStore((state) => state.index);
@@ -69,7 +70,7 @@ export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
     height,
     containerRef,
     items: data,
-    overscanBy: Infinity,
+    overscanBy: 10,
     render: MasonryItem,
   });
 }

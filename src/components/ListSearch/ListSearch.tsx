@@ -1,31 +1,34 @@
 import { Popover, Text, Stack, Box, NavLink } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { trpc } from '~/utils/trpc';
 import { ClearableTextInput } from './../ClearableTextInput/ClearableTextInput';
-import { useModelStore } from '~/hooks/useModelStore';
 import { useForm } from '@mantine/form';
+import { useRouter } from 'next/router';
+import { useModelFilters } from '~/hooks/useModelFilters';
 
 const limit = 3;
 
 export function ListSearch() {
+  const router = useRouter();
+  const {
+    filters: { tag, query },
+    setFilters,
+  } = useModelFilters();
   const inputRef = useRef<HTMLInputElement>(null);
   const [focused, setFocused] = useState(false);
-  const [query, setQuery] = useDebouncedState('', 200);
-
-  const filterQuery = useModelStore((state) => state.filters.query);
-  const filterTag = useModelStore((state) => state.filters.tag);
-  const setFilterTag = useModelStore((state) => state.setTags);
-  const setFilterQuery = useModelStore((state) => state.setQuery);
+  const [value, setValue] = useDebouncedState('', 200);
 
   const form = useForm({
     initialValues: {
-      query: filterQuery ?? filterTag ? `#${filterTag}` : '',
+      query: '',
     },
   });
 
-  const canQueryTags = query.startsWith('#') ? query.length > 1 : !query.startsWith('@');
+  useEffect(() => {
+    form.setValues({ query: router.route === '/' ? (query ?? tag ? `#${tag}` : '') : '' });
+  }, [router.route, query, tag]); //eslint-disable-line
 
   // const canQueryUsers = query.startsWith('@') ? query.length > 1 : !query.startsWith('#');
 
@@ -34,35 +37,38 @@ export function ListSearch() {
   //   { enabled: !!query.length && canQueryUsers }
   // );
 
-  const parseTagQuery = (query: string) => (query.startsWith('#') ? query.substring(1) : query);
+  const canQueryTags = value.startsWith('#') ? value.length > 1 : !value.startsWith('@');
+  const parseTagQuery = (query: string) =>
+    query.startsWith('#') ? query.substring(1).toLowerCase() : query.toLowerCase();
+
   const { data: tags } = trpc.tag.getAll.useQuery(
-    { query: parseTagQuery(query), limit },
-    { enabled: !!query.length && canQueryTags, keepPreviousData: true }
+    { query: parseTagQuery(value), limit },
+    { enabled: !!value.length && canQueryTags, keepPreviousData: true }
   );
 
   const handleSetTags = (query: string) => {
     const parsedQuery = parseTagQuery(query);
-    const tag = tags?.find((x) => x.name === parsedQuery);
+    const tag = tags?.find((x) => x.name.toLowerCase() === parsedQuery);
     if (!tag) return;
-    setFilterTag(tag.name);
-    setFilterQuery(undefined);
+    setFilters((state) => ({ ...state, tag: tag.name, query: undefined }));
   };
 
   const handleSetQuery = (query: string) => {
-    setFilterQuery(query);
-    setFilterTag(undefined);
+    setFilters((state) => ({ ...state, tag: undefined, query }));
   };
 
   const handleClear = () => {
-    setFilterQuery(undefined);
-    setFilterTag(undefined);
+    setFilters((state) => ({ ...state, tag: undefined, query: undefined }));
   };
 
-  const hasQueriedTags = tags?.some((x) => x.name.toLowerCase().includes(query.toLowerCase()));
+  const hasQueriedTags = tags?.some((x) => {
+    const parsedQuery = parseTagQuery(value);
+    return !!parsedQuery.length ? x.name.toLowerCase().includes(parsedQuery) : false;
+  });
 
   return (
     <Popover
-      opened={!!tags?.length && focused && !!query.length && hasQueriedTags}
+      opened={!!tags?.length && focused && !!value.length && hasQueriedTags}
       width="target"
       transition="pop"
     >
@@ -82,7 +88,7 @@ export function ListSearch() {
             onBlur={() => setFocused(false)}
             onChange={(e) => {
               form.setValues({ query: e.target.value });
-              setQuery(e.target.value);
+              setValue(e.target.value);
             }}
             onClear={handleClear}
             ref={inputRef}
@@ -103,7 +109,7 @@ export function ListSearch() {
               </Box>
             </Stack>
           )} */}
-          {tags?.some((x) => x.name.toLowerCase().includes(query.toLowerCase())) && (
+          {tags?.some((x) => x.name.toLowerCase().includes(parseTagQuery(value))) && (
             <Stack spacing={5}>
               <Text size="sm" weight={700} color="dimmed" px="xs">
                 Tags
