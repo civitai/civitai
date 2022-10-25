@@ -32,8 +32,6 @@ export const getAllModelsSchema = z.object({
 
 export const getAllModels = async (input: z.infer<typeof getAllModelsSchema>) => {
   const { cursor, limit = 50, period = MetricTimeframe.AllTime } = input;
-  console.log('___INPUT___');
-  console.log({ input });
   const items = await prisma.model.findMany({
     take: limit + 1, // get an extra item at the end which we'll use as next cursor
     cursor: cursor ? { id: cursor } : undefined,

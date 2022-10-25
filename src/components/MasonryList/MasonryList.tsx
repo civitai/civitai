@@ -163,16 +163,17 @@ const MasonryItem = ({
 
 const useStyles = createStyles((theme) => {
   const base = theme.colors[getRandom(mantineColors)];
+  const background = theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0];
 
   return {
     card: {
       height: '300px',
       cursor: 'pointer',
-      background: theme.fn.gradient({ from: base[6], to: base[3] }),
+      background: theme.fn.gradient({ from: base[9], to: background, deg: 180 }),
     },
 
     content: {
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+      background,
       position: 'absolute',
       bottom: 0,
       right: 0,

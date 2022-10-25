@@ -24,7 +24,6 @@ import { signOut, useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { ColorSchemeToggle } from '~/components/ColorSchemeToggle/ColorSchemeToggle';
-import { IsHydrated } from '~/components/IsHydrated/IsHydrated';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 
 const useStyles = createStyles((theme) => ({
@@ -113,9 +112,7 @@ export function AppHeader({ links }: Props) {
             icon={<IconSearch size={16} stroke={1.5} />}
             data={['React', 'Angular', 'Vue', 'Next.js', 'Riot.js', 'Svelte', 'Blitz.js']}
           /> */}
-          <IsHydrated>
-            <ListSearch />
-          </IsHydrated>
+          <ListSearch />
         </Group>
         <Group spacing="sm">
           <Group spacing="sm" className={classes.links}>
