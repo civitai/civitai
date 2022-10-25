@@ -173,7 +173,11 @@ export function AppHeader({ links }: Props) {
                   </Menu.Item>
 
                   <Menu.Label>Settings</Menu.Label>
-                  <Menu.Item icon={<IconSettings size={14} stroke={1.5} />}>
+                  <Menu.Item
+                    icon={<IconSettings size={14} stroke={1.5} />}
+                    component={NextLink}
+                    href="/user/account"
+                  >
                     Account settings
                   </Menu.Item>
                   <Menu.Item

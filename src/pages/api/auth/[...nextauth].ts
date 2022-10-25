@@ -20,6 +20,8 @@ export const authOptions: NextAuthOptions = {
 
       if (localSession.user) {
         localSession.user.id = Number(user.id);
+        localSession.user.showNsfw = user.showNsfw;
+        localSession.user.blurNsfw = user.blurNsfw;
       }
 
       return localSession;
@@ -46,7 +48,11 @@ export const authOptions: NextAuthOptions = {
   },
 };
 
-export const getSessionUser = async (ctx: GetServerSidePropsContext<ParsedUrlQuery, PreviewData>) =>
-  getServerAuthSession(ctx);
+export const getSessionUser = async (
+  ctx: GetServerSidePropsContext<ParsedUrlQuery, PreviewData>
+) => {
+  const session = await getServerAuthSession(ctx);
+  return session?.user;
+};
 
 export default NextAuth(authOptions);
