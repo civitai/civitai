@@ -6,8 +6,12 @@ import { modelWithDetailsSelect } from '~/server/services/models/getById';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
 
 export const modelRouter = router({
-  getAll: publicProcedure.input(getAllModelsSchema).query(async ({ input = {} }) => {
+  getAll: publicProcedure.input(getAllModelsSchema).query(async ({ input = {}, ctx }) => {
     try {
+      const user = ctx.session;
+      //TODO - pass filters from user session for viewing nsfw content
+      console.log('___USER___');
+      console.log({ user });
       return await getAllModels(input);
     } catch (error) {
       return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });

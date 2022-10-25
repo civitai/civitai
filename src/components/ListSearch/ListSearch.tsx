@@ -87,7 +87,7 @@ export function ListSearch() {
             {...form.getInputProps('query')}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
-            onChange={(e) => {
+            onChange={(e: any) => {
               form.setValues({ query: e.target.value });
               setValue(e.target.value);
             }}

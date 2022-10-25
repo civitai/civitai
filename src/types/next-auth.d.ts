@@ -7,6 +7,8 @@ declare module 'next-auth' {
   interface Session {
     user?: {
       id: number;
+      showNsfw: boolean;
+      blurNsfw: boolean;
     } & DefaultSession['user'];
   }
 }

@@ -5,19 +5,19 @@ import { ModelSort } from '~/server/common/enums';
 
 export type GetAllModelsReturnType = Awaited<ReturnType<typeof getAllModels>>;
 
-const timeframeDaysMap: Record<MetricTimeframe, number> = {
-  [MetricTimeframe.Day]: 1,
-  [MetricTimeframe.Week]: 7,
-  [MetricTimeframe.Month]: 30,
-  [MetricTimeframe.Year]: 365,
-  [MetricTimeframe.AllTime]: 365 * 10,
-};
+// const timeframeDaysMap: Record<MetricTimeframe, number> = {
+//   [MetricTimeframe.Day]: 1,
+//   [MetricTimeframe.Week]: 7,
+//   [MetricTimeframe.Month]: 30,
+//   [MetricTimeframe.Year]: 365,
+//   [MetricTimeframe.AllTime]: 365 * 10,
+// };
 
-const getSinceDate = (timeframe: MetricTimeframe) => {
-  const sinceDate = new Date();
-  sinceDate.setDate(sinceDate.getDate() - timeframeDaysMap[timeframe]);
-  return sinceDate;
-};
+// const getSinceDate = (timeframe: MetricTimeframe) => {
+//   const sinceDate = new Date();
+//   sinceDate.setDate(sinceDate.getDate() - timeframeDaysMap[timeframe]);
+//   return sinceDate;
+// };
 
 export const getAllModelsSchema = z.object({
   limit: z.number().min(1).max(200).optional(),
@@ -36,14 +36,6 @@ export const getAllModels = async (input: z.infer<typeof getAllModelsSchema>) =>
     take: limit + 1, // get an extra item at the end which we'll use as next cursor
     cursor: cursor ? { id: cursor } : undefined,
     where: {
-      // only return items that have been ranked
-      // rank: input.sort ? { modelId: { not: undefined } } : undefined,
-      createdAt:
-        period !== MetricTimeframe.AllTime
-          ? {
-              gte: getSinceDate(period),
-            }
-          : undefined,
       name: input.query
         ? {
             contains: input.query,
@@ -98,6 +90,7 @@ export const getAllModels = async (input: z.infer<typeof getAllModelsSchema>) =>
       id: true,
       name: true,
       type: true,
+      nsfw: true,
       modelVersions: {
         orderBy: {
           id: 'asc',

@@ -115,7 +115,7 @@ const MasonryItem = ({
   // }, [width, image.width, image.height]);
 
   return (
-    <Link href={`models/${id}`}>
+    <Link href={`models/${id}`} prefetch={false}>
       <Card
         ref={ref}
         withBorder

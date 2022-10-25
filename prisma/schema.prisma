@@ -45,9 +45,12 @@ model Session {
 model User {
   id            Int       @id @default(autoincrement())
   name          String?
+  username      String?   @unique
   email         String?   @unique
   emailVerified DateTime?
   image         String?
+  showNsfw      Boolean?  @default(false)
+  blurNsfw      Boolean?  @default(true)
 
   accounts        Account[]
   sessions        Session[]
