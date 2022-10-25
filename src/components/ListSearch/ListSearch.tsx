@@ -27,7 +27,7 @@ export function ListSearch() {
   });
 
   useEffect(() => {
-    form.setValues({ query: router.route === '/' ? (query ?? tag ? `#${tag}` : '') : '' });
+    form.setValues({ query: router.route === '/' ? query ?? (tag ? `#${tag}` : '') : '' });
   }, [router.route, query, tag]); //eslint-disable-line
 
   // const canQueryUsers = query.startsWith('@') ? query.length > 1 : !query.startsWith('#');
@@ -75,6 +75,7 @@ export function ListSearch() {
       <Popover.Target>
         <form
           onSubmit={form.onSubmit(({ query }) => {
+            console.log({ query });
             if (query.startsWith('#')) handleSetTags(query);
             else handleSetQuery(query);
             inputRef.current?.blur();
