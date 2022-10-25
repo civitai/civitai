@@ -17,7 +17,7 @@ import {
 } from '@mantine/core';
 import { useForm, zodResolver } from '@mantine/form';
 import { showNotification } from '@mantine/notifications';
-import { Model } from '@prisma/client';
+import { Model, ModelType } from '@prisma/client';
 import { IconCheck, IconX, IconArrowLeft, IconPlus, IconTrash } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import React from 'react';
@@ -33,7 +33,8 @@ type CreateModelProps = z.infer<typeof modelSchema>;
 
 export function ModelForm({ model }: Props) {
   const router = useRouter();
-  const initialFormData = model
+  const editing = !!model;
+  const initialFormData = editing
     ? ({
         ...model,
         tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
@@ -43,44 +44,46 @@ export function ModelForm({ model }: Props) {
             images: version.images.map(({ image }) => image),
           })) ?? [],
       } as CreateModelProps)
-    : null;
+    : {
+        id: 0,
+        name: '',
+        description: '',
+        trainedWords: [],
+        type: ModelType.Checkpoint,
+        tagsOnModels: [],
+        nsfw: false,
+        modelVersions: [
+          {
+            id: 0,
+            name: '',
+            description: '',
+            url: '',
+            epochs: 0,
+            steps: 0,
+            sizeKB: 0,
+            trainingDataUrl: '',
+            images: [],
+          },
+        ],
+      };
   const form = useForm<CreateModelProps>({
     validate: zodResolver(modelSchema.passthrough()),
-    initialValues: initialFormData ?? {
-      id: 0,
-      name: '',
-      description: '',
-      trainedWords: [],
-      type: 'Checkpoint',
-      tagsOnModels: [],
-      nsfw: false,
-      modelVersions: [
-        {
-          id: 0,
-          name: '',
-          description: '',
-          url: '',
-          epochs: 0,
-          steps: 0,
-          sizeKB: 0,
-          trainingDataUrl: '',
-          images: [],
-        },
-      ],
-    },
+    initialValues: initialFormData,
   });
 
   const addMutation = trpc.model.add.useMutation();
   const updateMutation = trpc.model.update.useMutation();
 
   const handleSubmit = async (data: CreateModelProps) => {
-    await addMutation.mutateAsync(data, {
+    const mutation = editing ? updateMutation : addMutation;
+
+    await mutation.mutateAsync(data, {
       onSuccess(results) {
         const response = results as Model;
 
         showNotification({
-          title: 'Your model was uploaded',
-          message: 'Successfully created the model',
+          title: 'Your model was saved',
+          message: `Successfully ${editing ? 'updated' : 'created'} the model`,
           color: 'teal',
           icon: <IconCheck size={18} />,
         });
@@ -90,8 +93,8 @@ export function ModelForm({ model }: Props) {
         const message = error.message;
 
         showNotification({
-          title: 'Could not upload model',
-          message: `An error occurred while uploading the model: ${message}`,
+          title: 'Could not save model',
+          message: `An error occurred while saving the model: ${message}`,
           color: 'red',
           icon: <IconX size={18} />,
         });
@@ -102,7 +105,7 @@ export function ModelForm({ model }: Props) {
   const handleOnDrop = (modelIndex: number) => (files: Array<{ name: string; url: string }>) => {
     form.setFieldValue(
       `modelVersions.${modelIndex}.images`,
-      files.map((file) => ({ image: { ...file } }))
+      files.map((file) => ({ ...file }))
     );
   };
 
@@ -177,6 +180,7 @@ export function ModelForm({ model }: Props) {
                       variant="outline"
                       onClick={() =>
                         form.insertListItem('modelVersions', {
+                          id: Math.floor((Date.now() * Math.random()) / 1000),
                           name: '',
                           description: '',
                           url: '',
@@ -194,7 +198,7 @@ export function ModelForm({ model }: Props) {
                   </Group>
                   <Stack sx={{ flexDirection: 'column-reverse' }}>
                     {form.values.modelVersions?.map((version, index) => (
-                      <React.Fragment key={version.id ?? index}>
+                      <React.Fragment key={version.id}>
                         <Group p="sm" sx={{ position: 'relative' }}>
                           {versionsCount > 1 && (
                             <ActionIcon
@@ -282,7 +286,7 @@ export function ModelForm({ model }: Props) {
                             <Grid.Col span={12}>
                               <FileDrop
                                 title="Example Images"
-                                files={form.values.modelVersions[index].images}
+                                files={form.values.modelVersions[index].images as CustomFile[]}
                                 onDrop={handleOnDrop(index)}
                                 onDragEnd={handleOnDrop(index)}
                                 onDeleteFiles={(ids: string[]) => {

@@ -2,7 +2,7 @@ import { ModelType } from '@prisma/client';
 import { z } from 'zod';
 
 export const imageSchema = z.object({
-  id: z.number(),
+  id: z.number().optional(),
   name: z.string(),
   url: z.string(),
   prompt: z.string().nullish(),
@@ -18,7 +18,7 @@ export const tagSchema = z.object({
 });
 
 export const modelVersionSchema = z.object({
-  id: z.number().nullish(),
+  id: z.number(),
   name: z.string().min(1, 'Name cannot be empty.'),
   description: z.string().nullish(),
   url: z.string().url().min(1, 'You must select a file'),
@@ -30,7 +30,7 @@ export const modelVersionSchema = z.object({
 });
 
 export const modelSchema = z.object({
-  id: z.number().nullish(),
+  id: z.number(),
   name: z.string().min(1, 'Name cannot be empty.'),
   description: z.string().nullish(),
   type: z.nativeEnum(ModelType),

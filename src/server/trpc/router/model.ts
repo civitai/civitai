@@ -1,4 +1,3 @@
-import { ModelType } from '@prisma/client';
 import { z } from 'zod';
 import { modelSchema } from '~/server/common/validation/model';
 import { handleDbError } from '~/server/services/errorHandling';
@@ -37,7 +36,7 @@ export const modelRouter = router({
   add: protectedProcedure.input(modelSchema).mutation(async ({ ctx, input }) => {
     try {
       const userId = ctx.session.user.id;
-      const { id, modelVersions, tagsOnModels, ...data } = input;
+      const { modelVersions, tagsOnModels, ...data } = input;
       const createdModels = await ctx.prisma.model.create({
         data: {
           ...data,
@@ -64,33 +63,57 @@ export const modelRouter = router({
       return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
     }
   }),
-  update: protectedProcedure
-    .input(
-      z.object({
-        id: z.number(),
-        name: z.string(),
-        description: z.string(),
-        type: z.nativeEnum(ModelType),
-        trainedWords: z.array(z.string()),
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      try {
-        const { id, ...data } = input;
-        const model = await ctx.prisma.model.update({ where: { id }, data });
+  update: protectedProcedure.input(modelSchema).mutation(async ({ ctx, input }) => {
+    try {
+      const userId = ctx.session.user.id;
+      const { id, modelVersions, tagsOnModels, ...data } = input;
+      const model = await ctx.prisma.model.update({
+        where: { id },
+        data: {
+          ...data,
+          modelVersions: {
+            upsert: modelVersions.map(({ id, images, ...version }) => ({
+              where: { id },
+              create: {
+                ...version,
+                images: {
+                  create: images.map((image, index) => ({
+                    index,
+                    image: { create: { name: image.name, url: image.url, userId } },
+                  })),
+                },
+              },
+              update: {
+                ...version,
+                images: {
+                  set: [],
+                  create: images.map((image, index) => ({
+                    index,
+                    image: { create: { name: image.name, url: image.url, userId } },
+                  })),
+                },
+              },
+            })),
+          },
+          tagsOnModels: {
+            set: [],
+            create: tagsOnModels?.map((tag) => ({ tag: { create: { name: tag } } })),
+          },
+        },
+      });
 
-        if (!model) {
-          return handleDbError({
-            code: 'NOT_FOUND',
-            message: `No model with id ${id}`,
-          });
-        }
-
-        return model;
-      } catch (error) {
-        return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+      if (!model) {
+        return handleDbError({
+          code: 'NOT_FOUND',
+          message: `No model with id ${id}`,
+        });
       }
-    }),
+
+      return model;
+    } catch (error) {
+      return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    }
+  }),
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {

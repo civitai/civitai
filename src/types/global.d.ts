@@ -14,9 +14,9 @@ declare global {
   type BaseEntity = { id: number | string } & MixedObject;
 
   type CustomFile = {
+    id: number;
     url: string;
     name: string;
-    id: number;
     file?: FileWithPath;
   };
 }

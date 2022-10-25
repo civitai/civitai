@@ -70,7 +70,7 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
   const { id } = props;
   const { edit } = router.query;
 
-  const { data: model, isLoading, isFetching } = trpc.model.getById.useQuery({ id });
+  const { data: model } = trpc.model.getById.useQuery({ id });
 
   if (!!edit && model) return <ModelForm model={model} />;
 
@@ -114,7 +114,7 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
               <Menu position="bottom-end" transition="pop-top-right">
                 <Menu.Target>
                   <ActionIcon variant="outline">
-                    <IconDotsVertical color={theme.colors.dark[6]} size={16} />
+                    <IconDotsVertical size={16} />
                   </ActionIcon>
                 </Menu.Target>
 
