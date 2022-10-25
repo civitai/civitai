@@ -3,53 +3,8 @@ import { z } from 'zod';
 import { modelSchema } from '~/server/common/validation/model';
 import { handleDbError } from '~/server/services/errorHandling';
 import { getAllModels, getAllModelsSchema } from '~/server/services/models/getAllModels';
+import { modelWithDetailsSelect } from '~/server/services/models/getById';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
-
-const baseQuerySelect = {
-  id: true,
-  name: true,
-  description: true,
-  trainedWords: true,
-  nsfw: true,
-  type: true,
-  updatedAt: true,
-  user: {
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      image: true,
-    },
-  },
-  modelVersions: {
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      steps: true,
-      epochs: true,
-      trainingDataUrl: true,
-      url: true,
-      sizeKB: true,
-      images: {
-        select: {
-          index: true,
-          image: {
-            select: {
-              id: true,
-              name: true,
-              url: true,
-              nsfw: true,
-              prompt: true,
-            },
-          },
-        },
-      },
-    },
-  },
-  reviews: { select: { text: true, rating: true, user: true } },
-  tagsOnModels: { select: { tag: true } },
-};
 
 export const modelRouter = router({
   getAll: publicProcedure.input(getAllModelsSchema).query(async ({ input = {} }) => {
@@ -64,7 +19,7 @@ export const modelRouter = router({
       const { id } = input;
       const model = await ctx.prisma.model.findUnique({
         where: { id },
-        select: baseQuerySelect,
+        select: modelWithDetailsSelect,
       });
 
       if (!model) {
@@ -82,7 +37,7 @@ export const modelRouter = router({
   add: protectedProcedure.input(modelSchema).mutation(async ({ ctx, input }) => {
     try {
       const userId = ctx.session.user.id;
-      const { id, modelVersions, tags, ...data } = input;
+      const { id, modelVersions, tagsOnModels, ...data } = input;
       const createdModels = await ctx.prisma.model.create({
         data: {
           ...data,
@@ -93,13 +48,13 @@ export const modelRouter = router({
               images: {
                 create: images.map((image, index) => ({
                   index,
-                  image: { create: { name: image.name, url: image.url, userId: image.userId } },
+                  image: { create: { name: image.name, url: image.url, userId } },
                 })),
               },
             })),
           },
           tagsOnModels: {
-            create: tags?.map((tag) => ({ tag: { create: { name: tag } } })),
+            create: tagsOnModels?.map((tag) => ({ tag: { create: { name: tag } } })),
           },
         },
       });

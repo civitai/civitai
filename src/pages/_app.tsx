@@ -1,17 +1,17 @@
 // src/pages/_app.tsx
 import { ColorScheme, ColorSchemeProvider, MantineProvider } from '@mantine/core';
+import { NotificationsProvider } from '@mantine/notifications';
 import { getCookie, setCookie } from 'cookies-next';
+import type { NextPage } from 'next';
+import type { AppContext, AppProps } from 'next/app';
+import App from 'next/app';
+import Head from 'next/head';
 import type { Session } from 'next-auth';
 import { SessionProvider } from 'next-auth/react';
-import type { AppContext, AppProps } from 'next/app';
-import { trpc } from '~/utils/trpc';
-import App from 'next/app';
-
-import { NotificationsProvider } from '@mantine/notifications';
-import type { NextPage } from 'next';
-import Head from 'next/head';
 import { ReactElement, ReactNode, useState } from 'react';
+
 import { AppLayout } from '~/components/AppLayout/AppLayout';
+import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 
 type CustomNextPage = NextPage & {
