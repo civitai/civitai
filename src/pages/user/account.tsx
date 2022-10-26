@@ -3,6 +3,8 @@ import { GetServerSideProps } from 'next';
 import { Session } from 'next-auth';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
 import { useForm } from '@mantine/form';
+import { signIn } from 'next-auth/react';
+import { trpc } from '~/utils/trpc';
 
 type Props = {
   user: Session['user'];
@@ -23,13 +25,20 @@ export const getServerSideProps: GetServerSideProps<Props> = async (context) => 
 };
 
 export default function Account({ user }: Props) {
+  const { mutateAsync, isLoading } = trpc.user.update.useMutation();
+
   const form = useForm({
     initialValues: user,
   });
 
   return (
     <Container p={0} size="xs">
-      <form onSubmit={form.onSubmit((values) => console.log({ values }))}>
+      <form
+        onSubmit={form.onSubmit(async (values) => {
+          await mutateAsync(values);
+          signIn();
+        })}
+      >
         <Stack>
           <Title>Manage Account</Title>
           <TextInput label="Username" required {...form.getInputProps('username')} />
@@ -43,7 +52,9 @@ export default function Account({ user }: Props) {
             checked={form.values.blurNsfw}
             {...form.getInputProps('blurNsfw')}
           />
-          <Button type="submit">Submit</Button>
+          <Button type="submit" loading={isLoading} disabled={!form.isDirty()}>
+            Save
+          </Button>
         </Stack>
       </form>
     </Container>

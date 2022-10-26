@@ -54,10 +54,14 @@ export const userRouter = router({
   }),
   update: protectedProcedure
     .input(
-      z.object({
-        id: z.number(),
-        name: z.string(),
-      })
+      z
+        .object({
+          id: z.number(),
+          username: z.string(),
+          showNsfw: z.boolean(),
+          blurNsfw: z.boolean(),
+        })
+        .partial()
     )
     .mutation(async ({ ctx, input }) => {
       try {
