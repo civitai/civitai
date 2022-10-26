@@ -38,7 +38,7 @@ function Home() {
   }, [inView]); //eslint-disable-line
 
   const models = useMemo(
-    (): GetAllModelsReturnType['items'] => data?.pages.flatMap((x) => x.items) ?? [],
+    (): GetAllModelsReturnType => data?.pages.flatMap((x) => x.items) ?? [],
     [data]
   );
 

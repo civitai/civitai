@@ -61,6 +61,8 @@ function MyApp(props: CustomAppProps<{ session: Session | null; colorScheme: Col
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const { pageProps, ...appProps } = await App.getInitialProps(appContext);
 
+  console.log('___INITIAL PROPS___');
+
   return {
     pageProps: {
       ...pageProps,

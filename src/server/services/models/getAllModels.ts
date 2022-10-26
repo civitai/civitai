@@ -1,9 +1,6 @@
-import { MetricTimeframe, ModelType } from '@prisma/client';
+import { MetricTimeframe, ModelType, Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { prisma } from '~/server/db/client';
 import { ModelSort } from '~/server/common/enums';
-
-export type GetAllModelsReturnType = Awaited<ReturnType<typeof getAllModels>>;
 
 // const timeframeDaysMap: Record<MetricTimeframe, number> = {
 //   [MetricTimeframe.Day]: 1,
@@ -28,111 +25,111 @@ export const getAllModelsSchema = z.object({
   type: z.nativeEnum(ModelType).optional(),
   sort: z.nativeEnum(ModelSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
+  showNsfw: z.boolean().optional(),
 });
 
-export const getAllModels = async (input: z.infer<typeof getAllModelsSchema>) => {
-  const { cursor, limit = 50, period = MetricTimeframe.AllTime } = input;
-  const items = await prisma.model.findMany({
-    take: limit + 1, // get an extra item at the end which we'll use as next cursor
-    cursor: cursor ? { id: cursor } : undefined,
-    where: {
-      name: input.query
-        ? {
-            contains: input.query,
-            mode: 'insensitive',
-          }
-        : undefined,
-      tagsOnModels: input.tag
-        ? {
-            some: {
-              tag: {
-                name: input.tag,
-              },
+export const getAllModelsWhere = (input: z.infer<typeof getAllModelsSchema>) =>
+  Prisma.validator<Prisma.ModelWhereInput>()({
+    name: input.query
+      ? {
+          contains: input.query,
+          mode: 'insensitive',
+        }
+      : undefined,
+    tagsOnModels: input.tag
+      ? {
+          some: {
+            tag: {
+              name: input.tag,
             },
-          }
-        : undefined,
-      user: input.user
-        ? {
-            name: input.user,
-          }
-        : undefined,
+          },
+        }
+      : undefined,
+    user: input.user
+      ? {
+          name: input.user,
+        }
+      : undefined,
+    type: input.type
+      ? {
+          equals: input?.type,
+        }
+      : undefined,
+    nsfw: input.showNsfw
+      ? undefined
+      : {
+          equals: false,
+        },
+  });
 
-      type: input.type
-        ? {
-            equals: input?.type,
-          }
-        : undefined,
+export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
+  id: true,
+  name: true,
+  type: true,
+  nsfw: true,
+  modelVersions: {
+    orderBy: {
+      id: 'asc',
     },
-    orderBy: [
-      ...(input.sort === ModelSort.HighestRated
-        ? [
-            {
-              rank: {
-                [`rating${period}`]: 'desc',
-              },
-            },
-          ]
-        : []),
-      ...(input.sort === ModelSort.MostDownloaded
-        ? [
-            {
-              rank: {
-                [`downloadCount${period}`]: 'desc',
-              },
-            },
-          ]
-        : []),
-      {
-        createdAt: 'desc',
-      },
-    ],
+    take: 1,
     select: {
-      id: true,
-      name: true,
-      type: true,
-      nsfw: true,
-      modelVersions: {
+      images: {
         orderBy: {
-          id: 'asc',
+          index: 'asc',
         },
         take: 1,
         select: {
-          images: {
-            orderBy: {
-              index: 'asc',
-            },
-            take: 1,
+          image: {
             select: {
-              image: {
-                select: {
-                  width: true,
-                  url: true,
-                  height: true,
-                  prompt: true,
-                  hash: true,
-                },
-              },
+              width: true,
+              url: true,
+              height: true,
+              prompt: true,
+              hash: true,
             },
           },
         },
       },
-      rank: {
-        select: {
-          downloadCountAllTime: true,
-          ratingCountAllTime: true,
-          ratingAllTime: true,
-        },
-      },
     },
-  });
+  },
+  rank: {
+    select: {
+      downloadCountAllTime: true,
+      ratingCountAllTime: true,
+      ratingAllTime: true,
+    },
+  },
+});
 
-  let nextCursor: typeof cursor | undefined = undefined;
-  if (items.length > limit) {
-    const nextItem = items.pop();
-    nextCursor = nextItem?.id;
-  }
+export const getAllModelsOrderBy = ({
+  period = MetricTimeframe.AllTime,
+}: z.infer<typeof getAllModelsSchema>) =>
+  Prisma.validator<Prisma.Enumerable<Prisma.ModelOrderByWithRelationInput>>()([
+    {
+      rank: {
+        [`rating${period}`]: 'desc',
+      },
+    } as never,
+    {
+      rank: {
+        [`downloadCount${period}`]: 'desc',
+      },
+    } as never,
+    {
+      createdAt: 'desc',
+    },
+  ]);
 
-  const models = items.map(({ rank, modelVersions, ...item }) => {
+const modelList = Prisma.validator<Prisma.ModelArgs>()({
+  select: getAllModelsSelect,
+});
+
+type ModelListProps = Prisma.ModelGetPayload<typeof modelList>;
+
+export type GetAllModelsReturnType = ReturnType<typeof getAllModelsTransform>;
+
+export const getAllModelsTransform = (items: ModelListProps[]) =>
+  items.map(({ rank, modelVersions, ...item }) => {
     return {
       ...item,
       image: modelVersions[0]?.images[0]?.image ?? {},
@@ -143,6 +140,3 @@ export const getAllModels = async (input: z.infer<typeof getAllModelsSchema>) =>
       },
     };
   });
-
-  return { items: models, nextCursor };
-};

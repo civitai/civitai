@@ -1,4 +1,5 @@
 import { ModelType, ReviewReactions, PrismaClient } from '@prisma/client';
+import { getRandomInt } from '../src/utils/number-helpers';
 
 const prisma = new PrismaClient();
 
@@ -7,11 +8,7 @@ const getRandomItems = <T>(array: T[], quantity: number) => {
   const shuffled = [...array].sort(() => 0.5 - Math.random());
   return shuffled.slice(0, quantity);
 };
-const getRandomInt = (min: number, max: number) => {
-  const intMin = Math.ceil(min);
-  const intMax = Math.floor(max);
-  return Math.floor(Math.random() * (intMax - intMin + 1)) + intMin;
-};
+
 const trainedWords = [
   'jump',
   'roll over',
@@ -259,7 +256,11 @@ async function clearSeed() {
   await prisma.image.deleteMany();
 }
 
-seed()
+async function clearUser() {
+  await prisma.user.delete({ where: { email: 'bkdiehl@gmail.com' } });
+}
+
+clearUser()
   .catch(async (e) => {
     console.error('ERROR:', e);
     await prisma.$disconnect();

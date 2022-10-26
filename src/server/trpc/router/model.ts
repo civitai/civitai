@@ -1,18 +1,40 @@
+import { MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
 import { modelSchema } from '~/server/common/validation/model';
 import { handleDbError } from '~/server/services/errorHandling';
-import { getAllModels, getAllModelsSchema } from '~/server/services/models/getAllModels';
+import {
+  getAllModelsOrderBy,
+  getAllModelsSchema,
+  getAllModelsSelect,
+  getAllModelsTransform,
+  getAllModelsWhere,
+} from '~/server/services/models/getAllModels';
 import { modelWithDetailsSelect } from '~/server/services/models/getById';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
 
 export const modelRouter = router({
-  getAll: publicProcedure.input(getAllModelsSchema).query(async ({ input = {}, ctx }) => {
+  getAll: publicProcedure.input(getAllModelsSchema).query(async ({ ctx, input = {} }) => {
     try {
-      const user = ctx.session;
-      //TODO - pass filters from user session for viewing nsfw content
-      console.log('___USER___');
-      console.log({ user });
-      return await getAllModels(input);
+      const session = ctx.session;
+      const { cursor, limit = 50 } = input;
+      input.showNsfw = session?.user?.showNsfw;
+
+      const items = await ctx.prisma.model.findMany({
+        take: limit + 1, // get an extra item at the end which we'll use as next cursor
+        cursor: cursor ? { id: cursor } : undefined,
+        where: getAllModelsWhere(input),
+        orderBy: getAllModelsOrderBy(input),
+        select: getAllModelsSelect,
+      });
+
+      let nextCursor: typeof cursor | undefined = undefined;
+      if (items.length > limit) {
+        const nextItem = items.pop();
+        nextCursor = nextItem?.id;
+      }
+
+      const models = getAllModelsTransform(items);
+      return { items: models, nextCursor };
     } catch (error) {
       return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
     }

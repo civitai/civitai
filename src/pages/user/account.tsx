@@ -1,19 +1,17 @@
-import { Container, Stack, Switch, TextInput, Title } from '@mantine/core';
+import { Button, Container, Stack, Switch, TextInput, Title } from '@mantine/core';
 import { GetServerSideProps } from 'next';
-import { useState } from 'react';
-import { getSessionUser } from '~/pages/api/auth/[...nextauth]';
+import { Session } from 'next-auth';
+import { getServerAuthSession } from '~/server/common/get-server-auth-session';
+import { useForm } from '@mantine/form';
 
 type Props = {
-  user: Awaited<ReturnType<typeof getUserById>>;
+  user: Session['user'];
 };
 
-const getUserById = async (id?: number) => await prisma?.user.findUnique({ where: { id } });
-
 export const getServerSideProps: GetServerSideProps<Props> = async (context) => {
-  const sessionUser = await getSessionUser(context);
-  const user = await getUserById(sessionUser?.id);
+  const session = await getServerAuthSession(context);
 
-  if (!user)
+  if (!session)
     return {
       redirect: {
         destination: '/',
@@ -21,35 +19,33 @@ export const getServerSideProps: GetServerSideProps<Props> = async (context) => 
       },
     };
 
-  return {
-    props: {
-      user,
-    },
-  };
+  return { props: { user: session.user } };
 };
 
 export default function Account({ user }: Props) {
-  const [showNsfw, setShowNsfw] = useState(user?.showNsfw ?? false);
-  const [blurNsfw, setBlurNsfw] = useState(user?.blurNsfw ?? true);
-
-  console.log({ showNsfw });
+  const form = useForm({
+    initialValues: user,
+  });
 
   return (
     <Container p={0} size="xs">
-      <Stack>
-        <Title>Manage Account</Title>
-        <TextInput label="User Name" required />
-        <Switch
-          label="I am of legal age to view NSFW content"
-          checked={showNsfw}
-          onChange={(e) => setShowNsfw(e.target.checked)}
-        />
-        <Switch
-          label="Blur NSFW content"
-          checked={blurNsfw}
-          onChange={(e) => setBlurNsfw(e.target.checked)}
-        />
-      </Stack>
+      <form onSubmit={form.onSubmit((values) => console.log({ values }))}>
+        <Stack>
+          <Title>Manage Account</Title>
+          <TextInput label="Username" required {...form.getInputProps('username')} />
+          <Switch
+            label="I am of legal age to view NSFW content"
+            checked={form.values.showNsfw}
+            {...form.getInputProps('showNsfw')}
+          />
+          <Switch
+            label="Blur NSFW content"
+            checked={form.values.blurNsfw}
+            {...form.getInputProps('blurNsfw')}
+          />
+          <Button type="submit">Submit</Button>
+        </Stack>
+      </form>
     </Container>
   );
 }

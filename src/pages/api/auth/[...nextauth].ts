@@ -7,21 +7,47 @@ import GoogleProvider from 'next-auth/providers/google';
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import { env } from '~/env/server.mjs';
 import { prisma } from '~/server/db/client';
-import { GetServerSidePropsContext, PreviewData } from 'next';
-import { ParsedUrlQuery } from 'querystring';
-import { getServerAuthSession } from '~/server/common/get-server-auth-session';
+import { getRandomInt } from '~/utils/number-helpers';
+
+const setUserName = async (email: string) => {
+  try {
+    const { username } = await prisma.user.update({
+      where: { email },
+      data: {
+        username: `${email.split('@')[0]}${getRandomInt(100, 999)}`,
+      },
+      select: {
+        username: true,
+      },
+    });
+    return username ? username : undefined;
+  } catch (e) {
+    return undefined;
+  }
+};
 
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
   // Include user.id on session
+  events: {
+    createUser: async ({ user }) => {
+      if (!user.email) throw new Error('There is no email associated with this account');
+
+      let username: string | undefined = undefined;
+      while (!username) {
+        username = await setUserName(user.email);
+      }
+    },
+  },
   callbacks: {
-    session({ session, user }) {
+    session: async ({ session, user }) => {
       const localSession = { ...session };
 
       if (localSession.user) {
         localSession.user.id = Number(user.id);
         localSession.user.showNsfw = user.showNsfw;
         localSession.user.blurNsfw = user.blurNsfw;
+        localSession.user.username = user.username;
       }
 
       return localSession;
@@ -45,14 +71,8 @@ export const authOptions: NextAuthOptions = {
   pages: {
     signIn: '/login',
     error: '/login',
+    newUser: '/user/account',
   },
-};
-
-export const getSessionUser = async (
-  ctx: GetServerSidePropsContext<ParsedUrlQuery, PreviewData>
-) => {
-  const session = await getServerAuthSession(ctx);
-  return session?.user;
 };
 
 export default NextAuth(authOptions);

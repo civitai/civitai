@@ -1,24 +1,22 @@
 import { DefaultSession } from 'next-auth';
 
+interface ExtendedUser {
+  id: number;
+  showNsfw: boolean;
+  blurNsfw: boolean;
+  username?: string;
+}
+
 declare module 'next-auth' {
-  interface DefaultUser {
-    id: string;
+  interface DefaultUser extends ExtendedUser {
     name?: string | null;
     email?: string | null;
     image?: string | null;
-    showNsfw: boolean;
-    blurNsfw: boolean;
-    username?: string;
   }
   /**
    * Returned by `useSession`, `getSession` and received as a prop on the `SessionProvider` React Context
    */
   interface Session {
-    user?: {
-      id: number;
-      showNsfw: boolean;
-      blurNsfw: boolean;
-      username?: string;
-    } & DefaultSession['user'];
+    user?: ExtendedUser & DefaultSession['user'];
   }
 }

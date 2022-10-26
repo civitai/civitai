@@ -32,3 +32,9 @@ export function abbreviateNumber(value: number): string {
   }
   return newValue;
 }
+
+export function getRandomInt(min: number, max: number) {
+  const intMin = Math.ceil(min);
+  const intMax = Math.floor(max);
+  return Math.floor(Math.random() * (intMax - intMin + 1)) + intMin;
+}

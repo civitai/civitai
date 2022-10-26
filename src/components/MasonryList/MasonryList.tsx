@@ -30,7 +30,7 @@ import { useModelFilters } from '~/hooks/useModelFilters';
 
 type MasonryListProps = {
   columnWidth: number;
-  data: GetAllModelsReturnType['items'];
+  data: GetAllModelsReturnType;
 };
 
 // https://github.com/jaredLunde/masonic
@@ -96,7 +96,7 @@ const MasonryItem = ({
   width,
 }: {
   index: number;
-  data: GetAllModelsReturnType['items'][0];
+  data: GetAllModelsReturnType[0];
   width: number;
 }) => {
   const { id, image, name, rank } = data ?? {};
