@@ -12,13 +12,13 @@ export const imageSchema = z.object({
 });
 
 export const tagSchema = z.object({
-  id: z.number().nullish(),
+  id: z.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
   color: z.string().nullish(),
 });
 
 export const modelVersionSchema = z.object({
-  id: z.number(),
+  id: z.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
   description: z.string().nullish(),
   url: z.string().url().min(1, 'You must select a file'),
@@ -30,12 +30,12 @@ export const modelVersionSchema = z.object({
 });
 
 export const modelSchema = z.object({
-  id: z.number(),
+  id: z.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
   description: z.string().nullish(),
   type: z.nativeEnum(ModelType),
   trainedWords: z.array(z.string()).min(1, 'At least one trained word is required.'),
-  tagsOnModels: z.array(z.string()).nullish(),
+  tagsOnModels: z.array(tagSchema).nullish(),
   nsfw: z.boolean(),
   modelVersions: z.array(modelVersionSchema).min(1, 'At least one model version is required.'),
 });

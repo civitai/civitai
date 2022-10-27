@@ -13,6 +13,7 @@ import { ReactElement, ReactNode, useState } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
+import { ModalsProvider } from '@mantine/modals';
 
 type CustomNextPage = NextPage & {
   getLayout?: (page: ReactElement) => ReactNode;
@@ -47,11 +48,13 @@ function MyApp(props: CustomAppProps<{ session: Session | null; colorScheme: Col
 
       <ColorSchemeProvider colorScheme={colorScheme} toggleColorScheme={toggleColorScheme}>
         <MantineProvider theme={{ colorScheme }} withGlobalStyles withNormalizeCSS>
-          <NotificationsProvider>
-            <SessionProvider session={session}>
-              {getLayout(<Component {...pageProps} />)}
-            </SessionProvider>
-          </NotificationsProvider>
+          <ModalsProvider>
+            <NotificationsProvider>
+              <SessionProvider session={session}>
+                {getLayout(<Component {...pageProps} />)}
+              </SessionProvider>
+            </NotificationsProvider>
+          </ModalsProvider>
         </MantineProvider>
       </ColorSchemeProvider>
     </>

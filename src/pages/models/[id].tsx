@@ -92,7 +92,8 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
       value: <Text>{model?.user.name}</Text>,
     },
   ];
-  const [latestVersion] = model?.modelVersions ?? [];
+
+  const latestVersion = model?.modelVersions[model.modelVersions.length - 1];
 
   return (
     <Container size="xl" py="xl">
@@ -104,12 +105,12 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
               <Button
                 component="a"
                 leftIcon={<IconDownload size={16} />}
-                href={latestVersion.url}
+                href={latestVersion?.url}
                 target="_blank"
                 size="xs"
                 download
               >
-                {`Download (${formatBytes(latestVersion.sizeKB)})`}
+                {`Download (${formatBytes(latestVersion?.sizeKB ?? 0)})`}
               </Button>
               <Menu position="bottom-end" transition="pop-top-right">
                 <Menu.Target>

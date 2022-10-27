@@ -1,24 +1,29 @@
 import {
-  Container,
-  Group,
   ActionIcon,
-  Title,
-  Grid,
-  Stack,
-  Paper,
-  TextInput,
-  Textarea,
   Button,
-  NumberInput,
-  Divider,
-  Select,
-  MultiSelect,
   Checkbox,
+  Container,
+  Divider,
+  Grid,
+  Group,
+  LoadingOverlay,
+  MultiSelect,
+  NumberInput,
+  Paper,
+  Select,
+  Stack,
+  Textarea,
+  TextInput,
+  Text,
+  Title,
 } from '@mantine/core';
 import { useForm, zodResolver } from '@mantine/form';
+import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { Model, ModelType } from '@prisma/client';
 import { IconCheck, IconX, IconArrowLeft, IconPlus, IconTrash } from '@tabler/icons';
+import { TRPCClientErrorBase } from '@trpc/client';
+import { DefaultErrorShape } from '@trpc/server';
 import { useRouter } from 'next/router';
 import React from 'react';
 import { z } from 'zod';
@@ -30,14 +35,16 @@ import { ModelWithDetails } from '~/server/services/models/getById';
 import { trpc } from '~/utils/trpc';
 
 type CreateModelProps = z.infer<typeof modelSchema>;
+type UpdateModelProps = Omit<CreateModelProps, 'id'> & { id: number };
 
 export function ModelForm({ model }: Props) {
   const router = useRouter();
+  const queryUtils = trpc.useContext();
   const editing = !!model;
   const initialFormData = editing
     ? ({
         ...model,
-        tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
+        tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag) ?? [],
         modelVersions:
           model?.modelVersions.map((version) => ({
             ...version,
@@ -45,7 +52,6 @@ export function ModelForm({ model }: Props) {
           })) ?? [],
       } as CreateModelProps)
     : {
-        id: 0,
         name: '',
         description: '',
         trainedWords: [],
@@ -54,7 +60,6 @@ export function ModelForm({ model }: Props) {
         nsfw: false,
         modelVersions: [
           {
-            id: 0,
             name: '',
             description: '',
             url: '',
@@ -71,25 +76,27 @@ export function ModelForm({ model }: Props) {
     initialValues: initialFormData,
   });
 
+  const { data: tags } = trpc.tag.getAll.useQuery();
+
   const addMutation = trpc.model.add.useMutation();
   const updateMutation = trpc.model.update.useMutation();
+  const deleteVersionMutation = trpc.model.deleteModelVersion.useMutation();
 
-  const handleSubmit = async (data: CreateModelProps) => {
-    const mutation = editing ? updateMutation : addMutation;
-
-    await mutation.mutateAsync(data, {
-      onSuccess(results) {
+  const handleSubmit = (data: CreateModelProps) => {
+    const commonOptions = {
+      onSuccess(results: void | Model) {
         const response = results as Model;
 
         showNotification({
           title: 'Your model was saved',
-          message: `Successfully ${editing ? 'updated' : 'created'} the model`,
+          message: `Successfully ${editing ? 'updated' : 'created'} the model.`,
           color: 'teal',
           icon: <IconCheck size={18} />,
         });
+        queryUtils.model.invalidate();
         router.push(`/models/${response.id}`);
       },
-      onError(error) {
+      onError(error: TRPCClientErrorBase<DefaultErrorShape>) {
         const message = error.message;
 
         showNotification({
@@ -99,7 +106,10 @@ export function ModelForm({ model }: Props) {
           icon: <IconX size={18} />,
         });
       },
-    });
+    };
+
+    if (editing) updateMutation.mutate(data as UpdateModelProps, commonOptions);
+    else addMutation.mutate(data as CreateModelProps, commonOptions);
   };
 
   const handleOnDrop = (modelIndex: number) => (files: Array<{ name: string; url: string }>) => {
@@ -139,8 +149,54 @@ export function ModelForm({ model }: Props) {
     }
   };
 
+  const handleDeleteVersion = (
+    version: CreateModelProps['modelVersions'][number],
+    index: number
+  ) => {
+    if (editing && version.id) {
+      openConfirmModal({
+        title: 'Delete Version',
+        children: (
+          <Text size="sm">
+            Are you sure you want to delete this version? This action is destructive and you will
+            have to contact support to restore your data.
+          </Text>
+        ),
+        centered: true,
+        labels: { confirm: 'Delete Version', cancel: "No, don't delete it" },
+        confirmProps: { color: 'red' },
+        onConfirm: async () => {
+          if (version.id)
+            deleteVersionMutation.mutate(
+              { id: version.id },
+              {
+                onSuccess() {
+                  queryUtils.model.getById.invalidate({ id: model.id });
+                  form.removeListItem('modelVersions', index);
+                },
+                onError(error) {
+                  const message = error.message;
+
+                  showNotification({
+                    title: 'Could not delete version',
+                    message: `An error occurred while deleting the version: ${message}`,
+                    color: 'red',
+                    icon: <IconX size={18} />,
+                  });
+                },
+              }
+            );
+        },
+      });
+    } else {
+      form.removeListItem('modelVersions', index);
+    }
+  };
+
   const versionsCount = form.values.modelVersions?.length ?? 0;
   const mutating = addMutation.isLoading || updateMutation.isLoading;
+
+  console.log('tags', form.values.tagsOnModels);
 
   return (
     <Container>
@@ -170,7 +226,8 @@ export function ModelForm({ model }: Props) {
                   />
                 </Stack>
               </Paper>
-              <Paper radius="md" p="xl" withBorder>
+              <Paper radius="md" p="xl" sx={{ position: 'relative' }} withBorder>
+                <LoadingOverlay visible={deleteVersionMutation.isLoading} />
                 <Stack>
                   <Group sx={{ justifyContent: 'space-between' }}>
                     <Title order={4}>Model Versions</Title>
@@ -180,7 +237,6 @@ export function ModelForm({ model }: Props) {
                       variant="outline"
                       onClick={() =>
                         form.insertListItem('modelVersions', {
-                          id: Math.floor((Date.now() * Math.random()) / 1000),
                           name: '',
                           description: '',
                           url: '',
@@ -198,15 +254,13 @@ export function ModelForm({ model }: Props) {
                   </Group>
                   <Stack sx={{ flexDirection: 'column-reverse' }}>
                     {form.values.modelVersions?.map((version, index) => (
-                      <React.Fragment key={version.id}>
+                      <React.Fragment key={index}>
                         <Group p="sm" sx={{ position: 'relative' }}>
                           {versionsCount > 1 && (
                             <ActionIcon
                               color="red"
                               sx={{ position: 'absolute', top: 0, right: 0 }}
-                              onClick={() => {
-                                form.removeListItem('modelVersions', index);
-                              }}
+                              onClick={() => handleDeleteVersion(version, index)}
                             >
                               <IconTrash size={16} stroke={1.5} />
                             </ActionIcon>
@@ -314,13 +368,14 @@ export function ModelForm({ model }: Props) {
               <Stack>
                 <Title order={4}>Model Properties</Title>
                 <Select
+                  {...form.getInputProps('type')}
                   label="Type"
                   placeholder="Type"
                   data={['Checkpoint', 'TextualInversion', 'Hypernetwork']}
                   withAsterisk
-                  {...form.getInputProps('type')}
                 />
                 <MultiSelect
+                  {...form.getInputProps('trainedWords')}
                   label="Trained Words"
                   placeholder="e.g.: Master Chief"
                   description="Please input the words you have trained your model with"
@@ -338,30 +393,51 @@ export function ModelForm({ model }: Props) {
                   clearable
                   searchable
                   withAsterisk
-                  {...form.getInputProps('trainedWords')}
                 />
                 <MultiSelect
+                  {...form.getInputProps('tagsOnModels')}
                   label="Tags"
                   placeholder="e.g.: portrait, sharp focus, etc."
                   description="Please add your tags"
-                  data={form.values.tagsOnModels?.map((tag) => ({ value: tag, label: tag }))}
                   getCreateLabel={(query) => `+ Create ${query}`}
-                  onCreate={(query) => {
-                    const item = { value: query, label: query };
+                  onCreate={(name) => {
+                    const item = { value: name, label: name, name };
                     const currentTags = form.values.tagsOnModels ?? [];
-                    form.setFieldValue('tagsOnModels', [...currentTags, query]);
+                    form.setFieldValue('tagsOnModels', [...currentTags, { name }]);
 
                     return item;
                   }}
+                  data={
+                    tags
+                      ?.map(({ name }) => ({
+                        value: name,
+                        label: name,
+                        name,
+                      }))
+                      .concat(
+                        form.values.tagsOnModels?.map(({ name }) => ({
+                          value: name,
+                          label: name,
+                          name,
+                        })) ?? []
+                      ) ?? []
+                  }
+                  onChange={(values) => {
+                    const matches = tags?.filter((tag) => values.includes(tag.name)) ?? [];
+                    const unMatched = values
+                      .filter((value) => !matches.map((match) => match.name).includes(value))
+                      .map((value) => ({ name: value }));
+                    form.setFieldValue('tagsOnModels', [...matches, ...unMatched]);
+                  }}
+                  value={form.values.tagsOnModels?.map(({ name }) => name)}
                   clearButtonLabel="Clear tags"
-                  creatable
                   clearable
+                  creatable
                   searchable
-                  {...form.getInputProps('tagsOnModels')}
                 />
                 <Checkbox
-                  label="This model or images associated with it are NSFW"
                   {...form.getInputProps('nsfw', { type: 'checkbox' })}
+                  label="This model or images associated with it are NSFW"
                 />
               </Stack>
             </Paper>

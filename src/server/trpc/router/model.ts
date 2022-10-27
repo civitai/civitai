@@ -13,7 +13,7 @@ import { modelWithDetailsSelect } from '~/server/services/models/getById';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
 
 export const modelRouter = router({
-  getAll: publicProcedure.input(getAllModelsSchema).query(async ({ ctx, input = {} }) => {
+  getAll: publicProcedure.input(getAllModelsSchema.optional()).query(async ({ ctx, input = {} }) => {
     try {
       const session = ctx.session;
       const { cursor, limit = 50 } = input;
@@ -79,7 +79,7 @@ export const modelRouter = router({
             })),
           },
           tagsOnModels: {
-            create: tagsOnModels?.map((tag) => ({ tag: { create: { name: tag } } })),
+            create: tagsOnModels?.map(({ name }) => ({ tag: { create: { name } } })),
           },
         },
       });
@@ -89,57 +89,79 @@ export const modelRouter = router({
       return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
     }
   }),
-  update: protectedProcedure.input(modelSchema).mutation(async ({ ctx, input }) => {
-    try {
-      const userId = ctx.session.user.id;
-      const { id, modelVersions, tagsOnModels, ...data } = input;
-      const model = await ctx.prisma.model.update({
-        where: { id },
-        data: {
-          ...data,
-          modelVersions: {
-            upsert: modelVersions.map(({ id, images, ...version }) => ({
-              where: { id },
-              create: {
-                ...version,
-                images: {
-                  create: images.map((image, index) => ({
-                    index,
-                    image: { create: { name: image.name, url: image.url, userId } },
-                  })),
-                },
-              },
-              update: {
-                ...version,
-                images: {
-                  set: [],
-                  create: images.map((image, index) => ({
-                    index,
-                    image: { create: { name: image.name, url: image.url, userId } },
-                  })),
-                },
-              },
-            })),
-          },
-          tagsOnModels: {
-            set: [],
-            create: tagsOnModels?.map((tag) => ({ tag: { create: { name: tag } } })),
-          },
-        },
-      });
+  update: protectedProcedure
+    .input(modelSchema.extend({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const userId = ctx.session.user.id;
+        const { id, modelVersions, tagsOnModels, ...data } = input;
+        const { tagsToCreate, tagsToUpdate } = tagsOnModels?.reduce(
+          (acc, current) => {
+            if (!current.id) acc.tagsToCreate.push(current);
+            else acc.tagsToUpdate.push(current);
 
-      if (!model) {
-        return handleDbError({
-          code: 'NOT_FOUND',
-          message: `No model with id ${id}`,
+            return acc;
+          },
+          {
+            tagsToCreate: [] as Array<typeof tagsOnModels[number]>,
+            tagsToUpdate: [] as Array<typeof tagsOnModels[number]>,
+          }
+        ) ?? { tagsToCreate: [], tagsToUpdate: [] };
+
+        const model = await ctx.prisma.model.update({
+          where: { id },
+          data: {
+            ...data,
+            modelVersions: {
+              upsert: modelVersions.map(({ id = -1, images, ...version }) => ({
+                where: { id },
+                create: {
+                  ...version,
+                  images: {
+                    create: images.map((image, index) => ({
+                      index,
+                      image: { create: { name: image.name, url: image.url, userId } },
+                    })),
+                  },
+                },
+                update: {
+                  ...version,
+                  images: {
+                    deleteMany: {},
+                    create: images.map((image, index) => ({
+                      index,
+                      image: { create: { name: image.name, url: image.url, userId } },
+                    })),
+                  },
+                },
+              })),
+            },
+            tagsOnModels: {
+              deleteMany: {},
+              connectOrCreate: tagsToUpdate.map((tag) => ({
+                where: { modelId_tagId: { modelId: id, tagId: tag.id as number } },
+                create: { tagId: tag.id as number },
+              })),
+              create: tagsToCreate.map((tag) => ({
+                tag: { create: { name: tag.name } },
+              })),
+            },
+          },
         });
-      }
 
-      return model;
-    } catch (error) {
-      return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
-    }
-  }),
+        if (!model) {
+          return handleDbError({
+            code: 'NOT_FOUND',
+            message: `No model with id ${id}`,
+          });
+        }
+
+        return model;
+      } catch (error) {
+        console.error(error);
+        return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+      }
+    }),
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
@@ -155,6 +177,25 @@ export const modelRouter = router({
         }
 
         return model;
+      } catch (error) {
+        return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+      }
+    }),
+  deleteModelVersion: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const { id } = input;
+        const modelVersion = await ctx.prisma.modelVersion.delete({ where: { id } });
+
+        if (!modelVersion) {
+          return handleDbError({
+            code: 'NOT_FOUND',
+            message: `No model version with id ${id}`,
+          });
+        }
+
+        return modelVersion;
       } catch (error) {
         return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
       }

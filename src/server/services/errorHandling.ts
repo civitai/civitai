@@ -1,4 +1,4 @@
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime';
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 
@@ -11,11 +11,15 @@ export function handleDbError({
   error?: unknown;
   message?: string;
 }) {
-  const prismaError = error as PrismaClientKnownRequestError;
+  let errorMessage = message ?? 'Invalid database operation';
+
+  if (error instanceof Prisma.PrismaClientKnownRequestError) errorMessage = error.message;
+  else if (error instanceof Prisma.PrismaClientValidationError)
+    errorMessage = 'Database validation error';
 
   throw new TRPCError({
     code,
-    message: message ?? prismaError.message,
-    cause: prismaError,
+    message: errorMessage,
+    cause: error,
   });
 }
