@@ -13,7 +13,7 @@ const limit = 3;
 export function ListSearch() {
   const router = useRouter();
   const {
-    filters: { tag, query },
+    filters: { tag, query, user },
     setFilters,
   } = useModelFilters();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -27,15 +27,19 @@ export function ListSearch() {
   });
 
   useEffect(() => {
-    form.setValues({ query: router.route === '/' ? query ?? (tag ? `#${tag}` : '') : '' });
+    form.setValues({
+      query: router.route === '/' ? query ?? (tag ? `#${tag}` : user ? `@${user}` : '') : '',
+    });
   }, [router.route, query, tag]); //eslint-disable-line
 
-  // const canQueryUsers = query.startsWith('@') ? query.length > 1 : !query.startsWith('#');
+  const canQueryUsers = value.startsWith('@') ? value.length > 1 : !value.startsWith('#');
+  const parseUserQuery = (query: string) =>
+    query.startsWith('@') ? query.substring(1).toLowerCase() : query.toLowerCase();
 
-  // const { data: users } = trpc.user.getAll.useQuery(
-  //   { query: query.startsWith('@') ? query.substring(1) : query, limit },
-  //   { enabled: !!query.length && canQueryUsers }
-  // );
+  const { data: users } = trpc.user.getAll.useQuery(
+    { query: parseUserQuery(value), limit },
+    { enabled: !!value.length && canQueryUsers, keepPreviousData: true }
+  );
 
   const canQueryTags = value.startsWith('#') ? value.length > 1 : !value.startsWith('@');
   const parseTagQuery = (query: string) =>
@@ -50,15 +54,27 @@ export function ListSearch() {
     const parsedQuery = parseTagQuery(query);
     const tag = tags?.find((x) => x.name.toLowerCase() === parsedQuery);
     if (!tag) return;
-    setFilters((state) => ({ ...state, tag: tag.name, query: undefined }));
+    setFilters((state) => ({ ...state, tag: tag.name, query: undefined, user: undefined }));
+  };
+
+  const handleSetUsers = (query: string) => {
+    const parsedQuery = parseUserQuery(query);
+    const user = users?.find((x) => x.username?.toLowerCase() === parsedQuery);
+    if (!user) return;
+    setFilters((state) => ({
+      ...state,
+      tag: undefined,
+      query: undefined,
+      user: user.username || undefined,
+    }));
   };
 
   const handleSetQuery = (query: string) => {
-    setFilters((state) => ({ ...state, tag: undefined, query }));
+    setFilters((state) => ({ ...state, tag: undefined, query, user: undefined }));
   };
 
   const handleClear = () => {
-    setFilters((state) => ({ ...state, tag: undefined, query: undefined }));
+    setFilters((state) => ({ ...state, tag: undefined, query: undefined, user: undefined }));
   };
 
   const hasQueriedTags = tags?.some((x) => {
@@ -66,9 +82,14 @@ export function ListSearch() {
     return !!parsedQuery.length ? x.name.toLowerCase().includes(parsedQuery) : false;
   });
 
+  const hasQueriedUsers = users?.some((x) => {
+    const parsedQuery = parseUserQuery(value);
+    return !!parsedQuery.length ? x.username?.toLowerCase().includes(parsedQuery) : false;
+  });
+
   return (
     <Popover
-      opened={!!tags?.length && focused && !!value.length && hasQueriedTags}
+      opened={focused && !!value.length && (hasQueriedTags || hasQueriedUsers)}
       width="target"
       transition="pop"
     >
@@ -97,18 +118,28 @@ export function ListSearch() {
       </Popover.Target>
       <Popover.Dropdown px={0}>
         <Stack spacing="lg">
-          {/* {!!users?.length && (
+          {users?.some((x) => x.username?.toLowerCase().includes(parseUserQuery(value))) && (
             <Stack spacing={5}>
               <Text size="sm" weight={700} color="dimmed" px="xs">
                 Users
               </Text>
               <Box>
-                {users.map((user) => (
-                  <NavLink key={user.id} label={`@ ${user.name}`} />
-                ))}
+                {users.map(
+                  ({ id, username }) =>
+                    username && (
+                      <NavLink
+                        key={id}
+                        label={`@ ${username}`}
+                        onClick={() => {
+                          form.setValues({ query: `@${username}` });
+                          handleSetUsers(username);
+                        }}
+                      />
+                    )
+                )}
               </Box>
             </Stack>
-          )} */}
+          )}
           {tags?.some((x) => x.name.toLowerCase().includes(parseTagQuery(value))) && (
             <Stack spacing={5}>
               <Text size="sm" weight={700} color="dimmed" px="xs">

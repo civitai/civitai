@@ -17,12 +17,11 @@ export const userRouter = router({
         return await ctx.prisma.user.findMany({
           take: input.limit,
           select: {
-            name: true,
+            username: true,
             id: true,
-            email: true,
           },
           where: {
-            name: input.query
+            username: input.query
               ? {
                   contains: input.query,
                   mode: 'insensitive',

@@ -47,7 +47,7 @@ export const getAllModelsWhere = (input: z.infer<typeof getAllModelsSchema>) =>
       : undefined,
     user: input.user
       ? {
-          name: input.user,
+          username: input.user,
         }
       : undefined,
     type: input.type
