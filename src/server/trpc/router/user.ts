@@ -65,40 +65,40 @@ export const userRouter = router({
     .mutation(async ({ ctx, input }) => {
       // try {
       const { id, ...data } = input;
-      const user = await ctx.prisma.user.findUnique({
-        where: { id },
-        select: { id: true, username: true },
-      });
+      // const user = await ctx.prisma.user.findUnique({
+      //   where: { id },
+      //   select: { id: true, username: true },
+      // });
 
-      if (!user) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: `No user with id ${id}`,
-        });
-      }
+      // if (!user) {
+      //   throw new TRPCError({
+      //     code: 'NOT_FOUND',
+      //     message: `No user with id ${id}`,
+      //   });
+      // }
 
-      if (user.username !== input.username) {
-        const userWithUsernameExists = await prisma?.user.findFirst({
-          where: {
-            id: {
-              not: user.id,
-            },
-            username: {
-              equals: input.username,
-              mode: 'insensitive',
-            },
-          },
-        });
-        if (!!userWithUsernameExists) {
-          throw new TRPCError({
-            code: 'CONFLICT',
-            message: 'This username is not available.',
-          });
-        }
-      }
+      // if (user.username !== input.username) {
+      //   const userWithUsernameExists = await prisma?.user.findFirst({
+      //     where: {
+      //       id: {
+      //         not: user.id,
+      //       },
+      //       username: {
+      //         equals: input.username,
+      //         mode: 'insensitive',
+      //       },
+      //     },
+      //   });
+      //   if (!!userWithUsernameExists) {
+      //     throw new TRPCError({
+      //       code: 'CONFLICT',
+      //       message: 'This username is not available.',
+      //     });
+      //   }
+      // }
 
       const updatedUser = await ctx.prisma.user.update({ where: { id }, data });
-      if (!user) {
+      if (!updatedUser) {
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: `There was a problem processing your request`,

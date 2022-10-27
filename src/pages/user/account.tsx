@@ -43,6 +43,8 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
     initialValues: user,
   });
 
+  console.log({ updateUserError });
+
   return (
     <Container p={0} size="xs">
       <form

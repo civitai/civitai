@@ -45,7 +45,7 @@ model Session {
 model User {
   id            Int       @id @default(autoincrement())
   name          String?
-  username      String?   @unique
+  username      String?   @unique @db.Citext
   email         String?   @unique
   emailVerified DateTime?
   image         String?
