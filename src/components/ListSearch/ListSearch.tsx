@@ -1,4 +1,4 @@
-import { Popover, Text, Stack, Box, NavLink } from '@mantine/core';
+import { Popover, Text, Stack, Box, NavLink, TextInput } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons';
 import { useState, useRef, useEffect } from 'react';
@@ -75,7 +75,6 @@ export function ListSearch() {
       <Popover.Target>
         <form
           onSubmit={form.onSubmit(({ query }) => {
-            console.log({ query });
             if (query.startsWith('#')) handleSetTags(query);
             else handleSetQuery(query);
             inputRef.current?.blur();
@@ -87,7 +86,7 @@ export function ListSearch() {
             {...form.getInputProps('query')}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
-            onChange={(e: any) => {
+            onChange={(e) => {
               form.setValues({ query: e.target.value });
               setValue(e.target.value);
             }}

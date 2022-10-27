@@ -1,6 +1,35 @@
 import { Button, ButtonProps } from '@mantine/core';
+import { TablerIconProps, IconBrandDiscord, IconBrandGithub, IconBrandGoogle } from '@tabler/icons';
+import { BuiltInProviderType } from 'next-auth/providers';
 
-import { IconBrandDiscord, IconBrandGithub, IconBrandGoogle } from '@tabler/icons';
+type SocialProps = Partial<
+  Record<
+    BuiltInProviderType,
+    {
+      label?: React.ReactNode;
+      Icon?: React.FunctionComponent<TablerIconProps>;
+      Button?: React.FunctionComponent<ButtonProps>;
+    }
+  >
+>;
+
+export const socialItems: SocialProps = {
+  discord: {
+    label: 'Discord',
+    Icon: IconBrandDiscord,
+    Button: DiscordButton,
+  },
+  github: {
+    label: 'GitHub',
+    Icon: IconBrandGithub,
+    Button: GitHubButton,
+  },
+  google: {
+    label: 'Google',
+    Icon: IconBrandGoogle,
+    Button: GoogleButton,
+  },
+};
 
 const discordColor = '#5865F2';
 const googleColor = '#4285F4';
@@ -8,7 +37,6 @@ const googleColor = '#4285F4';
 export function DiscordButton(props: ButtonProps) {
   return (
     <Button
-      leftIcon={<IconBrandDiscord size={16} />}
       sx={(theme) => ({
         backgroundColor: theme.colorScheme === 'dark' ? discordColor : discordColor,
         '&:hover': {
@@ -27,7 +55,6 @@ export function GitHubButton(props: ButtonProps) {
   return (
     <Button
       {...props}
-      leftIcon={<IconBrandGithub size={16} />}
       sx={(theme) => {
         const backgroundColor = theme.colors.dark?.[theme.colorScheme === 'dark' ? 9 : 6];
 
@@ -50,7 +77,6 @@ export function GoogleButton(props: ButtonProps) {
   return (
     <Button
       {...props}
-      leftIcon={<IconBrandGoogle size={16} />}
       sx={(theme) => ({
         backgroundColor: theme.colorScheme === 'dark' ? googleColor : googleColor,
         '&:hover': {

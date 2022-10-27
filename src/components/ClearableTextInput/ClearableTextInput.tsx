@@ -7,8 +7,8 @@ type ClearableTextInputProps = TextInputProps & {
   onClear?: () => void;
 };
 
-export const ClearableTextInput = forwardRef<HTMLInputElement>(
-  ({ clearable = true, rightSection, onClear, ...props }: ClearableTextInputProps, ref) => {
+export const ClearableTextInput = forwardRef<HTMLInputElement, ClearableTextInputProps>(
+  ({ clearable = true, rightSection, onClear, ...props }, ref) => {
     const inputRef = useRef<HTMLInputElement>(null);
     const mergedRef = useMergedRef(ref, inputRef) as unknown;
 

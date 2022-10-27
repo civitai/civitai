@@ -260,7 +260,7 @@ async function clearUser() {
   await prisma.user.delete({ where: { email: 'bkdiehl@gmail.com' } });
 }
 
-clearUser()
+seed()
   .catch(async (e) => {
     console.error('ERROR:', e);
     await prisma.$disconnect();

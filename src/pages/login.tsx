@@ -1,35 +1,18 @@
-import { ButtonProps, Container, Paper, Stack, Text } from '@mantine/core';
+import { Alert, Container, Paper, Stack, Text } from '@mantine/core';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
+import { BuiltInProviderType } from 'next-auth/providers';
 import { getCsrfToken, getProviders, signIn } from 'next-auth/react';
-import React, { MouseEventHandler } from 'react';
-import {
-  DiscordButton,
-  GitHubButton,
-  GoogleButton,
-} from '~/components/SocialButtons/SocialButtons';
-import { getServerAuthSession } from '~/server/common/get-server-auth-session';
+import { useRouter } from 'next/router';
+import React from 'react';
+import { SocialButton } from '~/components/Social/SocialButton';
 
-const mapProviderSignInButton = {
-  github: (props: ButtonProps & { onClick: MouseEventHandler }) => (
-    <GitHubButton radius="xl" {...props}>
-      GitHub
-    </GitHubButton>
-  ),
-  discord: (props: ButtonProps & { onClick: MouseEventHandler }) => (
-    <DiscordButton radius="xl" {...props}>
-      Discord
-    </DiscordButton>
-  ),
-  google: (props: ButtonProps & { onClick: MouseEventHandler }) => (
-    <GoogleButton radius="xl" {...props}>
-      Google
-    </GoogleButton>
-  ),
-};
+import { getServerAuthSession } from '~/server/common/get-server-auth-session';
 
 export default function Login({
   providers,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
+  const router = useRouter();
+  const { error } = router.query;
   return (
     <Container size="xs">
       <Paper radius="md" p="xl" withBorder>
@@ -40,17 +23,21 @@ export default function Login({
         <Stack mb="md" mt="md">
           {providers
             ? Object.values(providers).map((provider) => {
-                const ProviderButton =
-                  mapProviderSignInButton[provider.id as keyof typeof mapProviderSignInButton];
-
                 return (
-                  <React.Fragment key={provider.name}>
-                    <ProviderButton onClick={() => signIn(provider.id, { callbackUrl: '/' })} />
-                  </React.Fragment>
+                  <SocialButton
+                    key={provider.name}
+                    provider={provider.id as BuiltInProviderType}
+                    onClick={() => signIn(provider.id, { callbackUrl: '/' })}
+                  />
                 );
               })
             : null}
         </Stack>
+        {error === 'OAuthAccountNotLinked' && (
+          <Alert color="yellow" title="Login Error" mt="lg" variant="outline">
+            {"Please sign in with an account you've already linked"}
+          </Alert>
+        )}
       </Paper>
     </Container>
   );

@@ -14,6 +14,7 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { ModalsProvider } from '@mantine/modals';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 
 type CustomNextPage = NextPage & {
   getLayout?: (page: ReactElement) => ReactNode;
@@ -57,14 +58,13 @@ function MyApp(props: CustomAppProps<{ session: Session | null; colorScheme: Col
           </ModalsProvider>
         </MantineProvider>
       </ColorSchemeProvider>
+      {process.env.NODE_ENV == 'development' && <ReactQueryDevtools />}
     </>
   );
 }
 
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const { pageProps, ...appProps } = await App.getInitialProps(appContext);
-
-  console.log('___INITIAL PROPS___');
 
   return {
     pageProps: {
