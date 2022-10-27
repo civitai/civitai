@@ -1,4 +1,4 @@
-import { Popover, Text, Stack, Box, NavLink, TextInput } from '@mantine/core';
+import { Popover, Text, Stack, Box, NavLink } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons';
 import { useState, useRef, useEffect } from 'react';

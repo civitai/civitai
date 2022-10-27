@@ -9,6 +9,7 @@ import {
   Table,
   Group,
   LoadingOverlay,
+  Alert,
 } from '@mantine/core';
 import { GetServerSideProps } from 'next';
 import { Session } from 'next-auth';
@@ -24,7 +25,11 @@ import { BuiltInProviderType } from 'next-auth/providers';
 
 export default function Account({ user, providers, accounts: initialAccounts }: Props) {
   const utils = trpc.useContext();
-  const { mutateAsync: updateUserAsync, isLoading: updatingUser } = trpc.user.update.useMutation();
+  const {
+    mutateAsync: updateUserAsync,
+    isLoading: updatingUser,
+    error: updateUserError,
+  } = trpc.user.update.useMutation();
   const { mutate: deleteAccount, isLoading: deletingAccount } = trpc.account.delete.useMutation({
     onSuccess: () => {
       utils.account.invalidate();
@@ -48,6 +53,11 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
       >
         <Stack>
           <Title order={1}>Manage Account</Title>
+          {updateUserError && (
+            <Alert color="red" variant="light">
+              {updateUserError.message}
+            </Alert>
+          )}
           <TextInput label="Username" required {...form.getInputProps('username')} />
           <Switch
             label="I am of legal age to view NSFW content"
