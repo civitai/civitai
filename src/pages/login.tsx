@@ -1,9 +1,10 @@
-import { Alert, Container, Paper, Stack, Text } from '@mantine/core';
+import { Container, Paper, Stack, Text } from '@mantine/core';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { BuiltInProviderType } from 'next-auth/providers';
 import { getCsrfToken, getProviders, signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import React from 'react';
+import { SignInError } from '~/components/SignInError/SignInError';
 import { SocialButton } from '~/components/Social/SocialButton';
 
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
@@ -12,7 +13,7 @@ export default function Login({
   providers,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
-  const { error } = router.query;
+  const { error } = router.query as { error: string };
   return (
     <Container size="xs">
       <Paper radius="md" p="xl" withBorder>
@@ -33,10 +34,8 @@ export default function Login({
               })
             : null}
         </Stack>
-        {error === 'OAuthAccountNotLinked' && (
-          <Alert color="yellow" title="Login Error" mt="lg" variant="outline">
-            {"Please sign in with an account you've already linked"}
-          </Alert>
+        {error && (
+          <SignInError color="yellow" title="Login Error" mt="lg" variant="outline" error={error} />
         )}
       </Paper>
     </Container>
