@@ -7,8 +7,8 @@ export const imageSchema = z.object({
   url: z.string(),
   prompt: z.string().nullish(),
   hash: z.string().nullish(),
-  height: z.string().nullish(),
-  width: z.string().nullish(),
+  height: z.number().nullish(),
+  width: z.number().nullish(),
 });
 
 export const tagSchema = z.object({

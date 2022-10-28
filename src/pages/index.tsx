@@ -2,7 +2,7 @@ import { Group, Loader, Stack, Container, Center, ThemeIcon, Text } from '@manti
 import Head from 'next/head';
 import { useEffect, useMemo } from 'react';
 import { trpc } from '~/utils/trpc';
-import { GetAllModelsReturnType } from '~/server/services/models/getAllModels';
+import { GetAllModelsReturnType } from '~/server/validators/models/getAllModels';
 import { useInView } from 'react-intersection-observer';
 import { MasonryList } from '~/components/MasonryList/MasonryList';
 import { ListSort } from '~/components/ListSort/ListSort';

@@ -19,7 +19,7 @@ import {
 import Image from 'next/image';
 import Link from 'next/link';
 import React, { useEffect, useRef } from 'react';
-import { GetAllModelsReturnType } from '~/server/services/models/getAllModels';
+import { GetAllModelsReturnType } from '~/server/validators/models/getAllModels';
 import { useWindowSize } from '@react-hook/window-size';
 import { getRandom } from './../../utils/array-helpers';
 import { useModelStore } from '~/hooks/useModelStore';

@@ -31,7 +31,7 @@ import { FileDrop } from '~/components/FileDrop/FileDrop';
 import { FileInputUpload } from '~/components/FileInputUpload/FileInputUpload';
 import { UploadTypeUnion } from '~/server/common/enums';
 import { modelSchema } from '~/server/common/validation/model';
-import { ModelWithDetails } from '~/server/services/models/getById';
+import { ModelWithDetails } from '~/server/validators/models/getById';
 import { trpc } from '~/utils/trpc';
 
 type CreateModelProps = z.infer<typeof modelSchema>;

@@ -18,7 +18,7 @@ import { ModelSort } from '~/server/common/enums';
 
 export const getAllModelsSchema = z.object({
   limit: z.number().min(1).max(200).optional(),
-  cursor: z.number().nullish(),
+  cursor: z.number().optional(),
   query: z.string().optional(),
   tag: z.string().optional(),
   user: z.string().optional(),

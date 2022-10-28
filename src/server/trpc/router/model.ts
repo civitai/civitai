@@ -1,4 +1,3 @@
-import { MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
 import { modelSchema } from '~/server/common/validation/model';
 import { handleDbError } from '~/server/services/errorHandling';
@@ -8,8 +7,8 @@ import {
   getAllModelsSelect,
   getAllModelsTransform,
   getAllModelsWhere,
-} from '~/server/services/models/getAllModels';
-import { modelWithDetailsSelect } from '~/server/services/models/getById';
+} from '~/server/validators/models/getAllModels';
+import { modelWithDetailsSelect } from '~/server/validators/models/getById';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
 
 export const modelRouter = router({
