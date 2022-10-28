@@ -1,3 +1,4 @@
+import { Carousel } from '@mantine/carousel';
 import {
   ActionIcon,
   Avatar,
@@ -6,12 +7,12 @@ import {
   Container,
   CopyButton,
   createStyles,
-  Divider,
   Grid,
   Group,
   Menu,
   Rating,
   Stack,
+  Tabs,
   Text,
   Title,
   useMantineTheme,
@@ -33,6 +34,7 @@ import { createProxySSGHelpers } from '@trpc/react-query/ssg';
 import dayjs from 'dayjs';
 import { GetStaticPaths, GetStaticProps, InferGetStaticPropsType } from 'next';
 import { useSession } from 'next-auth/react';
+import Image from 'next/image';
 import { useRouter } from 'next/router';
 import superjson from 'superjson';
 import {
@@ -100,7 +102,7 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
   const router = useRouter();
   const { data: session } = useSession();
   const { classes } = useStyles();
-  const isMobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm - 1}px)`, true, {
+  const mobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm - 1}px)`, true, {
     getInitialValueInEffect: false,
   });
 
@@ -229,7 +231,6 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
   ];
 
   const latestVersion = model?.modelVersions[model.modelVersions.length - 1];
-  console.log({ isMobile });
 
   return (
     <Container size="xl" py="xl">
@@ -245,7 +246,7 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
               href={latestVersion?.url}
               target="_blank"
               size="xs"
-              fullWidth={isMobile}
+              fullWidth={mobile}
               download
             >
               {`Download (${formatBytes(latestVersion?.sizeKB ?? 0)})`}
@@ -282,8 +283,8 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
         <Group spacing={4}>
           <Rating
             value={model?.rank?.ratingAllTime}
-            fractions={isMobile ? 5 : 2}
-            count={isMobile ? 1 : undefined}
+            fractions={mobile ? 5 : 2}
+            count={mobile ? 1 : undefined}
             readOnly
           />
           <Text size="sm">({model?.rank?.ratingAllTime.toLocaleString() ?? 0})</Text>
@@ -311,6 +312,28 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
           })}
         >
           <Stack>
+            <Carousel
+              slideSize="50%"
+              breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
+              slideGap="xl"
+              align={latestVersion.images.length > 2 ? 'start' : 'center'}
+              slidesToScroll={mobile ? 1 : 2}
+              withControls={latestVersion.images.length > 2 ? true : false}
+            >
+              {latestVersion.images.map(({ image }) => (
+                <Carousel.Slide key={image.id}>
+                  <Image
+                    src={image.url}
+                    alt={image.name ?? 'Example results of the model'}
+                    height={440}
+                    width={380}
+                    objectFit="cover"
+                    objectPosition="top"
+                    style={{ borderRadius: theme.spacing.md }}
+                  />
+                </Carousel.Slide>
+              ))}
+            </Carousel>
             <Title className={classes.title} order={2}>
               About this model
             </Title>
@@ -318,9 +341,40 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
           </Stack>
         </Grid.Col>
         <Grid.Col span={12} orderSm={3}>
-          <Title className={classes.title} order={2}>
-            Versions
-          </Title>
+          <Stack spacing="xl">
+            <Title className={classes.title} order={2}>
+              Versions
+            </Title>
+            <Tabs
+              defaultValue={latestVersion.id.toString()}
+              orientation={mobile ? 'horizontal' : 'vertical'}
+            >
+              <Grid gutter="lg">
+                <Grid.Col xs={12} sm={3} md={2}>
+                  <Tabs.List>
+                    {model.modelVersions.map((version) => (
+                      <Tabs.Tab key={version.id} value={version.id.toString()}>
+                        {version.name}
+                      </Tabs.Tab>
+                    ))}
+                  </Tabs.List>
+                </Grid.Col>
+                <Grid.Col xs={12} sm={9} md={10}>
+                  {model.modelVersions.map((version) => (
+                    <Tabs.Panel key={version.id} value={version.id.toString()}>
+                      <Stack>
+                        <Group align="center" sx={{ justifyContent: 'space-between' }}>
+                          <Title order={3}>About this version</Title>
+                          <Rating value={0} fractions={2} readOnly />
+                        </Group>
+                        <Text>{version.description}</Text>
+                      </Stack>
+                    </Tabs.Panel>
+                  ))}
+                </Grid.Col>
+              </Grid>
+            </Tabs>
+          </Stack>
         </Grid.Col>
         <Grid.Col span={12} orderSm={4}>
           <Title className={classes.title} order={2}>

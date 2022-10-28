@@ -219,7 +219,6 @@ export function ModelForm({ model }: Props) {
                   <Textarea
                     label="About your model"
                     placeholder="Tell us what your model does"
-                    maxLength={240}
                     {...form.getInputProps('description')}
                   />
                 </Stack>
@@ -277,7 +276,6 @@ export function ModelForm({ model }: Props) {
                               <Textarea
                                 label="Version changes or notes"
                                 placeholder="Tell us about this version"
-                                maxLength={240}
                                 {...form.getInputProps(`modelVersions.${index}.description`)}
                               />
                             </Grid.Col>
