@@ -19,7 +19,7 @@ import React, { useEffect } from 'react';
 import { SortableGrid } from '~/components/SortableGrid/SortableGrid';
 import { useS3Upload } from '~/hooks/use-s3-upload';
 
-const useStyles = createStyles((_theme, _params, getRef) => ({
+const useStyles = createStyles((theme, _params, getRef) => ({
   sortItem: {
     position: 'relative',
     display: 'flex',
@@ -48,7 +48,7 @@ const useStyles = createStyles((_theme, _params, getRef) => ({
     ref: getRef('actionsGroup'),
     opacity: 0,
     position: 'absolute',
-    background: 'rgba(0, 0, 0, 0.6)',
+    background: theme.fn.rgba(theme.colors.dark[9], 0.4),
     justifyContent: 'center',
     width: '100%',
     height: '100%',
@@ -60,7 +60,7 @@ const useStyles = createStyles((_theme, _params, getRef) => ({
     [`.${getRef('actionsGroup')}`]: {
       opacity: 1,
       transition: 'all .1s ease',
-      background: 'rgba(255, 255, 255, 0.4)',
+      background: theme.fn.rgba(theme.colors.gray[0], 0.4),
     },
   },
 }));
@@ -207,8 +207,9 @@ export function FileDrop({
       <Group sx={{ justifyContent: 'space-between' }}>
         {hasSelectedFile ? (
           <>
-            <Group>
+            <Group align="center">
               <Checkbox
+                sx={{ display: 'flex' }}
                 checked={allFilesSelected}
                 indeterminate={partialFilesSelected}
                 onChange={() =>

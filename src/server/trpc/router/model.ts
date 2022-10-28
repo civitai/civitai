@@ -12,34 +12,32 @@ import { modelWithDetailsSelect } from '~/server/validators/models/getById';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
 
 export const modelRouter = router({
-  getAll: publicProcedure
-    .input(getAllModelsSchema.optional())
-    .query(async ({ ctx, input = {} }) => {
-      try {
-        const session = ctx.session;
-        const { cursor, limit = 50 } = input;
-        input.showNsfw = session?.user?.showNsfw;
+  getAll: publicProcedure.input(getAllModelsSchema).query(async ({ ctx, input = {} }) => {
+    try {
+      const session = ctx.session;
+      const { cursor, limit = 50 } = input;
+      input.showNsfw = session?.user?.showNsfw;
 
-        const items = await ctx.prisma.model.findMany({
-          take: limit + 1, // get an extra item at the end which we'll use as next cursor
-          cursor: cursor ? { id: cursor } : undefined,
-          where: getAllModelsWhere(input),
-          orderBy: getAllModelsOrderBy(input),
-          select: getAllModelsSelect,
-        });
+      const items = await ctx.prisma.model.findMany({
+        take: limit + 1, // get an extra item at the end which we'll use as next cursor
+        cursor: cursor ? { id: cursor } : undefined,
+        where: getAllModelsWhere(input),
+        orderBy: getAllModelsOrderBy(input),
+        select: getAllModelsSelect,
+      });
 
-        let nextCursor: typeof cursor | undefined = undefined;
-        if (items.length > limit) {
-          const nextItem = items.pop();
-          nextCursor = nextItem?.id;
-        }
-
-        const models = getAllModelsTransform(items);
-        return { items: models, nextCursor };
-      } catch (error) {
-        return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+      let nextCursor: typeof cursor | undefined = undefined;
+      if (items.length > limit) {
+        const nextItem = items.pop();
+        nextCursor = nextItem?.id;
       }
-    }),
+
+      const models = getAllModelsTransform(items);
+      return { items: models, nextCursor };
+    } catch (error) {
+      return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    }
+  }),
   getById: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     try {
       const { id } = input;
@@ -80,7 +78,14 @@ export const modelRouter = router({
             })),
           },
           tagsOnModels: {
-            create: tagsOnModels?.map(({ name }) => ({ tag: { create: { name } } })),
+            create: tagsOnModels?.map(({ name }) => ({
+              tag: {
+                connectOrCreate: {
+                  where: { name },
+                  create: { name },
+                },
+              },
+            })),
           },
         },
       });
@@ -159,7 +164,6 @@ export const modelRouter = router({
 
         return model;
       } catch (error) {
-        console.error(error);
         return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
       }
     }),
