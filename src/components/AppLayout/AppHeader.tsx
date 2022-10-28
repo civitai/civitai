@@ -25,6 +25,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { ColorSchemeToggle } from '~/components/ColorSchemeToggle/ColorSchemeToggle';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
+import { getInitials } from '~/utils/string-helpers';
 
 const useStyles = createStyles((theme) => ({
   inner: {
@@ -33,7 +34,7 @@ const useStyles = createStyles((theme) => ({
   },
 
   burger: {
-    [theme.fn.largerThan('xs')]: {
+    [theme.fn.largerThan('md')]: {
       display: 'none',
     },
   },
@@ -114,8 +115,8 @@ export function AppHeader({ links }: Props) {
           /> */}
           <ListSearch />
         </Group>
-        <Group spacing="sm">
-          <Group spacing="sm" className={classes.links}>
+        <Group spacing="sm" className={classes.links}>
+          <Group spacing="sm">
             {links?.map((link) => (
               <Link key={link.label} href={link.url} passHref>
                 <Anchor className={classes.link} variant="text">
@@ -150,7 +151,9 @@ export function AppHeader({ links }: Props) {
                         alt={session?.user?.name ?? 'User avatar'}
                         radius="xl"
                         size={20}
-                      />
+                      >
+                        {getInitials(session.user?.name ?? '')}
+                      </Avatar>
                       <IconChevronDown size={12} stroke={1.5} />
                     </Group>
                   </UnstyledButton>

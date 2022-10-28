@@ -21,11 +21,11 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
 
   const s3 = new S3({
     credentials: {
-      accessKeyId: env.S3_UPLOAD_KEY as string,
-      secretAccessKey: env.S3_UPLOAD_SECRET as string,
+      accessKeyId: env.S3_UPLOAD_KEY,
+      secretAccessKey: env.S3_UPLOAD_SECRET,
     },
-    region: env.S3_UPLOAD_REGION as string,
-    endpoint: env.S3_UPLOAD_ENDPOINT as string,
+    region: env.S3_UPLOAD_REGION,
+    endpoint: env.S3_UPLOAD_ENDPOINT,
   });
 
   const { filename } = req.body;

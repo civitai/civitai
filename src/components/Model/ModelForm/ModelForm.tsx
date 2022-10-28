@@ -164,7 +164,7 @@ export function ModelForm({ model }: Props) {
         ),
         centered: true,
         labels: { confirm: 'Delete Version', cancel: "No, don't delete it" },
-        confirmProps: { color: 'red' },
+        confirmProps: { color: 'red', loading: deleteVersionMutation.isLoading },
         onConfirm: async () => {
           if (version.id)
             deleteVersionMutation.mutate(
@@ -195,8 +195,6 @@ export function ModelForm({ model }: Props) {
 
   const versionsCount = form.values.modelVersions?.length ?? 0;
   const mutating = addMutation.isLoading || updateMutation.isLoading;
-
-  console.log('tags', form.values.tagsOnModels);
 
   return (
     <Container>

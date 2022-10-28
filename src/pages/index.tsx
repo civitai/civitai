@@ -26,8 +26,8 @@ function Home() {
   } = trpc.model.getAll.useInfiniteQuery(
     { limit: 100, ...filters },
     {
-      getNextPageParam: (lastPage: any) => lastPage.nextCursor,
-      getPreviousPageParam: (firstPage: any) => firstPage.prevCursor,
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
     }
   );
 
@@ -35,10 +35,10 @@ function Home() {
     if (inView) {
       fetchNextPage();
     }
-  }, [inView]); //eslint-disable-line
+  }, [fetchNextPage, inView]);
 
-  const models = useMemo(
-    (): GetAllModelsReturnType => data?.pages.flatMap((x) => x.items) ?? [],
+  const models = useMemo<GetAllModelsReturnType>(
+    () => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [],
     [data]
   );
 
