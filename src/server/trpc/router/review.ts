@@ -1,9 +1,9 @@
 import { z } from 'zod';
-import { handleDbError } from '~/server/services/errorHandling';
 import { TRPCError } from '@trpc/server';
 import { getAllReviewsSelect } from '~/server/validators/reviews/getAllReviews';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
 import { imageSchema } from './../../common/validation/model';
+import { handleDbError } from '~/server/services/errorHandling';
 
 export const reviewRouter = router({
   getAll: publicProcedure
@@ -64,7 +64,7 @@ export const reviewRouter = router({
       const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
       const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
 
-      const review = await ctx.prisma.review.upsert({
+      return await ctx.prisma.review.upsert({
         where: { id: input.id },
         create: {
           ...reviewInput,
@@ -78,7 +78,6 @@ export const reviewRouter = router({
         update: {
           ...reviewInput,
           imagesOnReviews: {
-            deleteMany: {},
             create: imagesToCreate.map(({ index, ...image }) => ({
               index,
               image: { create: image },
@@ -98,5 +97,20 @@ export const reviewRouter = router({
           id: true,
         },
       });
+    }),
+  delete: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const { id } = input;
+      const review = await ctx.prisma.review.deleteMany({
+        where: { AND: { id, userId: ctx.session.user.id } },
+      });
+
+      if (!review) {
+        return handleDbError({
+          code: 'NOT_FOUND',
+          message: `No review with id ${id}`,
+        });
+      }
     }),
 });
