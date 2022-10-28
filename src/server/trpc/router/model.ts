@@ -119,28 +119,43 @@ export const modelRouter = router({
           data: {
             ...data,
             modelVersions: {
-              upsert: modelVersions.map(({ id = -1, images, ...version }) => ({
-                where: { id },
-                create: {
-                  ...version,
-                  images: {
-                    create: images.map((image, index) => ({
-                      index,
-                      image: { create: { name: image.name, url: image.url, userId } },
-                    })),
+              upsert: modelVersions.map(({ id = -1, images, ...version }) => {
+                const imagesWithIndex = images.map((image, index) => ({ index, userId, ...image }));
+                const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
+                const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
+                return {
+                  where: { id },
+                  create: {
+                    ...version,
+                    images: {
+                      create: imagesWithIndex.map(({ index, ...image }) => ({
+                        index,
+                        image: { create: image },
+                      })),
+                    },
                   },
-                },
-                update: {
-                  ...version,
-                  images: {
-                    deleteMany: {},
-                    create: images.map((image, index) => ({
-                      index,
-                      image: { create: { name: image.name, url: image.url, userId } },
-                    })),
+                  update: {
+                    ...version,
+                    images: {
+                      create: imagesToCreate.map(({ index, ...image }) => ({
+                        index,
+                        image: { create: image },
+                      })),
+                      update: imagesToUpdate.map(({ index, ...image }) => ({
+                        where: {
+                          imageId_modelVersionId: {
+                            imageId: image.id as number,
+                            modelVersionId: id,
+                          },
+                        },
+                        data: {
+                          index,
+                        },
+                      })),
+                    },
                   },
-                },
-              })),
+                };
+              }),
             },
             tagsOnModels: {
               deleteMany: {},
