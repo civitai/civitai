@@ -1,3 +1,4 @@
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { handleDbError } from '~/server/services/errorHandling';
@@ -63,49 +64,27 @@ export const userRouter = router({
         .partial()
     )
     .mutation(async ({ ctx, input }) => {
-      // try {
       const { id, ...data } = input;
-      // const user = await ctx.prisma.user.findUnique({
-      //   where: { id },
-      //   select: { id: true, username: true },
-      // });
+      try {
+        const updatedUser = await ctx.prisma.user.update({ where: { id }, data });
+        if (!updatedUser) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: `There was a problem processing your request`,
+          });
+        }
 
-      // if (!user) {
-      //   throw new TRPCError({
-      //     code: 'NOT_FOUND',
-      //     message: `No user with id ${id}`,
-      //   });
-      // }
-
-      // if (user.username !== input.username) {
-      //   const userWithUsernameExists = await prisma?.user.findFirst({
-      //     where: {
-      //       id: {
-      //         not: user.id,
-      //       },
-      //       username: {
-      //         equals: input.username,
-      //         mode: 'insensitive',
-      //       },
-      //     },
-      //   });
-      //   if (!!userWithUsernameExists) {
-      //     throw new TRPCError({
-      //       code: 'CONFLICT',
-      //       message: 'This username is not available.',
-      //     });
-      //   }
-      // }
-
-      const updatedUser = await ctx.prisma.user.update({ where: { id }, data });
-      if (!updatedUser) {
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: `There was a problem processing your request`,
-        });
+        return updatedUser;
+      } catch (error) {
+        if (error instanceof PrismaClientKnownRequestError) {
+          if (error.code === 'P2002')
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'This username is not available.',
+            });
+        }
+        return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
       }
-
-      return updatedUser;
     }),
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))

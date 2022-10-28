@@ -138,21 +138,23 @@ const MasonryItem = ({
               placeholder="empty"
             />
             <Box p="xs" className={classes.content}>
-              <Stack spacing={6}>
-                <Text size={14} lineClamp={2}>
-                  {name}
-                </Text>
-                <Group position="apart">
-                  <Group spacing={5}>
-                    <Rating value={rank.rating} fractions={2} readOnly size="xs" />
-                    <Text size="xs">({rank.ratingCount})</Text>
-                  </Group>
-                  <Group spacing={5} align="bottom">
-                    <Text size="xs">{abbreviateNumber(rank.downloadCount ?? 0)}</Text>
-                    <IconDownload size={16} />
-                  </Group>
+              <Group position="apart" align="flex-end">
+                <Stack spacing={6}>
+                  <Text size={14} lineClamp={2}>
+                    {name}
+                  </Text>
+                  {!!rank?.rating && (
+                    <Group spacing={5}>
+                      <Rating value={rank.rating} fractions={2} readOnly size="xs" />
+                      <Text size="xs">({rank.ratingCount})</Text>
+                    </Group>
+                  )}
+                </Stack>
+                <Group spacing={5} align="bottom">
+                  <Text size="xs">{abbreviateNumber(rank.downloadCount ?? 0)}</Text>
+                  <IconDownload size={16} />
                 </Group>
-              </Stack>
+              </Group>
             </Box>
           </>
         )}
