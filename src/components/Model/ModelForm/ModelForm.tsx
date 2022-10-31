@@ -76,7 +76,7 @@ export function ModelForm({ model }: Props) {
     initialValues: initialFormData,
   });
 
-  const { data: tags } = trpc.tag.getAll.useQuery();
+  const { data: tags } = trpc.tag.getAll.useQuery({}, { cacheTime: Infinity });
 
   const addMutation = trpc.model.add.useMutation();
   const updateMutation = trpc.model.update.useMutation();

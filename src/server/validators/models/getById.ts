@@ -26,6 +26,8 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       trainingDataUrl: true,
       url: true,
       sizeKB: true,
+      createdAt: true,
+      updatedAt: true,
       images: {
         select: {
           index: true,

@@ -42,6 +42,7 @@ import {
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { ModelForm } from '~/components/Model/ModelForm/ModelForm';
+import { ModelVersion } from '~/components/Model/ModelVersion/ModelVersion';
 import { prisma } from '~/server/db/client';
 import { createContextInner } from '~/server/trpc/context';
 import { appRouter } from '~/server/trpc/router';
@@ -351,9 +352,13 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
             >
               <Grid gutter="lg">
                 <Grid.Col xs={12} sm={3} md={2}>
-                  <Tabs.List>
+                  <Tabs.List sx={{ flexDirection: mobile ? 'row-reverse' : 'column-reverse' }}>
                     {model.modelVersions.map((version) => (
-                      <Tabs.Tab key={version.id} value={version.id.toString()}>
+                      <Tabs.Tab
+                        key={version.id}
+                        value={version.id.toString()}
+                        sx={{ whiteSpace: 'normal' }}
+                      >
                         {version.name}
                       </Tabs.Tab>
                     ))}
@@ -362,13 +367,7 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
                 <Grid.Col xs={12} sm={9} md={10}>
                   {model.modelVersions.map((version) => (
                     <Tabs.Panel key={version.id} value={version.id.toString()}>
-                      <Stack>
-                        <Group align="center" sx={{ justifyContent: 'space-between' }}>
-                          <Title order={3}>About this version</Title>
-                          <Rating value={0} fractions={2} readOnly />
-                        </Group>
-                        <Text>{version.description}</Text>
-                      </Stack>
+                      <ModelVersion version={version} />
                     </Tabs.Panel>
                   ))}
                 </Grid.Col>
