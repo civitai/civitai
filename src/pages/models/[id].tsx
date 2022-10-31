@@ -10,14 +10,12 @@ import {
   Grid,
   Group,
   Menu,
-  Rating,
+  Select,
   Stack,
-  Tabs,
   Text,
   Title,
   useMantineTheme,
 } from '@mantine/core';
-import { useMediaQuery } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { showNotification } from '@mantine/notifications';
@@ -27,6 +25,7 @@ import {
   IconDotsVertical,
   IconDownload,
   IconEdit,
+  IconPlus,
   IconTrash,
   IconX,
 } from '@tabler/icons';
@@ -42,7 +41,11 @@ import {
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { ModelForm } from '~/components/Model/ModelForm/ModelForm';
+import { ModelReview } from '~/components/Model/ModelReview/ModelReview';
 import { ModelVersion } from '~/components/Model/ModelVersion/ModelVersion';
+import { ModelRating } from '~/components/ModelRating/ModelRating';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { ReviewSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
 import { createContextInner } from '~/server/trpc/context';
 import { appRouter } from '~/server/trpc/router';
@@ -103,9 +106,7 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
   const router = useRouter();
   const { data: session } = useSession();
   const { classes } = useStyles();
-  const mobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm - 1}px)`, true, {
-    getInitialValueInEffect: false,
-  });
+  const mobile = useIsMobile();
 
   const { id } = props;
   const { edit } = router.query;
@@ -281,15 +282,7 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
             ) : null}
           </Group>
         </Group>
-        <Group spacing={4}>
-          <Rating
-            value={model?.rank?.ratingAllTime}
-            fractions={mobile ? 5 : 2}
-            count={mobile ? 1 : undefined}
-            readOnly
-          />
-          <Text size="sm">({model?.rank?.ratingAllTime.toLocaleString() ?? 0})</Text>
-        </Group>
+        <ModelRating rank={model.rank} />
       </Stack>
       <Grid gutter="xl">
         <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
@@ -346,39 +339,33 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
             <Title className={classes.title} order={2}>
               Versions
             </Title>
-            <Tabs
-              defaultValue={latestVersion.id.toString()}
-              orientation={mobile ? 'horizontal' : 'vertical'}
-            >
-              <Grid gutter="lg">
-                <Grid.Col xs={12} sm={3} md={2}>
-                  <Tabs.List sx={{ flexDirection: mobile ? 'row-reverse' : 'column-reverse' }}>
-                    {model.modelVersions.map((version) => (
-                      <Tabs.Tab
-                        key={version.id}
-                        value={version.id.toString()}
-                        sx={{ whiteSpace: 'normal' }}
-                      >
-                        {version.name}
-                      </Tabs.Tab>
-                    ))}
-                  </Tabs.List>
-                </Grid.Col>
-                <Grid.Col xs={12} sm={9} md={10}>
-                  {model.modelVersions.map((version) => (
-                    <Tabs.Panel key={version.id} value={version.id.toString()}>
-                      <ModelVersion version={version} />
-                    </Tabs.Panel>
-                  ))}
-                </Grid.Col>
-              </Grid>
-            </Tabs>
+            <ModelVersion items={model.modelVersions} initialTab={latestVersion.id.toString()} />
           </Stack>
         </Grid.Col>
         <Grid.Col span={12} orderSm={4}>
-          <Title className={classes.title} order={2}>
-            Reviews
-          </Title>
+          <Stack spacing="xl">
+            <Group sx={{ justifyContent: 'space-between' }}>
+              <Group spacing={4}>
+                <Title order={3}>Reviews</Title>
+                <ModelRating rank={model.rank} />
+              </Group>
+              <Group spacing="xs">
+                <Button leftIcon={<IconPlus size={16} />} variant="outline" compact>
+                  Add Review
+                </Button>
+                <Select
+                  defaultValue={ReviewSort.Newest}
+                  data={[
+                    { label: 'Newest', value: ReviewSort.Newest },
+                    { label: 'Most Liked', value: ReviewSort.MostLiked },
+                    { label: 'Most Disiked', value: ReviewSort.MostDisliked },
+                  ]}
+                  size="xs"
+                />
+              </Group>
+            </Group>
+            <ModelReview items={model.reviews} />
+          </Stack>
         </Grid.Col>
       </Grid>
     </Container>
