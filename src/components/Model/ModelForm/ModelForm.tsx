@@ -27,7 +27,6 @@ import { DefaultErrorShape } from '@trpc/server';
 import { useRouter } from 'next/router';
 import React from 'react';
 import { z } from 'zod';
-import { FileDrop } from '~/components/FileDrop/FileDrop';
 import { FileInputUpload } from '~/components/FileInputUpload/FileInputUpload';
 import { UploadTypeUnion } from '~/server/common/enums';
 import { modelSchema } from '~/server/common/validation/model';

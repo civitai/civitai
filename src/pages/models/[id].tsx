@@ -237,25 +237,6 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
             >
               {`Download (${formatBytes(latestVersion?.sizeKB ?? 0)})`}
             </Button>
-            <Button
-              onClick={() => {
-                openContextModal({
-                  modal: 'reviewEdit',
-                  title: 'Review a model',
-                  closeOnClickOutside: false,
-                  innerProps: {
-                    modelName: model.name,
-                    modelVersions: model.modelVersions.map(({ id, name }) => ({ id, name })),
-                    review: {
-                      modelId: model.id,
-                      userId: session?.user?.id,
-                    },
-                  },
-                });
-              }}
-            >
-              Review
-            </Button>
             {session && session.user?.id === model?.user.id ? (
               <Menu position="bottom-end" transition="pop-top-right">
                 <Menu.Target>
@@ -361,7 +342,26 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
                 >{`${fakeReviews.length.toLocaleString()} total reviews`}</Text>
               </Stack>
               <Group spacing="xs">
-                <Button leftIcon={<IconPlus size={16} />} variant="outline" compact>
+                <Button
+                  leftIcon={<IconPlus size={16} />}
+                  variant="outline"
+                  compact
+                  onClick={() =>
+                    openContextModal({
+                      modal: 'reviewEdit',
+                      title: 'Review a model',
+                      closeOnClickOutside: false,
+                      innerProps: {
+                        modelName: model.name,
+                        modelVersions: model.modelVersions.map(({ id, name }) => ({ id, name })),
+                        review: {
+                          modelId: model.id,
+                          userId: session?.user?.id,
+                        },
+                      },
+                    })
+                  }
+                >
                   Add Review
                 </Button>
                 <Select
