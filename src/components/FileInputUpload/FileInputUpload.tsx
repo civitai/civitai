@@ -1,8 +1,9 @@
-import { Stack, FileInput, Progress, FileInputProps } from '@mantine/core';
+import { Stack, FileInput, Progress, FileInputProps, Group, Text } from '@mantine/core';
 import { IconUpload, IconCircleCheck } from '@tabler/icons';
 import { useEffect, useState } from 'react';
 import { useS3Upload } from '~/hooks/use-s3-upload';
 import { UploadType, UploadTypeUnion } from '~/server/common/enums';
+import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 
 export function FileInputUpload({
   uploadType = 'default',
@@ -12,7 +13,12 @@ export function FileInputUpload({
 }: Props) {
   const [localFile, setLocalFile] = useState<File>();
   const { files, uploadToS3, resetFiles } = useS3Upload();
-  const { file, progress } = files[0] ?? { file: null, progress: 0 };
+  const { file, progress, speed, timeRemaining } = files[0] ?? {
+    file: null,
+    progress: 0,
+    speed: 0,
+    timeRemaining: 0,
+  };
 
   const handleOnChange: FileInputProps['onChange'] = async (file) => {
     let url: string | null = null;
@@ -52,12 +58,21 @@ export function FileInputUpload({
         rightSection={file && progress === 100 ? <IconCircleCheck color="green" size={24} /> : null}
       />
       {file && progress < 100 ? (
-        <Progress
-          size="xl"
-          value={progress}
-          label={`${Math.floor(progress)}%`}
-          color={progress < 100 ? 'blue' : 'green'}
-        />
+        <Stack spacing={2}>
+          <Progress
+            sx={{ width: '100%' }}
+            size="xl"
+            value={progress}
+            label={`${Math.floor(progress)}%`}
+            color={progress < 100 ? 'blue' : 'green'}
+            striped
+            animate
+          />
+          <Group position="apart">
+            <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text>
+            <Text size="xs" color="dimmed">{`${formatSeconds(timeRemaining)} remaining`}</Text>
+          </Group>
+        </Stack>
       ) : null}
     </Stack>
   );
