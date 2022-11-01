@@ -46,8 +46,11 @@ export async function getPutUrl(key: string, s3: S3 | null = null) {
   return { url, bucket, key };
 }
 
+const keyParser = /https:\/\/.*?\/(.*)/;
 export async function getGetUrl(key: string, s3: S3 | null = null) {
   if (!s3) s3 = getS3Client();
+
+  if (key.startsWith('http')) key = keyParser.exec(key)?.[1] ?? key;
 
   const bucket = env.S3_UPLOAD_BUCKET;
   const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: bucket, Key: key }), {
