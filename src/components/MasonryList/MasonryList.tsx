@@ -132,9 +132,10 @@ const MasonryItem = ({
               alt={name}
               objectFit="cover"
               objectPosition="top"
-              height={hasDimensions ? `${image.height}px` : undefined}
-              width={hasDimensions ? `${image.width}px` : undefined}
-              layout={!hasDimensions ? 'fill' : undefined}
+              // height={hasDimensions ? `${image.height}px` : undefined}
+              // width={hasDimensions ? `${image.width}px` : undefined}
+              // layout={!hasDimensions ? 'fill' : undefined}
+              layout="fill"
               placeholder="empty"
             />
             <Box p="xs" className={classes.content}>

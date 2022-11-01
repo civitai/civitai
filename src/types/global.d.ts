@@ -15,9 +15,9 @@ declare global {
 
   type CustomFile = {
     id?: number;
-    index: number;
     url: string;
     name: string;
+    prompt?: string;
     file?: FileWithPath;
     height?: number | null;
     width?: number | null;

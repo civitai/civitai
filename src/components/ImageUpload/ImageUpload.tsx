@@ -1,5 +1,24 @@
-import { DragEndEvent } from '@dnd-kit/core';
-import { arrayMove } from '@dnd-kit/sortable';
+import {
+  useSensors,
+  useSensor,
+  PointerSensor,
+  KeyboardSensor,
+  DndContext,
+  closestCenter,
+  DndContextProps,
+  DragOverEvent,
+  DragEndEvent,
+  UniqueIdentifier,
+  DragStartEvent,
+  DragOverlay,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  sortableKeyboardCoordinates,
+  SortableContext,
+  useSortable,
+  rectSortingStrategy,
+} from '@dnd-kit/sortable';
 import {
   Checkbox,
   createStyles,
@@ -9,7 +28,7 @@ import {
   Paper,
   RingProgress,
   Text,
-  Image,
+  Image as MantineImage,
   Stack,
   Title,
   Button,
@@ -17,26 +36,35 @@ import {
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useListState } from '@mantine/hooks';
 import { IconZoomIn, IconGripVertical } from '@tabler/icons';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useS3Upload } from '~/hooks/use-s3-upload';
-import { ImageUploadProps } from '~/server/validators/image/schema';
 import { SortableGrid } from '../SortableGrid/SortableGrid';
-import { blurHashImage } from '../../utils/blurhash';
-
-type CustomFile = ImageUploadProps & { file?: FileWithPath; index: number };
+import { blurHashImage, loadImage } from '../../utils/blurhash';
+import { MediaHash } from './../ImageHash/ImageHash';
+import produce from 'immer';
+import useIsClient from '~/hooks/useIsClient';
+import { ImagePreview } from '~/components/ImageUpload/ImagePreview';
+import { SortableImage } from './SortableItem';
 
 type Props = InputWrapperProps & {
   value: Array<CustomFile>;
   onChange: (value: Array<CustomFile>) => void;
 };
 
-export function ImageUpload({ value = [], onChange, ...inputWrapperProps }: Props) {
+export function ImageUpload({ value = [], onChange, label, ...inputWrapperProps }: Props) {
   const { classes, cx } = useStyles();
+
+  const isClient = useIsClient();
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
   const { uploadToS3, files: imageFiles } = useS3Upload();
   const [files, filesHandlers] = useListState<CustomFile>(
     value.map((file, index) => ({ ...file, index: index + 1 }))
   );
+  const [activeId, setActiveId] = useState<UniqueIdentifier>();
   const [selectedFiles, selectedFilesHandlers] = useListState<string>([]);
 
   useEffect(() => {
@@ -45,15 +73,34 @@ export function ImageUpload({ value = [], onChange, ...inputWrapperProps }: Prop
   }, [files]);
 
   const handlDrop = async (droppedFiles: FileWithPath[]) => {
-    filesHandlers.setState((current) =>
-      [
-        ...current,
-        ...droppedFiles.map((file) => ({
+    const toUpload = await Promise.all(
+      droppedFiles.map(async (file) => {
+        const src = URL.createObjectURL(file);
+        const img = await loadImage(src);
+        const hashResult = blurHashImage(img);
+        return {
           name: file.name,
-          url: URL.createObjectURL(file),
+          url: src,
           file,
-        })),
-      ].map((file, index) => ({ ...file, index: index + 1 }))
+          ...hashResult,
+        };
+      })
+    );
+    filesHandlers.setState((current) => [...current, ...toUpload]);
+
+    await Promise.all(
+      toUpload.map(async (image) => {
+        const { url } = await uploadToS3(image.file);
+        filesHandlers.setState(
+          produce((current) => {
+            const index = current.findIndex((item) => item.file === image.file);
+            if (index === -1) return;
+            current[index].url = url;
+            current[index].file = undefined;
+          })
+        );
+        URL.revokeObjectURL(image.url);
+      })
     );
   };
 
@@ -61,164 +108,161 @@ export function ImageUpload({ value = [], onChange, ...inputWrapperProps }: Prop
     onChange(files);
   }, [files]);
 
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over) return;
-    if (active.id !== over.id) {
-      filesHandlers.setState((items) => {
-        const indices = items.map(({ index }) => index);
-        const oldIndex = indices.indexOf(active.id as number);
-        const newIndex = indices.indexOf(over.id as number);
-        const sorted = arrayMove(items, oldIndex, newIndex);
-        return sorted.map((image, index) => ({ ...image, index: index + 1 }));
-      });
-    }
-  };
-
   const selectedFilesCount = selectedFiles.length;
   const allFilesSelected = selectedFiles.length === files.length && files.length !== 0;
   const partialFilesSelected = !allFilesSelected && selectedFiles.length !== 0;
   const hasSelectedFile = selectedFilesCount > 0;
 
+  const alternateLabel = (
+    <Group sx={{ justifyContent: 'space-between', flex: 1 }}>
+      <Group align="center">
+        <Checkbox
+          sx={{ display: 'flex' }}
+          checked={allFilesSelected}
+          indeterminate={partialFilesSelected}
+          onChange={() =>
+            selectedFilesHandlers.setState(allFilesSelected ? [] : files.map((file) => file.url))
+          }
+        />
+        <Title order={5}>{`${selectedFilesCount} ${
+          selectedFilesCount > 1 ? 'files' : 'file '
+        } selected`}</Title>
+      </Group>
+      <Button
+        color="red"
+        variant="subtle"
+        size="xs"
+        compact
+        onClick={() => {
+          filesHandlers.setState((items) =>
+            items
+              .filter((item) => !selectedFiles.includes(item.url))
+              .map((file, index) => ({ ...file, index: index + 1 }))
+          );
+          selectedFilesHandlers.setState([]);
+        }}
+      >
+        {selectedFilesCount > 1 ? 'Delete Files' : 'Delete File'}
+      </Button>
+    </Group>
+  );
+
   return (
-    <Input.Wrapper {...inputWrapperProps}>
-      <Stack>
-        <Dropzone
-          accept={IMAGE_MIME_TYPE}
-          onDrop={handlDrop}
-          maxFiles={10}
-          styles={(theme) => ({
-            root: {
-              borderColor: !!inputWrapperProps.error ? theme.colors.red[6] : undefined,
-            },
-          })}
-        >
-          <Text align="center">Drop images here</Text>
-        </Dropzone>
-        {hasSelectedFile && (
-          <Group sx={{ justifyContent: 'space-between' }}>
-            <Group align="center">
-              <Checkbox
-                sx={{ display: 'flex' }}
-                checked={allFilesSelected}
-                indeterminate={partialFilesSelected}
-                onChange={() =>
-                  selectedFilesHandlers.setState(
-                    allFilesSelected ? [] : files.map((file) => file.url)
-                  )
-                }
-              />
-              <Title order={5}>{`${selectedFilesCount} ${
-                selectedFilesCount > 1 ? 'files' : 'file '
-              } selected`}</Title>
-            </Group>
-            <Button
-              color="red"
-              variant="subtle"
-              size="xs"
-              compact
-              onClick={() => {
-                filesHandlers.setState((items) =>
-                  items
-                    .filter((item) => !selectedFiles.includes(item.url))
-                    .map((file, index) => ({ ...file, index: index + 1 }))
-                );
-                selectedFilesHandlers.setState([]);
-              }}
-            >
-              {selectedFilesCount > 1 ? 'Delete Files' : 'Delete File'}
-            </Button>
-          </Group>
-        )}
+    <>
+      {hasSelectedFile ? alternateLabel : <Text>{label}</Text>}
+      <Input.Wrapper {...inputWrapperProps}>
+        <Stack>
+          <Dropzone
+            accept={IMAGE_MIME_TYPE}
+            onDrop={handlDrop}
+            maxFiles={10}
+            styles={(theme) => ({
+              root: {
+                borderColor: !!inputWrapperProps.error ? theme.colors.red[6] : undefined,
+              },
+            })}
+          >
+            <Text align="center">Drop images here</Text>
+          </Dropzone>
 
-        <SortableGrid
-          items={files}
-          rowKey="index"
-          onDragEnd={handleDragEnd}
-          gridProps={{
-            cols: 3,
-            breakpoints: [{ maxWidth: 'sm', cols: 1 }],
-          }}
-          disabled={hasSelectedFile}
-        >
-          {(image, index) => {
-            const match = imageFiles.find((file) => image.file === file.file);
-            const { progress } = match ?? { progress: 0 };
-            const showLoading = match && progress < 100 && !!image.file;
-            const selected = selectedFiles.includes(image.url);
-
-            return (
-              <Paper
-                className={cx({
-                  [classes.sortItem]: !showLoading,
-                  [classes.selected]: hasSelectedFile,
-                })}
-                radius="sm"
-                sx={{
-                  position: 'relative',
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center',
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+            onDragStart={handleDragStart}
+            onDragCancel={handleDragCancel}
+          >
+            <SortableContext items={files.map((x) => x.url)} disabled={hasSelectedFile}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: `repeat(3, 1fr)`,
+                  gridGap: 10,
+                  padding: 10,
                 }}
               >
-                <Image
-                  key={image.id}
-                  src={image.url}
-                  alt={image.name}
-                  sx={showLoading ? { filter: 'blur(2px)' } : undefined}
-                  onLoad={async (e) => {
-                    if (image.file) {
-                      const imgEl = e.target as HTMLImageElement;
-                      const { file, ...restOfImage } = image;
-                      const { url } = await uploadToS3(file, 'image');
-                      const hashResult = blurHashImage(imgEl);
-                      URL.revokeObjectURL(image.url);
-                      filesHandlers.setItem(index, { ...restOfImage, ...hashResult, url });
-                    }
-                  }}
-                  radius="sm"
-                  fit="contain"
-                />
-                {showLoading && (
-                  <RingProgress
-                    sx={{ position: 'absolute' }}
-                    sections={[{ value: progress, color: 'blue' }]}
-                    size={48}
-                    thickness={4}
-                    roundCaps
-                  />
-                )}
-                <Group align="center" className={classes.actionsGroup}>
-                  {!hasSelectedFile ? (
-                    <Group>
-                      {/* <IconZoomIn size={32} stroke={1.5} color="white" /> */}
-                      <IconGripVertical
-                        size={24}
-                        stroke={1.5}
-                        className={classes.draggableIcon}
-                        color="white"
-                      />
-                    </Group>
-                  ) : null}
-                  <Checkbox
-                    className={classes.checkbox}
-                    size="xs"
-                    checked={selected}
-                    onChange={() => {
-                      const index = selectedFiles.indexOf(image.url);
-                      index === -1
-                        ? selectedFilesHandlers.append(image.url)
-                        : selectedFilesHandlers.remove(index);
-                    }}
-                  />
-                </Group>
-              </Paper>
-            );
-          }}
-        </SortableGrid>
-      </Stack>
-    </Input.Wrapper>
+                {files.map((image, index) => {
+                  const match = imageFiles.find((file) => image.file === file.file);
+                  const { progress } = match ?? { progress: 0 };
+                  const showLoading = match && progress < 100 && !!image.file;
+                  const selected = selectedFiles.includes(image.url);
+
+                  return (
+                    <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
+                      <ImagePreview index={index} image={image}>
+                        {showLoading && (
+                          <RingProgress
+                            sx={{ position: 'absolute' }}
+                            sections={[{ value: progress, color: 'blue' }]}
+                            size={48}
+                            thickness={4}
+                            roundCaps
+                          />
+                        )}
+                        <Group align="center">
+                          {!hasSelectedFile && (
+                            <Group>
+                              <IconGripVertical
+                                size={24}
+                                stroke={1.5}
+                                className={classes.draggableIcon}
+                                color="white"
+                              />
+                            </Group>
+                          )}
+                          <Checkbox
+                            className={classes.checkbox}
+                            size="xs"
+                            checked={selected}
+                            onChange={() => {
+                              const index = selectedFiles.indexOf(image.url);
+                              index === -1
+                                ? selectedFilesHandlers.append(image.url)
+                                : selectedFilesHandlers.remove(index);
+                            }}
+                          />
+                        </Group>
+                      </ImagePreview>
+                    </SortableImage>
+                  );
+                })}
+              </div>
+            </SortableContext>
+            <DragOverlay adjustScale={true}>
+              {activeId && (
+                <ImagePreview
+                  index={files.findIndex((file) => file.url === activeId)}
+                  image={files.find((file) => file.url === activeId)}
+                ></ImagePreview>
+              )}
+            </DragOverlay>
+          </DndContext>
+        </Stack>
+      </Input.Wrapper>
+    </>
   );
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over) return;
+    if (active.id !== over.id) {
+      filesHandlers.setState((items) => {
+        const ids = items.map(({ url }): UniqueIdentifier => url);
+        const oldIndex = ids.indexOf(active.id);
+        const newIndex = ids.indexOf(over.id);
+        const sorted = arrayMove(items, oldIndex, newIndex);
+        return sorted;
+      });
+    }
+  }
+
+  function handleDragStart(event: DragStartEvent) {
+    setActiveId(event.active.id);
+  }
+
+  function handleDragCancel() {
+    setActiveId(undefined);
+  }
 }
 
 const useStyles = createStyles((theme, _params, getRef) => ({

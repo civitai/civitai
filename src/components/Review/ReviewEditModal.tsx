@@ -17,6 +17,8 @@ import { FileDrop } from '~/components/FileDrop/FileDrop';
 import { imageSchema } from '~/server/common/validation/model';
 
 import { ReviewUpsertProps } from '~/server/validators/reviews/schema';
+import { trpc } from '~/utils/trpc';
+import { ImageUpload } from './../ImageUpload/ImageUpload';
 
 type ReviewModelProps = {
   review: Partial<ReviewUpsertProps>;
@@ -38,6 +40,7 @@ export default function ReviewEditModal({
   innerProps,
 }: ContextModalProps<ReviewModelProps>) {
   const { modelName, modelVersions, review } = innerProps;
+  const { mutate, isLoading } = trpc.review.upsert.useMutation();
 
   const form = useForm<typeof schema>({
     validate: zodResolver(schema),
@@ -68,7 +71,7 @@ export default function ReviewEditModal({
             minRows={2}
             autosize
           />
-          {/* <FileDrop title="Generated Images" /> */}
+          <ImageUpload title="Generated Images" {...form.getInputProps('images')} />
           <Checkbox
             {...form.getInputProps('nsfw')}
             label="This review or images associated with it are NSFW"

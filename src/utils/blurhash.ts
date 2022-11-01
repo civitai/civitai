@@ -6,6 +6,14 @@ export type HashResult = {
   height: number;
 };
 
+export const loadImage = async (src: string) =>
+  new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = (...args) => reject(args);
+    img.src = src;
+  });
+
 export const getClampedSize = (
   width: number,
   height: number,
@@ -23,7 +31,7 @@ export const getClampedSize = (
 };
 
 export function blurHashImage(img: HTMLImageElement): HashResult {
-  const clampedSize = getClampedSize(img.naturalWidth, img.naturalHeight, 64);
+  const clampedSize = getClampedSize(img.width, img.height, 64);
   const canvas = document.createElement('canvas');
   canvas.width = clampedSize.width;
   canvas.height = clampedSize.height;
@@ -32,5 +40,5 @@ export function blurHashImage(img: HTMLImageElement): HashResult {
 
   const { data, width, height } = ctx.getImageData(0, 0, clampedSize.width, clampedSize.height);
   const hash = encode(data, width, height, 4, 4);
-  return { hash, width: img.naturalWidth, height: img.naturalHeight };
+  return { hash, width: img.width, height: img.height };
 }
