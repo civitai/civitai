@@ -1,32 +1,66 @@
 import {
+  Button,
+  Image,
   Group,
+  Grid,
+  Rating,
+  SimpleGrid,
+  Stack,
+  Tabs,
   Text,
   Title,
-  Rating,
-  Grid,
-  Stack,
-  Button,
-  SimpleGrid,
-  Image,
-  useMantineTheme,
 } from '@mantine/core';
-import { useMediaQuery } from '@mantine/hooks';
 import { IconDownload } from '@tabler/icons';
 import dayjs from 'dayjs';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { ModelWithDetails } from '~/server/validators/models/getById';
 import { formatBytes } from '~/utils/number-helpers';
 
 const VERSION_IMAGES_LIMIT = 9;
 
-export function ModelVersion({ version }: Props) {
-  const theme = useMantineTheme();
-  const mobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm - 1}px)`, true, {
-    getInitialValueInEffect: false,
-  });
+export function ModelVersion({ items, initialTab }: Props) {
+  const mobile = useIsMobile();
+
+  return (
+    <Tabs defaultValue={initialTab} orientation={mobile ? 'horizontal' : 'vertical'}>
+      <Grid gutter="lg">
+        <Grid.Col xs={12} sm={3} md={2}>
+          <Tabs.List sx={{ flexDirection: mobile ? 'row-reverse' : 'column-reverse' }}>
+            {items.map((version) => (
+              <Tabs.Tab
+                key={version.id}
+                value={version.id.toString()}
+                sx={{ whiteSpace: 'normal' }}
+              >
+                {version.name}
+              </Tabs.Tab>
+            ))}
+          </Tabs.List>
+        </Grid.Col>
+        <Grid.Col xs={12} sm={9} md={10}>
+          {items.map((version) => (
+            <Tabs.Panel key={version.id} value={version.id.toString()}>
+              <TabContent version={version} />
+            </Tabs.Panel>
+          ))}
+        </Grid.Col>
+      </Grid>
+    </Tabs>
+  );
+}
+
+type Props = {
+  items: ModelWithDetails['modelVersions'];
+  initialTab?: string | null;
+};
+
+function TabContent({ version }: TabContentProps) {
+  const mobile = useIsMobile();
 
   const versionDetails: DescriptionTableProps['items'] = [
     { label: 'Uploaded', value: dayjs(version.createdAt).format('MMM DD, YYYY') },
@@ -77,7 +111,9 @@ export function ModelVersion({ version }: Props) {
             <Title order={3}>About this version</Title>
             <Rating value={0} fractions={2} readOnly />
           </Group>
-          <Text>{version.description}</Text>
+          <ContentClamp>
+            <Text>{version.description}</Text>
+          </ContentClamp>
           <Title order={3}>Generated with this version</Title>
           <SimpleGrid
             breakpoints={[
@@ -122,6 +158,4 @@ export function ModelVersion({ version }: Props) {
   );
 }
 
-type Props = {
-  version: ModelWithDetails['modelVersions'][number];
-};
+type TabContentProps = { version: Props['items'][number] };

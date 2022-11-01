@@ -1,6 +1,5 @@
 import {
   Anchor,
-  Avatar,
   Burger,
   Button,
   createStyles,
@@ -25,7 +24,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { ColorSchemeToggle } from '~/components/ColorSchemeToggle/ColorSchemeToggle';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
-import { getInitials } from '~/utils/string-helpers';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 
 const useStyles = createStyles((theme) => ({
   inner: {
@@ -146,14 +145,7 @@ export function AppHeader({ links }: Props) {
                     onClick={() => setUserMenuOpened(true)}
                   >
                     <Group spacing={7}>
-                      <Avatar
-                        src={session?.user?.image}
-                        alt={session?.user?.name ?? 'User avatar'}
-                        radius="xl"
-                        size={20}
-                      >
-                        {getInitials(session.user?.name ?? '')}
-                      </Avatar>
+                      {session.user ? <UserAvatar user={session.user} /> : null}
                       <IconChevronDown size={12} stroke={1.5} />
                     </Group>
                   </UnstyledButton>

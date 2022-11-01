@@ -12,3 +12,14 @@ export enum ModelSort {
   MostDownloaded = 'Most Downloaded',
   Newest = 'Newest',
 }
+
+export enum ReviewSort {
+  Newest = 'newest',
+  MostLiked = 'most-liked',
+  MostDisliked = 'most-disliked',
+}
+
+export enum ReviewFilter {
+  NSFW = 'nsfw',
+  IncludesImages = 'includes-images',
+}
