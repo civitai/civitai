@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { getAllReviewsSelect } from '~/server/validators/reviews/getAllReviews';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
 import { handleDbError } from '~/server/services/errorHandling';
+import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { reviewUpsertSchema } from '~/server/validators/reviews/schema';
 
 export const reviewRouter = router({
@@ -15,6 +16,8 @@ export const reviewRouter = router({
           modelId: z.number(),
           modelVersionId: z.number(),
           userId: z.number(),
+          filterBy: z.array(z.nativeEnum(ReviewFilter)).optional(),
+          sort: z.nativeEnum(ReviewSort).optional(),
         })
         .partial()
     )

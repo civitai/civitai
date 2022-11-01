@@ -1,10 +1,13 @@
 import { Carousel } from '@mantine/carousel';
 import {
+  Badge,
+  Box,
   Chip,
   createStyles,
   Grid,
   Group,
   Image,
+  LoadingOverlay,
   Paper,
   Rating,
   SimpleGrid,
@@ -16,7 +19,7 @@ import dayjs from 'dayjs';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ReviewFilter } from '~/server/common/enums';
-import { ModelWithDetails } from '~/server/validators/models/getById';
+import { ReviewDetails } from '~/server/validators/reviews/getAllReviews';
 
 const useStyles = createStyles(() => ({
   label: {
@@ -29,7 +32,7 @@ const useStyles = createStyles(() => ({
   },
 }));
 
-export function ModelReview({ items }: Props) {
+export function ModelReviews({ items, onFilterChange, loading = false }: Props) {
   const { classes } = useStyles();
 
   return (
@@ -37,7 +40,7 @@ export function ModelReview({ items }: Props) {
       <Grid.Col span={2}>
         <Stack>
           <Title order={4}>Filters</Title>
-          <Chip.Group align="center" multiple>
+          <Chip.Group align="center" onChange={onFilterChange} multiple>
             <Chip classNames={classes} radius="xs" value={ReviewFilter.NSFW}>
               NSFW
             </Chip>
@@ -47,7 +50,8 @@ export function ModelReview({ items }: Props) {
           </Chip.Group>
         </Stack>
       </Grid.Col>
-      <Grid.Col span={10}>
+      <Grid.Col span={10} sx={{ position: 'relative' }}>
+        <LoadingOverlay visible={loading} />
         {items.length > 0 ? (
           <SimpleGrid
             breakpoints={[
@@ -74,7 +78,11 @@ export function ModelReview({ items }: Props) {
   );
 }
 
-type Props = { items: ModelWithDetails['reviews'] };
+type Props = {
+  items: ReviewDetails[];
+  onFilterChange: (values: ReviewFilter[]) => void;
+  loading?: boolean;
+};
 
 function ReviewItem({ review }: ItemProps) {
   return (
@@ -90,21 +98,43 @@ function ReviewItem({ review }: ItemProps) {
           </Stack>
           <Rating value={review.rating} fractions={2} readOnly />
         </Group>
-        <Carousel
-          sx={(theme) => ({
-            margin: `0 ${theme.spacing.md * -1}px`,
-          })}
-          loop
-        >
-          {review.imagesOnReviews.map(({ image }) => (
-            <Carousel.Slide key={image.id}>
-              <Image
-                src={image.url}
-                alt={image.name ?? 'Visual representation of the user review'}
-              />
-            </Carousel.Slide>
-          ))}
-        </Carousel>
+        {review.imagesOnReviews.length > 0 ? (
+          <Box sx={{ position: 'relative' }}>
+            <Carousel
+              sx={(theme) => ({
+                margin: `0 ${theme.spacing.md * -1}px`,
+              })}
+              loop
+            >
+              {review.imagesOnReviews.map(({ image }) => (
+                <Carousel.Slide key={image.id}>
+                  <Image
+                    src={image.url}
+                    alt={image.name ?? 'Visual representation of the user review'}
+                  />
+                </Carousel.Slide>
+              ))}
+            </Carousel>
+            <Badge
+              variant="filled"
+              color="gray"
+              size="sm"
+              sx={(theme) => ({ position: 'absolute', top: theme.spacing.xs, right: 0 })}
+            >
+              {review.imagesOnReviews.length}
+            </Badge>
+            {review.nsfw ? (
+              <Badge
+                color="red"
+                variant="filled"
+                size="sm"
+                sx={(theme) => ({ position: 'absolute', top: theme.spacing.xs, left: 0 })}
+              >
+                NSFW
+              </Badge>
+            ) : null}
+          </Box>
+        ) : null}
         <ContentClamp>
           <Text>{review.text}</Text>
         </ContentClamp>
@@ -113,4 +143,4 @@ function ReviewItem({ review }: ItemProps) {
   );
 }
 
-type ItemProps = { review: ModelWithDetails['reviews'][number] };
+type ItemProps = { review: Props['items'][number] };

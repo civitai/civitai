@@ -25,7 +25,10 @@ export const modelVersionSchema = z.object({
   steps: z.number().nullish(),
   epochs: z.number().nullish(),
   sizeKB: z.number(),
-  images: z.array(imageSchema).min(1, 'At least one example image must be uploaded'),
+  images: z
+    .array(imageSchema)
+    .min(1, 'At least one example image must be uploaded')
+    .max(10, 'You can only upload up to 10 images'),
   trainingDataUrl: z.string().nullish(),
 });
 

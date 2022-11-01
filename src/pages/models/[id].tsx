@@ -34,6 +34,7 @@ import { GetStaticPaths, GetStaticProps, InferGetStaticPropsType } from 'next';
 import { useSession } from 'next-auth/react';
 import Image from 'next/image';
 import { useRouter } from 'next/router';
+import { useState } from 'react';
 import superjson from 'superjson';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -42,16 +43,16 @@ import {
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { ModelForm } from '~/components/Model/ModelForm/ModelForm';
-import { ModelReview } from '~/components/Model/ModelReview/ModelReview';
-import { ModelVersion } from '~/components/Model/ModelVersion/ModelVersion';
+import { ModelReviews } from '~/components/Model/ModelReviews/ModelReviews';
+import { ModelVersions } from '~/components/Model/ModelVersions/ModelVersions';
 import { ModelRating } from '~/components/ModelRating/ModelRating';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { ReviewSort } from '~/server/common/enums';
+import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
 import { createContextInner } from '~/server/trpc/context';
 import { appRouter } from '~/server/trpc/router';
-import { ModelWithDetails } from '~/server/validators/models/getById';
+import { ReviewDetails } from '~/server/validators/reviews/getAllReviews';
 import { formatBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -113,7 +114,20 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
   const { id } = props;
   const { edit } = router.query;
 
+  const [reviewFilters, setReviewFilters] = useState<{
+    filterBy: ReviewFilter[];
+    sort: ReviewSort;
+  }>({
+    filterBy: [],
+    sort: ReviewSort.Newest,
+  });
+
   const { data: model } = trpc.model.getById.useQuery({ id });
+  const { data: reviews = [], status: reviewsStatus } = trpc.review.getAll.useQuery({
+    modelId: id,
+    ...reviewFilters,
+  });
+
   const deleteMutation = trpc.model.delete.useMutation();
 
   if (!model) return <NotFound />;
@@ -164,6 +178,20 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
     });
   };
 
+  const handleReviewFilterChange = (values: ReviewFilter[]) => {
+    setReviewFilters((current) => ({
+      ...current,
+      filterBy: values,
+    }));
+  };
+
+  const handleReviewSortChange = (value: ReviewSort) => {
+    setReviewFilters((current) => ({
+      ...current,
+      sort: value,
+    }));
+  };
+
   const modelDetails: DescriptionTableProps['items'] = [
     {
       label: 'Type',
@@ -180,6 +208,18 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
     {
       label: 'Versions',
       value: <Text>{model?.modelVersions.length}</Text>,
+    },
+    {
+      label: 'Tags',
+      value: (
+        <Group spacing={4}>
+          {model.tagsOnModels.map(({ tag }) => (
+            <Badge key={tag.id} color={tag.color ?? 'blue'} size="sm">
+              {tag.name}
+            </Badge>
+          ))}
+        </Group>
+      ),
     },
     {
       label: 'Trained Words',
@@ -315,7 +355,7 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
             <Title className={classes.title} order={2}>
               About this model
             </Title>
-            <ContentClamp maxHeight={400}>
+            <ContentClamp maxHeight={300}>
               <Text>{model?.description}</Text>
             </ContentClamp>
           </Stack>
@@ -325,7 +365,7 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
             <Title className={classes.title} order={2}>
               Versions
             </Title>
-            <ModelVersion items={model.modelVersions} initialTab={latestVersion.id.toString()} />
+            <ModelVersions items={model.modelVersions} initialTab={latestVersion.id.toString()} />
           </Stack>
         </Grid.Col>
         <Grid.Col span={12} orderSm={4}>
@@ -371,11 +411,17 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
                     { label: 'Most Liked', value: ReviewSort.MostLiked },
                     { label: 'Most Disiked', value: ReviewSort.MostDisliked },
                   ]}
+                  onChange={handleReviewSortChange}
                   size="xs"
                 />
               </Group>
             </Group>
-            <ModelReview items={fakeReviews} />
+            <ModelReviews
+              // items={reviews}
+              items={fakeReviews}
+              onFilterChange={handleReviewFilterChange}
+              loading={['loading', 'fetching'].includes(reviewsStatus)}
+            />
           </Stack>
         </Grid.Col>
       </Grid>
@@ -383,203 +429,105 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
   );
 }
 
-const fakeReviews: ModelWithDetails['reviews'] = [
+const fakeReviews: ReviewDetails[] = [
   {
+    id: 1,
+    modelId: 1,
     user: {
       id: 1,
       username: 'Manuel',
-      blurNsfw: false,
-      email: 'manuel.ureh@hotmail.com',
-      emailVerified: new Date(),
       name: 'Manuel Urena',
-      showNsfw: true,
       image: 'https://avatars.githubusercontent.com/u/12631159?v=4',
     },
     rating: 4.2,
     text: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.',
     createdAt: new Date('2022-10-25'),
-    nsfw: false,
+    nsfw: true,
+    modelVersionId: 1,
     modelVersion: { id: 1, name: 'Fake Model V1' },
     imagesOnReviews: [
       {
+        index: 0,
         image: {
           id: 1,
           name: 'Fake Image Name 1',
           url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%281%29.jpeg',
+          hash: 'some-random-hash-1234',
+          width: 100,
+          height: 100,
         },
       },
       {
+        index: 1,
         image: {
           id: 2,
           name: 'Fake Image Name 2',
           url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%284%29.jpeg',
+          hash: 'some-random-hash-1234',
+          width: 100,
+          height: 100,
         },
       },
     ],
+    reviewReactions: [],
   },
   {
+    id: 2,
+    modelId: 1,
     user: {
       id: 1,
       username: 'Manuel',
-      blurNsfw: false,
-      email: 'manuel.ureh@hotmail.com',
-      emailVerified: new Date(),
       name: 'Manuel Urena',
-      showNsfw: true,
       image: 'https://avatars.githubusercontent.com/u/12631159?v=4',
     },
     rating: 4.2,
     text: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.',
     createdAt: new Date('2022-10-25'),
-    nsfw: false,
+    nsfw: true,
+    modelVersionId: 1,
     modelVersion: { id: 1, name: 'Fake Model V1' },
     imagesOnReviews: [
       {
+        index: 0,
         image: {
           id: 1,
           name: 'Fake Image Name 1',
           url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%281%29.jpeg',
+          hash: 'some-random-hash-1234',
+          width: 100,
+          height: 100,
         },
       },
       {
+        index: 1,
         image: {
           id: 2,
           name: 'Fake Image Name 2',
           url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%284%29.jpeg',
+          hash: 'some-random-hash-1234',
+          width: 100,
+          height: 100,
         },
       },
     ],
+    reviewReactions: [],
   },
   {
+    id: 3,
+    modelId: 1,
     user: {
       id: 1,
       username: 'Manuel',
-      blurNsfw: false,
-      email: 'manuel.ureh@hotmail.com',
-      emailVerified: new Date(),
       name: 'Manuel Urena',
-      showNsfw: true,
       image: 'https://avatars.githubusercontent.com/u/12631159?v=4',
     },
     rating: 4.2,
     text: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.',
     createdAt: new Date('2022-10-25'),
-    nsfw: false,
+    nsfw: true,
+    modelVersionId: 1,
     modelVersion: { id: 1, name: 'Fake Model V1' },
-    imagesOnReviews: [
-      {
-        image: {
-          id: 1,
-          name: 'Fake Image Name 1',
-          url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%281%29.jpeg',
-        },
-      },
-      {
-        image: {
-          id: 2,
-          name: 'Fake Image Name 2',
-          url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%284%29.jpeg',
-        },
-      },
-    ],
-  },
-  {
-    user: {
-      id: 1,
-      username: 'Manuel',
-      blurNsfw: false,
-      email: 'manuel.ureh@hotmail.com',
-      emailVerified: new Date(),
-      name: 'Manuel Urena',
-      showNsfw: true,
-      image: 'https://avatars.githubusercontent.com/u/12631159?v=4',
-    },
-    rating: 4.2,
-    text: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.',
-    createdAt: new Date('2022-10-25'),
-    nsfw: false,
-    modelVersion: { id: 1, name: 'Fake Model V1' },
-    imagesOnReviews: [
-      {
-        image: {
-          id: 1,
-          name: 'Fake Image Name 1',
-          url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%281%29.jpeg',
-        },
-      },
-      {
-        image: {
-          id: 2,
-          name: 'Fake Image Name 2',
-          url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%284%29.jpeg',
-        },
-      },
-    ],
-  },
-  {
-    user: {
-      id: 1,
-      username: 'Manuel',
-      blurNsfw: false,
-      email: 'manuel.ureh@hotmail.com',
-      emailVerified: new Date(),
-      name: 'Manuel Urena',
-      showNsfw: true,
-      image: 'https://avatars.githubusercontent.com/u/12631159?v=4',
-    },
-    rating: 4.2,
-    text: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.',
-    createdAt: new Date('2022-10-25'),
-    nsfw: false,
-    modelVersion: { id: 1, name: 'Fake Model V1' },
-    imagesOnReviews: [
-      {
-        image: {
-          id: 1,
-          name: 'Fake Image Name 1',
-          url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%281%29.jpeg',
-        },
-      },
-      {
-        image: {
-          id: 2,
-          name: 'Fake Image Name 2',
-          url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%284%29.jpeg',
-        },
-      },
-    ],
-  },
-  {
-    user: {
-      id: 1,
-      username: 'Manuel',
-      blurNsfw: false,
-      email: 'manuel.ureh@hotmail.com',
-      emailVerified: new Date(),
-      name: 'Manuel Urena',
-      showNsfw: true,
-      image: 'https://avatars.githubusercontent.com/u/12631159?v=4',
-    },
-    rating: 4.2,
-    text: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.',
-    createdAt: new Date('2022-10-25'),
-    nsfw: false,
-    modelVersion: { id: 1, name: 'Fake Model V1' },
-    imagesOnReviews: [
-      {
-        image: {
-          id: 1,
-          name: 'Fake Image Name 1',
-          url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%281%29.jpeg',
-        },
-      },
-      {
-        image: {
-          id: 2,
-          name: 'Fake Image Name 2',
-          url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%284%29.jpeg',
-        },
-      },
-    ],
+    imagesOnReviews: [],
+    reviewReactions: [],
   },
 ];

@@ -16,12 +16,12 @@ import {
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useListState } from '@mantine/hooks';
-import { IconZoomIn, IconGripVertical } from '@tabler/icons';
+import { IconGripVertical } from '@tabler/icons';
 import { useEffect } from 'react';
+import { SortableGrid } from '~/components/SortableGrid/SortableGrid';
 import { useS3Upload } from '~/hooks/use-s3-upload';
 import { ImageUploadProps } from '~/server/validators/image/schema';
-import { SortableGrid } from '../SortableGrid/SortableGrid';
-import { blurHashImage } from '../../utils/blurhash';
+import { blurHashImage } from '~/utils/blurhash';
 
 type CustomFile = ImageUploadProps & { file?: FileWithPath; index: number };
 
@@ -29,6 +29,8 @@ type Props = InputWrapperProps & {
   value: Array<CustomFile>;
   onChange: (value: Array<CustomFile>) => void;
 };
+
+const MAX_FILE_UPLOAD = 10;
 
 export function ImageUpload({ value = [], onChange, ...inputWrapperProps }: Props) {
   const { classes, cx } = useStyles();
@@ -44,7 +46,7 @@ export function ImageUpload({ value = [], onChange, ...inputWrapperProps }: Prop
     return () => files.forEach((file) => URL.revokeObjectURL(file.url));
   }, [files]);
 
-  const handlDrop = async (droppedFiles: FileWithPath[]) => {
+  const handleDrop = async (droppedFiles: FileWithPath[]) => {
     filesHandlers.setState((current) =>
       [
         ...current,
@@ -59,7 +61,7 @@ export function ImageUpload({ value = [], onChange, ...inputWrapperProps }: Prop
 
   useEffect(() => {
     onChange(files);
-  }, [files]);
+  }, [files, onChange]);
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -85,8 +87,8 @@ export function ImageUpload({ value = [], onChange, ...inputWrapperProps }: Prop
       <Stack>
         <Dropzone
           accept={IMAGE_MIME_TYPE}
-          onDrop={handlDrop}
-          maxFiles={10}
+          onDrop={handleDrop}
+          maxFiles={MAX_FILE_UPLOAD}
           styles={(theme) => ({
             root: {
               borderColor: !!inputWrapperProps.error ? theme.colors.red[6] : undefined,
