@@ -72,7 +72,7 @@ export const modelRouter = router({
               images: {
                 create: images.map((image, index) => ({
                   index,
-                  image: { create: { name: image.name, url: image.url, userId } },
+                  image: { create: { ...image, userId } },
                 })),
               },
             })),
@@ -98,89 +98,92 @@ export const modelRouter = router({
   update: protectedProcedure
     .input(modelSchema.extend({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      try {
-        const userId = ctx.session.user.id;
-        const { id, modelVersions, tagsOnModels, ...data } = input;
-        const { tagsToCreate, tagsToUpdate } = tagsOnModels?.reduce(
-          (acc, current) => {
-            if (!current.id) acc.tagsToCreate.push(current);
-            else acc.tagsToUpdate.push(current);
+      const userId = ctx.session.user.id;
+      const { id, modelVersions, tagsOnModels, ...data } = input;
+      const { tagsToCreate, tagsToUpdate } = tagsOnModels?.reduce(
+        (acc, current) => {
+          if (!current.id) acc.tagsToCreate.push(current);
+          else acc.tagsToUpdate.push(current);
 
-            return acc;
-          },
-          {
-            tagsToCreate: [] as Array<typeof tagsOnModels[number]>,
-            tagsToUpdate: [] as Array<typeof tagsOnModels[number]>,
-          }
-        ) ?? { tagsToCreate: [], tagsToUpdate: [] };
-
-        const model = await ctx.prisma.model.update({
-          where: { id },
-          data: {
-            ...data,
-            modelVersions: {
-              upsert: modelVersions.map(({ id = -1, images, ...version }) => {
-                const imagesWithIndex = images.map((image, index) => ({ index, userId, ...image }));
-                const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
-                const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
-                return {
-                  where: { id },
-                  create: {
-                    ...version,
-                    images: {
-                      create: imagesWithIndex.map(({ index, ...image }) => ({
-                        index,
-                        image: { create: image },
-                      })),
-                    },
-                  },
-                  update: {
-                    ...version,
-                    images: {
-                      create: imagesToCreate.map(({ index, ...image }) => ({
-                        index,
-                        image: { create: image },
-                      })),
-                      update: imagesToUpdate.map(({ index, ...image }) => ({
-                        where: {
-                          imageId_modelVersionId: {
-                            imageId: image.id as number,
-                            modelVersionId: id,
-                          },
-                        },
-                        data: {
-                          index,
-                        },
-                      })),
-                    },
-                  },
-                };
-              }),
-            },
-            tagsOnModels: {
-              deleteMany: {},
-              connectOrCreate: tagsToUpdate.map((tag) => ({
-                where: { modelId_tagId: { modelId: id, tagId: tag.id as number } },
-                create: { tagId: tag.id as number },
-              })),
-              create: tagsToCreate.map((tag) => ({
-                tag: { create: { name: tag.name } },
-              })),
-            },
-          },
-        });
-
-        if (!model) {
-          return handleDbError({
-            code: 'NOT_FOUND',
-            message: `No model with id ${id}`,
-          });
+          return acc;
+        },
+        {
+          tagsToCreate: [] as Array<typeof tagsOnModels[number]>,
+          tagsToUpdate: [] as Array<typeof tagsOnModels[number]>,
         }
+      ) ?? { tagsToCreate: [], tagsToUpdate: [] };
 
-        return model;
-      } catch (error) {
-        return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+      const model = await ctx.prisma.model.update({
+        where: { id },
+        data: {
+          ...data,
+          modelVersions: {
+            upsert: modelVersions.map(({ id = -1, images, ...version }) => {
+              const imagesWithIndex = images.map((image, index) => ({
+                index,
+                userId,
+                ...image,
+              }));
+              const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
+              const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
+              return {
+                where: { id },
+                create: {
+                  ...version,
+                  images: {
+                    create: imagesWithIndex.map(({ index, ...image }) => ({
+                      index,
+                      image: { create: image },
+                    })),
+                  },
+                },
+                update: {
+                  ...version,
+                  images: {
+                    deleteMany: {
+                      NOT: images.map((image) => ({ imageId: image.id })),
+                    },
+                    create: imagesToCreate.map(({ index, ...image }) => ({
+                      index,
+                      image: { create: image },
+                    })),
+                    update: imagesToUpdate.map(({ index, ...image }) => ({
+                      where: {
+                        imageId_modelVersionId: {
+                          imageId: image.id as number,
+                          modelVersionId: id,
+                        },
+                      },
+                      data: {
+                        index,
+                      },
+                    })),
+                  },
+                },
+              };
+            }),
+          },
+          tagsOnModels: {
+            deleteMany: {},
+            connectOrCreate: tagsToUpdate.map((tag) => ({
+              where: { modelId_tagId: { modelId: id, tagId: tag.id as number } },
+              create: { tagId: tag.id as number },
+            })),
+            create: tagsToCreate.map((tag) => ({
+              tag: { create: { name: tag.name } },
+            })),
+          },
+        },
+      });
+
+      if (!model) {
+        return handleDbError({
+          code: 'NOT_FOUND',
+          message: `No model with id ${id}`,
+        });
       }
+
+      return model;
     }),
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))

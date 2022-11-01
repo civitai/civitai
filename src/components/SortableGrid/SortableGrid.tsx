@@ -13,9 +13,10 @@ import { SimpleGrid, SimpleGridProps } from '@mantine/core';
 import React, { CSSProperties } from 'react';
 import useIsClient from '~/hooks/useIsClient';
 
-export function SortableGrid<T extends BaseEntity = BaseEntity>({
+export function SortableGrid<T>({
   children,
   items,
+  rowKey,
   gridProps,
   disabled = false,
   ...props
@@ -24,8 +25,9 @@ export function SortableGrid<T extends BaseEntity = BaseEntity>({
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        delay: 100,
-        tolerance: 5,
+        // delay: 0,
+        // tolerance: 5,
+        distance: 8,
       },
     }),
     useSensor(KeyboardSensor, {
@@ -33,14 +35,24 @@ export function SortableGrid<T extends BaseEntity = BaseEntity>({
     })
   );
 
-  const ids = items.map((item) => item.id);
+  if (!items.length) return null;
+  if (typeof items[0][rowKey] !== 'number' && items[0][rowKey] !== 'string') {
+    console.error('invalid row key provided to SortableGrid');
+    return null;
+  }
+
+  const keys = items.map((item) => item[rowKey] as string | number);
 
   return isClient ? (
     <DndContext sensors={sensors} collisionDetection={closestCenter} {...props}>
-      <SortableContext items={ids}>
+      <SortableContext items={keys}>
         <SimpleGrid {...gridProps}>
           {items.map((item, index) => (
-            <SortableItem key={item.id} id={item.id} disabled={disabled}>
+            <SortableItem
+              key={item[rowKey] as string | number}
+              id={item[rowKey] as string | number}
+              disabled={disabled}
+            >
               {children(item, index)}
             </SortableItem>
           ))}
@@ -50,9 +62,10 @@ export function SortableGrid<T extends BaseEntity = BaseEntity>({
   ) : null;
 }
 
-type SortableGridProps<T extends BaseEntity = BaseEntity> = Pick<DndContextProps, 'onDragEnd'> & {
+type SortableGridProps<T> = Pick<DndContextProps, 'onDragEnd'> & {
   children: (item: T, index: number) => React.ReactNode;
   items: T[];
+  rowKey: keyof T;
   gridProps?: SimpleGridProps;
   disabled?: boolean;
 };

@@ -33,6 +33,7 @@ import { UploadTypeUnion } from '~/server/common/enums';
 import { modelSchema } from '~/server/common/validation/model';
 import { ModelWithDetails } from '~/server/validators/models/getById';
 import { trpc } from '~/utils/trpc';
+import { ImageUpload } from '../../ImageUpload/ImageUpload';
 
 type CreateModelProps = z.infer<typeof modelSchema>;
 type UpdateModelProps = Omit<CreateModelProps, 'id'> & { id: number };
@@ -112,13 +113,6 @@ export function ModelForm({ model }: Props) {
     else addMutation.mutate(data as CreateModelProps, commonOptions);
   };
 
-  const handleOnDrop = (modelIndex: number) => (files: Array<{ name: string; url: string }>) => {
-    form.setFieldValue(
-      `modelVersions.${modelIndex}.images`,
-      files.map((file) => ({ ...file }))
-    );
-  };
-
   const handleFileChange = async ({
     file,
     url,
@@ -195,6 +189,11 @@ export function ModelForm({ model }: Props) {
 
   const versionsCount = form.values.modelVersions?.length ?? 0;
   const mutating = addMutation.isLoading || updateMutation.isLoading;
+  const isUploadingImages = form.values.modelVersions.some((version) =>
+    version.images.some((image) => {
+      return !!image.url.startsWith('blob');
+    })
+  );
 
   return (
     <Container>
@@ -334,19 +333,9 @@ export function ModelForm({ model }: Props) {
                               />
                             </Grid.Col>
                             <Grid.Col span={12}>
-                              <FileDrop
-                                title="Example Images"
-                                files={form.values.modelVersions[index].images as CustomFile[]}
-                                onDrop={handleOnDrop(index)}
-                                onDragEnd={handleOnDrop(index)}
-                                onDeleteFiles={(ids: string[]) => {
-                                  const currentImages = form.values.modelVersions[index].images;
-                                  form.setFieldValue(
-                                    `modelVersions.${index}.images`,
-                                    currentImages.filter((image) => !ids.includes(image.url))
-                                  );
-                                }}
-                                errors={form.errors[`modelVersions.${index}.images`] as string}
+                              <ImageUpload
+                                label="Example Images"
+                                {...form.getInputProps(`modelVersions.${index}.images`)}
                               />
                             </Grid.Col>
                           </Grid>
@@ -444,7 +433,7 @@ export function ModelForm({ model }: Props) {
           <Button variant="outline" onClick={() => router.back()} disabled={mutating}>
             Discard changes
           </Button>
-          <Button type="submit" loading={mutating}>
+          <Button type="submit" loading={mutating} disabled={isUploadingImages}>
             Save
           </Button>
         </Group>

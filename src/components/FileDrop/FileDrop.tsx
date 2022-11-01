@@ -80,16 +80,18 @@ export function FileDrop({
   const { uploadToS3, files: imageFiles } = useS3Upload();
 
   const handleOnDrop = async (droppedFiles: FileWithPath[]) => {
-    filesHandlers.setState((current) => [
-      ...current,
-      ...droppedFiles.map((file) => ({
-        // TODO: revisit unique number generator if it's giving issues
-        id: Math.floor((Date.now() * Math.random()) / 1000),
-        name: file.name,
-        url: URL.createObjectURL(file),
-        file,
-      })),
-    ]);
+    filesHandlers.setState((current) =>
+      [
+        ...current,
+        ...droppedFiles.map((file) => ({
+          // TODO: revisit unique number generator if it's giving issues
+          id: Math.floor((Date.now() * Math.random()) / 1000),
+          name: file.name,
+          url: URL.createObjectURL(file),
+          file,
+        })),
+      ].map((image, index) => ({ ...image, index }))
+    );
 
     const uploadedImages = await Promise.all(
       droppedFiles.map(async (file) => {
@@ -261,6 +263,7 @@ export function FileDrop({
       ) : null}
       <SortableGrid
         items={files}
+        rowKey="id"
         onDragEnd={handleDragEnd}
         gridProps={{
           cols: 3,

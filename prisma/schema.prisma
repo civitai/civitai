@@ -3,7 +3,7 @@
 
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = ["filteredRelationCount", "orderByNulls"]
+  previewFeatures = ["filteredRelationCount", "orderByNulls", "interactiveTransactions"]
 }
 
 datasource db {
@@ -222,7 +222,7 @@ enum ImageOnModelType {
 model ImagesOnModels {
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   modelVersionId Int
-  image          Image        @relation(fields: [imageId], references: [id])
+  image          Image        @relation(fields: [imageId], references: [id], onDelete: Cascade)
   imageId        Int
   index          Int?
 
@@ -232,7 +232,7 @@ model ImagesOnModels {
 model ImagesOnReviews {
   review   Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   reviewId Int
-  image    Image  @relation(fields: [imageId], references: [id])
+  image    Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
   imageId  Int
   index    Int?
 

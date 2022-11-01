@@ -15,6 +15,7 @@ import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { ModalsProvider } from '@mantine/modals';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+import { CustomModalsProvider } from './../providers/CustomModalsProvider';
 
 type CustomNextPage = NextPage & {
   getLayout?: (page: ReactElement) => ReactNode;
@@ -49,13 +50,13 @@ function MyApp(props: CustomAppProps<{ session: Session | null; colorScheme: Col
 
       <ColorSchemeProvider colorScheme={colorScheme} toggleColorScheme={toggleColorScheme}>
         <MantineProvider theme={{ colorScheme }} withGlobalStyles withNormalizeCSS>
-          <ModalsProvider>
+          <CustomModalsProvider>
             <NotificationsProvider>
               <SessionProvider session={session}>
                 {getLayout(<Component {...pageProps} />)}
               </SessionProvider>
             </NotificationsProvider>
-          </ModalsProvider>
+          </CustomModalsProvider>
         </MantineProvider>
       </ColorSchemeProvider>
       {process.env.NODE_ENV == 'development' && <ReactQueryDevtools />}

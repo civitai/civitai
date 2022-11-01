@@ -29,6 +29,9 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       createdAt: true,
       updatedAt: true,
       images: {
+        orderBy: {
+          index: 'asc',
+        },
         select: {
           index: true,
           image: {
@@ -38,6 +41,9 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
               url: true,
               nsfw: true,
               prompt: true,
+              height: true,
+              width: true,
+              hash: true,
             },
           },
         },

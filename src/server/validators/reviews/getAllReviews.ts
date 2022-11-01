@@ -41,4 +41,4 @@ const getAllReviews = Prisma.validator<Prisma.ReviewArgs>()({
   select: getAllReviewsSelect,
 });
 
-export type GetAllReviews = Prisma.ReviewGetPayload<typeof getAllReviews>;
+export type ReviewDetails = Prisma.ReviewGetPayload<typeof getAllReviews>;
