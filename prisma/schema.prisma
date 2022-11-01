@@ -152,8 +152,8 @@ enum UserActivityType {
 
 model UserActivity {
   id        Int              @id @default(autoincrement())
-  userId    Int
-  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int?
+  user      User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
   activity  UserActivityType
   details   Json?
   createdAt DateTime         @default(now())
