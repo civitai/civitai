@@ -12,6 +12,7 @@ import {
 } from '@mantine/core';
 import { IconDownload } from '@tabler/icons';
 import dayjs from 'dayjs';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import {
   DescriptionTable,
   type Props as DescriptionTableProps,
@@ -110,7 +111,9 @@ function TabContent({ version }: TabContentProps) {
             <Title order={3}>About this version</Title>
             <Rating value={0} fractions={2} readOnly />
           </Group>
-          <Text>{version.description}</Text>
+          <ContentClamp>
+            <Text>{version.description}</Text>
+          </ContentClamp>
           <Title order={3}>Generated with this version</Title>
           <SimpleGrid
             breakpoints={[

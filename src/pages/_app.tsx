@@ -1,7 +1,12 @@
 // src/pages/_app.tsx
 import { ColorScheme, ColorSchemeProvider, MantineProvider } from '@mantine/core';
+import { ModalsProvider } from '@mantine/modals';
 import { NotificationsProvider } from '@mantine/notifications';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { getCookie, setCookie } from 'cookies-next';
+import * as dayjs from 'dayjs';
+import duration from 'dayjs/plugin/duration';
+import relativeTime from 'dayjs/plugin/relativeTime';
 import type { NextPage } from 'next';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
@@ -13,8 +18,9 @@ import { ReactElement, ReactNode, useState } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
-import { ModalsProvider } from '@mantine/modals';
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+
+dayjs.extend(duration);
+dayjs.extend(relativeTime);
 
 type CustomNextPage = NextPage & {
   getLayout?: (page: ReactElement) => ReactNode;

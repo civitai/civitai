@@ -1,8 +1,8 @@
-import { Avatar, AvatarProps, Group, Text } from '@mantine/core';
+import { Avatar, AvatarProps, Group, Stack, Text } from '@mantine/core';
 import { User } from '@prisma/client';
 import { getInitials } from '~/utils/string-helpers';
 
-export function UserAvatar({ user, withUsername, avatarProps }: Props) {
+export function UserAvatar({ user, withUsername, subText, avatarProps }: Props) {
   return (
     <Group align="center" spacing={4}>
       <Avatar
@@ -14,13 +14,21 @@ export function UserAvatar({ user, withUsername, avatarProps }: Props) {
       >
         {getInitials(user.name ?? '')}
       </Avatar>
-      {withUsername ? <Text>{user.username}</Text> : null}
+      <Stack spacing={0}>
+        {withUsername ? <Text size="sm">{user.username ?? user.name}</Text> : null}
+        {subText ? (
+          <Text size="xs" color="dimmed">
+            {subText}
+          </Text>
+        ) : null}
+      </Stack>
     </Group>
   );
 }
 
 type Props = {
-  user: User;
+  user: Partial<User>;
   withUsername?: boolean;
   avatarProps?: AvatarProps;
+  subText?: string;
 };

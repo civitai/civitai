@@ -44,7 +44,17 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       },
     },
   },
-  reviews: { select: { text: true, rating: true, user: true } },
+  reviews: {
+    select: {
+      text: true,
+      rating: true,
+      user: true,
+      nsfw: true,
+      createdAt: true,
+      modelVersion: { select: { id: true, name: true } },
+      imagesOnReviews: { select: { image: { select: { id: true, name: true, url: true } } } },
+    },
+  },
   tagsOnModels: { select: { tag: true } },
   rank: true,
 });

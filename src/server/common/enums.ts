@@ -18,3 +18,8 @@ export enum ReviewSort {
   MostLiked = 'most-liked',
   MostDisliked = 'most-disliked',
 }
+
+export enum ReviewFilter {
+  NSFW = 'nsfw',
+  IncludesImages = 'includes-images',
+}
