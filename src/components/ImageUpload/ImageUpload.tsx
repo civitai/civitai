@@ -34,13 +34,19 @@ import { ImagePreview } from '~/components/ImageUpload/ImagePreview';
 import { SortableImage } from './SortableItem';
 
 type Props = InputWrapperProps & {
+  max?: number;
   value: Array<CustomFile>;
   onChange: (value: Array<CustomFile>) => void;
 };
 
-const MAX_FILE_UPLOAD = 10;
-
-export function ImageUpload({ value = [], onChange, label, ...inputWrapperProps }: Props) {
+//TODO - make sure the max is applying to the total number of images and not just each time the user adds new images via the input
+export function ImageUpload({
+  value = [],
+  onChange,
+  label,
+  max = 10,
+  ...inputWrapperProps
+}: Props) {
   const { classes, cx } = useStyles();
 
   const sensors = useSensors(
@@ -144,7 +150,7 @@ export function ImageUpload({ value = [], onChange, label, ...inputWrapperProps 
           <Dropzone
             accept={IMAGE_MIME_TYPE}
             onDrop={handlDrop}
-            maxFiles={10}
+            maxFiles={max}
             styles={(theme) => ({
               root: {
                 borderColor: !!inputWrapperProps.error ? theme.colors.red[6] : undefined,

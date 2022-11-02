@@ -12,6 +12,7 @@ import {
 } from '@mantine/core';
 import { useForm, zodResolver } from '@mantine/form';
 import { ContextModalProps } from '@mantine/modals';
+import { useSession } from 'next-auth/react';
 import { z } from 'zod';
 import { FileDrop } from '~/components/FileDrop/FileDrop';
 import { imageSchema } from '~/server/common/validation/model';
@@ -21,7 +22,7 @@ import { trpc } from '~/utils/trpc';
 import { ImageUpload } from './../ImageUpload/ImageUpload';
 
 type ReviewModelProps = {
-  review: Partial<ReviewUpsertProps>;
+  review: ReviewUpsertProps;
   modelName: string;
   modelVersions: { id: number; name: string }[];
 };
@@ -34,20 +35,22 @@ const schema = z.object({
   images: z.array(imageSchema).optional(),
 });
 
+type ReviewEditDataSchema = z.infer<typeof schema>;
+
 export default function ReviewEditModal({
   context,
   id,
   innerProps,
 }: ContextModalProps<ReviewModelProps>) {
   const { modelName, modelVersions, review } = innerProps;
-  const { mutate, isLoading } = trpc.review.upsert.useMutation();
+  const { mutateAsync, isLoading } = trpc.review.upsert.useMutation();
 
-  const form = useForm<typeof schema>({
+  const form = useForm<ReviewEditDataSchema>({
     validate: zodResolver(schema),
   });
 
-  const handleSubmit = () => {
-    console.log('save');
+  const handleSubmit = async (data: ReviewEditDataSchema) => {
+    await mutateAsync({ ...review, ...data });
     context.closeModal(id);
   };
 
@@ -71,7 +74,7 @@ export default function ReviewEditModal({
             minRows={2}
             autosize
           />
-          <ImageUpload title="Generated Images" {...form.getInputProps('images')} />
+          <ImageUpload title="Generated Images" max={5} {...form.getInputProps('images')} />
           <Checkbox
             {...form.getInputProps('nsfw')}
             label="This review or images associated with it are NSFW"

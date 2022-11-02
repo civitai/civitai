@@ -38,7 +38,7 @@ export const reviewRouter = router({
   upsert: protectedProcedure.input(reviewUpsertSchema).mutation(async ({ ctx, input }) => {
     // TODO - allow admin to make changes to a review?
     const { user } = ctx.session;
-    if (!user || input.userId !== user.id) {
+    if (!user) {
       throw new TRPCError({
         code: 'UNAUTHORIZED',
       });
@@ -46,7 +46,7 @@ export const reviewRouter = router({
 
     const { images = [], ...reviewInput } = input;
     const imagesWithIndex = images.map((image, index) => ({
-      userId: input.userId,
+      userId: user.id,
       ...image,
       index,
     }));
@@ -55,9 +55,10 @@ export const reviewRouter = router({
     const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
 
     return await ctx.prisma.review.upsert({
-      where: { id: input.id },
+      where: { id: input.id ?? 0 },
       create: {
         ...reviewInput,
+        userId: user.id,
         imagesOnReviews: {
           create: imagesWithIndex.map(({ index, ...image }) => ({
             index,

@@ -5,7 +5,6 @@ export const reviewUpsertSchema = z.object({
   id: z.number().optional(),
   modelId: z.number(),
   modelVersionId: z.number(),
-  userId: z.number(),
   rating: z.number(),
   text: z.string().optional(),
   nsfw: z.boolean().optional(),
