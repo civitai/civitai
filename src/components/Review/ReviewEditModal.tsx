@@ -1,46 +1,47 @@
 import { Button, Group, Stack, Rating, Select, Input, Textarea, Checkbox } from '@mantine/core';
 import { useForm, zodResolver } from '@mantine/form';
 import { ContextModalProps } from '@mantine/modals';
-import { z } from 'zod';
-import { imageSchema } from '~/server/common/validation/model';
+import { showNotification } from '@mantine/notifications';
+import { IconX } from '@tabler/icons';
 
-import { ReviewUpsertProps } from '~/server/validators/reviews/schema';
+import { ImageUpload } from '~/components/ImageUpload/ImageUpload';
+import { ReviewUpsertProps, reviewUpsertSchema } from '~/server/validators/reviews/schema';
 import { trpc } from '~/utils/trpc';
-import { ImageUpload } from './../ImageUpload/ImageUpload';
 
 type ReviewModelProps = {
   review: ReviewUpsertProps;
   modelVersions: { id: number; name: string }[];
 };
 
-const schema = z.object({
-  modelVersionId: z.number(),
-  rating: z.number(),
-  text: z.string().optional(),
-  nsfw: z.boolean().optional(),
-  images: z.array(imageSchema).optional(),
-});
-
-type ReviewEditDataSchema = z.infer<typeof schema>;
-
 export default function ReviewEditModal({
   context,
   id,
   innerProps,
 }: ContextModalProps<ReviewModelProps>) {
-  const { modelVersions, review } = innerProps;
-  const { mutateAsync, isLoading } = trpc.review.upsert.useMutation();
+  const queryUtils = trpc.useContext();
+  const { modelName, modelVersions, review } = innerProps;
+  const { mutate, isLoading } = trpc.review.upsert.useMutation();
 
-  const form = useForm<ReviewEditDataSchema>({
-    validate: zodResolver(schema),
-    initialValues: {
-      ...review,
-    },
+  const form = useForm<ReviewUpsertProps>({
+    validate: zodResolver(reviewUpsertSchema),
+    initialValues: review,
   });
 
-  const handleSubmit = async (data: ReviewEditDataSchema) => {
-    await mutateAsync({ ...review, ...data });
-    context.closeModal(id);
+  const handleSubmit = (data: ReviewUpsertProps) => {
+    mutate(data, {
+      onSuccess: ({ modelId }) => {
+        context.closeModal(id);
+        queryUtils.review.getAll.invalidate({ modelId });
+      },
+      onError: () => {
+        showNotification({
+          title: 'Could not save the review',
+          message: `There was an error when trying to save your review. Please try again`,
+          color: 'red',
+          icon: <IconX size={18} />,
+        });
+      },
+    });
   };
 
   return (
@@ -69,7 +70,7 @@ export default function ReviewEditModal({
             label="This review or images associated with it are NSFW"
           />
           <Group position="apart">
-            <Button variant="default" onClick={() => context.closeModal(id)}>
+            <Button variant="default" onClick={() => context.closeModal(id)} disabled={isLoading}>
               Cancel
             </Button>
             <Button type="submit" loading={isLoading}>

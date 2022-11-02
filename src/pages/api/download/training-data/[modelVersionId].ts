@@ -3,11 +3,10 @@ import { getGetUrl } from '~/utils/s3-utils';
 import { UserActivityType } from '@prisma/client';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
 
-export default async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
+export default async function downloadTrainingData(req: NextApiRequest, res: NextApiResponse) {
   const modelVersionId = req.query.modelVersionId as string;
   if (!modelVersionId) {
-    res.status(400).json({ error: 'Missing modelVersionId' });
-    return;
+    return res.status(400).json({ error: 'Missing modelVersionId' });
   }
 
   const modelVersion = await prisma?.modelVersion.findFirst({
@@ -15,20 +14,24 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
     select: { model: { select: { id: true, name: true } }, name: true, trainingDataUrl: true },
   });
   if (!modelVersion || !modelVersion.trainingDataUrl) {
-    res.status(404).json({ error: 'Model not found' });
-    return;
+    return res.status(404).json({ error: 'Training data not found' });
   }
 
   // Track activity
   const session = await getServerAuthSession({ req, res });
   const userId = session?.user?.id;
-  await prisma?.userActivity.create({
-    data: {
-      userId,
-      activity: UserActivityType.TrainingDataDownload,
-      details: JSON.stringify({ modelId: modelVersion.model.id, modelVersionId }),
-    },
-  });
+
+  try {
+    await prisma?.userActivity.create({
+      data: {
+        userId,
+        activity: UserActivityType.TrainingDataDownload,
+        details: JSON.stringify({ modelId: modelVersion.model.id, modelVersionId }),
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ error: 'Invalid database operation', cause: error });
+  }
 
   const { url } = await getGetUrl(modelVersion.trainingDataUrl);
 

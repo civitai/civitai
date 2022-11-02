@@ -9,7 +9,7 @@ type Props = {
 
 export const ImagePreview = forwardRef<HTMLDivElement, Props>(
   ({ image, children, isPrimary, ...props }, ref) => {
-    const { classes, cx } = useStyles({ url: image?.url, isPrimary });
+    const { classes } = useStyles({ url: image?.url, isPrimary });
     if (!image) return null;
     return (
       <div ref={ref} className={classes.root} {...props}>

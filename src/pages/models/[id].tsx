@@ -9,6 +9,7 @@ import {
   Grid,
   Group,
   Menu,
+  MultiSelect,
   Select,
   Stack,
   Text,
@@ -19,11 +20,13 @@ import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/mod
 import { NextLink } from '@mantine/next';
 import { showNotification } from '@mantine/notifications';
 import {
+  IconArrowsSort,
   IconCheck,
   IconCopy,
   IconDotsVertical,
   IconDownload,
   IconEdit,
+  IconFilter,
   IconPlus,
   IconTrash,
   IconX,
@@ -52,7 +55,6 @@ import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
 import { createContextInner } from '~/server/trpc/context';
 import { appRouter } from '~/server/trpc/router';
-import { ReviewDetails } from '~/server/validators/reviews/getAllReviews';
 import { formatBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -146,7 +148,7 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
       labels: { confirm: 'Delete Model', cancel: "No, don't delete it" },
       confirmProps: { color: 'red', loading: deleteMutation.isLoading },
       closeOnConfirm: false,
-      onConfirm: async () => {
+      onConfirm: () => {
         if (model) {
           deleteMutation.mutate(
             { id: model.id },
@@ -265,11 +267,11 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
           <Title className={classes.title} order={1}>
             {model?.name}
           </Title>
-          <Group spacing="xs" className={classes.actions}>
+          <Group spacing="xs" className={classes.actions} noWrap>
             <Button
               component="a"
               leftIcon={<IconDownload size={16} />}
-              href={latestVersion?.url}
+              href={`/api/download/models/${latestVersion?.id}`}
               target="_blank"
               size="xs"
               fullWidth={mobile}
@@ -311,7 +313,7 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
       <Grid gutter="xl">
         <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
           <Stack>
-            <DescriptionTable title="Model Details" items={modelDetails} />
+            <DescriptionTable items={modelDetails} labelWidth="30%" />
           </Stack>
         </Grid.Col>
         <Grid.Col
@@ -371,7 +373,7 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
         <Grid.Col span={12} orderSm={4}>
           <Stack spacing="xl">
             <Group sx={{ justifyContent: 'space-between' }}>
-              <Stack spacing={0}>
+              <Stack spacing={4}>
                 <Group spacing={4}>
                   <Title order={3}>Reviews</Title>
                   <ModelRating rank={model.rank} />
@@ -379,13 +381,14 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
                 <Text
                   size="md"
                   color="dimmed"
-                >{`${fakeReviews.length.toLocaleString()} total reviews`}</Text>
+                >{`${reviews.length.toLocaleString()} total reviews`}</Text>
               </Stack>
-              <Group spacing="xs">
+              <Stack align="flex-end" spacing="xs">
                 <Button
                   leftIcon={<IconPlus size={16} />}
                   variant="outline"
-                  compact
+                  fullWidth={mobile}
+                  size="xs"
                   onClick={() =>
                     openContextModal({
                       modal: 'reviewEdit',
@@ -406,21 +409,36 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
                 >
                   Add Review
                 </Button>
-                <Select
-                  defaultValue={ReviewSort.Newest}
-                  data={[
-                    { label: 'Newest', value: ReviewSort.Newest },
-                    { label: 'Most Liked', value: ReviewSort.MostLiked },
-                    { label: 'Most Disiked', value: ReviewSort.MostDisliked },
-                  ]}
-                  onChange={handleReviewSortChange}
-                  size="xs"
-                />
-              </Group>
+                <Group spacing="xs" noWrap grow>
+                  <Select
+                    defaultValue={ReviewSort.Newest}
+                    icon={<IconArrowsSort size={14} />}
+                    data={[
+                      { label: 'Newest', value: ReviewSort.Newest },
+                      { label: 'Most Liked', value: ReviewSort.MostLiked },
+                      { label: 'Most Disiked', value: ReviewSort.MostDisliked },
+                    ]}
+                    onChange={handleReviewSortChange}
+                    size="xs"
+                  />
+                  <MultiSelect
+                    placeholder="Filters"
+                    icon={<IconFilter size={14} />}
+                    data={[
+                      { label: 'NSFW', value: ReviewFilter.NSFW },
+                      { label: 'Includes Images', value: ReviewFilter.IncludesImages },
+                    ]}
+                    onChange={handleReviewFilterChange}
+                    size="xs"
+                    zIndex={500}
+                    clearButtonLabel="Clear review filters"
+                    clearable
+                  />
+                </Group>
+              </Stack>
             </Group>
             <ModelReviews
-              // items={reviews}
-              items={fakeReviews}
+              items={reviews}
               onFilterChange={handleReviewFilterChange}
               loading={['loading', 'fetching'].includes(reviewsStatus)}
             />
@@ -430,106 +448,3 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
     </Container>
   );
 }
-
-const fakeReviews: ReviewDetails[] = [
-  {
-    id: 1,
-    modelId: 1,
-    user: {
-      id: 1,
-      username: 'Manuel',
-      name: 'Manuel Urena',
-      image: 'https://avatars.githubusercontent.com/u/12631159?v=4',
-    },
-    rating: 4.2,
-    text: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.',
-    createdAt: new Date('2022-10-25'),
-    nsfw: true,
-    modelVersionId: 1,
-    modelVersion: { id: 1, name: 'Fake Model V1' },
-    imagesOnReviews: [
-      {
-        index: 0,
-        image: {
-          id: 1,
-          name: 'Fake Image Name 1',
-          url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%281%29.jpeg',
-          hash: 'some-random-hash-1234',
-          width: 100,
-          height: 100,
-        },
-      },
-      {
-        index: 1,
-        image: {
-          id: 2,
-          name: 'Fake Image Name 2',
-          url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%284%29.jpeg',
-          hash: 'some-random-hash-1234',
-          width: 100,
-          height: 100,
-        },
-      },
-    ],
-    reviewReactions: [],
-  },
-  {
-    id: 2,
-    modelId: 1,
-    user: {
-      id: 1,
-      username: 'Manuel',
-      name: 'Manuel Urena',
-      image: 'https://avatars.githubusercontent.com/u/12631159?v=4',
-    },
-    rating: 4.2,
-    text: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.',
-    createdAt: new Date('2022-10-25'),
-    nsfw: true,
-    modelVersionId: 1,
-    modelVersion: { id: 1, name: 'Fake Model V1' },
-    imagesOnReviews: [
-      {
-        index: 0,
-        image: {
-          id: 1,
-          name: 'Fake Image Name 1',
-          url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%281%29.jpeg',
-          hash: 'some-random-hash-1234',
-          width: 100,
-          height: 100,
-        },
-      },
-      {
-        index: 1,
-        image: {
-          id: 2,
-          name: 'Fake Image Name 2',
-          url: 'https://model-share.s3.us-west-1.wasabisys.com/4/image/944%2520%284%29.jpeg',
-          hash: 'some-random-hash-1234',
-          width: 100,
-          height: 100,
-        },
-      },
-    ],
-    reviewReactions: [],
-  },
-  {
-    id: 3,
-    modelId: 1,
-    user: {
-      id: 1,
-      username: 'Manuel',
-      name: 'Manuel Urena',
-      image: 'https://avatars.githubusercontent.com/u/12631159?v=4',
-    },
-    rating: 4.2,
-    text: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.',
-    createdAt: new Date('2022-10-25'),
-    nsfw: true,
-    modelVersionId: 1,
-    modelVersion: { id: 1, name: 'Fake Model V1' },
-    imagesOnReviews: [],
-    reviewReactions: [],
-  },
-];

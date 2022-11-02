@@ -1,66 +1,91 @@
 import { Carousel } from '@mantine/carousel';
 import {
+  ActionIcon,
   Badge,
   Box,
-  Chip,
-  createStyles,
   Grid,
   Group,
   Image,
   LoadingOverlay,
+  Menu,
   Paper,
   Rating,
   SimpleGrid,
   Stack,
   Text,
-  Title,
 } from '@mantine/core';
+import { closeAllModals, openConfirmModal } from '@mantine/modals';
+import { showNotification } from '@mantine/notifications';
+import { IconDotsVertical, IconTrash, IconX } from '@tabler/icons';
 import dayjs from 'dayjs';
+import { useSession } from 'next-auth/react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ReviewFilter } from '~/server/common/enums';
 import { ReviewDetails } from '~/server/validators/reviews/getAllReviews';
+import { ExtendedUser } from '~/types/next-auth';
+import { trpc } from '~/utils/trpc';
 
-const useStyles = createStyles(() => ({
-  label: {
-    textAlign: 'center',
-    width: '100%',
-  },
-  root: {
-    textAlign: 'center',
-    width: '100%',
-  },
-}));
+export function ModelReviews({ items, loading = false }: Props) {
+  const { data: session } = useSession();
+  const queryUtils = trpc.useContext();
 
-export function ModelReviews({ items, onFilterChange, loading = false }: Props) {
-  const { classes } = useStyles();
+  const { mutate, isLoading } = trpc.review.delete.useMutation();
+  const handleDeleteReview = (review: ReviewDetails) => {
+    openConfirmModal({
+      title: 'Delete Review',
+      children: (
+        <Text size="sm">
+          Are you sure you want to delete this model? This action is destructive and cannot be
+          reverted.
+        </Text>
+      ),
+      centered: true,
+      labels: { confirm: 'Delete Review', cancel: "No, don't delete it" },
+      confirmProps: { color: 'red', loading: isLoading },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        mutate(
+          { id: review.id },
+          {
+            onSuccess() {
+              queryUtils.review.getAll.invalidate({ modelId: review.modelId });
+              closeAllModals();
+            },
+            onError(error) {
+              const message = error.message;
+
+              showNotification({
+                title: 'Could not delete review',
+                message: `An error occurred while deleting the review: ${message}`,
+                color: 'red',
+                icon: <IconX size={18} />,
+              });
+            },
+          }
+        );
+      },
+    });
+  };
 
   return (
-    <Grid gutter="xl">
-      <Grid.Col span={2}>
-        <Stack>
-          <Title order={4}>Filters</Title>
-          <Chip.Group align="center" onChange={onFilterChange} multiple>
-            <Chip classNames={classes} radius="xs" value={ReviewFilter.NSFW}>
-              NSFW
-            </Chip>
-            <Chip classNames={classes} radius="xs" value={ReviewFilter.IncludesImages}>
-              Includes Images
-            </Chip>
-          </Chip.Group>
-        </Stack>
-      </Grid.Col>
-      <Grid.Col span={10} sx={{ position: 'relative' }}>
+    <Grid>
+      <Grid.Col span={12} sx={{ position: 'relative' }}>
         <LoadingOverlay visible={loading} />
         {items.length > 0 ? (
           <SimpleGrid
             breakpoints={[
-              { minWidth: 'sm', cols: 2 },
-              { minWidth: 'md', cols: 3 },
+              { minWidth: 'sm', cols: 3 },
+              { minWidth: 'md', cols: 4 },
             ]}
           >
             {items.map((review, index) => (
-              <ReviewItem key={index} review={review} />
+              <ReviewItem
+                key={index}
+                review={review}
+                currentUser={session?.user}
+                onDelete={handleDeleteReview}
+              />
             ))}
           </SimpleGrid>
         ) : (
@@ -84,19 +109,39 @@ type Props = {
   loading?: boolean;
 };
 
-function ReviewItem({ review }: ItemProps) {
+function ReviewItem({ review, currentUser, onDelete }: ItemProps) {
+  const displayActions = currentUser?.id === review.user.id;
+
   return (
     <Paper radius="md" p="md" withBorder>
-      <Stack>
-        <Group align="center" sx={{ justifyContent: 'space-between' }}>
+      <Stack spacing="xs">
+        <Group align="flex-start" sx={{ justifyContent: 'space-between' }} noWrap>
           <Stack spacing={4}>
             <UserAvatar
               user={review.user}
               subText={`${dayjs(review.createdAt).fromNow()} - ${review.modelVersion?.name}`}
               withUsername
             />
+            <Rating value={review.rating} fractions={2} readOnly />
           </Stack>
-          <Rating value={review.rating} fractions={2} readOnly />
+          {displayActions ? (
+            <Menu position="bottom-end">
+              <Menu.Target>
+                <ActionIcon size="xs" variant="subtle">
+                  <IconDotsVertical size={14} />
+                </ActionIcon>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Item
+                  icon={<IconTrash size={14} stroke={1.5} />}
+                  color="red"
+                  onClick={() => onDelete(review)}
+                >
+                  Delete review
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+          ) : null}
         </Group>
         {review.imagesOnReviews.length > 0 ? (
           <Box sx={{ position: 'relative' }}>
@@ -135,7 +180,7 @@ function ReviewItem({ review }: ItemProps) {
             ) : null}
           </Box>
         ) : null}
-        <ContentClamp>
+        <ContentClamp maxHeight={100}>
           <Text>{review.text}</Text>
         </ContentClamp>
       </Stack>
@@ -143,4 +188,8 @@ function ReviewItem({ review }: ItemProps) {
   );
 }
 
-type ItemProps = { review: Props['items'][number] };
+type ItemProps = {
+  review: Props['items'][number];
+  onDelete: (review: ReviewDetails) => void;
+  currentUser?: ExtendedUser;
+};

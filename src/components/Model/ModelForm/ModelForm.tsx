@@ -32,7 +32,7 @@ import { UploadTypeUnion } from '~/server/common/enums';
 import { modelSchema } from '~/server/common/validation/model';
 import { ModelWithDetails } from '~/server/validators/models/getById';
 import { trpc } from '~/utils/trpc';
-import { ImageUpload } from '../../ImageUpload/ImageUpload';
+import { ImageUpload } from '~/components/ImageUpload/ImageUpload';
 
 type CreateModelProps = z.infer<typeof modelSchema>;
 type UpdateModelProps = Omit<CreateModelProps, 'id'> & { id: number };

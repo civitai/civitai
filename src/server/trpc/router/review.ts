@@ -33,6 +33,7 @@ export const reviewRouter = router({
         },
         select: getAllReviewsSelect,
       });
+
       return reviews;
     }),
   upsert: protectedProcedure.input(reviewUpsertSchema).mutation(async ({ ctx, input }) => {
@@ -55,7 +56,7 @@ export const reviewRouter = router({
     const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
 
     return await ctx.prisma.review.upsert({
-      where: { id: input.id ?? 0 },
+      where: { id: input.id ?? -1 },
       create: {
         ...reviewInput,
         userId: user.id,
@@ -70,7 +71,7 @@ export const reviewRouter = router({
         ...reviewInput,
         imagesOnReviews: {
           deleteMany: {
-            NOT: images.map((image) => ({ imageId: image.id })),
+            NOT: imagesToUpdate.map((image) => ({ imageId: image.id })),
           },
           create: imagesToCreate.map(({ index, ...image }) => ({
             index,
@@ -89,6 +90,7 @@ export const reviewRouter = router({
       },
       select: {
         id: true,
+        modelId: true,
       },
     });
   }),
@@ -96,15 +98,17 @@ export const reviewRouter = router({
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
       const { id } = input;
-      const review = await ctx.prisma.review.deleteMany({
+      const deleted = await ctx.prisma.review.deleteMany({
         where: { AND: { id, userId: ctx.session.user.id } },
       });
 
-      if (!review) {
+      if (!deleted) {
         return handleDbError({
           code: 'NOT_FOUND',
           message: `No review with id ${id}`,
         });
       }
+
+      return deleted;
     }),
 });

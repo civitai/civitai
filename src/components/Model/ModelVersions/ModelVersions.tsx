@@ -74,7 +74,7 @@ function TabContent({ version }: TabContentProps) {
               <Text
                 variant="link"
                 component="a"
-                href={version.trainingDataUrl}
+                href={`/api/download/training-data/${version.id}`}
                 target="_blank"
                 download
               >
@@ -95,14 +95,14 @@ function TabContent({ version }: TabContentProps) {
           <Button
             component="a"
             target="_blank"
-            href={version.url}
+            href={`/api/download/models/${version.id}`}
             leftIcon={<IconDownload size={16} />}
             fullWidth
             download
           >
             {`Download (${formatBytes(version.sizeKB)})`}
           </Button>
-          <DescriptionTable title="Version Details" items={versionDetails} />
+          <DescriptionTable items={versionDetails} />
         </Stack>
       </Grid.Col>
       <Grid.Col xs={12} sm={8} orderSm={1}>

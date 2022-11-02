@@ -49,7 +49,7 @@ export function ImageUpload({
   hasPrimaryImage,
   ...inputWrapperProps
 }: Props) {
-  const { classes, cx } = useStyles();
+  const { classes } = useStyles();
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -68,7 +68,7 @@ export function ImageUpload({
     return () => files.forEach((file) => URL.revokeObjectURL(file.url));
   }, [files]);
 
-  const handlDrop = async (droppedFiles: FileWithPath[]) => {
+  const handleDrop = async (droppedFiles: FileWithPath[]) => {
     const toUpload = await Promise.all(
       droppedFiles.map(async (file) => {
         const src = URL.createObjectURL(file);
@@ -151,7 +151,7 @@ export function ImageUpload({
         <Stack>
           <Dropzone
             accept={IMAGE_MIME_TYPE}
-            onDrop={handlDrop}
+            onDrop={handleDrop}
             maxFiles={max}
             styles={(theme) => ({
               root: {
