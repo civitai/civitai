@@ -4,7 +4,7 @@ import { getAllReviewsSelect } from '~/server/validators/reviews/getAllReviews';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
 import { handleDbError } from '~/server/services/errorHandling';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
-import { reviewUpsertSchema } from '~/server/validators/reviews/schema';
+import { reviewUpsertSchema } from '~/server/validators/reviews/schemas';
 
 export const reviewRouter = router({
   getAll: publicProcedure

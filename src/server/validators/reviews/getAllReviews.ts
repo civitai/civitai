@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { simpleUserSelect } from './../user/simpleUserSelect';
+import { imageSimpleSelect } from '~/server/validators/image/selectors';
+import { simpleUserSelect } from '~/server/validators/user/simpleUserSelect';
 
 export const getAllReviewsSelect = Prisma.validator<Prisma.ReviewSelect>()({
   id: true,
@@ -28,14 +29,7 @@ export const getAllReviewsSelect = Prisma.validator<Prisma.ReviewSelect>()({
     select: {
       index: true,
       image: {
-        select: {
-          id: true,
-          url: true,
-          name: true,
-          hash: true,
-          height: true,
-          width: true,
-        },
+        select: imageSimpleSelect,
       },
     },
   },

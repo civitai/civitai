@@ -69,7 +69,7 @@ export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
   nsfw: true,
   modelVersions: {
     orderBy: {
-      id: 'asc',
+      createdAt: 'desc',
     },
     take: 1,
     select: {

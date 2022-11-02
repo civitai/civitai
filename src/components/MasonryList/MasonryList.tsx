@@ -27,6 +27,7 @@ import { useInView } from 'react-intersection-observer';
 import { IconDownload } from '@tabler/icons';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useModelFilters } from '~/hooks/useModelFilters';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 type MasonryListProps = {
   columnWidth: number;
@@ -99,7 +100,7 @@ const MasonryItem = ({
   data: GetAllModelsReturnType[0];
   width: number;
 }) => {
-  const { id, image, name, rank } = data ?? {};
+  const { id, image, name, rank, nsfw } = data ?? {};
   const { classes } = useStyles();
 
   const hasDimensions = image.width && image.height;
@@ -127,17 +128,22 @@ const MasonryItem = ({
       >
         {inView && (
           <>
-            <Image
-              src={image.url}
-              alt={name}
-              objectFit="cover"
-              objectPosition="top"
-              // height={hasDimensions ? `${image.height}px` : undefined}
-              // width={hasDimensions ? `${image.width}px` : undefined}
-              // layout={!hasDimensions ? 'fill' : undefined}
-              layout="fill"
-              placeholder="empty"
-            />
+            {nsfw ? (
+              <MediaHash {...image} />
+            ) : (
+              <Image
+                src={image.url}
+                alt={name}
+                objectFit="cover"
+                objectPosition="top"
+                // height={hasDimensions ? `${image.height}px` : undefined}
+                // width={hasDimensions ? `${image.width}px` : undefined}
+                // layout={!hasDimensions ? 'fill' : undefined}
+                layout="fill"
+                placeholder="empty"
+              />
+            )}
+
             <Box p="xs" className={classes.content}>
               <Group position="apart" align="flex-end">
                 <Stack spacing={6}>

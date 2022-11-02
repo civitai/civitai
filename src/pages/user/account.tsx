@@ -43,8 +43,6 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
     initialValues: user,
   });
 
-  console.log({ updateUserError });
-
   return (
     <Container p={0} size="xs">
       <form
@@ -66,11 +64,13 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
             checked={form.values.showNsfw}
             {...form.getInputProps('showNsfw')}
           />
-          <Switch
-            label="Blur NSFW content"
-            checked={form.values.blurNsfw}
-            {...form.getInputProps('blurNsfw')}
-          />
+          {form.values.showNsfw && (
+            <Switch
+              label="Blur NSFW content"
+              checked={form.values.blurNsfw}
+              {...form.getInputProps('blurNsfw')}
+            />
+          )}
           <Button type="submit" loading={updatingUser} disabled={!form.isDirty()}>
             Save
           </Button>

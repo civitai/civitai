@@ -354,10 +354,10 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
                 </Carousel.Slide>
               ))}
             </Carousel>
-            <Title className={classes.title} order={2}>
+            {/* <Title className={classes.title} order={2}>
               About this model
-            </Title>
-            <ContentClamp maxHeight={300}>
+            </Title> */}
+            <ContentClamp maxHeight={150}>
               <Text>{model?.description}</Text>
             </ContentClamp>
           </Stack>

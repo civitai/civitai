@@ -6,23 +6,17 @@ import {
   Group,
   Header,
   Menu,
+  Switch,
   Title,
   UnstyledButton,
+  useMantineColorScheme,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import {
-  IconChevronDown,
-  IconFile,
-  IconHeart,
-  IconLogout,
-  IconSettings,
-  IconStar,
-} from '@tabler/icons';
+import { IconChevronDown, IconFile, IconLogout, IconPalette, IconSettings } from '@tabler/icons';
 import { signOut, useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useState } from 'react';
-import { ColorSchemeToggle } from '~/components/ColorSchemeToggle/ColorSchemeToggle';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 
@@ -90,6 +84,7 @@ export function AppHeader({ links }: Props) {
   const [burgerOpened, { toggle: toggleBurger }] = useDisclosure(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
   const { classes, cx, theme } = useStyles();
+  const { colorScheme, toggleColorScheme } = useMantineColorScheme();
 
   return (
     <Header px="md" height={70}>
@@ -125,13 +120,12 @@ export function AppHeader({ links }: Props) {
             ))}
           </Group>
           <Group spacing="xs">
-            {session ? (
+            {session?.user ? (
               <Button component={NextLink} href="/models/create" variant="subtle">
                 Upload a model
               </Button>
             ) : null}
-            <ColorSchemeToggle />
-            {session ? (
+            {session?.user ? (
               <Menu
                 width={260}
                 opened={userMenuOpened}
@@ -151,7 +145,7 @@ export function AppHeader({ links }: Props) {
                   </UnstyledButton>
                 </Menu.Target>
                 <Menu.Dropdown>
-                  <Menu.Item
+                  {/* <Menu.Item
                     icon={<IconHeart size={14} color={theme.colors.red[6]} stroke={1.5} />}
                   >
                     Liked models
@@ -160,14 +154,32 @@ export function AppHeader({ links }: Props) {
                     icon={<IconStar size={14} color={theme.colors.yellow[6]} stroke={1.5} />}
                   >
                     Saved models
-                  </Menu.Item>
+                  </Menu.Item> */}
                   <Menu.Item
                     icon={<IconFile size={14} color={theme.colors.blue[6]} stroke={1.5} />}
+                    component={NextLink}
+                    // TODO - replace?
+                    href={`/?user=${session.user.username}`}
                   >
                     Your models
                   </Menu.Item>
+                  {/* <Menu.Label>Theme</Menu.Label> */}
+                  <Menu.Item
+                    closeMenuOnClick={false}
+                    icon={<IconPalette size={14} stroke={1.5} />}
+                    onClick={() => toggleColorScheme()}
+                  >
+                    <Group align="center" position="apart">
+                      Dark mode
+                      <Switch
+                        checked={colorScheme === 'dark'}
+                        style={{ display: 'flex', alignItems: 'center' }}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </Group>
+                  </Menu.Item>
 
-                  <Menu.Label>Settings</Menu.Label>
+                  {/* <Menu.Label>Settings</Menu.Label> */}
                   <Menu.Item
                     icon={<IconSettings size={14} stroke={1.5} />}
                     component={NextLink}

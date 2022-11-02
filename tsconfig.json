@@ -32,11 +32,12 @@
     "noErrorTruncation": true
   },
   "include": [
-    "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
-    "**/*.cjs",
-    "**/*.mjs"
+    // "next-env.d.ts",
+    // "**/*.ts",
+    // "**/*.tsx",
+    // "**/*.cjs",
+    // "**/*.mjs"
+    "src"
   ],
   "exclude": [
     "node_modules"

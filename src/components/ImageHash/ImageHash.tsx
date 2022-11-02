@@ -2,9 +2,9 @@ import { BlurhashCanvas } from 'react-blurhash';
 import { getClampedSize } from '~/utils/blurhash';
 
 type Props = {
-  hash?: string;
-  width?: number;
-  height?: number;
+  hash: string | null;
+  width: number | null;
+  height: number | null;
 };
 
 export function MediaHash({ hash, height, width }: Props) {
@@ -20,11 +20,11 @@ export function MediaHash({ hash, height, width }: Props) {
       style={{
         width: '100%',
         height: '100%',
-        // position: 'absolute',
-        // top: 0,
-        // left: 0,
-        // objectFit: 'cover',
-        // objectPosition: 'center',
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        objectFit: 'cover',
+        objectPosition: 'center',
       }}
     />
   );

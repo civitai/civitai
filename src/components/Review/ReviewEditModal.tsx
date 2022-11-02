@@ -5,7 +5,7 @@ import { showNotification } from '@mantine/notifications';
 import { IconX } from '@tabler/icons';
 
 import { ImageUpload } from '~/components/ImageUpload/ImageUpload';
-import { ReviewUpsertProps, reviewUpsertSchema } from '~/server/validators/reviews/schema';
+import { ReviewUpsertProps, reviewUpsertSchema } from '~/server/validators/reviews/schemas';
 import { trpc } from '~/utils/trpc';
 
 type ReviewModelProps = {
@@ -19,7 +19,7 @@ export default function ReviewEditModal({
   innerProps,
 }: ContextModalProps<ReviewModelProps>) {
   const queryUtils = trpc.useContext();
-  const { modelName, modelVersions, review } = innerProps;
+  const { modelVersions, review } = innerProps;
   const { mutate, isLoading } = trpc.review.upsert.useMutation();
 
   const form = useForm<ReviewUpsertProps>({
