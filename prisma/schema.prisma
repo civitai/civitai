@@ -148,6 +148,7 @@ model ModelVersionMetric {
 
 enum UserActivityType {
   ModelDownload
+  TrainingDataDownload
 }
 
 model UserActivity {

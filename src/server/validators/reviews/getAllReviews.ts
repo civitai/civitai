@@ -9,6 +9,9 @@ export const getAllReviewsSelect = Prisma.validator<Prisma.ReviewSelect>()({
   text: true,
   modelId: true,
   modelVersionId: true,
+  modelVersion: {
+    select: { id: true, name: true },
+  },
   user: {
     select: simpleUserSelect,
   },
@@ -28,6 +31,7 @@ export const getAllReviewsSelect = Prisma.validator<Prisma.ReviewSelect>()({
         select: {
           id: true,
           url: true,
+          name: true,
           hash: true,
           height: true,
           width: true,

@@ -21,9 +21,9 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { ModelWithDetails } from '~/server/validators/models/getById';
 import { formatBytes } from '~/utils/number-helpers';
 
-const VERSION_IMAGES_LIMIT = 9;
+const VERSION_IMAGES_LIMIT = 8;
 
-export function ModelVersion({ items, initialTab }: Props) {
+export function ModelVersions({ items, initialTab }: Props) {
   const mobile = useIsMobile();
 
   return (
@@ -86,7 +86,7 @@ function TabContent({ version }: TabContentProps) {
       : []),
   ];
 
-  const imagesLimit = mobile ? VERSION_IMAGES_LIMIT - 5 : VERSION_IMAGES_LIMIT;
+  const imagesLimit = mobile ? VERSION_IMAGES_LIMIT / 2 : VERSION_IMAGES_LIMIT;
 
   return (
     <Grid gutter="xl">

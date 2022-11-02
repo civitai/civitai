@@ -1,19 +1,19 @@
 // src/server/trpc/router/index.ts
 import { router } from '../trpc';
-import { modelRouter } from './model';
-import { userRouter } from './user';
-import { authRouter } from './auth';
-import { tagRouter } from './tag';
 import { accountRouter } from './accounts';
+import { authRouter } from './auth';
+import { modelRouter } from './model';
 import { reviewRouter } from './review';
+import { tagRouter } from './tag';
+import { userRouter } from './user';
 
 export const appRouter = router({
+  account: accountRouter,
   auth: authRouter,
   model: modelRouter,
-  user: userRouter,
-  tag: tagRouter,
-  account: accountRouter,
   review: reviewRouter,
+  tag: tagRouter,
+  user: userRouter,
 });
 
 // export type definition of API

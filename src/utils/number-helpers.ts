@@ -6,10 +6,36 @@ export function formatBytes(bytes: number, decimals = 2) {
   if (bytes === 0) return '0 Bytes';
 
   const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
 
   return parseFloat((bytes / Math.pow(k, i)).toFixed(decimals)) + ' ' + sizes[i];
+}
+
+export function formatSeconds(seconds: number) {
+  if (seconds === 0) return '0 seconds';
+
+  const units = [
+    { name: 'year', limit: 31536000, in_seconds: 31536000 },
+    { name: 'month', limit: 2592000, in_seconds: 2592000 },
+    { name: 'week', limit: 604800, in_seconds: 604800 },
+    { name: 'day', limit: 86400, in_seconds: 86400 },
+    { name: 'hour', limit: 3600, in_seconds: 3600 },
+    { name: 'minute', limit: 60, in_seconds: 60 },
+    { name: 'second', limit: 1, in_seconds: 1 },
+  ];
+  let output = '';
+  let unit: any;
+  let unitCount: number;
+  for (let i = 0; i < units.length; i++) {
+    unit = units[i];
+    unitCount = Math.floor(seconds / unit.in_seconds);
+    if (unitCount >= 1) {
+      output += ' ' + unitCount + ' ' + unit.name + (unitCount > 1 ? 's' : '');
+      seconds -= unitCount * unit.in_seconds;
+    }
+  }
+  return output.trim();
 }
 
 export function abbreviateNumber(value: number): string {

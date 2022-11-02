@@ -5,44 +5,31 @@ import {
   KeyboardSensor,
   DndContext,
   closestCenter,
-  DndContextProps,
-  DragOverEvent,
   DragEndEvent,
   UniqueIdentifier,
   DragStartEvent,
   DragOverlay,
 } from '@dnd-kit/core';
-import {
-  arrayMove,
-  sortableKeyboardCoordinates,
-  SortableContext,
-  useSortable,
-  rectSortingStrategy,
-} from '@dnd-kit/sortable';
+import { arrayMove, sortableKeyboardCoordinates, SortableContext } from '@dnd-kit/sortable';
 import {
   Checkbox,
   createStyles,
   Group,
   Input,
   InputWrapperProps,
-  Paper,
   RingProgress,
   Text,
-  Image as MantineImage,
   Stack,
   Title,
   Button,
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useListState } from '@mantine/hooks';
-import { IconZoomIn, IconGripVertical } from '@tabler/icons';
+import { IconGripVertical } from '@tabler/icons';
 import { useEffect, useState } from 'react';
 import { useS3Upload } from '~/hooks/use-s3-upload';
-import { SortableGrid } from '../SortableGrid/SortableGrid';
 import { blurHashImage, loadImage } from '../../utils/blurhash';
-import { MediaHash } from './../ImageHash/ImageHash';
 import produce from 'immer';
-import useIsClient from '~/hooks/useIsClient';
 import { ImagePreview } from '~/components/ImageUpload/ImagePreview';
 import { SortableImage } from './SortableItem';
 
@@ -51,10 +38,11 @@ type Props = InputWrapperProps & {
   onChange: (value: Array<CustomFile>) => void;
 };
 
+const MAX_FILE_UPLOAD = 10;
+
 export function ImageUpload({ value = [], onChange, label, ...inputWrapperProps }: Props) {
   const { classes, cx } = useStyles();
 
-  const isClient = useIsClient();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -106,7 +94,7 @@ export function ImageUpload({ value = [], onChange, label, ...inputWrapperProps 
 
   useEffect(() => {
     onChange(files);
-  }, [files]);
+  }, [files, onChange]);
 
   const selectedFilesCount = selectedFiles.length;
   const allFilesSelected = selectedFiles.length === files.length && files.length !== 0;

@@ -23,6 +23,8 @@ type TrackedFile = {
   progress: number;
   uploaded: number;
   size: number;
+  speed: number;
+  timeRemaining: number;
 };
 
 type UseS3UploadOptions = {
@@ -116,20 +118,38 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       const { url, bucket, key } = data;
 
       const xhr = new XMLHttpRequest();
-      setFiles((x) => [...x, { file, progress: 0, uploaded: 0, size: file.size }]);
+      setFiles((x) => [
+        ...x,
+        { file, progress: 0, uploaded: 0, size: file.size, speed: 0, timeRemaining: 0 },
+      ]);
 
       await new Promise((resolve) => {
+        let uploadStart = Date.now();
+        xhr.upload.addEventListener('loadstart', (e) => {
+          uploadStart = Date.now();
+        });
         xhr.upload.addEventListener('progress', (progress) => {
           const uploaded = progress.loaded ?? 0;
           const size = progress.total ?? 0;
 
           if (uploaded) {
+            const secondsElapsed = (Date.now() - uploadStart) / 1000;
+            const speed = uploaded / secondsElapsed;
+            const timeRemaining = (size - uploaded) / speed;
+            const uploadProgress = size ? (uploaded / size) * 100 : 0;
+
             setFiles((x) =>
-              x.map((trackedFile) =>
-                trackedFile.file === file
-                  ? { file, uploaded, size, progress: size ? (uploaded / size) * 100 : 0 }
-                  : trackedFile
-              )
+              x.map((trackedFile) => {
+                if (trackedFile.file !== file) return trackedFile;
+                return {
+                  file,
+                  uploaded,
+                  size,
+                  progress: uploadProgress,
+                  timeRemaining,
+                  speed,
+                };
+              })
             );
           }
         });
