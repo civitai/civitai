@@ -74,7 +74,7 @@ export default function ReviewEditModal({
             minRows={2}
             autosize
           />
-          <ImageUpload title="Generated Images" max={5} {...form.getInputProps('images')} />
+          <ImageUpload label="Generated Images" max={5} {...form.getInputProps('images')} />
           <Checkbox
             {...form.getInputProps('nsfw')}
             label="This review or images associated with it are NSFW"

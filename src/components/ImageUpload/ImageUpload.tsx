@@ -145,7 +145,7 @@ export function ImageUpload({
   );
 
   return (
-    <>
+    <div>
       {hasSelectedFile ? alternateLabel : <Text>{label}</Text>}
       <Input.Wrapper {...inputWrapperProps}>
         <Stack>
@@ -186,11 +186,7 @@ export function ImageUpload({
 
                   return (
                     <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
-                      <ImagePreview
-                        index={index}
-                        image={image}
-                        isPrimary={hasPrimaryImage && index === 0}
-                      >
+                      <ImagePreview image={image} isPrimary={hasPrimaryImage && index === 0}>
                         {showLoading && (
                           <RingProgress
                             sx={{ position: 'absolute' }}
@@ -233,16 +229,16 @@ export function ImageUpload({
               <DragOverlay adjustScale={true}>
                 {activeId && (
                   <ImagePreview
-                    index={files.findIndex((file) => file.url === activeId)}
+                    isPrimary={files.findIndex((file) => file.url === activeId) === 0}
                     image={files.find((file) => file.url === activeId)}
-                  ></ImagePreview>
+                  />
                 )}
               </DragOverlay>
             )}
           </DndContext>
         </Stack>
       </Input.Wrapper>
-    </>
+    </div>
   );
 
   function handleDragEnd(event: DragEndEvent) {

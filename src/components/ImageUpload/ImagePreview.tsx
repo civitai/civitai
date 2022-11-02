@@ -2,15 +2,14 @@ import { forwardRef } from 'react';
 import { createStyles } from '@mantine/core';
 
 type Props = {
-  index: number;
   image?: CustomFile;
   children?: React.ReactNode;
   isPrimary?: boolean;
 } & React.ComponentPropsWithoutRef<'div'>;
 
 export const ImagePreview = forwardRef<HTMLDivElement, Props>(
-  ({ index, image, children, isPrimary, ...props }, ref) => {
-    const { classes, cx } = useStyles({ index, url: image?.url, isPrimary });
+  ({ image, children, isPrimary, ...props }, ref) => {
+    const { classes, cx } = useStyles({ url: image?.url, isPrimary });
     if (!image) return null;
     return (
       <div ref={ref} className={classes.root} {...props}>
@@ -25,11 +24,16 @@ const useStyles = createStyles(
   (
     theme,
     {
-      index,
+      // index,
       url,
       faded,
       isPrimary,
-    }: { index: number; url?: string; faded?: boolean; isPrimary?: boolean }
+    }: {
+      // index: number;
+      url?: string;
+      faded?: boolean;
+      isPrimary?: boolean;
+    }
   ) => ({
     root: {
       position: 'relative',
