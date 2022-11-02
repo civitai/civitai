@@ -94,7 +94,8 @@ export function ImageUpload({ value = [], onChange, label, ...inputWrapperProps 
 
   useEffect(() => {
     onChange(files);
-  }, [files, onChange]);
+    // don't disable the eslint-disable
+  }, [files]); //eslint-disable-line
 
   const selectedFilesCount = selectedFiles.length;
   const allFilesSelected = selectedFiles.length === files.length && files.length !== 0;
