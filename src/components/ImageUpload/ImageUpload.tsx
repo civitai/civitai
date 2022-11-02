@@ -34,6 +34,7 @@ import { ImagePreview } from '~/components/ImageUpload/ImagePreview';
 import { SortableImage } from './SortableItem';
 
 type Props = InputWrapperProps & {
+  hasPrimaryImage?: boolean;
   max?: number;
   value: Array<CustomFile>;
   onChange: (value: Array<CustomFile>) => void;
@@ -45,6 +46,7 @@ export function ImageUpload({
   onChange,
   label,
   max = 10,
+  hasPrimaryImage,
   ...inputWrapperProps
 }: Props) {
   const { classes, cx } = useStyles();
@@ -184,7 +186,11 @@ export function ImageUpload({
 
                   return (
                     <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
-                      <ImagePreview index={index} image={image}>
+                      <ImagePreview
+                        index={index}
+                        image={image}
+                        isPrimary={hasPrimaryImage && index === 0}
+                      >
                         {showLoading && (
                           <RingProgress
                             sx={{ position: 'absolute' }}
@@ -223,14 +229,16 @@ export function ImageUpload({
                 })}
               </div>
             </SortableContext>
-            <DragOverlay adjustScale={true}>
-              {activeId && (
-                <ImagePreview
-                  index={files.findIndex((file) => file.url === activeId)}
-                  image={files.find((file) => file.url === activeId)}
-                ></ImagePreview>
-              )}
-            </DragOverlay>
+            {hasPrimaryImage && (
+              <DragOverlay adjustScale={true}>
+                {activeId && (
+                  <ImagePreview
+                    index={files.findIndex((file) => file.url === activeId)}
+                    image={files.find((file) => file.url === activeId)}
+                  ></ImagePreview>
+                )}
+              </DragOverlay>
+            )}
           </DndContext>
         </Stack>
       </Input.Wrapper>

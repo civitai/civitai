@@ -396,7 +396,6 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
                         modelVersions: model.modelVersions.map(({ id, name }) => ({ id, name })),
                         review: {
                           modelId: model.id,
-                          userId: session?.user?.id,
                         },
                       },
                     })

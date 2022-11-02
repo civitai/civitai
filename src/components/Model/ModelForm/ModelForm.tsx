@@ -334,6 +334,7 @@ export function ModelForm({ model }: Props) {
                             <Grid.Col span={12}>
                               <ImageUpload
                                 label="Example Images"
+                                hasPrimaryImage
                                 {...form.getInputProps(`modelVersions.${index}.images`)}
                               />
                             </Grid.Col>
