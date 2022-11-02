@@ -1,20 +1,7 @@
-import {
-  Button,
-  Group,
-  Stack,
-  Title,
-  Text,
-  Rating,
-  Select,
-  Input,
-  Textarea,
-  Checkbox,
-} from '@mantine/core';
+import { Button, Group, Stack, Rating, Select, Input, Textarea, Checkbox } from '@mantine/core';
 import { useForm, zodResolver } from '@mantine/form';
 import { ContextModalProps } from '@mantine/modals';
-import { useSession } from 'next-auth/react';
 import { z } from 'zod';
-import { FileDrop } from '~/components/FileDrop/FileDrop';
 import { imageSchema } from '~/server/common/validation/model';
 
 import { ReviewUpsertProps } from '~/server/validators/reviews/schema';
@@ -23,7 +10,6 @@ import { ImageUpload } from './../ImageUpload/ImageUpload';
 
 type ReviewModelProps = {
   review: ReviewUpsertProps;
-  modelName: string;
   modelVersions: { id: number; name: string }[];
 };
 
@@ -42,11 +28,14 @@ export default function ReviewEditModal({
   id,
   innerProps,
 }: ContextModalProps<ReviewModelProps>) {
-  const { modelName, modelVersions, review } = innerProps;
+  const { modelVersions, review } = innerProps;
   const { mutateAsync, isLoading } = trpc.review.upsert.useMutation();
 
   const form = useForm<ReviewEditDataSchema>({
     validate: zodResolver(schema),
+    initialValues: {
+      ...review,
+    },
   });
 
   const handleSubmit = async (data: ReviewEditDataSchema) => {
@@ -83,7 +72,9 @@ export default function ReviewEditModal({
             <Button variant="default" onClick={() => context.closeModal(id)}>
               Cancel
             </Button>
-            <Button type="submit">Save</Button>
+            <Button type="submit" loading={isLoading}>
+              Save
+            </Button>
           </Group>
         </Stack>
       </form>

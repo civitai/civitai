@@ -389,13 +389,16 @@ export default function ModelDetail(props: InferGetStaticPropsType<typeof getSta
                   onClick={() =>
                     openContextModal({
                       modal: 'reviewEdit',
-                      title: 'Review a model',
+                      title: `Reviewing ${model.name}`,
                       closeOnClickOutside: false,
                       innerProps: {
-                        modelName: model.name,
                         modelVersions: model.modelVersions.map(({ id, name }) => ({ id, name })),
                         review: {
                           modelId: model.id,
+                          modelVersionId:
+                            model.modelVersions.length === 1
+                              ? model.modelVersions[0].id
+                              : undefined,
                         },
                       },
                     })
