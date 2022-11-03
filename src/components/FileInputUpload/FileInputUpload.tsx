@@ -1,5 +1,5 @@
 import { Stack, FileInput, Progress, FileInputProps, Group, Text } from '@mantine/core';
-import { IconUpload, IconCircleCheck } from '@tabler/icons';
+import { IconUpload, IconCircleCheck, IconBan } from '@tabler/icons';
 import { useEffect, useState } from 'react';
 import { useS3Upload } from '~/hooks/use-s3-upload';
 import { UploadType, UploadTypeUnion } from '~/server/common/enums';
@@ -13,11 +13,12 @@ export function FileInputUpload({
 }: Props) {
   const [localFile, setLocalFile] = useState<File>();
   const { files, uploadToS3, resetFiles } = useS3Upload();
-  const { file, progress, speed, timeRemaining } = files[0] ?? {
+  const { file, progress, speed, timeRemaining, status, abort } = files[0] ?? {
     file: null,
     progress: 0,
     speed: 0,
     timeRemaining: 0,
+    status: 'pending',
   };
 
   const handleOnChange: FileInputProps['onChange'] = async (file) => {
@@ -55,25 +56,48 @@ export function FileInputUpload({
         icon={<IconUpload size={16} />}
         onChange={handleOnChange}
         value={file ?? localFile}
-        rightSection={file && progress === 100 ? <IconCircleCheck color="green" size={24} /> : null}
+        rightSection={
+          file && (
+            <>
+              {status === 'success' && <IconCircleCheck color="green" size={24} />}
+              {status === 'uploading' && (
+                <IconBan
+                  style={{ cursor: 'pointer' }}
+                  color="red"
+                  size={24}
+                  onClick={() => abort()}
+                />
+              )}
+            </>
+          )
+        }
       />
-      {file && progress < 100 ? (
-        <Stack spacing={2}>
-          <Progress
-            sx={{ width: '100%' }}
-            size="xl"
-            value={progress}
-            label={`${Math.floor(progress)}%`}
-            color={progress < 100 ? 'blue' : 'green'}
-            striped
-            animate
-          />
-          <Group position="apart">
-            <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text>
-            <Text size="xs" color="dimmed">{`${formatSeconds(timeRemaining)} remaining`}</Text>
-          </Group>
-        </Stack>
-      ) : null}
+      {file && (
+        <>
+          {status === 'uploading' && (
+            <Stack spacing={2}>
+              <Progress
+                sx={{ width: '100%' }}
+                size="xl"
+                value={progress}
+                label={`${Math.floor(progress)}%`}
+                color={progress < 100 ? 'blue' : 'green'}
+                striped
+                animate
+              />
+              <Group position="apart">
+                <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text>
+                <Text size="xs" color="dimmed">{`${formatSeconds(timeRemaining)} remaining`}</Text>
+              </Group>
+            </Stack>
+          )}
+          {status === 'error' && (
+            <Text size="xs" color="red">
+              Error uploading file
+            </Text>
+          )}
+        </>
+      )}
     </Stack>
   );
 }

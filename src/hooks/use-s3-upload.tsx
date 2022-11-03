@@ -25,6 +25,8 @@ type TrackedFile = {
   size: number;
   speed: number;
   timeRemaining: number;
+  status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
+  abort: () => void;
 };
 
 type UseS3UploadOptions = {
@@ -65,6 +67,16 @@ type UseS3UploadTools = {
 };
 
 type UseS3Upload = (options?: UseS3UploadOptions) => UseS3UploadTools;
+
+const pendingTrackedFile = {
+  progress: 0,
+  uploaded: 0,
+  size: 0,
+  speed: 0,
+  timeRemaining: 0,
+  status: 'pending',
+  abort: () => { },
+};
 
 export const useS3Upload: UseS3Upload = (options = {}) => {
   const ref = useRef<HTMLInputElement>();
@@ -120,41 +132,55 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       const xhr = new XMLHttpRequest();
       setFiles((x) => [
         ...x,
-        { file, progress: 0, uploaded: 0, size: file.size, speed: 0, timeRemaining: 0 },
+        { file, ...pendingTrackedFile, abort: xhr.abort.bind(xhr) } as TrackedFile,
       ]);
+
+      function updateFile(trackedFile: Partial<TrackedFile>) {
+        setFiles((x) =>
+          x.map((y) => {
+            if (y.file !== file) return y;
+            return { ...y, ...trackedFile } as TrackedFile;
+          })
+        );
+      }
 
       await new Promise((resolve) => {
         let uploadStart = Date.now();
         xhr.upload.addEventListener('loadstart', (e) => {
           uploadStart = Date.now();
         });
-        xhr.upload.addEventListener('progress', (progress) => {
-          const uploaded = progress.loaded ?? 0;
-          const size = progress.total ?? 0;
+        xhr.upload.addEventListener('progress', ({ loaded, total }) => {
+          const uploaded = loaded ?? 0;
+          const size = total ?? 0;
 
           if (uploaded) {
             const secondsElapsed = (Date.now() - uploadStart) / 1000;
             const speed = uploaded / secondsElapsed;
             const timeRemaining = (size - uploaded) / speed;
-            const uploadProgress = size ? (uploaded / size) * 100 : 0;
+            const progress = size ? (uploaded / size) * 100 : 0;
 
-            setFiles((x) =>
-              x.map((trackedFile) => {
-                if (trackedFile.file !== file) return trackedFile;
-                return {
-                  file,
-                  uploaded,
-                  size,
-                  progress: uploadProgress,
-                  timeRemaining,
-                  speed,
-                };
-              })
-            );
+            updateFile({
+              uploaded,
+              size,
+              progress,
+              timeRemaining,
+              speed,
+              status: 'uploading',
+            });
           }
         });
-        xhr.addEventListener('loadend', () => {
-          resolve(xhr.readyState === 4 && xhr.status === 200);
+        xhr.addEventListener('loadend', ({ loaded, total }) => {
+          const success = xhr.readyState === 4 && xhr.status === 200;
+          if (success) updateFile({ status: 'success' });
+          resolve(success);
+        });
+        xhr.addEventListener('error', () => {
+          updateFile({ status: 'error' });
+          resolve(false);
+        });
+        xhr.addEventListener('abort', () => {
+          updateFile({ status: 'aborted' });
+          resolve(false);
         });
         xhr.open('PUT', url, true);
         xhr.setRequestHeader('Content-Type', 'application/octet-stream');
