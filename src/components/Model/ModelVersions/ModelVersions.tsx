@@ -1,17 +1,5 @@
-import {
-  Button,
-  Image,
-  Group,
-  Grid,
-  Rating,
-  SimpleGrid,
-  Stack,
-  Tabs,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Button, Image, Grid, Rating, SimpleGrid, Stack, Tabs, Text, Title } from '@mantine/core';
 import { IconDownload } from '@tabler/icons';
-import dayjs from 'dayjs';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import {
   DescriptionTable,
@@ -19,6 +7,7 @@ import {
 } from '~/components/DescriptionTable/DescriptionTable';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ModelWithDetails } from '~/server/validators/models/getById';
+import { formatDate } from '~/utils/date-helpers';
 import { formatBytes } from '~/utils/number-helpers';
 
 const VERSION_IMAGES_LIMIT = 8;
@@ -63,7 +52,8 @@ function TabContent({ version }: TabContentProps) {
   const mobile = useIsMobile();
 
   const versionDetails: DescriptionTableProps['items'] = [
-    { label: 'Uploaded', value: dayjs(version.createdAt).format('MMM DD, YYYY') },
+    { label: 'Rating', value: <Rating value={0} fractions={2} readOnly /> },
+    { label: 'Uploaded', value: formatDate(version.createdAt) },
     { label: 'Steps', value: version.steps?.toLocaleString() ?? 0 },
     { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0 },
     ...(version.trainingDataUrl
@@ -102,57 +92,51 @@ function TabContent({ version }: TabContentProps) {
           >
             {`Download (${formatBytes(version.sizeKB)})`}
           </Button>
-          <DescriptionTable items={versionDetails} />
-        </Stack>
-      </Grid.Col>
-      <Grid.Col xs={12} sm={8} orderSm={1}>
-        <Stack>
-          <Group align="center" sx={{ justifyContent: 'space-between' }}>
-            <Title order={3}>About this version</Title>
-            <Rating value={0} fractions={2} readOnly />
-          </Group>
+          <DescriptionTable items={versionDetails} labelWidth="30%" />
+          <Title order={3}>About this version</Title>
           <ContentClamp>
             <Text>{version.description}</Text>
           </ContentClamp>
-          <Title order={3}>Generated with this version</Title>
-          <SimpleGrid
-            breakpoints={[
-              { minWidth: 'xs', cols: 1 },
-              { minWidth: 'sm', cols: 2 },
-              { minWidth: 'md', cols: 3 },
-              { minWidth: 'lg', cols: 4 },
-            ]}
-          >
-            {version.images.slice(0, imagesLimit).map(({ image }, index) => (
-              <Image
-                key={index}
-                src={image.url}
-                radius="md"
-                width="100%"
-                height="100%"
-                alt={
-                  image.name ??
-                  'Visual representation of the output after running the model using this version'
-                }
-                sx={{
-                  figure: { height: '100%', display: 'flex' },
-                  ...(index === 0 && !mobile
-                    ? {
-                        gridColumn: '1/3',
-                        gridRow: '1/5',
-                        figure: { height: '100%', display: 'flex' },
-                      }
-                    : {}),
-                }}
-              />
-            ))}
-            {version.images.length > imagesLimit ? (
-              <Button variant="outline" sx={!mobile ? { height: '100%' } : undefined}>
-                View more
-              </Button>
-            ) : null}
-          </SimpleGrid>
         </Stack>
+      </Grid.Col>
+      <Grid.Col xs={12} sm={8} orderSm={1}>
+        <SimpleGrid
+          breakpoints={[
+            { minWidth: 'xs', cols: 1 },
+            { minWidth: 'sm', cols: 2 },
+            { minWidth: 'md', cols: 3 },
+            { minWidth: 'lg', cols: 4 },
+          ]}
+        >
+          {version.images.slice(0, imagesLimit).map(({ image }, index) => (
+            <Image
+              key={index}
+              src={image.url}
+              radius="md"
+              width="100%"
+              height="100%"
+              alt={
+                image.name ??
+                'Visual representation of the output after running the model using this version'
+              }
+              sx={{
+                figure: { height: '100%', display: 'flex' },
+                ...(index === 0 && !mobile
+                  ? {
+                      gridColumn: '1/3',
+                      gridRow: '1/5',
+                      figure: { height: '100%', display: 'flex' },
+                    }
+                  : {}),
+              }}
+            />
+          ))}
+          {version.images.length > imagesLimit ? (
+            <Button variant="outline" sx={!mobile ? { height: '100%' } : undefined}>
+              View more
+            </Button>
+          ) : null}
+        </SimpleGrid>
       </Grid.Col>
     </Grid>
   );

@@ -10,26 +10,68 @@ import {
   Menu,
   Paper,
   Rating,
-  SimpleGrid,
   Stack,
   Text,
+  useMantineTheme,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { IconDotsVertical, IconTrash, IconX } from '@tabler/icons';
 import dayjs from 'dayjs';
+import { Masonry } from 'masonic';
 import { useSession } from 'next-auth/react';
+import { useState } from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ReviewFilter } from '~/server/common/enums';
 import { ReviewDetails } from '~/server/validators/reviews/getAllReviews';
-import { ExtendedUser } from '~/types/next-auth';
 import { trpc } from '~/utils/trpc';
 
 export function ModelReviews({ items, loading = false }: Props) {
-  const { data: session } = useSession();
-  const queryUtils = trpc.useContext();
+  const theme = useMantineTheme();
+  const reviews = items.map((item) => ({ review: { ...item } }));
 
+  return (
+    <Grid>
+      <Grid.Col span={12} sx={{ position: 'relative' }}>
+        <LoadingOverlay visible={loading} />
+        {items.length > 0 ? (
+          <Masonry
+            items={reviews}
+            render={ReviewItem}
+            columnGutter={theme.spacing.md}
+            columnWidth={1200 / 4}
+            maxColumnCount={4}
+          />
+        ) : (
+          <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Stack>
+              <Text size="xl">There are no reviews for this model yet.</Text>
+              <Text color="dimmed">
+                Be the first to let the people know about this model by leaving your review.
+              </Text>
+            </Stack>
+          </Paper>
+        )}
+      </Grid.Col>
+    </Grid>
+  );
+}
+
+type Props = {
+  items: ReviewDetails[];
+  onFilterChange: (values: ReviewFilter[]) => void;
+  loading?: boolean;
+};
+
+function ReviewItem({ data: { review } }: ItemProps) {
+  const { data: session } = useSession();
+  const displayActions = session?.user?.id === review.user.id;
+
+  const [blurContent, setBlurContent] = useState(review.nsfw);
+
+  const queryUtils = trpc.useContext();
   const { mutate, isLoading } = trpc.review.delete.useMutation();
   const handleDeleteReview = (review: ReviewDetails) => {
     openConfirmModal({
@@ -69,50 +111,6 @@ export function ModelReviews({ items, loading = false }: Props) {
   };
 
   return (
-    <Grid>
-      <Grid.Col span={12} sx={{ position: 'relative' }}>
-        <LoadingOverlay visible={loading} />
-        {items.length > 0 ? (
-          <SimpleGrid
-            breakpoints={[
-              { minWidth: 'sm', cols: 3 },
-              { minWidth: 'md', cols: 4 },
-            ]}
-          >
-            {items.map((review, index) => (
-              <ReviewItem
-                key={index}
-                review={review}
-                currentUser={session?.user}
-                onDelete={handleDeleteReview}
-              />
-            ))}
-          </SimpleGrid>
-        ) : (
-          <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Stack>
-              <Text size="xl">There are no reviews for this model yet.</Text>
-              <Text color="dimmed">
-                Be the first to let the people know about this model by leaving your review.
-              </Text>
-            </Stack>
-          </Paper>
-        )}
-      </Grid.Col>
-    </Grid>
-  );
-}
-
-type Props = {
-  items: ReviewDetails[];
-  onFilterChange: (values: ReviewFilter[]) => void;
-  loading?: boolean;
-};
-
-function ReviewItem({ review, currentUser, onDelete }: ItemProps) {
-  const displayActions = currentUser?.id === review.user.id;
-
-  return (
     <Paper radius="md" p="md" withBorder>
       <Stack spacing="xs">
         <Group align="flex-start" sx={{ justifyContent: 'space-between' }} noWrap>
@@ -135,7 +133,7 @@ function ReviewItem({ review, currentUser, onDelete }: ItemProps) {
                 <Menu.Item
                   icon={<IconTrash size={14} stroke={1.5} />}
                   color="red"
-                  onClick={() => onDelete(review)}
+                  onClick={() => handleDeleteReview(review)}
                 >
                   Delete review
                 </Menu.Item>
@@ -153,10 +151,14 @@ function ReviewItem({ review, currentUser, onDelete }: ItemProps) {
             >
               {review.imagesOnReviews.map(({ image }) => (
                 <Carousel.Slide key={image.id}>
-                  <Image
-                    src={image.url}
-                    alt={image.name ?? 'Visual representation of the user review'}
-                  />
+                  {blurContent ? (
+                    <MediaHash {...image} />
+                  ) : (
+                    <Image
+                      src={image.url}
+                      alt={image.name ?? 'Visual representation of the user review'}
+                    />
+                  )}
                 </Carousel.Slide>
               ))}
             </Carousel>
@@ -189,7 +191,7 @@ function ReviewItem({ review, currentUser, onDelete }: ItemProps) {
 }
 
 type ItemProps = {
-  review: Props['items'][number];
-  onDelete: (review: ReviewDetails) => void;
-  currentUser?: ExtendedUser;
+  data: {
+    review: Props['items'][number];
+  };
 };

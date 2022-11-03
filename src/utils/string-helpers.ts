@@ -1,5 +1,9 @@
 export function splitUppercase(value: string) {
-  return value.split(/(?=[A-Z])/).join(' ');
+  return value
+    .trim()
+    .split(/(?=[A-Z])/)
+    .map((word) => word.trim())
+    .join(' ');
 }
 
 export function getInitials(value: string) {

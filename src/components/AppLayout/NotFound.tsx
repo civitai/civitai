@@ -1,12 +1,11 @@
 import { Container, Stack, Text, Title } from '@mantine/core';
-import Head from 'next/head';
+import { Meta } from '~/components/Meta/Meta';
 
 export function NotFound() {
   return (
     <>
-      <Head>
-        <meta name="title" content="404 Page Not Found" />
-      </Head>
+      <Meta title="Page Not Found" />
+
       <Container size="xl" p="xl">
         <Stack align="center">
           <Title order={1}>404</Title>

@@ -33,6 +33,7 @@ import { modelSchema } from '~/server/common/validation/model';
 import { ModelWithDetails } from '~/server/validators/models/getById';
 import { trpc } from '~/utils/trpc';
 import { ImageUpload } from '~/components/ImageUpload/ImageUpload';
+import { splitUppercase } from '~/utils/string-helpers';
 
 type CreateModelProps = z.infer<typeof modelSchema>;
 type UpdateModelProps = Omit<CreateModelProps, 'id'> & { id: number };
@@ -356,7 +357,7 @@ export function ModelForm({ model }: Props) {
                   {...form.getInputProps('type')}
                   label="Type"
                   placeholder="Type"
-                  data={['Checkpoint', 'TextualInversion', 'Hypernetwork']}
+                  data={Object.values(ModelType).map(splitUppercase)}
                   withAsterisk
                 />
                 <MultiSelect
