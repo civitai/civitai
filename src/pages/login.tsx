@@ -13,7 +13,7 @@ export default function Login({
   providers,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
-  const { error } = router.query as { error: string };
+  const { error, returnUrl = '/' } = router.query as { error: string; returnUrl: string };
   return (
     <Container size="xs">
       <Paper radius="md" p="xl" withBorder>
@@ -28,7 +28,7 @@ export default function Login({
                   <SocialButton
                     key={provider.name}
                     provider={provider.id as BuiltInProviderType}
-                    onClick={() => signIn(provider.id, { callbackUrl: '/' })}
+                    onClick={() => signIn(provider.id, { callbackUrl: returnUrl })}
                   />
                 );
               })

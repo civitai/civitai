@@ -1,4 +1,5 @@
 import {
+  AspectRatio,
   Box,
   Card,
   createStyles,
@@ -129,21 +130,23 @@ const MasonryItem = ({
       >
         {inView && (
           <>
-            {nsfw ? (
-              <MediaHash {...image} />
-            ) : (
-              <Image
-                src={image.url}
-                alt={name}
-                objectFit="cover"
-                objectPosition="top"
-                // height={hasDimensions ? `${image.height}px` : undefined}
-                // width={hasDimensions ? `${image.width}px` : undefined}
-                // layout={!hasDimensions ? 'fill' : undefined}
-                layout="fill"
-                placeholder="empty"
-              />
-            )}
+            <AspectRatio ratio={1}>
+              {nsfw ? (
+                <MediaHash {...image} />
+              ) : (
+                <Image
+                  src={image.url}
+                  alt={name}
+                  objectFit="cover"
+                  objectPosition="top"
+                  // height={hasDimensions ? `${image.height}px` : undefined}
+                  // width={hasDimensions ? `${image.width}px` : undefined}
+                  // layout={!hasDimensions ? 'fill' : undefined}
+                  layout="fill"
+                  placeholder="empty"
+                />
+              )}
+            </AspectRatio>
 
             <Box p="xs" className={classes.content}>
               <Group position="apart" align="flex-end">
