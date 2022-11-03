@@ -80,7 +80,7 @@ function TabContent({ version }: TabContentProps) {
 
   return (
     <Grid gutter="xl">
-      <Grid.Col xs={12} sm={4} orderSm={2}>
+      <Grid.Col xs={12} md={4} orderMd={2}>
         <Stack spacing="xs">
           <Button
             component="a"
@@ -99,7 +99,7 @@ function TabContent({ version }: TabContentProps) {
           </ContentClamp>
         </Stack>
       </Grid.Col>
-      <Grid.Col xs={12} sm={8} orderSm={1}>
+      <Grid.Col xs={12} md={8} orderMd={1}>
         <SimpleGrid
           breakpoints={[
             { minWidth: 'xs', cols: 1 },

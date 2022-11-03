@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { TRPCError } from '@trpc/server';
 import { getAllReviewsSelect } from '~/server/validators/reviews/getAllReviews';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
 import { handleDbError } from '~/server/services/errorHandling';
@@ -17,35 +16,38 @@ export const reviewRouter = router({
           modelId: z.number(),
           modelVersionId: z.number(),
           userId: z.number(),
-          filterBy: z.array(z.nativeEnum(ReviewFilter)).optional(),
-          sort: z.nativeEnum(ReviewSort).optional(),
+          filterBy: z.array(z.nativeEnum(ReviewFilter)),
+          sort: z.nativeEnum(ReviewSort),
         })
         .partial()
     )
     .query(async ({ ctx, input = {} }) => {
       const { cursor, limit = 20, modelId, modelVersionId, userId } = input;
-      const reviews = await ctx.prisma.review.findMany({
-        take: limit + 1, // get an extra item at the end which we'll use as next cursor
-        cursor: cursor ? { id: cursor } : undefined,
-        where: {
-          modelId,
-          modelVersionId,
-          userId,
-        },
-        select: getAllReviewsSelect,
-      });
+      const commonWhere = { modelId, modelVersionId, userId };
+      const [reviews, totalCount] = await Promise.all([
+        ctx.prisma.review.findMany({
+          take: limit + 1, // get an extra item at the end which we'll use as next cursor
+          cursor: cursor ? { id: cursor } : undefined,
+          where: {
+            ...commonWhere,
+            nsfw: ctx.session?.user?.showNsfw ? undefined : false,
+          },
+          select: getAllReviewsSelect,
+        }),
+        ctx.prisma.review.count({ where: commonWhere }),
+      ]);
 
-      return reviews;
+      let nextCursor: typeof cursor | undefined = undefined;
+      if (reviews.length > limit) {
+        const nextItem = reviews.pop();
+        nextCursor = nextItem?.id;
+      }
+
+      return { reviews, nextCursor, totalCount };
     }),
   upsert: protectedProcedure.input(reviewUpsertSchema).mutation(async ({ ctx, input }) => {
     // TODO - allow admin to make changes to a review?
     const { user } = ctx.session;
-    if (!user) {
-      throw new TRPCError({
-        code: 'UNAUTHORIZED',
-      });
-    }
-
     const { images = [], ...reviewInput } = input;
     const imagesWithIndex = images.map((image, index) => ({
       userId: user.id,
