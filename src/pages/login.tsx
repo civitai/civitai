@@ -13,7 +13,7 @@ export default function Login({
   providers,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
-  const { error } = router.query as { error: string };
+  const { error, returnUrl = '/' } = router.query as { error: string; returnUrl: string };
   return (
     <Container size="xs">
       <Paper radius="md" p="xl" withBorder>
@@ -22,16 +22,17 @@ export default function Login({
         </Text>
 
         <Stack mb="md" mt="md">
-          {providers &&
-            Object.values(providers).map((provider) => {
-              return (
-                <SocialButton
-                  key={provider.name}
-                  provider={provider.id as BuiltInProviderType}
-                  onClick={() => signIn(provider.id, { callbackUrl: '/' })}
-                />
-              );
-            })}
+          {providers
+            ? Object.values(providers).map((provider) => {
+                return (
+                  <SocialButton
+                    key={provider.name}
+                    provider={provider.id as BuiltInProviderType}
+                    onClick={() => signIn(provider.id, { callbackUrl: returnUrl })}
+                  />
+                );
+              })
+            : null}
         </Stack>
         {error && (
           <SignInError color="yellow" title="Login Error" mt="lg" variant="outline" error={error} />

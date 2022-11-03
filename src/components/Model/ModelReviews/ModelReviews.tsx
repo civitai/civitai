@@ -1,6 +1,7 @@
 import { Carousel } from '@mantine/carousel';
 import {
   ActionIcon,
+  AspectRatio,
   Badge,
   Box,
   Grid,
@@ -16,7 +17,7 @@ import {
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
-import { IconDotsVertical, IconTrash, IconX } from '@tabler/icons';
+import { IconDotsVertical, IconEyeOff, IconTrash, IconX } from '@tabler/icons';
 import dayjs from 'dayjs';
 import { Masonry } from 'masonic';
 import { useSession } from 'next-auth/react';
@@ -30,7 +31,6 @@ import { trpc } from '~/utils/trpc';
 
 export function ModelReviews({ items, loading = false }: Props) {
   const theme = useMantineTheme();
-  const reviews = items.map((item) => ({ review: { ...item } }));
 
   return (
     <Grid>
@@ -38,7 +38,7 @@ export function ModelReviews({ items, loading = false }: Props) {
         <LoadingOverlay visible={loading} />
         {items.length > 0 ? (
           <Masonry
-            items={reviews}
+            items={items}
             render={ReviewItem}
             columnGutter={theme.spacing.md}
             columnWidth={1200 / 4}
@@ -65,11 +65,12 @@ type Props = {
   loading?: boolean;
 };
 
-function ReviewItem({ data: { review } }: ItemProps) {
+function ReviewItem({ data: review }: ItemProps) {
   const { data: session } = useSession();
   const displayActions = session?.user?.id === review.user.id;
+  const shouldBlur = session?.user?.blurNsfw;
 
-  const [blurContent, setBlurContent] = useState(review.nsfw);
+  const [blurContent, setBlurContent] = useState(review.nsfw && shouldBlur);
 
   const queryUtils = trpc.useContext();
   const { mutate, isLoading } = trpc.review.delete.useMutation();
@@ -110,58 +111,90 @@ function ReviewItem({ data: { review } }: ItemProps) {
     });
   };
 
+  const hasImages = review.imagesOnReviews.length > 0;
+  const firstImage = hasImages ? review.imagesOnReviews[0].image : null;
+
   return (
     <Paper radius="md" p="md" withBorder>
       <Stack spacing="xs">
-        <Group align="flex-start" sx={{ justifyContent: 'space-between' }} noWrap>
-          <Stack spacing={4}>
+        <Stack spacing={4}>
+          <Group align="flex-start" sx={{ justifyContent: 'space-between' }} noWrap>
             <UserAvatar
               user={review.user}
               subText={`${dayjs(review.createdAt).fromNow()} - ${review.modelVersion?.name}`}
               withUsername
             />
-            <Rating value={review.rating} fractions={2} readOnly />
-          </Stack>
-          {displayActions ? (
-            <Menu position="bottom-end">
-              <Menu.Target>
-                <ActionIcon size="xs" variant="subtle">
-                  <IconDotsVertical size={14} />
-                </ActionIcon>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Item
-                  icon={<IconTrash size={14} stroke={1.5} />}
-                  color="red"
-                  onClick={() => handleDeleteReview(review)}
-                >
-                  Delete review
-                </Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
-          ) : null}
-        </Group>
+            {displayActions ? (
+              <Menu position="bottom-end">
+                <Menu.Target>
+                  <ActionIcon size="xs" variant="subtle">
+                    <IconDotsVertical size={14} />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Item
+                    icon={<IconTrash size={14} stroke={1.5} />}
+                    color="red"
+                    onClick={() => handleDeleteReview(review)}
+                  >
+                    Delete review
+                  </Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
+            ) : null}
+          </Group>
+          <Rating
+            value={review.rating}
+            fractions={2}
+            size={!hasImages && !review.text ? 'xl' : undefined}
+            sx={{ alignSelf: !hasImages && !review.text ? 'center' : undefined }}
+            readOnly
+          />
+        </Stack>
         {review.imagesOnReviews.length > 0 ? (
           <Box sx={{ position: 'relative' }}>
-            <Carousel
-              sx={(theme) => ({
-                margin: `0 ${theme.spacing.md * -1}px`,
-              })}
-              loop
-            >
-              {review.imagesOnReviews.map(({ image }) => (
-                <Carousel.Slide key={image.id}>
-                  {blurContent ? (
-                    <MediaHash {...image} />
-                  ) : (
-                    <Image
-                      src={image.url}
-                      alt={image.name ?? 'Visual representation of the user review'}
-                    />
-                  )}
-                </Carousel.Slide>
-              ))}
-            </Carousel>
+            {blurContent ? (
+              <Box
+                sx={(theme) => ({ position: 'relative', margin: `0 ${theme.spacing.md * -1}px` })}
+              >
+                <AspectRatio ratio={16 / 9}>
+                  {firstImage ? <MediaHash {...firstImage} /> : null}
+                  <Stack
+                    align="center"
+                    spacing={0}
+                    sx={(theme) => ({
+                      position: 'absolute',
+                      padding: `0 ${theme.spacing.xs * 4}px`, // 40px horizontal padding
+                    })}
+                  >
+                    <IconEyeOff size={20} color="white" />
+                    <Text color="white">Sensitive Content</Text>
+                    <Text size="xs" color="white" align="center">
+                      This is marked as NSFW
+                    </Text>
+                  </Stack>
+                </AspectRatio>
+              </Box>
+            ) : (
+              <Carousel
+                sx={(theme) => ({
+                  margin: `0 ${theme.spacing.md * -1}px`,
+                })}
+                loop
+              >
+                {review.imagesOnReviews.map(({ image }) => (
+                  <Carousel.Slide key={image.id}>
+                    <AspectRatio ratio={16 / 9}>
+                      <Image
+                        src={image.url}
+                        alt={image.name ?? 'Visual representation of the user review'}
+                        sx={{ objectFit: 'cover', objectPosition: 'center' }}
+                      />
+                    </AspectRatio>
+                  </Carousel.Slide>
+                ))}
+              </Carousel>
+            )}
             <Badge
               variant="filled"
               color="gray"
@@ -170,14 +203,21 @@ function ReviewItem({ data: { review } }: ItemProps) {
             >
               {review.imagesOnReviews.length}
             </Badge>
-            {review.nsfw ? (
+            {review.nsfw && shouldBlur ? (
               <Badge
                 color="red"
                 variant="filled"
                 size="sm"
-                sx={(theme) => ({ position: 'absolute', top: theme.spacing.xs, left: 0 })}
+                onClick={shouldBlur ? () => setBlurContent((value) => !value) : undefined}
+                sx={(theme) => ({
+                  position: 'absolute',
+                  top: theme.spacing.xs,
+                  left: 0,
+                  userSelect: 'none',
+                  cursor: shouldBlur ? 'pointer' : 'auto',
+                })}
               >
-                NSFW
+                {blurContent ? 'Show' : 'Hide'}
               </Badge>
             ) : null}
           </Box>
@@ -191,7 +231,5 @@ function ReviewItem({ data: { review } }: ItemProps) {
 }
 
 type ItemProps = {
-  data: {
-    review: Props['items'][number];
-  };
+  data: Props['items'][number];
 };

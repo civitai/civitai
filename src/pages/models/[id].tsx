@@ -3,6 +3,7 @@ import {
   ActionIcon,
   AspectRatio,
   Badge,
+  Box,
   Button,
   Center,
   Container,
@@ -38,8 +39,10 @@ import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { useSession } from 'next-auth/react';
 import Image from 'next/image';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { InView } from 'react-intersection-observer';
 import superjson from 'superjson';
+
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import {
@@ -52,6 +55,7 @@ import { ModelForm } from '~/components/Model/ModelForm/ModelForm';
 import { ModelReviews } from '~/components/Model/ModelReviews/ModelReviews';
 import { ModelVersions } from '~/components/Model/ModelVersions/ModelVersions';
 import { ModelRating } from '~/components/ModelRating/ModelRating';
+import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
@@ -70,7 +74,10 @@ export const getServerSideProps: GetServerSideProps<{ id: number }> = async (con
     transformer: superjson,
   });
   const id = Number(context.params?.id as string);
-  await ssg.model.getById.prefetch({ id });
+  await Promise.all([
+    ssg.model.getById.prefetch({ id }),
+    ssg.review.getAll.prefetchInfinite({ modelId: id }),
+  ]);
 
   return {
     props: {
@@ -113,15 +120,47 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     sort: ReviewSort.Newest,
   });
 
-  const { data: model, status: modelStatus } = trpc.model.getById.useQuery({ id });
-  const { data: reviews = [], status: reviewsStatus } = trpc.review.getAll.useQuery({
-    modelId: id,
-    ...reviewFilters,
+  const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({ id });
+  const {
+    data: reviewsData,
+    isLoading: loadingReviews,
+    isFetchingNextPage,
+    fetchNextPage,
+    hasNextPage,
+  } = trpc.review.getAll.useInfiniteQuery(
+    { modelId: id, limit: 5, ...reviewFilters },
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+    }
+  );
+  const deleteMutation = trpc.model.delete.useMutation({
+    onSuccess() {
+      showNotification({
+        title: 'Your model has been deleted',
+        message: 'Successfully deleted the model',
+        color: 'teal',
+        icon: <IconCheck size={18} />,
+      });
+      closeAllModals();
+      router.replace('/'); // Redirect to the models or user page once available
+    },
+    onError(error) {
+      const message = error.message;
+
+      showNotification({
+        title: 'Could not delete model',
+        message: `An error occurred while deleting the model: ${message}`,
+        color: 'red',
+        icon: <IconX size={18} />,
+      });
+    },
   });
+  const reviews = useMemo(
+    () => reviewsData?.pages.flatMap((x) => x.reviews) ?? [],
+    [reviewsData?.pages]
+  );
 
-  const deleteMutation = trpc.model.delete.useMutation();
-
-  if (modelStatus === 'loading')
+  if (loadingModel)
     return (
       <Container size="xl">
         <Center>
@@ -131,6 +170,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     );
   if (!model) return <NotFound />;
   if (!!edit && model) return <ModelForm model={model} />;
+  if (model.nsfw && !session) return <SensitiveShield redirectTo={router.asPath} />;
 
   const handleDeleteModel = () => {
     openConfirmModal({
@@ -147,31 +187,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       closeOnConfirm: false,
       onConfirm: () => {
         if (model) {
-          deleteMutation.mutate(
-            { id: model.id },
-            {
-              onSuccess() {
-                showNotification({
-                  title: 'Your model has been deleted',
-                  message: 'Successfully deleted the model',
-                  color: 'teal',
-                  icon: <IconCheck size={18} />,
-                });
-                closeAllModals();
-                router.replace('/'); // Redirect to the models or user page once available
-              },
-              onError(error) {
-                const message = error.message;
-
-                showNotification({
-                  title: 'Could not delete model',
-                  message: `An error occurred while deleting the model: ${message}`,
-                  color: 'red',
-                  icon: <IconX size={18} />,
-                });
-              },
-            }
-          );
+          deleteMutation.mutate({ id: model.id });
         }
       },
     });
@@ -330,9 +346,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             orderSm={1}
             sx={(theme) => ({
               [theme.fn.largerThan('xs')]: {
-                // borderRight: `1px ${
-                //   theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                // } solid`,
                 padding: `0 ${theme.spacing.sm}px`,
                 margin: `${theme.spacing.sm}px 0`,
               },
@@ -368,9 +381,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   </Carousel.Slide>
                 ))}
               </Carousel>
-              {/* <Title className={classes.title} order={2}>
-              About this model
-            </Title> */}
               <ContentClamp maxHeight={150}>
                 <Text>{model?.description}</Text>
               </ContentClamp>
@@ -454,8 +464,33 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               <ModelReviews
                 items={reviews}
                 onFilterChange={handleReviewFilterChange}
-                loading={['loading', 'fetching'].includes(reviewsStatus)}
+                loading={loadingReviews}
               />
+              {/* At the bottom to detect infinite scroll */}
+              <InView
+                fallbackInView
+                threshold={1}
+                onChange={(inView) => {
+                  if (inView && !isFetchingNextPage && hasNextPage) {
+                    fetchNextPage();
+                  }
+                }}
+              >
+                {({ ref }) => (
+                  <Button
+                    ref={ref}
+                    variant="subtle"
+                    onClick={() => fetchNextPage()}
+                    disabled={!hasNextPage || isFetchingNextPage}
+                  >
+                    {isFetchingNextPage
+                      ? 'Loading more...'
+                      : hasNextPage
+                      ? 'Load More'
+                      : 'Nothing more to load'}
+                  </Button>
+                )}
+              </InView>
             </Stack>
           </Grid.Col>
         </Grid>
