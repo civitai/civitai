@@ -24,10 +24,21 @@ export function AppFooter() {
 
   return (
     <Paper className={cx(classes.root, { [classes.down]: !showFooter })} p="sm" radius={0}>
-      <Group>
-        <Text mr="md">&copy; Civitai {new Date().getFullYear()}</Text>
-        <Text component={NextLink} href="content/tos">
+      <Group spacing="lg">
+        <Text mr="md" weight={700}>
+          &copy; Civitai {new Date().getFullYear()}
+        </Text>
+        <Text component={NextLink} href="content/tos" size="sm">
           Terms of Service
+        </Text>
+        <Text component="a" href="https://github.com/civitai" size="sm">
+          GitHub
+        </Text>
+        <Text component="a" href="https://discord.gg/UwX5wKwm6c" size="sm">
+          Discord
+        </Text>
+        <Text component="a" href="https://twitter.com/HelloCivitai" size="sm">
+          Twitter
         </Text>
       </Group>
     </Paper>
