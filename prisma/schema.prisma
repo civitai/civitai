@@ -52,6 +52,7 @@ model User {
   showNsfw      Boolean?  @default(false)
   blurNsfw      Boolean?  @default(true)
   isModerator   Boolean?  @default(false)
+  tos           Boolean?  @default(false)
 
   accounts        Account[]
   sessions        Session[]

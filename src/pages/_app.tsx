@@ -18,6 +18,7 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { CustomModalsProvider } from './../providers/CustomModalsProvider';
+import { TosProvider } from '~/providers/TosProvider';
 
 dayjs.extend(duration);
 dayjs.extend(relativeTime);
@@ -53,17 +54,17 @@ function MyApp(props: CustomAppProps<{ session: Session | null; colorScheme: Col
         <meta name="viewport" content="minimum-scale=1, initial-scale=1, width=device-width" />
       </Head>
 
-      <ColorSchemeProvider colorScheme={colorScheme} toggleColorScheme={toggleColorScheme}>
-        <MantineProvider theme={{ colorScheme }} withGlobalStyles withNormalizeCSS>
-          <CustomModalsProvider>
-            <NotificationsProvider>
-              <SessionProvider session={session}>
-                {getLayout(<Component {...pageProps} />)}
-              </SessionProvider>
-            </NotificationsProvider>
-          </CustomModalsProvider>
-        </MantineProvider>
-      </ColorSchemeProvider>
+      <SessionProvider session={session}>
+        <ColorSchemeProvider colorScheme={colorScheme} toggleColorScheme={toggleColorScheme}>
+          <MantineProvider theme={{ colorScheme }} withGlobalStyles withNormalizeCSS>
+            <CustomModalsProvider>
+              <NotificationsProvider>
+                <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+              </NotificationsProvider>
+            </CustomModalsProvider>
+          </MantineProvider>
+        </ColorSchemeProvider>
+      </SessionProvider>
       {process.env.NODE_ENV == 'development' && <ReactQueryDevtools />}
     </>
   );

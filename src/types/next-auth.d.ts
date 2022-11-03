@@ -5,6 +5,7 @@ interface ExtendedUser {
   showNsfw: boolean;
   blurNsfw: boolean;
   username?: string;
+  tos?: boolean;
 }
 
 declare module 'next-auth' {

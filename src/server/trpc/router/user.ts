@@ -60,6 +60,7 @@ export const userRouter = router({
           username: z.string(),
           showNsfw: z.boolean(),
           blurNsfw: z.boolean(),
+          tos: z.boolean(),
         })
         .partial()
     )

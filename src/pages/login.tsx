@@ -22,17 +22,16 @@ export default function Login({
         </Text>
 
         <Stack mb="md" mt="md">
-          {providers
-            ? Object.values(providers).map((provider) => {
-                return (
-                  <SocialButton
-                    key={provider.name}
-                    provider={provider.id as BuiltInProviderType}
-                    onClick={() => signIn(provider.id, { callbackUrl: '/' })}
-                  />
-                );
-              })
-            : null}
+          {providers &&
+            Object.values(providers).map((provider) => {
+              return (
+                <SocialButton
+                  key={provider.name}
+                  provider={provider.id as BuiltInProviderType}
+                  onClick={() => signIn(provider.id, { callbackUrl: '/' })}
+                />
+              );
+            })}
         </Stack>
         {error && (
           <SignInError color="yellow" title="Login Error" mt="lg" variant="outline" error={error} />
