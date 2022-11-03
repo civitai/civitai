@@ -22,6 +22,7 @@ import React from 'react';
 
 import { SocialLabel } from '~/components/Social/SocialLabel';
 import { BuiltInProviderType } from 'next-auth/providers';
+import { reloadSession } from './../../utils/next-auth-helpers';
 
 export default function Account({ user, providers, accounts: initialAccounts }: Props) {
   const utils = trpc.useContext();
@@ -48,7 +49,7 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
       <form
         onSubmit={form.onSubmit(async (values) => {
           await updateUserAsync(values);
-          signIn();
+          reloadSession();
         })}
       >
         <Stack>
