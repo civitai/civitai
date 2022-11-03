@@ -48,6 +48,7 @@ export const authOptions: NextAuthOptions = {
         localSession.user.showNsfw = user.showNsfw;
         localSession.user.blurNsfw = user.blurNsfw;
         localSession.user.username = user.username;
+        localSession.user.tos = user.tos;
       }
 
       return localSession;

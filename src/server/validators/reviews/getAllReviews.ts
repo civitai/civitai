@@ -16,7 +16,7 @@ export const getAllReviewsSelect = Prisma.validator<Prisma.ReviewSelect>()({
   user: {
     select: simpleUserSelect,
   },
-  reviewReactions: {
+  reactions: {
     select: {
       id: true,
       reaction: true,

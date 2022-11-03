@@ -2,9 +2,10 @@ import { ContextModalProps } from '@mantine/modals';
 import { Button, Checkbox, Stack, TextInput, Text, Alert } from '@mantine/core';
 import { useForm, zodResolver } from '@mantine/form';
 import { z } from 'zod';
-import { useSession } from 'next-auth/react';
+import { signIn, useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { trpc } from '~/utils/trpc';
+import { reloadSession } from './../../utils/next-auth-helpers';
 
 const schema = z.object({
   username: z.string(),
@@ -25,8 +26,7 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
       { ...session.data?.user, ...values },
       {
         onSuccess: () => {
-          const event = new Event('visibilitychange');
-          document.dispatchEvent(event);
+          reloadSession();
           context.closeModal(id);
         },
       }
