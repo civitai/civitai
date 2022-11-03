@@ -15,11 +15,13 @@ type CustomModalsProviderProps = {
 export function CustomModalsProvider({ children }: CustomModalsProviderProps) {
   return (
     <ModalsProvider
-      modals={{
-        reviewEdit: DynamicReviewEditModal as React.FC<ContextModalProps<any>>,
-        imageLightbox: DynamicLightboxImageCarousel as React.FC<ContextModalProps<any>>,
-        onboarding: DynamicOnboardingModal as React.FC<ContextModalProps<any>>,
-      }}
+      modals={
+        {
+          reviewEdit: DynamicReviewEditModal,
+          imageLightbox: DynamicLightboxImageCarousel,
+          onboarding: DynamicOnboardingModal,
+        } as Record<string, React.FC<ContextModalProps<any>>>
+      }
     >
       {children}
     </ModalsProvider>
