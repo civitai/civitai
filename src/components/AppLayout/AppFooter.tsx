@@ -1,5 +1,6 @@
-import { createStyles, Paper } from '@mantine/core';
+import { createStyles, Group, Paper, Text } from '@mantine/core';
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
+import { NextLink } from '@mantine/next';
 
 interface ScrollPosition {
   x: number;
@@ -23,7 +24,12 @@ export function AppFooter() {
 
   return (
     <Paper className={cx(classes.root, { [classes.down]: !showFooter })} p="sm" radius={0}>
-      <span>Hello world</span>
+      <Group>
+        <Text mr="md">&copy; Civitai {new Date().getFullYear()}</Text>
+        <Text component={NextLink} href="content/tos">
+          Terms of Service
+        </Text>
+      </Group>
     </Paper>
   );
 }
@@ -34,9 +40,8 @@ const useStyles = createStyles((theme) => ({
     bottom: 0,
     right: 0,
     left: 0,
-    borderTop: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-    }`,
+    borderTop: `1px solid ${theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+      }`,
     // boxShadow: '0 -1px 3px rgba(0, 0, 0, 0.05), 0 -1px 2px rgba(0, 0, 0, 0.1)',
     transitionProperty: 'bottom',
     transitionDuration: '0.3s',
