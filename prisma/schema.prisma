@@ -74,6 +74,7 @@ enum ModelType {
   Checkpoint
   TextualInversion
   Hypernetwork
+  AestheticGradient
 }
 
 model Model {
@@ -85,6 +86,7 @@ model Model {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   nsfw         Boolean   @default(false)
+  tosViolation Boolean   @default(false)
   userId       Int
   user         User      @relation(fields: [userId], references: [id])
 
@@ -149,6 +151,10 @@ model ModelVersionMetric {
 enum UserActivityType {
   ModelDownload
   TrainingDataDownload
+  ReportModelTOSViolation
+  ReportModelNSFW
+  ReportReviewTOSViolation
+  ReportReviewNSFW
 }
 
 model UserActivity {
@@ -173,6 +179,7 @@ model Review {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   nsfw           Boolean       @default(false)
+  tosViolation   Boolean       @default(false)
 
   reviewReactions ReviewReaction[]
   imagesOnReviews ImagesOnReviews[]
