@@ -18,5 +18,5 @@ export const imageDetailsSelect = Prisma.validator<Prisma.ImageSelect>()({
 const imageSimple = Prisma.validator<Prisma.ImageArgs>()({ select: imageSimpleSelect });
 const imageDetails = Prisma.validator<Prisma.ImageArgs>()({ select: imageDetailsSelect });
 
-export type ImageSimpleModel = Prisma.ModelGetPayload<typeof imageSimple>;
-export type ImageDetailModel = Prisma.ModelGetPayload<typeof imageDetails>;
+export type ImageSimpleModel = Prisma.ImageGetPayload<typeof imageSimple>;
+export type ImageDetailModel = Prisma.ImageGetPayload<typeof imageDetails>;

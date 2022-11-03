@@ -47,6 +47,7 @@ import {
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { Meta } from '~/components/Meta/Meta';
+import LightboxCarousel from '~/components/LightboxImageCarousel/LightboxImageCarousel';
 import { ModelForm } from '~/components/Model/ModelForm/ModelForm';
 import { ModelReviews } from '~/components/Model/ModelReviews/ModelReviews';
 import { ModelVersions } from '~/components/Model/ModelVersions/ModelVersions';
@@ -60,6 +61,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { formatBytes } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { useImageLightbox } from '~/hooks/useImageLightbox';
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
   const ssg = createProxySSGHelpers({
@@ -98,6 +100,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const { data: session } = useSession();
   const { classes } = useStyles();
   const mobile = useIsMobile();
+  const { openImageLightbox } = useImageLightbox();
 
   const { id } = props;
   const { edit } = router.query;
@@ -344,7 +347,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 slidesToScroll={mobile ? 1 : 2}
                 withControls={latestVersion.images.length > 2 ? true : false}
               >
-                {latestVersion.images.map(({ image }) => (
+                {latestVersion.images.map(({ image }, index) => (
                   <Carousel.Slide key={image.id}>
                     <AspectRatio ratio={1}>
                       <Image
@@ -354,6 +357,12 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                         objectFit="cover"
                         objectPosition="top"
                         style={{ borderRadius: theme.spacing.md }}
+                        onClick={() =>
+                          openImageLightbox({
+                            initialSlide: index,
+                            images: latestVersion.images.map(({ image }) => image),
+                          })
+                        }
                       />
                     </AspectRatio>
                   </Carousel.Slide>
