@@ -1,4 +1,5 @@
 import { AppShell } from '@mantine/core';
+import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader } from '~/components/AppLayout/AppHeader';
 import { SideNavigation } from '~/components/AppLayout/SideNavigation';
 
@@ -19,6 +20,7 @@ export function AppLayout({ children, showNavbar }: Props) {
       navbar={showNavbar ? <SideNavigation /> : undefined}
     >
       {children}
+      <AppFooter />
     </AppShell>
   );
 }
