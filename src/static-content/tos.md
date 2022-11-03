@@ -1,9 +1,9 @@
 ---
-title: Civitai TOS
+title: Terms of Service
 ---
 
 ## Consent
-Using our app to do anything other than access the links to this "Terms" page or accessing any page of our website other than our home page and this "Terms" page constitutes your consent to these terms of use. If you do not consent, do not use our website.
+Using our app to do anything other than access the links to this "Terms of Service" page or accessing any page of our website other than our home page and this "Terms" page constitutes your consent to these terms of use. If you do not consent, do not use our website.
 
 Your use of our website to do anything beyond simply accessing/viewing it (that is, uploading, downloading, commenting, etc.), constitutes not merely your consent, but also your electronic signature, meaning that you are contractually bound by these terms.
 
