@@ -51,6 +51,7 @@ model User {
   image         String?
   showNsfw      Boolean?  @default(false)
   blurNsfw      Boolean?  @default(true)
+  isModerator   Boolean?  @default(false)
 
   accounts        Account[]
   sessions        Session[]
@@ -60,6 +61,8 @@ model User {
   models          Model[]
   activities      UserActivity[]
   saves           SavedModel[]
+  modelReports    ModelReport[]
+  reviewReports   ReviewReport[]
 }
 
 model VerificationToken {
@@ -96,6 +99,7 @@ model Model {
   metrics       ModelMetric[]
   saves         SavedModel[]
   rank          ModelRank?
+  reports       ModelReport[]
 }
 
 model ModelVersion {
@@ -151,10 +155,6 @@ model ModelVersionMetric {
 enum UserActivityType {
   ModelDownload
   TrainingDataDownload
-  ReportModelTOSViolation
-  ReportModelNSFW
-  ReportReviewTOSViolation
-  ReportReviewNSFW
 }
 
 model UserActivity {
@@ -164,6 +164,21 @@ model UserActivity {
   activity  UserActivityType
   details   Json?
   createdAt DateTime         @default(now())
+}
+
+enum ReportReason {
+  TOSViolation
+  NSFW
+}
+
+model ModelReport {
+  id        Int          @id @default(autoincrement())
+  modelId   Int
+  model     Model        @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason    ReportReason
+  createdAt DateTime     @default(now())
 }
 
 model Review {
@@ -181,8 +196,19 @@ model Review {
   nsfw           Boolean       @default(false)
   tosViolation   Boolean       @default(false)
 
-  reviewReactions ReviewReaction[]
+  reactions       ReviewReaction[]
   imagesOnReviews ImagesOnReviews[]
+  reports         ReviewReport[]
+}
+
+model ReviewReport {
+  id        Int          @id @default(autoincrement())
+  reviewId  Int
+  review    Review       @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason    ReportReason
+  createdAt DateTime     @default(now())
 }
 
 enum ReviewReactions {

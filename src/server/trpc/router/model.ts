@@ -1,3 +1,4 @@
+import { ReportReason } from '@prisma/client';
 import { z } from 'zod';
 import { modelSchema } from '~/server/common/validation/model';
 import { handleDbError } from '~/server/services/errorHandling';
@@ -222,5 +223,22 @@ export const modelRouter = router({
       } catch (error) {
         return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
       }
+    }),
+  report: protectedProcedure
+    .input(z.object({ id: z.number(), reason: z.nativeEnum(ReportReason) }))
+    .mutation(async ({ ctx, input: { id, reason } }) => {
+      const data = reason === ReportReason.NSFW ? { nsfw: true } : { tos: true };
+      await ctx.prisma.model.update({
+        where: { id },
+        data,
+      });
+
+      await ctx.prisma.modelReport.create({
+        data: {
+          modelId: id,
+          reason,
+          userId: ctx.session.user.id,
+        },
+      });
     }),
 });
