@@ -53,6 +53,10 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
       >
         <Stack>
           <Title order={1}>Manage Account</Title>
+          <Text>
+            Take a moment to review your account information and preferences to personalize your
+            experience on the site
+          </Text>
           {updateUserError && (
             <Alert color="red" variant="light">
               {updateUserError.message}
