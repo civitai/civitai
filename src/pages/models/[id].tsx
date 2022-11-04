@@ -39,7 +39,7 @@ import { useSession } from 'next-auth/react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { InView } from 'react-intersection-observer';
 import superjson from 'superjson';
 
@@ -66,6 +66,7 @@ import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { QS } from '~/utils/qs';
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
   const ssg = createProxySSGHelpers({
@@ -181,6 +182,29 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     () => reviewsData?.pages.flatMap((x) => x.reviews) ?? [],
     [reviewsData?.pages]
   );
+
+  // when a user navigates back in their browser, set the previous url with the query string model={id}
+  useEffect(() => {
+    router.beforePopState(({ as }) => {
+      if (as !== router.asPath) {
+        const [route, queryString] = as.split('?');
+        const queryParams = QS.parse(queryString);
+        const stringified = QS.stringify({ ...queryParams, model: id });
+        const url = stringified ? `${route}?${stringified}` : route;
+        if (as !== url) {
+          setTimeout(() => {
+            router.replace(url, undefined, { shallow: true });
+          }, 0);
+        }
+        // Will run when leaving the current page; on back/forward actions
+        // Add your logic here, like toggling the modal state
+      }
+      return true;
+    });
+
+    return () => router.beforePopState(() => true);
+  }, [router, id]); // Add any state variables to dependencies array if needed.
+
   const latestVersion = model?.modelVersions[model.modelVersions.length - 1];
 
   const { openImageLightbox } = useImageLightbox({
@@ -544,8 +568,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       {isFetchingNextPage
                         ? 'Loading more...'
                         : hasNextPage
-                          ? 'Load More'
-                          : 'Nothing more to load'}
+                        ? 'Load More'
+                        : 'Nothing more to load'}
                     </Button>
                   )}
                 </InView>

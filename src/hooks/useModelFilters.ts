@@ -41,8 +41,10 @@ export function useModelFilters() {
   const setFilters = useCallback(
     (value: SetStateAction<FilterState>) => {
       const newParams = typeof value === 'function' ? value(queryParams) : value;
-      const stringified = QS.stringify(newParams);
-      const url = !!stringified.length ? `/?${QS.stringify(newParams)}` : '/';
+      const result = filterSchema.safeParse(newParams);
+      if (!result.success) throw new Error('Invalid filter value');
+      const stringified = QS.stringify(result.data);
+      const url = !!stringified.length ? `/?${stringified}` : '/';
       if (router.route !== '/') router.push(url);
       else router.replace(url, undefined, { shallow: true });
     },

@@ -19,6 +19,9 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
     },
   },
   modelVersions: {
+    orderBy: {
+      createdAt: 'desc',
+    },
     select: {
       id: true,
       name: true,

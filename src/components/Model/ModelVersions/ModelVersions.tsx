@@ -63,21 +63,21 @@ function TabContent({ version }: TabContentProps) {
     { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0 },
     ...(version.trainingDataUrl
       ? [
-        {
-          label: 'Training Images',
-          value: (
-            <Text
-              variant="link"
-              component="a"
-              href={`/api/download/training-data/${version.id}`}
-              target="_blank"
-              download
-            >
-              Download
-            </Text>
-          ),
-        },
-      ]
+          {
+            label: 'Training Images',
+            value: (
+              <Text
+                variant="link"
+                component="a"
+                href={`/api/download/training-data/${version.id}`}
+                target="_blank"
+                download
+              >
+                Download
+              </Text>
+            ),
+          },
+        ]
       : []),
   ];
 
@@ -128,10 +128,10 @@ function TabContent({ version }: TabContentProps) {
                 figure: { height: '100%', display: 'flex' },
                 ...(index === 0 && !mobile
                   ? {
-                    gridColumn: '1/3',
-                    gridRow: '1/5',
-                    figure: { height: '100%', display: 'flex' },
-                  }
+                      gridColumn: '1/3',
+                      gridRow: '1/5',
+                      figure: { height: '100%', display: 'flex' },
+                    }
                   : {}),
               }}
               onClick={() => openImageLightbox({ initialSlide: index })}

@@ -1,5 +1,4 @@
 import {
-  AspectRatio,
   Box,
   Card,
   createStyles,
@@ -25,11 +24,11 @@ import React, { useEffect, useRef, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { useModelStore } from '~/hooks/useModelStore';
 import { useModelFilters } from '~/hooks/useModelFilters';
 import { GetAllModelsReturnType } from '~/server/validators/models/getAllModels';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { useRouter } from 'next/router';
 
 type MasonryListProps = {
   columnWidth: number;
@@ -41,9 +40,8 @@ export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
   // use stringified filters as key for positioner dependency array
   const { filters } = useModelFilters();
   const stringified = JSON.stringify(filters);
-
-  const selectedIndex = useModelStore((state) => state.index);
-  const setSelectedIndex = useModelStore((state) => state.setIndex);
+  const router = useRouter();
+  const modelId = Number(([] as string[]).concat(router.query.model ?? [])[0]);
 
   const containerRef = useRef(null);
   const [windowWidth, height] = useWindowSize();
@@ -59,11 +57,17 @@ export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
   });
 
   useEffect(() => {
-    if (!data?.length || !selectedIndex || data.length < selectedIndex) return;
+    console.log({ router });
+  }, [router]);
 
-    scrollToIndex(selectedIndex);
-    setSelectedIndex(undefined);
-  }, []); //eslint-disable-line
+  useEffect(() => {
+    if (!data?.length) return;
+    if (!modelId) scrollToIndex(0);
+    const index = data.findIndex((x) => x.id === modelId);
+    if (index === -1 || data.length < index) return;
+
+    scrollToIndex(index);
+  }, [stringified]); //eslint-disable-line
 
   return useMasonry({
     resizeObserver,
@@ -96,7 +100,7 @@ const mantineColors: DefaultMantineColor[] = [
 const MasonryItem = ({
   index,
   data,
-  width,
+  width: itemWidth,
 }: {
   index: number;
   data: GetAllModelsReturnType[0];
@@ -104,20 +108,56 @@ const MasonryItem = ({
 }) => {
   const { id, image, name, rank, nsfw } = data ?? {};
   const { classes } = useStyles();
+  // console.log({ index, name });
 
-  const hasDimensions = image.width && image.height;
+  // const hasDimensions = image.width && image.height;
 
-  const setSelectedIndex = useModelStore((state) => state.setIndex);
   const { ref, inView } = useInView();
 
   const height = useMemo(() => {
-    if (!image.width || !image.height || !width) return 300;
+    if (!image.width || !image.height) return 300;
+    const width = itemWidth > 0 ? itemWidth : 300;
     const aspectRatio = image.width / image.height;
     const heightT = width / aspectRatio;
     return heightT + (rank.rating ? 72 : 36);
-  }, [width, image.width, image.height, rank.rating]);
+  }, [itemWidth, image.width, image.height, rank.rating]);
 
-  // console.log({ height, width });
+  const modelText = (
+    <Text size={14} lineClamp={2} style={{ flex: 1 }}>
+      {name}
+    </Text>
+  );
+
+  const modelRating = (
+    <Group spacing={5}>
+      <Rating value={rank.rating} fractions={2} readOnly size="xs" />
+      <Text size="xs">({(rank.ratingCount ?? 0).toString()})</Text>
+    </Group>
+  );
+
+  const modelDownloads = (
+    <Group spacing={5} align="bottom">
+      <Text size="xs">{abbreviateNumber(rank.downloadCount ?? 0).toString()}</Text>
+      <IconDownload size={16} />
+    </Group>
+  );
+
+  const withRating = (
+    <Stack spacing={6}>
+      {modelText}
+      <Group position="apart">
+        {modelRating}
+        {modelDownloads}
+      </Group>
+    </Stack>
+  );
+
+  const withoutRating = (
+    <Group position="apart" align="flex-end">
+      {modelText}
+      {modelDownloads}
+    </Group>
+  );
 
   return (
     <Link href={`models/${id}`} prefetch={false}>
@@ -127,7 +167,6 @@ const MasonryItem = ({
         shadow="sm"
         className={classes.card}
         style={{ height: `${height}px` }}
-        onClick={() => setSelectedIndex(index)}
         p={0}
       >
         {inView && (
@@ -149,23 +188,7 @@ const MasonryItem = ({
             )}
 
             <Box p="xs" className={classes.content}>
-              <Group position="apart" align="flex-end">
-                <Stack spacing={6}>
-                  <Text size={14} lineClamp={2}>
-                    {name}
-                  </Text>
-                  {!!rank?.rating && (
-                    <Group spacing={5}>
-                      <Rating value={rank.rating} fractions={2} readOnly size="xs" />
-                      <Text size="xs">({rank.ratingCount})</Text>
-                    </Group>
-                  )}
-                </Stack>
-                <Group spacing={5} align="bottom">
-                  <Text size="xs">{abbreviateNumber(rank.downloadCount ?? 0)}</Text>
-                  <IconDownload size={16} />
-                </Group>
-              </Group>
+              {!!rank.rating ? withRating : withoutRating}
             </Box>
           </>
         )}
@@ -194,3 +217,6 @@ const useStyles = createStyles((theme) => {
     },
   };
 });
+function useRotuer() {
+  throw new Error('Function not implemented.');
+}

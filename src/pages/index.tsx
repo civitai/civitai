@@ -1,4 +1,14 @@
-import { Group, Loader, Stack, Container, Center, ThemeIcon, Text } from '@mantine/core';
+import {
+  Group,
+  Loader,
+  Stack,
+  Container,
+  Center,
+  ThemeIcon,
+  Text,
+  Box,
+  ActionIcon,
+} from '@mantine/core';
 import Head from 'next/head';
 import { useEffect, useMemo } from 'react';
 import { trpc } from '~/utils/trpc';
@@ -8,7 +18,8 @@ import { MasonryList } from '~/components/MasonryList/MasonryList';
 import { ListSort } from '~/components/ListSort/ListSort';
 import { ListPeriod } from '~/components/ListPeriod/ListPeriod';
 import { useModelFilters } from '~/hooks/useModelFilters';
-import { IconCloudOff } from '@tabler/icons';
+import { IconCloudOff, IconFilter } from '@tabler/icons';
+import { ListFilter } from '~/components/ListFilter/ListFilter';
 
 function Home() {
   const { ref, inView } = useInView();
@@ -47,11 +58,17 @@ function Home() {
       <Head>
         <meta name="description" content="Community driven AI model sharing tool" />
       </Head>
+      {/* <Box p="xl" mb="md">
+        <Center>test</Center>
+      </Box> */}
       <Container size="xl" p={0}>
         <Stack spacing="xs">
           <Group position="apart">
             <ListSort />
-            <ListPeriod />
+            <Group spacing="xs">
+              <ListPeriod />
+              <ListFilter />
+            </Group>
           </Group>
           {isLoading ? (
             <Center>
