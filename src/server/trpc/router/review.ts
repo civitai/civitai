@@ -4,7 +4,7 @@ import { protectedProcedure, publicProcedure, router } from '../trpc';
 import { handleDbError } from '~/server/services/errorHandling';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { reviewUpsertSchema } from '~/server/validators/reviews/schemas';
-import { ReportReason } from '@prisma/client';
+import { Prisma, ReportReason } from '@prisma/client';
 
 export const reviewRouter = router({
   getAll: publicProcedure
@@ -117,18 +117,28 @@ export const reviewRouter = router({
   report: protectedProcedure
     .input(z.object({ id: z.number(), reason: z.nativeEnum(ReportReason) }))
     .mutation(async ({ ctx, input: { id, reason } }) => {
-      const data = reason === ReportReason.NSFW ? { nsfw: true } : { tos: true };
-      await ctx.prisma.review.update({
-        where: { id },
-        data,
-      });
+      const data: Prisma.ReviewUpdateInput =
+        reason === ReportReason.NSFW ? { nsfw: true } : { tosViolation: true };
 
-      await ctx.prisma.reviewReport.create({
-        data: {
-          reviewId: id,
-          reason,
-          userId: ctx.session.user.id,
-        },
-      });
+      try {
+        await ctx.prisma.$transaction([
+          ctx.prisma.review.update({
+            where: { id },
+            data,
+          }),
+          ctx.prisma.reviewReport.create({
+            data: {
+              reviewId: id,
+              reason,
+              userId: ctx.session.user.id,
+            },
+          }),
+        ]);
+      } catch (error) {
+        return handleDbError({
+          code: 'INTERNAL_SERVER_ERROR',
+          error,
+        });
+      }
     }),
 });

@@ -21,22 +21,23 @@ import {
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { showNotification } from '@mantine/notifications';
+import { hideNotification, showNotification } from '@mantine/notifications';
+import { ReportReason } from '@prisma/client';
 import {
   IconArrowsSort,
-  IconCheck,
   IconCopy,
   IconDotsVertical,
   IconEdit,
   IconFilter,
+  IconFlag,
   IconPlus,
   IconTrash,
-  IconX,
 } from '@tabler/icons';
 import { createProxySSGHelpers } from '@trpc/react-query/ssg';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { useSession } from 'next-auth/react';
 import Image from 'next/image';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import { InView } from 'react-intersection-observer';
@@ -64,7 +65,7 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
-import Link from 'next/link';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
   const ssg = createProxySSGHelpers({
@@ -133,32 +134,55 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   );
   const deleteMutation = trpc.model.delete.useMutation({
     onSuccess() {
-      showNotification({
+      showSuccessNotification({
         title: 'Your model has been deleted',
         message: 'Successfully deleted the model',
-        color: 'teal',
-        icon: <IconCheck size={18} />,
       });
       closeAllModals();
       router.replace('/'); // Redirect to the models or user page once available
     },
     onError(error) {
-      const message = error.message;
-
-      showNotification({
+      showErrorNotification({
+        error: new Error(error.message),
         title: 'Could not delete model',
-        message: `An error occurred while deleting the model: ${message}`,
-        color: 'red',
-        icon: <IconX size={18} />,
+        reason: 'An unexpected error occurred, please try again',
       });
     },
   });
+  const reportModelMutation = trpc.model.report.useMutation({
+    onMutate() {
+      showNotification({
+        id: 'sending-report',
+        loading: true,
+        disallowClose: true,
+        autoClose: false,
+        message: 'Sending report...',
+      });
+    },
+    onSuccess() {
+      showSuccessNotification({
+        title: 'Model reported',
+        message: 'Your request has been received',
+      });
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Unable to send report',
+        reason: 'An unexpected error occurred, please try again',
+      });
+    },
+    onSettled() {
+      hideNotification('sending-report');
+    },
+  });
+
   const reviews = useMemo(
     () => reviewsData?.pages.flatMap((x) => x.reviews) ?? [],
     [reviewsData?.pages]
   );
-
   const latestVersion = model?.modelVersions[model.modelVersions.length - 1];
+
   const { openImageLightbox } = useImageLightbox({
     images: latestVersion?.images.map(({ image }) => image) ?? [],
     initialSlide: 0,
@@ -209,6 +233,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       ...current,
       sort: value,
     }));
+  };
+
+  const handleReportModel = (reason: ReportReason) => {
+    reportModelMutation.mutate({ id, reason });
   };
 
   const modelDetails: DescriptionTableProps['items'] = [
@@ -296,33 +324,53 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             <Title className={classes.title} order={1}>
               {model?.name}
             </Title>
-            {session && session.user?.id === model?.user.id ? (
-              <Menu position="bottom-end" transition="pop-top-right">
-                <Menu.Target>
-                  <ActionIcon variant="outline">
-                    <IconDotsVertical size={16} />
-                  </ActionIcon>
-                </Menu.Target>
+            <Menu position="bottom-end" transition="pop-top-right">
+              <Menu.Target>
+                <ActionIcon variant="outline">
+                  <IconDotsVertical size={16} />
+                </ActionIcon>
+              </Menu.Target>
 
-                <Menu.Dropdown>
-                  <Menu.Item
-                    component={NextLink}
-                    href={`/models/${id}?edit=true`}
-                    icon={<IconEdit size={14} stroke={1.5} />}
-                    shallow
-                  >
-                    Edit Model
-                  </Menu.Item>
-                  <Menu.Item
-                    color={theme.colors.red[6]}
-                    icon={<IconTrash size={14} stroke={1.5} />}
-                    onClick={handleDeleteModel}
-                  >
-                    Delete Model
-                  </Menu.Item>
-                </Menu.Dropdown>
-              </Menu>
-            ) : null}
+              <Menu.Dropdown>
+                {session && session.user?.id === model?.user.id ? (
+                  <>
+                    <Menu.Item
+                      color={theme.colors.red[6]}
+                      icon={<IconTrash size={14} stroke={1.5} />}
+                      onClick={handleDeleteModel}
+                    >
+                      Delete Model
+                    </Menu.Item>
+                    <Menu.Item
+                      component={NextLink}
+                      href={`/models/${id}?edit=true`}
+                      icon={<IconEdit size={14} stroke={1.5} />}
+                      shallow
+                    >
+                      Edit Model
+                    </Menu.Item>
+                  </>
+                ) : null}
+                {session && session.user?.id !== model?.user.id ? (
+                  <>
+                    <Menu.Item
+                      icon={<IconFlag size={14} stroke={1.5} />}
+                      onClick={() => handleReportModel(ReportReason.NSFW)}
+                      disabled={reportModelMutation.isLoading}
+                    >
+                      Report as NSFW
+                    </Menu.Item>
+                    <Menu.Item
+                      icon={<IconFlag size={14} stroke={1.5} />}
+                      onClick={() => handleReportModel(ReportReason.TOSViolation)}
+                      disabled={reportModelMutation.isLoading}
+                    >
+                      Report as Terms Violation
+                    </Menu.Item>
+                  </>
+                ) : null}
+              </Menu.Dropdown>
+            </Menu>
           </Group>
           <ModelRating rank={model.rank} />
         </Stack>

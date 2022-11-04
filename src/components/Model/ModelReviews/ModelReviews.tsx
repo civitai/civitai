@@ -15,8 +15,9 @@ import {
   Text,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import { showNotification } from '@mantine/notifications';
-import { IconDotsVertical, IconEyeOff, IconTrash, IconX } from '@tabler/icons';
+import { hideNotification, showNotification } from '@mantine/notifications';
+import { ReportReason } from '@prisma/client';
+import { IconDotsVertical, IconEyeOff, IconFlag, IconTrash } from '@tabler/icons';
 import dayjs from 'dayjs';
 import { useSession } from 'next-auth/react';
 import { useState } from 'react';
@@ -26,6 +27,7 @@ import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ReviewFilter } from '~/server/common/enums';
 import { ReviewDetails } from '~/server/validators/reviews/getAllReviews';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function ModelReviews({ items, loading = false }: Props) {
@@ -58,14 +60,25 @@ type Props = {
 
 function ReviewItem({ data: review }: ItemProps) {
   const { data: session } = useSession();
-  const displayActions = session?.user?.id === review.user.id;
+  const isOwner = session?.user?.id === review.user.id;
   const shouldBlur = session?.user?.blurNsfw;
 
   const [blurContent, setBlurContent] = useState(review.nsfw && shouldBlur);
 
   const queryUtils = trpc.useContext();
-  const { mutate, isLoading } = trpc.review.delete.useMutation();
-  const handleDeleteReview = (review: ReviewDetails) => {
+  const deleteMutation = trpc.review.delete.useMutation({
+    onSuccess() {
+      queryUtils.review.getAll.invalidate({ modelId: review.modelId });
+      closeAllModals();
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Could not delete review',
+      });
+    },
+  });
+  const handleDeleteReview = () => {
     openConfirmModal({
       title: 'Delete Review',
       children: (
@@ -76,30 +89,44 @@ function ReviewItem({ data: review }: ItemProps) {
       ),
       centered: true,
       labels: { confirm: 'Delete Review', cancel: "No, don't delete it" },
-      confirmProps: { color: 'red', loading: isLoading },
+      confirmProps: { color: 'red', loading: deleteMutation.isLoading },
       closeOnConfirm: false,
       onConfirm: () => {
-        mutate(
-          { id: review.id },
-          {
-            onSuccess() {
-              queryUtils.review.getAll.invalidate({ modelId: review.modelId });
-              closeAllModals();
-            },
-            onError(error) {
-              const message = error.message;
-
-              showNotification({
-                title: 'Could not delete review',
-                message: `An error occurred while deleting the review: ${message}`,
-                color: 'red',
-                icon: <IconX size={18} />,
-              });
-            },
-          }
-        );
+        deleteMutation.mutate({ id: review.id });
       },
     });
+  };
+
+  const reportMutation = trpc.review.report.useMutation({
+    onMutate() {
+      showNotification({
+        id: 'sending-review-report',
+        loading: true,
+        disallowClose: true,
+        autoClose: false,
+        message: 'Sending report...',
+      });
+    },
+    onSuccess() {
+      queryUtils.review.getAll.invalidate({ modelId: review.modelId });
+      showSuccessNotification({
+        title: 'Review reported',
+        message: 'Your request has been received',
+      });
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Unable to send report',
+        reason: 'An unexpected error occurred, please try again',
+      });
+    },
+    onSettled() {
+      hideNotification('sending-review-report');
+    },
+  });
+  const handleReportReview = (reason: ReportReason) => {
+    reportMutation.mutate({ id: review.id, reason });
   };
 
   const hasImages = review.imagesOnReviews.length > 0;
@@ -116,24 +143,40 @@ function ReviewItem({ data: review }: ItemProps) {
               subText={`${dayjs(review.createdAt).fromNow()} - ${review.modelVersion?.name}`}
               withUsername
             />
-            {displayActions ? (
-              <Menu position="bottom-end">
-                <Menu.Target>
-                  <ActionIcon size="xs" variant="subtle">
-                    <IconDotsVertical size={14} />
-                  </ActionIcon>
-                </Menu.Target>
-                <Menu.Dropdown>
+            <Menu position="bottom-end">
+              <Menu.Target>
+                <ActionIcon size="xs" variant="subtle">
+                  <IconDotsVertical size={14} />
+                </ActionIcon>
+              </Menu.Target>
+              <Menu.Dropdown>
+                {isOwner ? (
                   <Menu.Item
                     icon={<IconTrash size={14} stroke={1.5} />}
                     color="red"
-                    onClick={() => handleDeleteReview(review)}
+                    onClick={handleDeleteReview}
                   >
                     Delete review
                   </Menu.Item>
-                </Menu.Dropdown>
-              </Menu>
-            ) : null}
+                ) : null}
+                {!isOwner ? (
+                  <>
+                    <Menu.Item
+                      icon={<IconFlag size={14} stroke={1.5} />}
+                      onClick={() => handleReportReview(ReportReason.NSFW)}
+                    >
+                      Report as NSFW
+                    </Menu.Item>
+                    <Menu.Item
+                      icon={<IconFlag size={14} stroke={1.5} />}
+                      onClick={() => handleReportReview(ReportReason.TOSViolation)}
+                    >
+                      Report as Terms Violation
+                    </Menu.Item>
+                  </>
+                ) : null}
+              </Menu.Dropdown>
+            </Menu>
           </Group>
           <Rating
             value={review.rating}
