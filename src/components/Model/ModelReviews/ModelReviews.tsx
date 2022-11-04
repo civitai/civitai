@@ -20,6 +20,7 @@ import { ReportReason } from '@prisma/client';
 import { IconDotsVertical, IconEyeOff, IconFlag, IconTrash } from '@tabler/icons';
 import dayjs from 'dayjs';
 import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -60,6 +61,7 @@ type Props = {
 
 function ReviewItem({ data: review }: ItemProps) {
   const { data: session } = useSession();
+  const router = useRouter();
   const isOwner = session?.user?.id === review.user.id;
   const shouldBlur = session?.user?.blurNsfw;
 
@@ -126,6 +128,7 @@ function ReviewItem({ data: review }: ItemProps) {
     },
   });
   const handleReportReview = (reason: ReportReason) => {
+    if (!session) return router.push(`/login?returnUrl=${router.asPath}`);
     reportMutation.mutate({ id: review.id, reason });
   };
 
@@ -159,7 +162,7 @@ function ReviewItem({ data: review }: ItemProps) {
                     Delete review
                   </Menu.Item>
                 ) : null}
-                {!isOwner ? (
+                {!session || !isOwner ? (
                   <>
                     <Menu.Item
                       icon={<IconFlag size={14} stroke={1.5} />}

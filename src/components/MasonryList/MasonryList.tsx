@@ -1,5 +1,4 @@
 import {
-  AspectRatio,
   Box,
   Card,
   createStyles,
