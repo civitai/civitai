@@ -276,7 +276,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   return (
     <>
       <Meta
-        title={`Model Share - ${model.name}`}
+        title={`Civitai - ${model.name}`}
         description={model.description ?? ''}
         image={latestVersion.images[0].image.url}
       />
@@ -486,8 +486,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     {isFetchingNextPage
                       ? 'Loading more...'
                       : hasNextPage
-                      ? 'Load More'
-                      : 'Nothing more to load'}
+                        ? 'Load More'
+                        : 'Nothing more to load'}
                   </Button>
                 )}
               </InView>

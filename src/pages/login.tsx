@@ -18,20 +18,20 @@ export default function Login({
     <Container size="xs">
       <Paper radius="md" p="xl" withBorder>
         <Text size="lg" weight={500}>
-          Welcome to Model Share, sign in with
+          Welcome to Civitai, sign in with
         </Text>
 
         <Stack mb="md" mt="md">
           {providers
             ? Object.values(providers).map((provider) => {
-                return (
-                  <SocialButton
-                    key={provider.name}
-                    provider={provider.id as BuiltInProviderType}
-                    onClick={() => signIn(provider.id, { callbackUrl: returnUrl })}
-                  />
-                );
-              })
+              return (
+                <SocialButton
+                  key={provider.name}
+                  provider={provider.id as BuiltInProviderType}
+                  onClick={() => signIn(provider.id, { callbackUrl: returnUrl })}
+                />
+              );
+            })
             : null}
         </Stack>
         {error && (

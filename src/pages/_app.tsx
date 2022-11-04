@@ -50,7 +50,7 @@ function MyApp(props: CustomAppProps<{ session: Session | null; colorScheme: Col
   return (
     <>
       <Head>
-        <title>Model Share</title>
+        <title>Civitai</title>
         <meta name="viewport" content="minimum-scale=1, initial-scale=1, width=device-width" />
       </Head>
 

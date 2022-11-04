@@ -8,6 +8,7 @@ import {
   Menu,
   Switch,
   Title,
+  Text,
   UnstyledButton,
   useMantineColorScheme,
 } from '@mantine/core';
@@ -98,7 +99,23 @@ export function AppHeader({ links }: Props) {
           />
           <Link href="/" passHref>
             <Anchor variant="text">
-              <Title>MS</Title>
+              <Title>
+                C
+                <Text
+                  component="span"
+                  sx={() => ({
+                    display: 'none',
+                    '@media (min-width: 400px)': {
+                      display: 'inline',
+                    },
+                  })}
+                >
+                  ivit
+                </Text>
+                <Text component="span" color="blue">
+                  ai
+                </Text>
+              </Title>
             </Anchor>
           </Link>
           {/* <Autocomplete

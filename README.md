@@ -1,4 +1,4 @@
-# Model Share
+# Civitai
 
 Share you models, textual inversions, hypernetworks, aesthetic gradients, and any other crazy stuff people do to customize their AI generations.
 
