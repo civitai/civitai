@@ -22,7 +22,7 @@ export const getAllModelsSchema = z.object({
   query: z.string().optional(),
   tag: z.string().optional(),
   user: z.string().optional(),
-  type: z.nativeEnum(ModelType).optional(),
+  types: z.nativeEnum(ModelType).array().optional(),
   sort: z.nativeEnum(ModelSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
   showNsfw: z.boolean().optional(),
@@ -50,9 +50,9 @@ export const getAllModelsWhere = (input: z.infer<typeof getAllModelsSchema>) =>
           username: input.user,
         }
       : undefined,
-    type: input.type
+    type: input.types
       ? {
-          equals: input?.type,
+          in: input.types,
         }
       : undefined,
     nsfw: input.showNsfw

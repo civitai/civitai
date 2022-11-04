@@ -1,13 +1,12 @@
-import { ActionIcon, Popover } from '@mantine/core';
+import { ActionIcon, Popover, Stack, Checkbox } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconFilter } from '@tabler/icons';
+import { useModelFilters } from '~/hooks/useModelFilters';
 import { splitUppercase } from '~/utils/string-helpers';
 
 export function ListFilter() {
-  const typeOptions = Object.values(ModelType).map((type) => ({
-    label: splitUppercase(type),
-    value: type,
-  }));
+  const { filters, setFilters } = useModelFilters();
+  console.log({ types: filters.types });
 
   return (
     <Popover withArrow>
@@ -16,7 +15,22 @@ export function ListFilter() {
           <IconFilter size={18} />
         </ActionIcon>
       </Popover.Target>
-      <Popover.Dropdown>Test</Popover.Dropdown>
+      <Popover.Dropdown>
+        <Stack>
+          <Checkbox.Group
+            value={filters.types ?? []}
+            label="Model types"
+            orientation="vertical"
+            spacing="xs"
+            size="md"
+            onChange={(types: ModelType[]) => setFilters((state) => ({ ...state, types }))}
+          >
+            {Object.values(ModelType).map((type, index) => (
+              <Checkbox key={index} value={type} label={splitUppercase(type)} />
+            ))}
+          </Checkbox.Group>
+        </Stack>
+      </Popover.Dropdown>
     </Popover>
   );
 }

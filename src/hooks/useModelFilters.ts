@@ -7,7 +7,13 @@ import { SetStateAction, useCallback, useMemo } from 'react';
 import { isDefined } from '~/utils/type-guards';
 
 const filterSchema = z.object({
-  type: z.nativeEnum(ModelType).optional(),
+  types: z
+    .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
+    .optional()
+    .transform((rel) => {
+      if (!rel) return undefined;
+      return Array.isArray(rel) ? rel : [rel];
+    }),
   sort: z.nativeEnum(ModelSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
   query: z.string().optional(),
@@ -26,9 +32,11 @@ export function useModelFilters() {
   );
 
   const filters = useMemo(() => {
+    console.log({ queryParams });
     return Object.keys(queryParams)
       .map((key) => {
         const result = filterSchema.safeParse({ [key]: queryParams[key] });
+        if (!result.success) console.error('error parsing filters');
         return result.success ? result.data : undefined;
       })
       .filter(isDefined)
