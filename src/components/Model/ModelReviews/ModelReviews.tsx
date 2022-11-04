@@ -13,37 +13,28 @@ import {
   Rating,
   Stack,
   Text,
-  useMantineTheme,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { IconDotsVertical, IconEyeOff, IconTrash, IconX } from '@tabler/icons';
 import dayjs from 'dayjs';
-import { Masonry } from 'masonic';
 import { useSession } from 'next-auth/react';
 import { useState } from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ReviewFilter } from '~/server/common/enums';
 import { ReviewDetails } from '~/server/validators/reviews/getAllReviews';
 import { trpc } from '~/utils/trpc';
 
 export function ModelReviews({ items, loading = false }: Props) {
-  const theme = useMantineTheme();
-
   return (
     <Grid>
       <Grid.Col span={12} sx={{ position: 'relative' }}>
         <LoadingOverlay visible={loading} />
         {items.length > 0 ? (
-          <Masonry
-            items={items}
-            render={ReviewItem}
-            columnGutter={theme.spacing.md}
-            columnWidth={1200 / 4}
-            maxColumnCount={4}
-          />
+          <MasonryGrid items={items} render={ReviewItem} />
         ) : (
           <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Stack>
@@ -112,6 +103,7 @@ function ReviewItem({ data: review }: ItemProps) {
   };
 
   const hasImages = review.imagesOnReviews.length > 0;
+  const hasMultipleImages = review.imagesOnReviews.length > 1;
   const firstImage = hasImages ? review.imagesOnReviews[0].image : null;
 
   return (
@@ -151,7 +143,7 @@ function ReviewItem({ data: review }: ItemProps) {
             readOnly
           />
         </Stack>
-        {review.imagesOnReviews.length > 0 ? (
+        {hasImages ? (
           <Box sx={{ position: 'relative' }}>
             {blurContent ? (
               <Box
@@ -177,6 +169,8 @@ function ReviewItem({ data: review }: ItemProps) {
               </Box>
             ) : (
               <Carousel
+                withControls={hasMultipleImages}
+                draggable={hasMultipleImages}
                 sx={(theme) => ({
                   margin: `0 ${theme.spacing.md * -1}px`,
                 })}
@@ -195,14 +189,16 @@ function ReviewItem({ data: review }: ItemProps) {
                 ))}
               </Carousel>
             )}
-            <Badge
-              variant="filled"
-              color="gray"
-              size="sm"
-              sx={(theme) => ({ position: 'absolute', top: theme.spacing.xs, right: 0 })}
-            >
-              {review.imagesOnReviews.length}
-            </Badge>
+            {hasMultipleImages ? (
+              <Badge
+                variant="filled"
+                color="gray"
+                size="sm"
+                sx={(theme) => ({ position: 'absolute', top: theme.spacing.xs, right: 0 })}
+              >
+                {review.imagesOnReviews.length}
+              </Badge>
+            ) : null}
             {review.nsfw && shouldBlur ? (
               <Badge
                 color="red"

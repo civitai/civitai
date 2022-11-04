@@ -8,11 +8,11 @@ type OpenLightboxProps = {
   images?: ImageSimpleModel[];
 };
 
-export const useImageLightbox = () => {
+export const useImageLightbox = (options?: OpenLightboxProps) => {
   const theme = useMantineTheme();
 
   const openImageLightbox = useCallback(
-    ({ initialSlide, images }: OpenLightboxProps) => {
+    (innerProps?: OpenLightboxProps) => {
       openContextModal({
         modal: 'imageLightbox',
         fullScreen: true,
@@ -23,12 +23,12 @@ export const useImageLightbox = () => {
           },
         },
         innerProps: {
-          initialSlide,
-          images,
+          ...options,
+          ...innerProps,
         },
       });
     },
-    [theme]
+    [options, theme.colors.dark]
   );
 
   return { openImageLightbox };

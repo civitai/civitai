@@ -5,6 +5,7 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
+import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ModelWithDetails } from '~/server/validators/models/getById';
 import { formatDate } from '~/utils/date-helpers';
@@ -50,6 +51,10 @@ type Props = {
 
 function TabContent({ version }: TabContentProps) {
   const mobile = useIsMobile();
+  const { openImageLightbox } = useImageLightbox({
+    initialSlide: 0,
+    images: version.images.map(({ image }) => image),
+  });
 
   const versionDetails: DescriptionTableProps['items'] = [
     { label: 'Rating', value: <Rating value={0} fractions={2} readOnly /> },
@@ -129,10 +134,15 @@ function TabContent({ version }: TabContentProps) {
                     }
                   : {}),
               }}
+              onClick={() => openImageLightbox({ initialSlide: index })}
             />
           ))}
           {version.images.length > imagesLimit ? (
-            <Button variant="outline" sx={!mobile ? { height: '100%' } : undefined}>
+            <Button
+              variant="outline"
+              sx={!mobile ? { height: '100%' } : undefined}
+              onClick={() => openImageLightbox({ initialSlide: imagesLimit })}
+            >
               View more
             </Button>
           ) : null}
