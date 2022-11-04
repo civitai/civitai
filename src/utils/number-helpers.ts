@@ -26,7 +26,7 @@ export function formatSeconds(seconds: number) {
     { name: 'second', limit: 1, in_seconds: 1 },
   ];
   let output = '';
-  let unit: any;
+  let unit: typeof units[number];
   let unitCount: number;
   for (let i = 0; i < units.length; i++) {
     unit = units[i];
@@ -44,17 +44,17 @@ export function abbreviateNumber(value: number): string {
   if (value >= 1000) {
     const suffixes = ['', 'k', 'm', 'b', 't'];
     const suffixNum = Math.floor(('' + value).length / 3);
-    let shortValue: any = '';
+    let shortValue: string | number = 0;
     for (let precision = 2; precision >= 1; precision--) {
       shortValue = parseFloat(
-        (suffixNum != 0 ? value / Math.pow(1000, suffixNum) : value).toPrecision(precision)
+        (suffixNum !== 0 ? value / Math.pow(1000, suffixNum) : value).toPrecision(precision)
       );
       const dotLessShortValue = (shortValue + '').replace(/[^a-zA-Z 0-9]+/g, '');
       if (dotLessShortValue.length <= 2) {
         break;
       }
     }
-    if (shortValue % 1 != 0) shortValue = shortValue.toFixed(1);
+    if (shortValue % 1 !== 0) shortValue = shortValue.toFixed(1);
     newValue = shortValue + suffixes[suffixNum];
   }
   return newValue;

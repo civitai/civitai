@@ -260,6 +260,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   };
 
   const handleReportModel = (reason: ReportReason) => {
+    if (!session) return router.push(`/login?returnUrl=${router.asPath}`);
     reportModelMutation.mutate({ id, reason });
   };
 
@@ -375,7 +376,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     </Menu.Item>
                   </>
                 ) : null}
-                {session && session.user?.id !== model?.user.id ? (
+                {!session || session.user?.id !== model?.user.id ? (
                   <>
                     <Menu.Item
                       icon={<IconFlag size={14} stroke={1.5} />}
