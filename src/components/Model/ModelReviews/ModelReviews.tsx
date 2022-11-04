@@ -13,37 +13,28 @@ import {
   Rating,
   Stack,
   Text,
-  useMantineTheme,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { IconDotsVertical, IconEyeOff, IconTrash, IconX } from '@tabler/icons';
 import dayjs from 'dayjs';
-import { Masonry } from 'masonic';
 import { useSession } from 'next-auth/react';
 import { useState } from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ReviewFilter } from '~/server/common/enums';
 import { ReviewDetails } from '~/server/validators/reviews/getAllReviews';
 import { trpc } from '~/utils/trpc';
 
 export function ModelReviews({ items, loading = false }: Props) {
-  const theme = useMantineTheme();
-
   return (
     <Grid>
       <Grid.Col span={12} sx={{ position: 'relative' }}>
         <LoadingOverlay visible={loading} />
         {items.length > 0 ? (
-          <Masonry
-            items={items}
-            render={ReviewItem}
-            columnGutter={theme.spacing.md}
-            columnWidth={1200 / 4}
-            maxColumnCount={4}
-          />
+          <MasonryGrid items={items} render={ReviewItem} />
         ) : (
           <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Stack>
