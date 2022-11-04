@@ -64,6 +64,7 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
+import Link from 'next/link';
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
   const ssg = createProxySSGHelpers({
@@ -268,9 +269,16 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
     {
       label: 'Uploaded By',
-      value: model.user ? (
-        <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} withUsername />
-      ) : null,
+      value: model.user && (
+        <Link href={`/?user=${model.user.username}`} passHref>
+          <Text size="sm" variant="link" component="a" style={{ cursor: 'pointer' }}>
+            <Group align="center" spacing={4}>
+              <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
+              {model.user.username}
+            </Group>
+          </Text>
+        </Link>
+      ),
     },
   ];
 

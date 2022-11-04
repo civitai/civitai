@@ -21,7 +21,7 @@ import {
 } from 'masonic';
 import Image from 'next/image';
 import Link from 'next/link';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -110,12 +110,14 @@ const MasonryItem = ({
   const setSelectedIndex = useModelStore((state) => state.setIndex);
   const { ref, inView } = useInView();
 
-  // const height = useMemo(() => {
-  //   if (!image.width || !image.height) return 300;
-  //   const aspectRatio = image.width / image.height;
-  //   const heightT = width / aspectRatio;
-  //   return heightT + 72;
-  // }, [width, image.width, image.height]);
+  const height = useMemo(() => {
+    if (!image.width || !image.height || !width) return 300;
+    const aspectRatio = image.width / image.height;
+    const heightT = width / aspectRatio;
+    return heightT + (rank.rating ? 72 : 36);
+  }, [width, image.width, image.height, rank.rating]);
+
+  // console.log({ height, width });
 
   return (
     <Link href={`models/${id}`} prefetch={false}>
@@ -124,7 +126,7 @@ const MasonryItem = ({
         withBorder
         shadow="sm"
         className={classes.card}
-        // style={{ height: image.url ? `${height}px` : undefined }}
+        style={{ height: `${height}px` }}
         onClick={() => setSelectedIndex(index)}
         p={0}
       >
