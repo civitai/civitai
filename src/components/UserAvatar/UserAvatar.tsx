@@ -15,12 +15,12 @@ export function UserAvatar({ user, withUsername, subText, avatarProps }: Props) 
         {getInitials(user.name ?? '')}
       </Avatar>
       <Stack spacing={0}>
-        {withUsername ? <Text size="sm">{user.username ?? user.name}</Text> : null}
-        {subText ? (
+        {withUsername && <Text size="sm">{user.username ?? user.name}</Text>}
+        {subText && (
           <Text size="xs" color="dimmed">
             {subText}
           </Text>
-        ) : null}
+        )}
       </Stack>
     </Group>
   );
@@ -29,6 +29,7 @@ export function UserAvatar({ user, withUsername, subText, avatarProps }: Props) 
 type Props = {
   user: Partial<User>;
   withUsername?: boolean;
+  withLink?: boolean;
   avatarProps?: AvatarProps;
   subText?: string;
 };

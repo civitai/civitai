@@ -15,6 +15,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       name: true,
       email: true,
       image: true,
+      username: true,
     },
   },
   modelVersions: {
