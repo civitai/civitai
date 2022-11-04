@@ -112,6 +112,7 @@ function ReviewItem({ data: review }: ItemProps) {
   };
 
   const hasImages = review.imagesOnReviews.length > 0;
+  const hasMultipleImages = review.imagesOnReviews.length > 1;
   const firstImage = hasImages ? review.imagesOnReviews[0].image : null;
 
   return (
@@ -151,7 +152,7 @@ function ReviewItem({ data: review }: ItemProps) {
             readOnly
           />
         </Stack>
-        {review.imagesOnReviews.length > 0 ? (
+        {hasImages ? (
           <Box sx={{ position: 'relative' }}>
             {blurContent ? (
               <Box
@@ -177,6 +178,8 @@ function ReviewItem({ data: review }: ItemProps) {
               </Box>
             ) : (
               <Carousel
+                withControls={hasMultipleImages}
+                draggable={hasMultipleImages}
                 sx={(theme) => ({
                   margin: `0 ${theme.spacing.md * -1}px`,
                 })}
@@ -195,14 +198,16 @@ function ReviewItem({ data: review }: ItemProps) {
                 ))}
               </Carousel>
             )}
-            <Badge
-              variant="filled"
-              color="gray"
-              size="sm"
-              sx={(theme) => ({ position: 'absolute', top: theme.spacing.xs, right: 0 })}
-            >
-              {review.imagesOnReviews.length}
-            </Badge>
+            {hasMultipleImages ? (
+              <Badge
+                variant="filled"
+                color="gray"
+                size="sm"
+                sx={(theme) => ({ position: 'absolute', top: theme.spacing.xs, right: 0 })}
+              >
+                {review.imagesOnReviews.length}
+              </Badge>
+            ) : null}
             {review.nsfw && shouldBlur ? (
               <Badge
                 color="red"

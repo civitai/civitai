@@ -24,14 +24,14 @@ export default function Login({
         <Stack mb="md" mt="md">
           {providers
             ? Object.values(providers).map((provider) => {
-              return (
-                <SocialButton
-                  key={provider.name}
-                  provider={provider.id as BuiltInProviderType}
-                  onClick={() => signIn(provider.id, { callbackUrl: returnUrl })}
-                />
-              );
-            })
+                return (
+                  <SocialButton
+                    key={provider.name}
+                    provider={provider.id as BuiltInProviderType}
+                    onClick={() => signIn(provider.id, { callbackUrl: returnUrl })}
+                  />
+                );
+              })
             : null}
         </Stack>
         {error && (

@@ -3,7 +3,6 @@ import {
   ActionIcon,
   AspectRatio,
   Badge,
-  Box,
   Button,
   Center,
   Container,
@@ -50,7 +49,6 @@ import {
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { Meta } from '~/components/Meta/Meta';
-import LightboxCarousel from '~/components/LightboxImageCarousel/LightboxImageCarousel';
 import { ModelForm } from '~/components/Model/ModelForm/ModelForm';
 import { ModelReviews } from '~/components/Model/ModelReviews/ModelReviews';
 import { ModelVersions } from '~/components/Model/ModelVersions/ModelVersions';
@@ -107,7 +105,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const { data: session } = useSession();
   const { classes } = useStyles();
   const mobile = useIsMobile();
-  const { openImageLightbox } = useImageLightbox();
 
   const { id } = props;
   const { edit } = router.query;
@@ -159,6 +156,12 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     () => reviewsData?.pages.flatMap((x) => x.reviews) ?? [],
     [reviewsData?.pages]
   );
+
+  const latestVersion = model?.modelVersions[model.modelVersions.length - 1];
+  const { openImageLightbox } = useImageLightbox({
+    images: latestVersion?.images.map(({ image }) => image) ?? [],
+    initialSlide: 0,
+  });
 
   if (loadingModel)
     return (
@@ -271,14 +274,12 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
   ];
 
-  const latestVersion = model?.modelVersions[model.modelVersions.length - 1];
-
   return (
     <>
       <Meta
         title={`Civitai - ${model.name}`}
         description={model.description ?? ''}
-        image={latestVersion.images[0].image.url}
+        image={latestVersion?.images[0].image.url}
       />
 
       <Container size="xl" py="xl">
@@ -331,9 +332,11 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               >
                 <Text align="center">
                   {`Download (${formatBytes(latestVersion?.sizeKB ?? 0)})`}
-                  <Text size="xs">{`${latestVersion.name} (${formatDate(
-                    latestVersion.createdAt
-                  )})`}</Text>
+                  {latestVersion ? (
+                    <Text size="xs">
+                      {`${latestVersion.name} (${formatDate(latestVersion.createdAt)})`}
+                    </Text>
+                  ) : null}
                 </Text>
               </Button>
               <DescriptionTable items={modelDetails} labelWidth="30%" />
@@ -356,11 +359,11 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 slideSize="50%"
                 breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
                 slideGap="xl"
-                align={latestVersion.images.length > 2 ? 'start' : 'center'}
+                align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
                 slidesToScroll={mobile ? 1 : 2}
-                withControls={latestVersion.images.length > 2 ? true : false}
+                withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
               >
-                {latestVersion.images.map(({ image }, index) => (
+                {latestVersion?.images.map(({ image }, index) => (
                   <Carousel.Slide key={image.id}>
                     <AspectRatio ratio={1}>
                       <Image
@@ -370,12 +373,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                         objectFit="cover"
                         objectPosition="top"
                         style={{ borderRadius: theme.spacing.md }}
-                        onClick={() =>
-                          openImageLightbox({
-                            initialSlide: index,
-                            images: latestVersion.images.map(({ image }) => image),
-                          })
-                        }
+                        onClick={() => openImageLightbox({ initialSlide: index })}
                       />
                     </AspectRatio>
                   </Carousel.Slide>
@@ -391,7 +389,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               <Title className={classes.title} order={2}>
                 Versions
               </Title>
-              <ModelVersions items={model.modelVersions} initialTab={latestVersion.id.toString()} />
+              <ModelVersions
+                items={model.modelVersions}
+                initialTab={latestVersion?.id.toString()}
+              />
             </Stack>
           </Grid.Col>
           <Grid.Col span={12} orderSm={4} my="xl">
@@ -467,30 +468,32 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 loading={loadingReviews}
               />
               {/* At the bottom to detect infinite scroll */}
-              <InView
-                fallbackInView
-                threshold={1}
-                onChange={(inView) => {
-                  if (inView && !isFetchingNextPage && hasNextPage) {
-                    fetchNextPage();
-                  }
-                }}
-              >
-                {({ ref }) => (
-                  <Button
-                    ref={ref}
-                    variant="subtle"
-                    onClick={() => fetchNextPage()}
-                    disabled={!hasNextPage || isFetchingNextPage}
-                  >
-                    {isFetchingNextPage
-                      ? 'Loading more...'
-                      : hasNextPage
+              {reviews.length > 0 ? (
+                <InView
+                  fallbackInView
+                  threshold={1}
+                  onChange={(inView) => {
+                    if (inView && !isFetchingNextPage && hasNextPage) {
+                      fetchNextPage();
+                    }
+                  }}
+                >
+                  {({ ref }) => (
+                    <Button
+                      ref={ref}
+                      variant="subtle"
+                      onClick={() => fetchNextPage()}
+                      disabled={!hasNextPage || isFetchingNextPage}
+                    >
+                      {isFetchingNextPage
+                        ? 'Loading more...'
+                        : hasNextPage
                         ? 'Load More'
                         : 'Nothing more to load'}
-                  </Button>
-                )}
-              </InView>
+                    </Button>
+                  )}
+                </InView>
+              ) : null}
             </Stack>
           </Grid.Col>
         </Grid>
