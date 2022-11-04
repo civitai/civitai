@@ -60,7 +60,7 @@ import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { createContextInner } from '~/server/trpc/context';
 import { appRouter } from '~/server/trpc/router';
 import { formatDate } from '~/utils/date-helpers';
-import { formatBytes } from '~/utils/number-helpers';
+import { formatKBytes } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
@@ -331,7 +331,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 download
               >
                 <Text align="center">
-                  {`Download (${formatBytes(latestVersion?.sizeKB ?? 0)})`}
+                  {`Download (${formatKBytes(latestVersion?.sizeKB ?? 0)})`}
                   {latestVersion ? (
                     <Text size="xs">
                       {`${latestVersion.name} (${formatDate(latestVersion.createdAt)})`}
@@ -488,8 +488,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       {isFetchingNextPage
                         ? 'Loading more...'
                         : hasNextPage
-                        ? 'Load More'
-                        : 'Nothing more to load'}
+                          ? 'Load More'
+                          : 'Nothing more to load'}
                     </Button>
                   )}
                 </InView>

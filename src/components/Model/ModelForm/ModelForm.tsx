@@ -129,7 +129,7 @@ export function ModelForm({ model }: Props) {
 
     if (file) {
       if (isModelType) {
-        form.setFieldValue(`modelVersions.${modelIndex}.sizeKB`, file.size);
+        form.setFieldValue(`modelVersions.${modelIndex}.sizeKB`, file.size / 1024);
         form.setFieldValue(`modelVersions.${modelIndex}.url`, url);
       } else {
         form.setFieldValue(`modelVersions.${modelIndex}.trainingDataUrl`, url);

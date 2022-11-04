@@ -9,7 +9,7 @@ import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ModelWithDetails } from '~/server/validators/models/getById';
 import { formatDate } from '~/utils/date-helpers';
-import { formatBytes } from '~/utils/number-helpers';
+import { formatKBytes } from '~/utils/number-helpers';
 
 const VERSION_IMAGES_LIMIT = 8;
 
@@ -63,21 +63,21 @@ function TabContent({ version }: TabContentProps) {
     { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0 },
     ...(version.trainingDataUrl
       ? [
-          {
-            label: 'Training Images',
-            value: (
-              <Text
-                variant="link"
-                component="a"
-                href={`/api/download/training-data/${version.id}`}
-                target="_blank"
-                download
-              >
-                Download
-              </Text>
-            ),
-          },
-        ]
+        {
+          label: 'Training Images',
+          value: (
+            <Text
+              variant="link"
+              component="a"
+              href={`/api/download/training-data/${version.id}`}
+              target="_blank"
+              download
+            >
+              Download
+            </Text>
+          ),
+        },
+      ]
       : []),
   ];
 
@@ -95,7 +95,7 @@ function TabContent({ version }: TabContentProps) {
             fullWidth
             download
           >
-            {`Download (${formatBytes(version.sizeKB)})`}
+            {`Download (${formatKBytes(version.sizeKB)})`}
           </Button>
           <DescriptionTable items={versionDetails} labelWidth="30%" />
           <Title order={3}>About this version</Title>
@@ -128,10 +128,10 @@ function TabContent({ version }: TabContentProps) {
                 figure: { height: '100%', display: 'flex' },
                 ...(index === 0 && !mobile
                   ? {
-                      gridColumn: '1/3',
-                      gridRow: '1/5',
-                      figure: { height: '100%', display: 'flex' },
-                    }
+                    gridColumn: '1/3',
+                    gridRow: '1/5',
+                    figure: { height: '100%', display: 'flex' },
+                  }
                   : {}),
               }}
               onClick={() => openImageLightbox({ initialSlide: index })}
