@@ -44,34 +44,34 @@ export function ModelForm({ model }: Props) {
   const editing = !!model;
   const initialFormData = editing
     ? ({
-      ...model,
-      tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag) ?? [],
-      modelVersions:
-        model?.modelVersions.map((version) => ({
-          ...version,
-          images: version.images.map(({ image }) => image),
-        })) ?? [],
-    } as CreateModelProps)
+        ...model,
+        tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag) ?? [],
+        modelVersions:
+          model?.modelVersions.map((version) => ({
+            ...version,
+            images: version.images.map(({ image }) => image),
+          })) ?? [],
+      } as CreateModelProps)
     : {
-      name: '',
-      description: '',
-      trainedWords: [],
-      type: ModelType.Checkpoint,
-      tagsOnModels: [],
-      nsfw: false,
-      modelVersions: [
-        {
-          name: '',
-          description: '',
-          url: '',
-          epochs: null,
-          steps: null,
-          sizeKB: 0,
-          trainingDataUrl: '',
-          images: [],
-        },
-      ],
-    };
+        name: '',
+        description: '',
+        trainedWords: [],
+        type: ModelType.Checkpoint,
+        tagsOnModels: [],
+        nsfw: false,
+        modelVersions: [
+          {
+            name: '',
+            description: '',
+            url: '',
+            epochs: null,
+            steps: null,
+            sizeKB: 0,
+            trainingDataUrl: '',
+            images: [],
+          },
+        ],
+      };
   const form = useForm<CreateModelProps>({
     validate: zodResolver(modelSchema.passthrough()),
     initialValues: initialFormData,
@@ -237,8 +237,8 @@ export function ModelForm({ model }: Props) {
                           name: '',
                           description: '',
                           url: '',
-                          epochs: 0,
-                          steps: 0,
+                          epochs: null,
+                          steps: null,
                           sizeKB: 0,
                           trainingDataUrl: '',
                           images: [],

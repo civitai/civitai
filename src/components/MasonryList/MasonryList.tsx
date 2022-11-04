@@ -132,23 +132,21 @@ const MasonryItem = ({
       >
         {inView && (
           <>
-            <AspectRatio ratio={1}>
-              {nsfw ? (
-                <MediaHash {...image} />
-              ) : (
-                <Image
-                  src={image.url}
-                  alt={name}
-                  objectFit="cover"
-                  objectPosition="top"
-                  // height={hasDimensions ? `${image.height}px` : undefined}
-                  // width={hasDimensions ? `${image.width}px` : undefined}
-                  // layout={!hasDimensions ? 'fill' : undefined}
-                  layout="fill"
-                  placeholder="empty"
-                />
-              )}
-            </AspectRatio>
+            {nsfw ? (
+              <MediaHash {...image} />
+            ) : (
+              <Image
+                src={image.url}
+                alt={name}
+                objectFit="cover"
+                objectPosition="top"
+                // height={hasDimensions ? `${image.height}px` : undefined}
+                // width={hasDimensions ? `${image.width}px` : undefined}
+                // layout={!hasDimensions ? 'fill' : undefined}
+                layout="fill"
+                placeholder="empty"
+              />
+            )}
 
             <Box p="xs" className={classes.content}>
               <Group position="apart" align="flex-end">
