@@ -23,13 +23,12 @@ import Link from 'next/link';
 import React, { useEffect, useRef, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useModelFilters } from '~/hooks/useModelFilters';
 import { GetAllModelsReturnType } from '~/server/validators/models/getAllModels';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useRouter } from 'next/router';
-import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
+import { ContentShield } from '~/components/ContentShield/ContentShield';
 
 type MasonryListProps = {
   columnWidth: number;
@@ -160,20 +159,6 @@ const MasonryItem = ({
     </Group>
   );
 
-  const PreviewImage = (
-    <Image
-      src={image.url}
-      alt={name}
-      objectFit="cover"
-      objectPosition="top"
-      // height={hasDimensions ? `${image.height}px` : undefined}
-      // width={hasDimensions ? `${image.width}px` : undefined}
-      // layout={!hasDimensions ? 'fill' : undefined}
-      layout="fill"
-      placeholder="empty"
-    />
-  );
-
   return (
     <Link href={`models/${id}`} prefetch={false}>
       <Card
@@ -186,13 +171,19 @@ const MasonryItem = ({
       >
         {inView && (
           <>
-            {nsfw ? (
-              <SensitiveContent {...image} style={{ height: '100%' }}>
-                {PreviewImage}
-              </SensitiveContent>
-            ) : (
-              PreviewImage
-            )}
+            <ContentShield mediaHash={image} style={{ height: '100%' }} nsfw={nsfw}>
+              <Image
+                src={image.url}
+                alt={name}
+                objectFit="cover"
+                objectPosition="top"
+                // height={hasDimensions ? `${image.height}px` : undefined}
+                // width={hasDimensions ? `${image.width}px` : undefined}
+                // layout={!hasDimensions ? 'fill' : undefined}
+                layout="fill"
+                placeholder="empty"
+              />
+            </ContentShield>
 
             <Box p="xs" className={classes.content}>
               {!!rank.rating ? withRating : withoutRating}
@@ -224,6 +215,3 @@ const useStyles = createStyles((theme) => {
     },
   };
 });
-function useRotuer() {
-  throw new Error('Function not implemented.');
-}

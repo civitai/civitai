@@ -1,52 +1,64 @@
-import { Badge, createStyles, Group, Stack, Text } from '@mantine/core';
+import { Badge, Box, createStyles, Group, Stack, Text } from '@mantine/core';
 import { IconEyeOff } from '@tabler/icons';
 import { useState } from 'react';
 import { MediaHash, MediaHashProps } from '~/components/ImageHash/ImageHash';
 
-type SensitiveContentProps = {
+type ContentShieldProps = {
   children: React.ReactNode;
   count?: number;
-} & MediaHashProps &
-  React.ComponentPropsWithoutRef<'div'>;
+  nsfw?: boolean;
+  mediaHash?: MediaHashProps;
+} & React.ComponentPropsWithoutRef<'div'>;
 
-export function SensitiveContent({
+//TODO - Create a component that does something like this
+/*
+  export function ContentShield() {
+    if(nsfw) return SensitiveContent
+    else return children;
+  }
+  */
+export function ContentShield({
   children,
   count,
-  hash,
-  height,
-  width,
+  mediaHash,
   className,
+  nsfw = false,
   ...rootProps
-}: SensitiveContentProps) {
+}: ContentShieldProps) {
   const { classes, cx } = useStyles();
-  const [show, setShow] = useState(false);
+  const [isNsfw, setIsNsfw] = useState(nsfw);
 
   return (
     <div className={cx(classes.root, className)} {...rootProps}>
-      <Group position="apart" className={classes.header} p="md">
-        <Badge
-          color="red"
-          variant="filled"
-          size="sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            setShow((value) => !value);
-          }}
-        >
-          {!show ? 'Show' : 'Hide'}
-        </Badge>
-        {count && (
+      {nsfw && (
+        <Box p="md" className={classes.show}>
+          <Badge
+            component="div"
+            color="red"
+            variant="filled"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsNsfw((value) => !value);
+            }}
+          >
+            {isNsfw ? 'Show' : 'Hide'}
+          </Badge>
+        </Box>
+      )}
+      {count && (
+        <Box p="md" className={classes.count}>
           <Badge variant="filled" color="gray" size="sm">
             {count}
           </Badge>
-        )}
-      </Group>
+        </Box>
+      )}
 
-      {show ? (
+      {!isNsfw ? (
         children
       ) : (
         <>
-          <MediaHash hash={hash} width={width} height={height} />
+          {mediaHash && <MediaHash {...mediaHash} />}
           <Stack align="center" spacing={0} className={classes.message}>
             <IconEyeOff size={20} color="white" />
             <Text color="white">Sensitive Content</Text>
@@ -64,10 +76,15 @@ const useStyles = createStyles((theme) => ({
   root: {
     position: 'relative',
   },
-  header: {
+  show: {
     position: 'absolute',
     top: 0,
     left: 0,
+    zIndex: 10,
+  },
+  count: {
+    position: 'absolute',
+    top: 0,
     right: 0,
     zIndex: 10,
   },
