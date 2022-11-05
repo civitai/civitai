@@ -29,6 +29,7 @@ import { GetAllModelsReturnType } from '~/server/validators/models/getAllModels'
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useRouter } from 'next/router';
+import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 
 type MasonryListProps = {
   columnWidth: number;
@@ -159,6 +160,20 @@ const MasonryItem = ({
     </Group>
   );
 
+  const PreviewImage = (
+    <Image
+      src={image.url}
+      alt={name}
+      objectFit="cover"
+      objectPosition="top"
+      // height={hasDimensions ? `${image.height}px` : undefined}
+      // width={hasDimensions ? `${image.width}px` : undefined}
+      // layout={!hasDimensions ? 'fill' : undefined}
+      layout="fill"
+      placeholder="empty"
+    />
+  );
+
   return (
     <Link href={`models/${id}`} prefetch={false}>
       <Card
@@ -172,19 +187,11 @@ const MasonryItem = ({
         {inView && (
           <>
             {nsfw ? (
-              <MediaHash {...image} />
+              <SensitiveContent {...image} style={{ height: '100%' }}>
+                {PreviewImage}
+              </SensitiveContent>
             ) : (
-              <Image
-                src={image.url}
-                alt={name}
-                objectFit="cover"
-                objectPosition="top"
-                // height={hasDimensions ? `${image.height}px` : undefined}
-                // width={hasDimensions ? `${image.width}px` : undefined}
-                // layout={!hasDimensions ? 'fill' : undefined}
-                layout="fill"
-                placeholder="empty"
-              />
+              PreviewImage
             )}
 
             <Box p="xs" className={classes.content}>
