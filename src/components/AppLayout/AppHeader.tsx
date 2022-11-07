@@ -38,7 +38,6 @@ const useStyles = createStyles((theme) => ({
   root: {
     position: 'relative',
     zIndex: 1,
-    padding: '0 !important',
   },
 
   header: {
@@ -46,6 +45,12 @@ const useStyles = createStyles((theme) => ({
     alignItems: 'center',
     justifyContent: 'space-between',
     height: '100%',
+    padding: 0,
+
+    [theme.fn.smallerThan('lg')]: {
+      paddingLeft: theme.spacing.xs * 1.6, // 16px
+      paddingRight: theme.spacing.xs * 1.6, // 16px
+    },
   },
 
   burger: {
@@ -255,22 +260,9 @@ export function AppHeader({ links }: Props) {
   ];
 
   return (
-    <Header ref={ref} px="md" height={HEADER_HEIGHT} className={classes.root}>
+    <Header ref={ref} height={HEADER_HEIGHT} className={classes.root}>
       <Container size="xl" className={classes.header}>
         <Group spacing="sm">
-          <Burger
-            className={classes.burger}
-            opened={burgerOpened}
-            onClick={burgerOpened ? closeBurger : openBurger}
-            size="sm"
-          />
-          <Transition transition="pop-top-left" duration={200} mounted={burgerOpened}>
-            {(styles) => (
-              <Paper className={classes.dropdown} withBorder style={styles}>
-                {extendedMenuItems}
-              </Paper>
-            )}
-          </Transition>
           <Link href="/" passHref>
             <Anchor variant="text" onClick={() => closeBurger()}>
               <Title order={1}>
@@ -377,6 +369,19 @@ export function AppHeader({ links }: Props) {
             </Menu>
           </Group>
         </Group>
+        <Burger
+          className={classes.burger}
+          opened={burgerOpened}
+          onClick={burgerOpened ? closeBurger : openBurger}
+          size="sm"
+        />
+        <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
+          {(styles) => (
+            <Paper className={classes.dropdown} withBorder style={styles}>
+              {extendedMenuItems}
+            </Paper>
+          )}
+        </Transition>
       </Container>
     </Header>
   );
