@@ -6,21 +6,21 @@ module.exports = {
   plugins: [
     '@typescript-eslint',
     'prettier',
-    'import',
+    // 'import',
   ],
   extends: [
     'next/core-web-vitals',
-    'prettier',
-    'plugin:@next/next/recommended',
+    // 'plugin:@next/next/recommended',
     'plugin:@typescript-eslint/recommended',
-    'plugin:import/recommended',
-    'plugin:import/typescript',
+    // 'plugin:import/recommended',
+    // 'plugin:import/typescript',
+    'prettier',
   ],
   rules: {
     // aligns closing brackets for tags
     'react/jsx-closing-bracket-location': ['error', 'line-aligned'],
     // turn on errors for missing imports
-    'import/no-unresolved': 'error',
+    // 'import/no-unresolved': 'error',
     // prettier overrides
     'prettier/prettier': ['error', {
       printWidth: 100,
@@ -33,15 +33,15 @@ module.exports = {
     // allows ignoring ts checks
     "@typescript-eslint/ban-ts-comment": "off"
   },
-  settings: {
-    'import/parsers': {
-      '@typescript-eslint/parser': ['.ts', '.tsx']
-    },
-    'import/resolver': {
-      typescript: {
-        // always try to resolve types under `<root>@types` directory even it doesn't contain any source code, like `@types/unist`
-        alwaysTryTypes: true,
-      }
-    }
-  }
+  // settings: {
+  //   'import/parsers': {
+  //     '@typescript-eslint/parser': ['.ts', '.tsx']
+  //   },
+  //   'import/resolver': {
+  //     typescript: {
+  //       // always try to resolve types under `<root>@types` directory even it doesn't contain any source code, like `@types/unist`
+  //       alwaysTryTypes: true,
+  //     }
+  //   }
+  // }
 }

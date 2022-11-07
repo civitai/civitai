@@ -144,7 +144,12 @@ export function AppHeader({ links }: Props) {
 
   const menuItems =
     links?.map((link) => (
-      <Link key={link.label} href={link.url} passHref>
+      <Link
+        key={link.label}
+        href={link.url}
+        passHref
+        className={cx(classes.link, { [classes.linkActive]: router.asPath === link.url })}
+      >
         <Anchor
           variant="text"
           className={cx(classes.link, { [classes.linkActive]: router.asPath === link.url })}
