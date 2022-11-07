@@ -11,23 +11,60 @@ import {
   Text,
   UnstyledButton,
   useMantineColorScheme,
+  Transition,
+  Paper,
+  Container,
 } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
+import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import { IconChevronDown, IconFile, IconLogout, IconPalette, IconSettings } from '@tabler/icons';
+import {
+  IconFile,
+  IconLogout,
+  IconPalette,
+  IconSettings,
+  IconUpload,
+  IconUserCircle,
+} from '@tabler/icons';
 import { signOut, useSession } from 'next-auth/react';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 
+const HEADER_HEIGHT = 70;
+
 const useStyles = createStyles((theme) => ({
-  inner: {
-    height: 70,
+  root: {
+    position: 'relative',
+    zIndex: 1,
+    padding: '0 !important',
+  },
+
+  header: {
+    display: 'flex',
+    alignItems: 'center',
     justifyContent: 'space-between',
+    height: '100%',
   },
 
   burger: {
+    [theme.fn.largerThan('md')]: {
+      display: 'none',
+    },
+  },
+
+  dropdown: {
+    position: 'absolute',
+    top: HEADER_HEIGHT,
+    left: 0,
+    right: 0,
+    zIndex: 0,
+    borderTopRightRadius: 0,
+    borderTopLeftRadius: 0,
+    borderTopWidth: 0,
+    overflow: 'hidden',
+
     [theme.fn.largerThan('md')]: {
       display: 'none',
     },
@@ -40,7 +77,7 @@ const useStyles = createStyles((theme) => ({
   },
 
   links: {
-    [theme.fn.smallerThan('sm')]: {
+    [theme.fn.smallerThan('md')]: {
       display: 'none',
     },
   },
@@ -48,7 +85,7 @@ const useStyles = createStyles((theme) => ({
   link: {
     display: 'block',
     lineHeight: 1,
-    padding: '8px 12px',
+    padding: `${theme.spacing.xs}px ${theme.spacing.sm}px`,
     borderRadius: theme.radius.sm,
     textDecoration: 'none',
     color: theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.colors.gray[7],
@@ -58,11 +95,26 @@ const useStyles = createStyles((theme) => ({
     '&:hover': {
       backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
     },
+
+    [theme.fn.smallerThan('md')]: {
+      borderRadius: 0,
+      padding: theme.spacing.md,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      width: '100%',
+    },
+  },
+
+  linkActive: {
+    '&, &:hover': {
+      backgroundColor: theme.fn.variant({ variant: 'light', color: theme.primaryColor }).background,
+      color: theme.fn.variant({ variant: 'light', color: theme.primaryColor }).color,
+    },
   },
 
   user: {
     color: theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.black,
-    padding: `${theme.spacing.xs}px ${theme.spacing.sm}px`,
     borderRadius: theme.radius.sm,
     transition: 'background-color 100ms ease',
 
@@ -70,7 +122,7 @@ const useStyles = createStyles((theme) => ({
       backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
     },
 
-    [theme.fn.smallerThan('xs')]: {
+    [theme.fn.smallerThan('md')]: {
       display: 'none',
     },
   },
@@ -82,30 +134,152 @@ const useStyles = createStyles((theme) => ({
 
 export function AppHeader({ links }: Props) {
   const { data: session } = useSession();
-  const [burgerOpened, { toggle: toggleBurger }] = useDisclosure(false);
-  const [userMenuOpened, setUserMenuOpened] = useState(false);
   const { classes, cx, theme } = useStyles();
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
+  const router = useRouter();
+
+  const [burgerOpened, { open: openBurger, close: closeBurger }] = useDisclosure(false);
+  const [userMenuOpened, setUserMenuOpened] = useState(false);
+  const ref = useClickOutside(() => closeBurger());
+
+  const menuItems =
+    links?.map((link) => (
+      <Link
+        key={link.label}
+        href={link.url}
+        passHref
+        className={cx(classes.link, { [classes.linkActive]: router.asPath === link.url })}
+      >
+        <Anchor
+          variant="text"
+          className={cx(classes.link, { [classes.linkActive]: router.asPath === link.url })}
+          onClick={() => closeBurger()}
+        >
+          {link.label}
+        </Anchor>
+      </Link>
+    )) ?? [];
+  const extendedMenuItems = [
+    session?.user
+      ? [
+          <Link key="upload-menu-item" href="/models/create" passHref>
+            <Anchor
+              className={cx(classes.link, {
+                [classes.linkActive]: router.asPath.includes('/models/create'),
+              })}
+              variant="text"
+              onClick={() => closeBurger()}
+            >
+              <Group align="center" spacing="xs">
+                <IconUpload stroke={1.5} />
+                Upload a model
+              </Group>
+            </Anchor>
+          </Link>,
+          <Link key="your-models-menu-item" href={`/?user=${session.user.username}`} passHref>
+            <Anchor
+              className={cx(classes.link, {
+                [classes.linkActive]: router.asPath.includes(`user=${session.user.username}`),
+              })}
+              variant="text"
+              onClick={() => closeBurger()}
+            >
+              <Group align="center" spacing="xs">
+                <IconFile stroke={1.5} />
+                Your models
+              </Group>
+            </Anchor>
+          </Link>,
+        ]
+      : [
+          <Link key="sign-in-menu-item" href={`/login?returnUrl=${router.asPath}`} passHref>
+            <Anchor
+              className={cx(classes.link, {
+                [classes.linkActive]: router.asPath.includes('/login'),
+              })}
+              variant="text"
+              onClick={() => closeBurger()}
+            >
+              <Group align="center" spacing="xs">
+                <IconUserCircle stroke={1.5} />
+                Sign In/Sign up
+              </Group>
+            </Anchor>
+          </Link>,
+        ],
+    ...menuItems,
+    <UnstyledButton
+      key="theme-switcher"
+      className={classes.link}
+      onClick={() => toggleColorScheme()}
+    >
+      <Group align="center" spacing="xs">
+        <IconPalette stroke={1.5} />
+        Dark mode
+      </Group>
+      <Switch
+        checked={colorScheme === 'dark'}
+        sx={{ display: 'flex', alignItems: 'center' }}
+        onClick={(e) => e.stopPropagation()}
+      />
+    </UnstyledButton>,
+    ...(session?.user
+      ? [
+          <Link key="your-models-menu-item" href="/user/account" passHref>
+            <Anchor
+              className={cx(classes.link, {
+                [classes.linkActive]: router.asPath.includes('/user/account'),
+              })}
+              variant="text"
+              onClick={() => closeBurger()}
+            >
+              <Group align="center" spacing="xs">
+                <IconSettings stroke={1.5} />
+                Account settings
+              </Group>
+            </Anchor>
+          </Link>,
+          <UnstyledButton
+            key="user-logout"
+            className={classes.link}
+            onClick={() => signOut()}
+            sx={(theme) => ({ color: theme.colors.red[9] })}
+          >
+            <Group>
+              <IconLogout stroke={1.5} />
+              Logout
+            </Group>
+          </UnstyledButton>,
+        ]
+      : []),
+  ];
 
   return (
-    <Header px="md" height={70}>
-      <Group align="center" className={classes.inner}>
+    <Header ref={ref} px="md" height={HEADER_HEIGHT} className={classes.root}>
+      <Container size="xl" className={classes.header}>
         <Group spacing="sm">
           <Burger
             className={classes.burger}
             opened={burgerOpened}
-            onClick={toggleBurger}
+            onClick={burgerOpened ? closeBurger : openBurger}
             size="sm"
           />
+          <Transition transition="pop-top-left" duration={200} mounted={burgerOpened}>
+            {(styles) => (
+              <Paper className={classes.dropdown} withBorder style={styles}>
+                {extendedMenuItems}
+              </Paper>
+            )}
+          </Transition>
           <Link href="/" passHref>
-            <Anchor variant="text">
-              <Title>
+            <Anchor variant="text" onClick={() => closeBurger()}>
+              <Title order={1}>
                 C
                 <Text
                   component="span"
-                  sx={() => ({
+                  sx={(theme) => ({
                     display: 'none',
-                    '@media (min-width: 400px)': {
+                    [theme.fn.largerThan('xs')]: {
                       display: 'inline',
                     },
                   })}
@@ -118,60 +292,41 @@ export function AppHeader({ links }: Props) {
               </Title>
             </Anchor>
           </Link>
-          {/* <Autocomplete
-            className={classes.search}
-            placeholder="Search"
-            icon={<IconSearch size={16} stroke={1.5} />}
-            data={['React', 'Angular', 'Vue', 'Next.js', 'Riot.js', 'Svelte', 'Blitz.js']}
-          /> */}
-          <ListSearch />
+          <ListSearch onSearch={() => closeBurger()} />
         </Group>
         <Group spacing="sm" className={classes.links}>
-          <Group spacing="sm">
-            {links?.map((link) => (
-              <Link key={link.label} href={link.url} passHref>
-                <Anchor className={classes.link} variant="text">
-                  {link.label}
-                </Anchor>
-              </Link>
-            ))}
-          </Group>
+          <Group spacing="sm">{menuItems}</Group>
           <Group spacing="xs">
             {session?.user ? (
               <Button component={NextLink} href="/models/create" variant="subtle">
                 Upload a model
               </Button>
-            ) : null}
-            {session?.user ? (
-              <Menu
-                width={260}
-                opened={userMenuOpened}
-                position="bottom-end"
-                transition="pop-top-right"
-                onClose={() => setUserMenuOpened(false)}
+            ) : (
+              <Button
+                component={NextLink}
+                href={`/login?returnUrl=${router.asPath}`}
+                variant="outline"
               >
-                <Menu.Target>
-                  <UnstyledButton
-                    className={cx(classes.user, { [classes.userActive]: userMenuOpened })}
-                    onClick={() => setUserMenuOpened(true)}
-                  >
-                    <Group spacing={7}>
-                      {session.user ? <UserAvatar user={session.user} /> : null}
-                      <IconChevronDown size={12} stroke={1.5} />
-                    </Group>
-                  </UnstyledButton>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  {/* <Menu.Item
-                    icon={<IconHeart size={14} color={theme.colors.red[6]} stroke={1.5} />}
-                  >
-                    Liked models
-                  </Menu.Item>
-                  <Menu.Item
-                    icon={<IconStar size={14} color={theme.colors.yellow[6]} stroke={1.5} />}
-                  >
-                    Saved models
-                  </Menu.Item> */}
+                Sign In
+              </Button>
+            )}
+            <Menu
+              width={260}
+              opened={userMenuOpened}
+              position="bottom-end"
+              transition="pop-top-right"
+              onClose={() => setUserMenuOpened(false)}
+            >
+              <Menu.Target>
+                <UnstyledButton
+                  className={cx(classes.user, { [classes.userActive]: userMenuOpened })}
+                  onClick={() => setUserMenuOpened(true)}
+                >
+                  <UserAvatar user={session?.user} avatarProps={{ size: 'md' }} />
+                </UnstyledButton>
+              </Menu.Target>
+              <Menu.Dropdown>
+                {session?.user ? (
                   <Menu.Item
                     icon={<IconFile size={14} color={theme.colors.blue[6]} stroke={1.5} />}
                     component={NextLink}
@@ -180,46 +335,49 @@ export function AppHeader({ links }: Props) {
                   >
                     Your models
                   </Menu.Item>
-                  {/* <Menu.Label>Theme</Menu.Label> */}
-                  <Menu.Item
-                    closeMenuOnClick={false}
-                    icon={<IconPalette size={14} stroke={1.5} />}
-                    onClick={() => toggleColorScheme()}
-                  >
-                    <Group align="center" position="apart">
-                      Dark mode
-                      <Switch
-                        checked={colorScheme === 'dark'}
-                        style={{ display: 'flex', alignItems: 'center' }}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </Group>
+                ) : (
+                  <Menu.Item component={NextLink} href={`/login?returnUrl=${router.asPath}`}>
+                    Sign in/Sign up
                   </Menu.Item>
+                )}
 
-                  {/* <Menu.Label>Settings</Menu.Label> */}
-                  <Menu.Item
-                    icon={<IconSettings size={14} stroke={1.5} />}
-                    component={NextLink}
-                    href="/user/account"
-                  >
-                    Account settings
-                  </Menu.Item>
-                  <Menu.Item
-                    icon={<IconLogout size={14} color={theme.colors.red[9]} stroke={1.5} />}
-                    onClick={() => signOut()}
-                  >
-                    Logout
-                  </Menu.Item>
-                </Menu.Dropdown>
-              </Menu>
-            ) : (
-              <Button component={NextLink} href="/login" variant="outline">
-                Sign In
-              </Button>
-            )}
+                <Menu.Item
+                  closeMenuOnClick={false}
+                  icon={<IconPalette size={14} stroke={1.5} />}
+                  onClick={() => toggleColorScheme()}
+                >
+                  <Group align="center" position="apart">
+                    Dark mode
+                    <Switch
+                      checked={colorScheme === 'dark'}
+                      sx={{ display: 'flex', alignItems: 'center' }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </Group>
+                </Menu.Item>
+
+                {session?.user ? (
+                  <>
+                    <Menu.Item
+                      icon={<IconSettings size={14} stroke={1.5} />}
+                      component={NextLink}
+                      href="/user/account"
+                    >
+                      Account settings
+                    </Menu.Item>
+                    <Menu.Item
+                      icon={<IconLogout size={14} color={theme.colors.red[9]} stroke={1.5} />}
+                      onClick={() => signOut()}
+                    >
+                      Logout
+                    </Menu.Item>
+                  </>
+                ) : null}
+              </Menu.Dropdown>
+            </Menu>
           </Group>
         </Group>
-      </Group>
+      </Container>
     </Header>
   );
 }

@@ -10,7 +10,7 @@ import { useModelFilters } from '~/hooks/useModelFilters';
 
 const limit = 3;
 
-export function ListSearch() {
+export function ListSearch({ onSearch }: Props) {
   const router = useRouter();
   const {
     filters: { tag, query, user },
@@ -108,8 +108,10 @@ export function ListSearch() {
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
             onChange={(e) => {
-              form.setValues({ query: e.target.value });
-              setValue(e.target.value);
+              const query = e.target.value;
+              form.setValues({ query });
+              setValue(query);
+              onSearch?.(query);
             }}
             onClear={handleClear}
             ref={inputRef}
@@ -164,3 +166,5 @@ export function ListSearch() {
     </Popover>
   );
 }
+
+type Props = { onSearch?: (value: string) => void };
