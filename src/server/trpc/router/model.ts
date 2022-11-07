@@ -1,9 +1,9 @@
 import { Prisma, ReportReason } from '@prisma/client';
 import { z } from 'zod';
+import { ModelSort } from '~/server/common/enums';
 import { modelSchema } from '~/server/common/validation/model';
 import { handleDbError } from '~/server/services/errorHandling';
 import {
-  getAllModelsOrderBy,
   getAllModelsSchema,
   getAllModelsSelect,
   getAllModelsTransform,
@@ -19,11 +19,33 @@ export const modelRouter = router({
       const { cursor, limit = 50 } = input;
       input.showNsfw = session?.user?.showNsfw;
 
+      const orderBy: Prisma.Enumerable<Prisma.ModelOrderByWithRelationInput> = [
+        { createdAt: 'desc' },
+      ];
+      switch (input.sort) {
+        case ModelSort.HighestRated: {
+          orderBy.unshift({
+            rank: {
+              [`rating${input.period}`]: 'desc',
+            },
+          });
+          break;
+        }
+        case ModelSort.MostDownloaded: {
+          orderBy.unshift({
+            rank: {
+              [`downloadCount${input.period}`]: 'desc',
+            },
+          });
+          break;
+        }
+      }
+
       const items = await ctx.prisma.model.findMany({
         take: limit + 1, // get an extra item at the end which we'll use as next cursor
         cursor: cursor ? { id: cursor } : undefined,
         where: getAllModelsWhere(input),
-        orderBy: getAllModelsOrderBy(input),
+        orderBy: orderBy,
         select: getAllModelsSelect,
       });
 

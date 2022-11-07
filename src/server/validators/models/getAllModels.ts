@@ -101,25 +101,6 @@ export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
   },
 });
 
-export const getAllModelsOrderBy = ({
-  period = MetricTimeframe.AllTime,
-}: z.infer<typeof getAllModelsSchema>) =>
-  Prisma.validator<Prisma.Enumerable<Prisma.ModelOrderByWithRelationInput>>()([
-    {
-      rank: {
-        [`rating${period}`]: 'desc',
-      },
-    } as never,
-    {
-      rank: {
-        [`downloadCount${period}`]: 'desc',
-      },
-    } as never,
-    {
-      createdAt: 'desc',
-    },
-  ]);
-
 const modelList = Prisma.validator<Prisma.ModelArgs>()({
   select: getAllModelsSelect,
 });
