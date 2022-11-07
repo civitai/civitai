@@ -121,92 +121,110 @@ export const modelRouter = router({
   update: protectedProcedure
     .input(modelSchema.extend({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      const userId = ctx.session.user.id;
-      const { id, modelVersions, tagsOnModels, ...data } = input;
-      const { tagsToCreate, tagsToUpdate } = tagsOnModels?.reduce(
-        (acc, current) => {
-          if (!current.id) acc.tagsToCreate.push(current);
-          else acc.tagsToUpdate.push(current);
+      try {
+        const userId = ctx.session.user.id;
+        const { id, modelVersions, tagsOnModels, ...data } = input;
+        const { tagsToCreate, tagsToUpdate } = tagsOnModels?.reduce(
+          (acc, current) => {
+            if (!current.id) acc.tagsToCreate.push(current);
+            else acc.tagsToUpdate.push(current);
 
-          return acc;
-        },
-        {
-          tagsToCreate: [] as Array<typeof tagsOnModels[number]>,
-          tagsToUpdate: [] as Array<typeof tagsOnModels[number]>,
-        }
-      ) ?? { tagsToCreate: [], tagsToUpdate: [] };
-
-      const model = await ctx.prisma.model.update({
-        where: { id },
-        data: {
-          ...data,
-          modelVersions: {
-            upsert: modelVersions.map(({ id = -1, images, ...version }) => {
-              const imagesWithIndex = images.map((image, index) => ({
-                index,
-                userId,
-                ...image,
-              }));
-              const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
-              const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
-              return {
-                where: { id },
-                create: {
-                  ...version,
-                  images: {
-                    create: imagesWithIndex.map(({ index, ...image }) => ({
-                      index,
-                      image: { create: image },
-                    })),
-                  },
-                },
-                update: {
-                  ...version,
-                  images: {
-                    deleteMany: {
-                      NOT: images.map((image) => ({ imageId: image.id })),
-                    },
-                    create: imagesToCreate.map(({ index, ...image }) => ({
-                      index,
-                      image: { create: image },
-                    })),
-                    update: imagesToUpdate.map(({ index, ...image }) => ({
-                      where: {
-                        imageId_modelVersionId: {
-                          imageId: image.id as number,
-                          modelVersionId: id,
-                        },
-                      },
-                      data: {
-                        index,
-                      },
-                    })),
-                  },
-                },
-              };
-            }),
+            return acc;
           },
-          tagsOnModels: {
-            deleteMany: {},
-            connectOrCreate: tagsToUpdate.map((tag) => ({
-              where: { modelId_tagId: { modelId: id, tagId: tag.id as number } },
-              create: { tagId: tag.id as number },
-            })),
-            create: tagsToCreate.map((tag) => ({
-              tag: { create: { name: tag.name } },
-            })),
-          },
-        },
-      });
+          {
+            tagsToCreate: [] as Array<typeof tagsOnModels[number]>,
+            tagsToUpdate: [] as Array<typeof tagsOnModels[number]>,
+          }
+        ) ?? { tagsToCreate: [], tagsToUpdate: [] };
 
-      if (!model) {
-        return handleDbError({
-          code: 'NOT_FOUND',
-          message: `No model with id ${id}`,
+        const currentVersions = await ctx.prisma.modelVersion.findMany({
+          where: { modelId: id },
         });
-      }
+        const versionIds = modelVersions.map((version) => version.id).filter(Boolean);
+        const versionsToDelete = currentVersions
+          .filter((version) => versionIds.includes(version.id))
+          .map(({ id }) => id);
 
-      return model;
+        const [, model] = await ctx.prisma.$transaction([
+          ctx.prisma.modelVersion.deleteMany({
+            where: { id: { in: versionsToDelete } },
+          }),
+          ctx.prisma.model.update({
+            where: { id },
+            data: {
+              ...data,
+              modelVersions: {
+                upsert: modelVersions.map(({ id = -1, images, ...version }) => {
+                  const imagesWithIndex = images.map((image, index) => ({
+                    index,
+                    userId,
+                    ...image,
+                  }));
+                  const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
+                  const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
+
+                  return {
+                    where: { id },
+                    create: {
+                      ...version,
+                      images: {
+                        create: imagesWithIndex.map(({ index, ...image }) => ({
+                          index,
+                          image: { create: image },
+                        })),
+                      },
+                    },
+                    update: {
+                      ...version,
+                      images: {
+                        deleteMany: {
+                          NOT: images.map((image) => ({ imageId: image.id })),
+                        },
+                        create: imagesToCreate.map(({ index, ...image }) => ({
+                          index,
+                          image: { create: image },
+                        })),
+                        update: imagesToUpdate.map(({ index, ...image }) => ({
+                          where: {
+                            imageId_modelVersionId: {
+                              imageId: image.id as number,
+                              modelVersionId: id,
+                            },
+                          },
+                          data: {
+                            index,
+                          },
+                        })),
+                      },
+                    },
+                  };
+                }),
+              },
+              tagsOnModels: {
+                deleteMany: {},
+                connectOrCreate: tagsToUpdate.map((tag) => ({
+                  where: { modelId_tagId: { modelId: id, tagId: tag.id as number } },
+                  create: { tagId: tag.id as number },
+                })),
+                create: tagsToCreate.map((tag) => ({
+                  tag: { create: { name: tag.name } },
+                })),
+              },
+            },
+          }),
+        ]);
+
+        if (!model) {
+          return handleDbError({
+            code: 'NOT_FOUND',
+            message: `No model with id ${id}`,
+          });
+        }
+
+        return model;
+      } catch (error) {
+        return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+      }
     }),
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))

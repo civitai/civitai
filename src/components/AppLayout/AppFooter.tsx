@@ -1,4 +1,4 @@
-import { createStyles, Group, Paper, Text } from '@mantine/core';
+import { createStyles, Footer, Group, Text } from '@mantine/core';
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 
@@ -23,25 +23,27 @@ export function AppFooter() {
   });
 
   return (
-    <Paper className={cx(classes.root, { [classes.down]: !showFooter })} p="sm" radius={0}>
+    <Footer className={cx(classes.root, { [classes.down]: !showFooter })} height="auto" p="sm">
       <Group spacing="lg">
         <Text mr="md" weight={700}>
           &copy; Civitai {new Date().getFullYear()}
         </Text>
-        <Text component={NextLink} href="content/tos" size="sm">
-          Terms of Service
-        </Text>
-        <Text component="a" href="https://github.com/civitai" size="sm">
-          GitHub
-        </Text>
-        <Text component="a" href="https://discord.gg/UwX5wKwm6c" size="sm">
-          Discord
-        </Text>
-        <Text component="a" href="https://twitter.com/HelloCivitai" size="sm">
-          Twitter
-        </Text>
+        <Group spacing="lg">
+          <Text component={NextLink} href="/content/tos" size="sm">
+            Terms of Service
+          </Text>
+          <Text component="a" href="https://github.com/civitai" size="sm">
+            GitHub
+          </Text>
+          <Text component="a" href="https://discord.gg/UwX5wKwm6c" size="sm">
+            Discord
+          </Text>
+          <Text component="a" href="https://twitter.com/HelloCivitai" size="sm">
+            Twitter
+          </Text>
+        </Group>
       </Group>
-    </Paper>
+    </Footer>
   );
 }
 
@@ -51,16 +53,17 @@ const useStyles = createStyles((theme) => ({
     bottom: 0,
     right: 0,
     left: 0,
-    borderTop: `1px solid ${theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-      }`,
+    borderTop: `1px solid ${
+      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+    }`,
     // boxShadow: '0 -1px 3px rgba(0, 0, 0, 0.05), 0 -1px 2px rgba(0, 0, 0, 0.1)',
-    transitionProperty: 'bottom',
+    transitionProperty: 'transform',
     transitionDuration: '0.3s',
     transitionTimingFunction: 'linear',
     // transform: 'translateY(0)',
   },
   down: {
-    // transform: 'translateY(200%)',
-    bottom: -60,
+    transform: 'translateY(200%)',
+    // bottom: '-60',
   },
 }));
