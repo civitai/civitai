@@ -6,7 +6,6 @@ import { splitUppercase } from '~/utils/string-helpers';
 
 export function ListFilter() {
   const { filters, setFilters } = useModelFilters();
-  console.log({ types: filters.types });
 
   return (
     <Popover withArrow>

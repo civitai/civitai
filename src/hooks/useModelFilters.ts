@@ -32,7 +32,6 @@ export function useModelFilters() {
   );
 
   const filters = useMemo(() => {
-    console.log({ queryParams });
     return Object.keys(queryParams)
       .map((key) => {
         const result = filterSchema.safeParse({ [key]: queryParams[key] });

@@ -28,7 +28,7 @@ import { GetAllModelsReturnType } from '~/server/validators/models/getAllModels'
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useRouter } from 'next/router';
-import { ContentShield } from '~/components/ContentShield/ContentShield';
+import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 
 type MasonryListProps = {
   columnWidth: number;
@@ -55,10 +55,6 @@ export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
     height,
     align: 'center',
   });
-
-  useEffect(() => {
-    console.log({ router });
-  }, [router]);
 
   useEffect(() => {
     if (!data?.length) return;
@@ -159,6 +155,20 @@ const MasonryItem = ({
     </Group>
   );
 
+  const PreviewImage = (
+    <Image
+      src={image.url}
+      alt={name}
+      objectFit="cover"
+      objectPosition="top"
+      // height={hasDimensions ? `${image.height}px` : undefined}
+      // width={hasDimensions ? `${image.width}px` : undefined}
+      // layout={!hasDimensions ? 'fill' : undefined}
+      layout="fill"
+      placeholder="empty"
+    />
+  );
+
   return (
     <Link href={`models/${id}`} prefetch={false}>
       <Card
@@ -171,20 +181,13 @@ const MasonryItem = ({
       >
         {inView && (
           <>
-            <ContentShield mediaHash={image} style={{ height: '100%' }} nsfw={nsfw}>
-              <Image
-                src={image.url}
-                alt={name}
-                objectFit="cover"
-                objectPosition="top"
-                // height={hasDimensions ? `${image.height}px` : undefined}
-                // width={hasDimensions ? `${image.width}px` : undefined}
-                // layout={!hasDimensions ? 'fill' : undefined}
-                layout="fill"
-                placeholder="empty"
-              />
-            </ContentShield>
-
+            {nsfw ? (
+              <SensitiveContent mediaHash={image} style={{ height: '100%' }}>
+                {PreviewImage}
+              </SensitiveContent>
+            ) : (
+              PreviewImage
+            )}
             <Box p="xs" className={classes.content}>
               {!!rank.rating ? withRating : withoutRating}
             </Box>
