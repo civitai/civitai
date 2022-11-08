@@ -23,7 +23,10 @@ export const serverSchema = z.object({
   GOOGLE_CLIENT_ID: z.string(),
   GOOGLE_CLIENT_SECRET: z.string(),
   S3_UPLOAD_KEY: z.string(),
-  S3_ORIGINS: z.string(),
+  S3_ORIGINS: z.preprocess((value) => {
+    const str = String(value);
+    return str.split(',');
+  }, z.array(z.string().url()).optional()),
   S3_UPLOAD_SECRET: z.string(),
   S3_UPLOAD_REGION: z.string(),
   S3_UPLOAD_ENDPOINT: z.string().url(),

@@ -3,7 +3,6 @@ import { IconUpload, IconCircleCheck, IconBan } from '@tabler/icons';
 import { useEffect, useState } from 'react';
 import { useS3Upload } from '~/hooks/use-s3-upload';
 import { UploadType, UploadTypeUnion } from '~/server/common/enums';
-import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 
 export function FileInputUpload({
