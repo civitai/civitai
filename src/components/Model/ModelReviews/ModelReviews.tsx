@@ -3,11 +3,9 @@ import {
   ActionIcon,
   AspectRatio,
   Badge,
-  Box,
   Card,
   Grid,
   Group,
-  Image,
   LoadingOverlay,
   Menu,
   Paper,
@@ -18,11 +16,10 @@ import {
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { ReportReason } from '@prisma/client';
-import { IconDotsVertical, IconEyeOff, IconFlag, IconTrash } from '@tabler/icons';
+import { IconDotsVertical, IconFlag, IconTrash } from '@tabler/icons';
 import dayjs from 'dayjs';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
@@ -32,7 +29,7 @@ import { ReviewFilter } from '~/server/common/enums';
 import { ReviewDetails } from '~/server/validators/reviews/getAllReviews';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { useEffect } from 'react';
+import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 
 export function ModelReviews({ items, loading = false }: Props) {
   return (
@@ -140,13 +137,11 @@ function ReviewItem({ data: review }: ItemProps) {
     <Carousel withControls={hasMultipleImages} draggable={hasMultipleImages} loop>
       {review.imagesOnReviews.map(({ image }) => (
         <Carousel.Slide key={image.id}>
-          <AspectRatio ratio={16 / 9}>
-            <Image
-              src={image.url}
-              alt={image.name ?? 'Visual representation of the user review'}
-              sx={{ objectFit: 'cover', objectPosition: 'center' }}
-            />
-          </AspectRatio>
+          <ImagePreview
+            {...image}
+            aspectRatio={16 / 9}
+            lightboxImages={review.imagesOnReviews.map((x) => x.image)}
+          />
         </Carousel.Slide>
       ))}
     </Carousel>
