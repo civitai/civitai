@@ -69,6 +69,7 @@ import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
   const ssg = createProxySSGHelpers({
@@ -469,9 +470,11 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   </Carousel.Slide>
                 ))}
               </Carousel>
-              <ContentClamp maxHeight={150}>
-                <Text>{model?.description}</Text>
-              </ContentClamp>
+              {model.description ? (
+                <ContentClamp maxHeight={150}>
+                  <RenderHtml html={model.description} />
+                </ContentClamp>
+              ) : null}
             </Stack>
           </Grid.Col>
           <Grid.Col span={12} orderSm={3} my="xl">
@@ -579,8 +582,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       {isFetchingNextPage
                         ? 'Loading more...'
                         : hasNextPage
-                          ? 'Load More'
-                          : 'Nothing more to load'}
+                        ? 'Load More'
+                        : 'Nothing more to load'}
                     </Button>
                   )}
                 </InView>

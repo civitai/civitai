@@ -22,6 +22,7 @@ import {
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ModelWithDetails } from '~/server/validators/models/getById';
@@ -118,9 +119,11 @@ function TabContent({ version, nsfw }: TabContentProps) {
           </Button>
           <DescriptionTable items={versionDetails} labelWidth="30%" />
           <Title order={3}>About this version</Title>
-          <ContentClamp>
-            <Text>{version.description}</Text>
-          </ContentClamp>
+          {version.description ? (
+            <ContentClamp>
+              <RenderHtml html={version.description} />
+            </ContentClamp>
+          ) : null}
         </Stack>
       </Grid.Col>
       <Grid.Col xs={12} md={8} orderMd={1}>
