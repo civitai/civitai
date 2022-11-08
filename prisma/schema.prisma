@@ -108,7 +108,7 @@ model ModelVersion {
   name            String
   description     String?
   url             String
-  sizeKB          Int
+  sizeKB          Float
   modelId         Int
   model           Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
   steps           Int?

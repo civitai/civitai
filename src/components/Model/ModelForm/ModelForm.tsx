@@ -194,23 +194,27 @@ export function ModelForm({ model }: Props) {
                       leftIcon={<IconPlus size={16} />}
                       variant="outline"
                       onClick={() =>
-                        form.insertListItem('modelVersions', {
-                          name: '',
-                          description: '',
-                          url: '',
-                          epochs: null,
-                          steps: null,
-                          sizeKB: 0,
-                          trainingDataUrl: '',
-                          images: [],
-                        })
+                        form.insertListItem(
+                          'modelVersions',
+                          {
+                            name: '',
+                            description: '',
+                            url: '',
+                            epochs: null,
+                            steps: null,
+                            sizeKB: 0,
+                            trainingDataUrl: '',
+                            images: [],
+                          },
+                          0
+                        )
                       }
                       compact
                     >
                       Add Version
                     </Button>
                   </Group>
-                  <Stack sx={{ flexDirection: 'column-reverse' }}>
+                  <Stack>
                     {form.values.modelVersions?.map((version, index) => (
                       <React.Fragment key={version.id ?? index}>
                         <Group p="sm" sx={{ position: 'relative' }}>

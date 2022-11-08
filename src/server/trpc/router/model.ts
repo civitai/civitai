@@ -150,7 +150,8 @@ export const modelRouter = router({
           data: {
             ...data,
             modelVersions: {
-              deleteMany: { id: { in: versionsToDelete } },
+              deleteMany:
+                versionsToDelete.length > 0 ? { id: { in: versionsToDelete } } : undefined,
               upsert: modelVersions.map(({ id = -1, images, ...version }) => {
                 const imagesWithIndex = images.map((image, index) => ({
                   index,

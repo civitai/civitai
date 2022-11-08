@@ -11,6 +11,7 @@ export function handleDbError({
   error?: unknown;
   message?: string;
 }) {
+  console.error(error);
   let errorMessage = message ?? 'Invalid database operation';
 
   if (error instanceof Prisma.PrismaClientKnownRequestError) errorMessage = error.message;

@@ -37,7 +37,7 @@ export function ModelVersions({ items, initialTab, nsfw }: Props) {
     <Tabs defaultValue={initialTab} orientation={mobile ? 'horizontal' : 'vertical'}>
       <Grid gutter="lg" style={{ flex: 1 }}>
         <Grid.Col xs={12} sm={3} md={2}>
-          <Tabs.List sx={{ flexDirection: mobile ? 'row-reverse' : 'column-reverse' }}>
+          <Tabs.List>
             {items.map((version) => (
               <Tabs.Tab
                 key={version.id}
