@@ -1,10 +1,27 @@
-import { Button, Image, Grid, Rating, SimpleGrid, Stack, Tabs, Text, Title } from '@mantine/core';
+import {
+  Button,
+  Image,
+  Grid,
+  Rating,
+  SimpleGrid,
+  Stack,
+  Tabs,
+  Text,
+  Title,
+  createStyles,
+  Box,
+  AspectRatio,
+} from '@mantine/core';
 import { IconDownload } from '@tabler/icons';
+import React from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
+import { ImageUploadPreview } from '~/components/ImageUpload/ImagePreview';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ModelWithDetails } from '~/server/validators/models/getById';
@@ -13,12 +30,12 @@ import { formatKBytes } from '~/utils/number-helpers';
 
 const VERSION_IMAGES_LIMIT = 8;
 
-export function ModelVersions({ items, initialTab }: Props) {
+export function ModelVersions({ items, initialTab, nsfw }: Props) {
   const mobile = useIsMobile();
 
   return (
     <Tabs defaultValue={initialTab} orientation={mobile ? 'horizontal' : 'vertical'}>
-      <Grid gutter="lg">
+      <Grid gutter="lg" style={{ flex: 1 }}>
         <Grid.Col xs={12} sm={3} md={2}>
           <Tabs.List sx={{ flexDirection: mobile ? 'row-reverse' : 'column-reverse' }}>
             {items.map((version) => (
@@ -35,7 +52,7 @@ export function ModelVersions({ items, initialTab }: Props) {
         <Grid.Col xs={12} sm={9} md={10}>
           {items.map((version) => (
             <Tabs.Panel key={version.id} value={version.id.toString()}>
-              <TabContent version={version} />
+              <TabContent version={version} nsfw={nsfw} />
             </Tabs.Panel>
           ))}
         </Grid.Col>
@@ -47,9 +64,10 @@ export function ModelVersions({ items, initialTab }: Props) {
 type Props = {
   items: ModelWithDetails['modelVersions'];
   initialTab?: string | null;
+  nsfw?: boolean;
 };
 
-function TabContent({ version }: TabContentProps) {
+function TabContent({ version, nsfw }: TabContentProps) {
   const mobile = useIsMobile();
   const { openImageLightbox } = useImageLightbox({
     initialSlide: 0,
@@ -81,6 +99,7 @@ function TabContent({ version }: TabContentProps) {
       : []),
   ];
 
+  const versionImages = version.images.map((x) => x.image);
   const imagesLimit = mobile ? VERSION_IMAGES_LIMIT / 2 : VERSION_IMAGES_LIMIT;
 
   return (
@@ -113,18 +132,15 @@ function TabContent({ version }: TabContentProps) {
             { minWidth: 'lg', cols: 4 },
           ]}
         >
-          {version.images.slice(0, imagesLimit).map(({ image }, index) => (
-            <Image
+          {versionImages.slice(0, imagesLimit).map((image, index) => (
+            <ImagePreview
               key={index}
-              src={image.url}
+              {...image}
+              nsfw={nsfw}
               radius="md"
-              width="100%"
-              height="100%"
-              alt={
-                image.name ??
-                'Visual representation of the output after running the model using this version'
-              }
               sx={{
+                height: '100%',
+                width: '100%',
                 figure: { height: '100%', display: 'flex' },
                 ...(index === 0 && !mobile
                   ? {
@@ -134,14 +150,15 @@ function TabContent({ version }: TabContentProps) {
                     }
                   : {}),
               }}
-              onClick={() => openImageLightbox({ initialSlide: index })}
             />
           ))}
-          {version.images.length > imagesLimit ? (
+          {versionImages.length > imagesLimit ? (
             <Button
               variant="outline"
               sx={!mobile ? { height: '100%' } : undefined}
-              onClick={() => openImageLightbox({ initialSlide: imagesLimit })}
+              onClick={() =>
+                openImageLightbox({ initialSlide: imagesLimit, images: versionImages })
+              }
             >
               View more
             </Button>
@@ -152,4 +169,17 @@ function TabContent({ version }: TabContentProps) {
   );
 }
 
-type TabContentProps = { version: Props['items'][number] };
+type TabContentProps = { version: Props['items'][number]; nsfw?: boolean };
+
+// const useStyles = createStyles((theme, { index, mobile }: { index: number; mobile: boolean }) => ({
+//   image: {
+//     figure: { height: '100%', display: 'flex' },
+//     ...(index === 0 && !mobile
+//       ? {
+//           gridColumn: '1/3',
+//           gridRow: '1/5',
+//           figure: { height: '100%', display: 'flex' },
+//         }
+//       : {}),
+//   },
+// }));

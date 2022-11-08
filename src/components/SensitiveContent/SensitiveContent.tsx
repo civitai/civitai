@@ -1,8 +1,8 @@
 import { Badge, BadgeProps, createStyles, Stack, Text } from '@mantine/core';
 import { IconEyeOff } from '@tabler/icons';
+import { useSession } from 'next-auth/react';
 import React from 'react';
 import { useState } from 'react';
-import { MediaHash, MediaHashProps } from '~/components/ImageHash/ImageHash';
 
 const SensitiveContentContext = React.createContext<{
   show: boolean;
@@ -13,18 +13,20 @@ const useSensitiveContentContext = () => React.useContext(SensitiveContentContex
 type SensitiveContentProps = {
   controls?: React.ReactNode;
   children: React.ReactNode;
-  mediaHash?: MediaHashProps;
-} & React.ComponentPropsWithoutRef<'div'>;
+  placeholder?: React.ReactNode;
+} & Omit<React.ComponentPropsWithoutRef<'div'>, 'placeholder'>;
 
 export const SensitiveContent = ({
   children,
   controls,
-  mediaHash,
   className,
+  placeholder,
   ...rootProps
 }: SensitiveContentProps) => {
   const { classes, cx } = useStyles();
-  const [show, setShow] = useState(true);
+  const [show, setShow] = useState(false);
+  const { data: session } = useSession();
+  if (!session?.user?.blurNsfw) return <>{children}</>;
 
   return (
     <SensitiveContentContext.Provider value={{ show, setShow }}>
@@ -32,7 +34,7 @@ export const SensitiveContent = ({
         <div className={classes.controls}>{controls ?? <SensitiveContentToggle m="md" />}</div>
         {!show ? (
           <>
-            {mediaHash && <MediaHash {...mediaHash} />}
+            {placeholder}
             <Stack align="center" spacing={0} className={classes.message}>
               <IconEyeOff size={20} color="white" />
               <Text color="white">Sensitive Content</Text>
@@ -58,6 +60,7 @@ const SensitiveContentToggle = ({ ...props }: SensitiveContentToggleProps) => {
       color="red"
       variant="filled"
       size="sm"
+      sx={{ cursor: 'pointer', userSelect: 'none' }}
       onClick={(e) => {
         e.stopPropagation();
         setShow((value) => !value);

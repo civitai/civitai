@@ -15,6 +15,10 @@ type CustomModalsProviderProps = {
 export function CustomModalsProvider({ children }: CustomModalsProviderProps) {
   return (
     <ModalsProvider
+      labels={{
+        confirm: 'Confirm',
+        cancel: 'Cancel',
+      }}
       modals={
         {
           reviewEdit: DynamicReviewEditModal,
