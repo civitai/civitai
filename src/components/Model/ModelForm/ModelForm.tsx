@@ -6,7 +6,6 @@ import {
   Divider,
   Grid,
   Group,
-  LoadingOverlay,
   MultiSelect,
   NumberInput,
   Paper,
@@ -14,11 +13,9 @@ import {
   Stack,
   Textarea,
   TextInput,
-  Text,
   Title,
 } from '@mantine/core';
 import { useForm, zodResolver } from '@mantine/form';
-import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { Model, ModelType } from '@prisma/client';
 import { IconCheck, IconX, IconArrowLeft, IconPlus, IconTrash } from '@tabler/icons';
@@ -41,6 +38,7 @@ type UpdateModelProps = Omit<CreateModelProps, 'id'> & { id: number };
 export function ModelForm({ model }: Props) {
   const router = useRouter();
   const queryUtils = trpc.useContext();
+
   const editing = !!model;
   const initialFormData = editing
     ? ({
@@ -81,7 +79,6 @@ export function ModelForm({ model }: Props) {
 
   const addMutation = trpc.model.add.useMutation();
   const updateMutation = trpc.model.update.useMutation();
-  const deleteVersionMutation = trpc.model.deleteModelVersion.useMutation();
 
   const handleSubmit = (data: CreateModelProps) => {
     const commonOptions = {
@@ -118,74 +115,35 @@ export function ModelForm({ model }: Props) {
     file,
     url,
     type,
-    modelIndex,
+    versionIndex,
   }: {
     file: File | null;
     url: string | null;
     type: UploadTypeUnion;
-    modelIndex: number;
+    versionIndex: number;
   }) => {
     const isModelType = type === 'model';
 
     if (file) {
       if (isModelType) {
-        form.setFieldValue(`modelVersions.${modelIndex}.sizeKB`, file.size / 1024);
-        form.setFieldValue(`modelVersions.${modelIndex}.url`, url);
+        form.setFieldValue(`modelVersions.${versionIndex}.sizeKB`, file.size / 1024);
+        form.setFieldValue(`modelVersions.${versionIndex}.url`, url);
       } else {
-        form.setFieldValue(`modelVersions.${modelIndex}.trainingDataUrl`, url);
+        form.setFieldValue(`modelVersions.${versionIndex}.trainingDataUrl`, url);
       }
     } else {
       if (isModelType) {
-        form.setFieldValue(`modelVersions.${modelIndex}.url`, null);
-        form.setFieldValue(`modelVersions.${modelIndex}.sizeKB`, 0);
+        form.setFieldValue(`modelVersions.${versionIndex}.url`, null);
+        form.setFieldValue(`modelVersions.${versionIndex}.sizeKB`, 0);
       } else {
-        form.setFieldValue(`modelVersions.${modelIndex}.trainingDataUrl`, null);
+        form.setFieldValue(`modelVersions.${versionIndex}.trainingDataUrl`, null);
       }
     }
   };
 
-  const handleDeleteVersion = (
-    version: CreateModelProps['modelVersions'][number],
-    index: number
-  ) => {
-    if (editing && version.id) {
-      openConfirmModal({
-        title: 'Delete Version',
-        children: (
-          <Text size="sm">
-            Are you sure you want to delete this version? This action is destructive and you will
-            have to contact support to restore your data.
-          </Text>
-        ),
-        centered: true,
-        labels: { confirm: 'Delete Version', cancel: "No, don't delete it" },
-        confirmProps: { color: 'red', loading: deleteVersionMutation.isLoading },
-        onConfirm: async () => {
-          if (version.id)
-            deleteVersionMutation.mutate(
-              { id: version.id },
-              {
-                onSuccess() {
-                  queryUtils.model.getById.invalidate({ id: model.id });
-                  form.removeListItem('modelVersions', index);
-                },
-                onError(error) {
-                  const message = error.message;
-
-                  showNotification({
-                    title: 'Could not delete version',
-                    message: `An error occurred while deleting the version: ${message}`,
-                    color: 'red',
-                    icon: <IconX size={18} />,
-                  });
-                },
-              }
-            );
-        },
-      });
-    } else {
-      form.removeListItem('modelVersions', index);
-    }
+  const handleDeleteVersion = (index: number) => {
+    form.setDirty({ [`modelVersions.${index}`]: true });
+    form.removeListItem('modelVersions', index);
   };
 
   const versionsCount = form.values.modelVersions?.length ?? 0;
@@ -197,9 +155,13 @@ export function ModelForm({ model }: Props) {
   );
 
   return (
-    <Container>
+    <Container py="xl">
       <Group spacing="lg" mb="lg">
-        <ActionIcon variant="outline" size="lg" onClick={() => router.back()}>
+        <ActionIcon
+          variant="outline"
+          size="lg"
+          onClick={() => (editing ? router.push(`/models/${model.id}`) : router.back())}
+        >
           <IconArrowLeft size={20} stroke={1.5} />
         </ActionIcon>
         <Title order={3}>{model ? 'Editing model' : 'Upload model'}</Title>
@@ -224,7 +186,6 @@ export function ModelForm({ model }: Props) {
                 </Stack>
               </Paper>
               <Paper radius="md" p="xl" sx={{ position: 'relative' }} withBorder>
-                <LoadingOverlay visible={deleteVersionMutation.isLoading} />
                 <Stack>
                   <Group sx={{ justifyContent: 'space-between' }}>
                     <Title order={4}>Model Versions</Title>
@@ -251,13 +212,13 @@ export function ModelForm({ model }: Props) {
                   </Group>
                   <Stack sx={{ flexDirection: 'column-reverse' }}>
                     {form.values.modelVersions?.map((version, index) => (
-                      <React.Fragment key={index}>
+                      <React.Fragment key={version.id ?? index}>
                         <Group p="sm" sx={{ position: 'relative' }}>
                           {versionsCount > 1 && (
                             <ActionIcon
                               color="red"
                               sx={{ position: 'absolute', top: 0, right: 0 }}
-                              onClick={() => handleDeleteVersion(version, index)}
+                              onClick={() => handleDeleteVersion(index)}
                             >
                               <IconTrash size={16} stroke={1.5} />
                             </ActionIcon>
@@ -310,7 +271,7 @@ export function ModelForm({ model }: Props) {
                                     file,
                                     url,
                                     type: 'model',
-                                    modelIndex: index,
+                                    versionIndex: index,
                                   })
                                 }
                                 withAsterisk
@@ -330,7 +291,7 @@ export function ModelForm({ model }: Props) {
                                     file,
                                     url,
                                     type: 'training-images',
-                                    modelIndex: index,
+                                    versionIndex: index,
                                   })
                                 }
                               />
@@ -437,7 +398,11 @@ export function ModelForm({ model }: Props) {
         </Grid>
 
         <Group position="right" mt="lg">
-          <Button variant="outline" onClick={() => router.back()} disabled={mutating}>
+          <Button
+            variant="outline"
+            onClick={() => form.reset()}
+            disabled={!form.isDirty() || mutating}
+          >
             Discard changes
           </Button>
           <Button type="submit" loading={mutating} disabled={isUploadingImages}>

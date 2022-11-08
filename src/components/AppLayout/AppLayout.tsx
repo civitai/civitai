@@ -5,23 +5,16 @@ import { SideNavigation } from '~/components/AppLayout/SideNavigation';
 
 export function AppLayout({ children, showNavbar }: Props) {
   return (
-    <AppShell
-      padding="md"
-      header={
-        <AppHeader
-          links={
-            [
-              // { label: 'Models', url: '#' },
-              // { label: 'Link 2', url: '#' },
-            ]
-          }
-        />
-      }
-      navbar={showNavbar ? <SideNavigation /> : undefined}
-    >
-      {children}
-      <AppFooter />
-    </AppShell>
+    <>
+      <AppShell
+        padding="md"
+        header={<AppHeader />}
+        footer={<AppFooter />}
+        navbar={showNavbar ? <SideNavigation /> : undefined}
+      >
+        {children}
+      </AppShell>
+    </>
   );
 }
 

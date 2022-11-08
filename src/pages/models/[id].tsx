@@ -114,6 +114,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const { data: session } = useSession();
   const { classes } = useStyles();
   const mobile = useIsMobile();
+  const queryUtils = trpc.useContext();
 
   const { id } = props;
   const { edit } = router.query;
@@ -168,11 +169,12 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         message: 'Sending report...',
       });
     },
-    onSuccess() {
+    onSuccess(_, variables) {
       showSuccessNotification({
         title: 'Model reported',
         message: 'Your request has been received',
       });
+      queryUtils.model.getById.invalidate({ id: variables.id });
     },
     onError(error) {
       showErrorNotification({
@@ -190,6 +192,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     () => reviewsData?.pages.flatMap((x) => x.reviews) ?? [],
     [reviewsData?.pages]
   );
+  const isOwner = model?.user.id === session?.user?.id;
 
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
@@ -229,8 +232,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       </Container>
     );
   if (!model) return <NotFound />;
-  if (!!edit && model) return <ModelForm model={model} />;
-  if (model.nsfw && !session) return <SensitiveShield redirectTo={router.asPath} />;
+  if (!!edit && model && isOwner) return <ModelForm model={model} />;
+  if (model.nsfw && (!session || session.user?.blurNsfw))
+    return <SensitiveShield redirectTo={router.asPath} />;
 
   const handleDeleteModel = () => {
     openConfirmModal({
@@ -348,7 +352,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       <Meta
         title={`Civitai - ${model.name}`}
         description={model.description ?? ''}
-        image={latestVersion?.images[0].image.url}
+        image={model.nsfw ? undefined : latestVersion?.images[0].image.url}
       />
 
       <Container size="xl" py="xl">
@@ -365,7 +369,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Menu.Target>
 
               <Menu.Dropdown>
-                {session && session.user?.id === model?.user.id ? (
+                {session && isOwner ? (
                   <>
                     <Menu.Item
                       color={theme.colors.red[6]}
@@ -384,7 +388,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     </Menu.Item>
                   </>
                 ) : null}
-                {!session || session.user?.id !== model?.user.id ? (
+                {!session || !isOwner ? (
                   <>
                     <Menu.Item
                       icon={<IconFlag size={14} stroke={1.5} />}

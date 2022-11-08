@@ -3,6 +3,7 @@ import { IconUpload, IconCircleCheck, IconBan } from '@tabler/icons';
 import { useEffect, useState } from 'react';
 import { useS3Upload } from '~/hooks/use-s3-upload';
 import { UploadType, UploadTypeUnion } from '~/server/common/enums';
+import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 
 export function FileInputUpload({
@@ -36,13 +37,21 @@ export function FileInputUpload({
 
   useEffect(() => {
     async function getFileFromUrl(url: string, name: string, defaultType = 'image/jpeg') {
-      const response = await fetch(url);
-      const data = await response.blob();
+      try {
+        const response = await fetch(url);
+        const data = await response.blob();
 
-      const tempFile = new File([data], name, {
-        type: data.type || defaultType,
-      });
-      setLocalFile(tempFile);
+        const tempFile = new File([data], name, {
+          type: data.type || defaultType,
+        });
+        setLocalFile(tempFile);
+      } catch (error) {
+        const fetchError = error as Error;
+        showErrorNotification({
+          error: fetchError,
+          title: 'Could not generate file',
+        });
+      }
     }
 
     if (initialFile)

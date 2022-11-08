@@ -35,11 +35,6 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 const HEADER_HEIGHT = 70;
 
 const useStyles = createStyles((theme) => ({
-  root: {
-    position: 'relative',
-    zIndex: 1,
-  },
-
   header: {
     display: 'flex',
     alignItems: 'center',
@@ -260,7 +255,7 @@ export function AppHeader({ links }: Props) {
   ];
 
   return (
-    <Header ref={ref} height={HEADER_HEIGHT} className={classes.root}>
+    <Header ref={ref} height={HEADER_HEIGHT} fixed>
       <Container size="xl" className={classes.header}>
         <Group spacing="sm">
           <Link href="/" passHref>

@@ -1,13 +1,6 @@
 import { MetricTimeframe, Prisma, UserActivityType } from '@prisma/client';
 import { JobEndpoint } from '~/server/common/jobs';
-
-const timeframeDaysMap: Record<MetricTimeframe, number> = {
-  [MetricTimeframe.Day]: 1,
-  [MetricTimeframe.Week]: 7,
-  [MetricTimeframe.Month]: 30,
-  [MetricTimeframe.Year]: 365,
-  [MetricTimeframe.AllTime]: 365 * 10,
-};
+import { prisma } from '~/server/db/client';
 
 const METRIC_LAST_UPDATED_KEY = 'last-metrics-update';
 
@@ -16,179 +9,164 @@ export default JobEndpoint(async (req, res) => {
   // --------------------------------------
   const lastUpdate = new Date(
     ((
-      await prisma?.keyValue.findUnique({
+      await prisma.keyValue.findUnique({
         where: { key: METRIC_LAST_UPDATED_KEY },
       })
     )?.value as number) ?? 0
   );
 
-  // Get all user activities that have happened since then that affect metrics
-  // --------------------------------------
-  const recentActivities =
-    (await prisma?.userActivity.findMany({
-      where: {
-        createdAt: { gte: lastUpdate },
-        activity: { in: [UserActivityType.ModelDownload] },
-      },
-      select: {
-        activity: true,
-        details: true,
-      },
-    })) ?? [];
+  const updateMetrics = async (target: "models" | "versions") => {
+    const [tableName, tableId, viewName, viewId] = target === "models"
+      ? ["ModelMetric", "modelId", "affected_models", "model_id"]
+      : ["ModelVersionMetric", "modelVersionId", "affected_versions", "model_version_id"];
 
-  // Get all reviews that have been created/updated since then
-  // --------------------------------------
-  const recentReviews =
-    (await prisma?.review.findMany({
-      where: {
-        OR: [
-          { createdAt: { gte: new Date(lastUpdate) } },
-          { updatedAt: { gte: new Date(lastUpdate) } },
-        ],
-      },
-      select: {
-        modelId: true,
-        modelVersionId: true,
-      },
-    })) ?? [];
-
-  // Get all affected models and versions
-  // -------------------------------------
-  const affectedModels = new Set<number>();
-  const affectedVersions = new Set<number>();
-  for (const review of recentReviews) {
-    affectedModels.add(review.modelId);
-    if (review.modelVersionId) affectedVersions.add(review.modelVersionId);
+    await prisma?.$queryRawUnsafe(`
+      -- Get all user activities that have happened since then that affect metrics
+      WITH recent_activities AS 
+      (
+        SELECT 
+          CAST(CAST(a.details ->> 0 AS JSON) ->> 'modelId' AS INT) AS model_id,
+          CAST(CAST(a.details ->> 0 AS JSON) ->> 'modelVersionId' AS INT) AS model_version_id
+        FROM "UserActivity" a
+        WHERE (a."createdAt" > '${lastUpdate.toISOString()}')
+        AND (a.activity IN ('ModelDownload'))
+        
+      ),
+      -- Get all reviews that have been created/updated since then
+      recent_reviews AS
+      (
+        SELECT 
+          r."modelId" AS model_id,
+          r."modelVersionId" AS model_version_id
+        FROM "Review" r
+        WHERE (r."createdAt" > '${lastUpdate.toISOString()}' OR r."updatedAt" > '${lastUpdate.toISOString()}')
+      ),
+      -- Get all affected models
+      affected_models AS 
+      (
+          SELECT DISTINCT
+              r.model_id
+          FROM recent_reviews r
+          WHERE r.model_id IS NOT NULL
+      
+          UNION
+          
+          SELECT DISTINCT 
+              a.model_id
+          FROM recent_activities a
+          WHERE a.model_id IS NOT NULL
+      ),
+      -- Get all affected versions
+      affected_versions AS 
+      (
+          SELECT DISTINCT
+              r.model_version_id
+          FROM recent_reviews r
+          WHERE r.model_version_id IS NOT NULL
+      
+          UNION
+          
+          SELECT DISTINCT 
+              a.model_version_id
+          FROM recent_activities a
+          WHERE a.model_version_id IS NOT NULL
+      )
+      
+      -- upsert metrics for all affected models
+      -- perform a one-pass table scan producing all metrics for all affected models
+      INSERT INTO "${tableName}" ("${tableId}", timeframe, "downloadCount", "ratingCount", rating) 
+      SELECT 
+        m.${viewId},
+        tf.timeframe,
+        CASE 
+          WHEN tf.timeframe = 'AllTime' THEN download_count
+          WHEN tf.timeframe = 'Year' THEN year_download_count
+          WHEN tf.timeframe = 'Month' THEN month_download_count
+          WHEN tf.timeframe = 'Week' THEN week_download_count
+          WHEN tf.timeframe = 'Day' THEN day_download_count
+        END AS download_count,
+        CASE 
+          WHEN tf.timeframe = 'AllTime' THEN rating_count
+          WHEN tf.timeframe = 'Year' THEN year_rating_count
+          WHEN tf.timeframe = 'Month' THEN month_rating_count
+          WHEN tf.timeframe = 'Week' THEN week_rating_count
+          WHEN tf.timeframe = 'Day' THEN day_rating_count
+        END AS rating_count,
+        CASE 
+          WHEN tf.timeframe = 'AllTime' THEN rating
+          WHEN tf.timeframe = 'Year' THEN year_rating
+          WHEN tf.timeframe = 'Month' THEN month_rating
+          WHEN tf.timeframe = 'Week' THEN week_rating
+          WHEN tf.timeframe = 'Day' THEN day_rating
+        END AS rating
+      FROM
+      (
+        SELECT 
+          m.${viewId},
+          COALESCE(ds.download_count, 0) AS download_count,
+          COALESCE(ds.year_download_count, 0) AS year_download_count,
+          COALESCE(ds.month_download_count, 0) AS month_download_count,
+          COALESCE(ds.week_download_count, 0) AS week_download_count,
+          COALESCE(ds.day_download_count, 0) AS day_download_count,
+          COALESCE(rs.rating_count, 0) AS rating_count,
+          COALESCE(rs.rating, 0) AS rating,
+          COALESCE(rs.year_rating_count, 0) AS year_rating_count,
+          COALESCE(rs.year_rating, 0) AS year_rating,
+          COALESCE(rs.month_rating_count, 0) AS month_rating_count,
+          COALESCE(rs.month_rating, 0) AS month_rating,
+          COALESCE(rs.week_rating_count, 0) AS week_rating_count,
+          COALESCE(rs.week_rating, 0) AS week_rating,
+          COALESCE(rs.day_rating_count, 0) AS day_rating_count,
+          COALESCE(rs.day_rating, 0) AS day_rating
+        FROM ${viewName} m 
+        LEFT JOIN (
+          SELECT
+            a.${viewId},
+            COUNT(a.${viewId}) AS download_count,
+            SUM(CASE WHEN a.created_at >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_download_count,
+            SUM(CASE WHEN a.created_at >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_download_count,
+            SUM(CASE WHEN a.created_at >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_download_count,
+            SUM(CASE WHEN a.created_at >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_download_count	
+          FROM
+          (
+            SELECT 
+              CAST(CAST(a.details ->> 0 AS JSON) ->> '${tableId}' AS INT) AS ${viewId},
+              a."createdAt" AS created_at
+            FROM "UserActivity" a
+          ) a
+          GROUP BY a.${viewId}
+        ) ds ON m.${viewId} = ds.${viewId}
+        LEFT JOIN (
+          SELECT
+            r.${viewId},
+            COUNT(r.${viewId}) AS rating_count,
+            AVG(r.rating) AS rating,
+            SUM(CASE WHEN r.created_at >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_rating_count,
+            AVG(CASE WHEN r.created_at >= (NOW() - interval '365 days') THEN r.rating ELSE NULL END) AS year_rating,
+            SUM(CASE WHEN r.created_at >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_rating_count,
+            AVG(CASE WHEN r.created_at >= (NOW() - interval '30 days') THEN r.rating ELSE NULL END) AS month_rating,
+            SUM(CASE WHEN r.created_at >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_rating_count,
+            AVG(CASE WHEN r.created_at >= (NOW() - interval '7 days') THEN r.rating ELSE NULL END) AS week_rating,
+            SUM(CASE WHEN r.created_at >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_rating_count,
+            AVG(CASE WHEN r.created_at >= (NOW() - interval '1 days') THEN r.rating ELSE NULL END) AS day_rating
+          FROM
+          (
+            SELECT 
+              r."${tableId}" AS ${viewId},
+              r.rating,
+              r."createdAt" AS created_at
+            FROM "Review" r
+          ) r
+          GROUP BY r.${viewId}
+        ) rs ON m.${viewId} = rs.${viewId}
+      ) m
+      CROSS JOIN (
+        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+      ) tf
+      ON CONFLICT ("${tableId}", timeframe) DO UPDATE 
+        SET "downloadCount" = EXCLUDED."downloadCount", "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating;
+      `);
   }
-  for (const activities of recentActivities) {
-    const details = activities.details as Prisma.JsonObject;
-    if (details?.modelId) affectedModels.add(details.modelId as number);
-    if (details?.modelVersionId) affectedVersions.add(details.modelVersionId as number);
-  }
-
-  // Get all activities for the affected models and versions
-  // ---------------------------------------------------------
-  // TODO Optimization: Grab just affected models/versions instead of all of them when computing metrics
-  const modelActivities =
-    (await prisma?.userActivity.findMany({
-      where: {
-        activity: { in: [UserActivityType.ModelDownload] },
-      },
-      select: {
-        activity: true,
-        details: true,
-        createdAt: true,
-      },
-    })) ?? [];
-
-  const modelReviews =
-    (await prisma?.review.findMany({
-      where: {
-        modelId: { in: [...affectedModels] },
-      },
-      select: {
-        modelId: true,
-        modelVersionId: true,
-        rating: true,
-        createdAt: true,
-      },
-    })) ?? [];
-
-  // Set up updating functions
-  // --------------------------------------------
-  const updateModelMetrics = async (timeframe: MetricTimeframe) => {
-    // Get the date 24 hours ago
-    const sinceDate = new Date();
-    sinceDate.setDate(sinceDate.getDate() - timeframeDaysMap[timeframe]);
-
-    // Update the metrics for each affected model
-    for (const modelId of affectedModels) {
-      // Compute download metrics
-      const modelActivity = modelActivities.filter((a) => {
-        if (a.createdAt < sinceDate) return false;
-
-        const details = a.details as Prisma.JsonObject;
-        return details?.modelId === modelId;
-      });
-      const downloadCount = modelActivity.length;
-
-      // Compute rating metrics
-      const modelReview = modelReviews.filter(
-        (r) => r.createdAt > sinceDate && r.modelId === modelId
-      );
-      const ratingCount = modelReview.length;
-      const rating =
-        modelReview.length === 0
-          ? 0
-          : Math.round(modelReview.reduce((a, b) => a + b.rating, 0) / ratingCount);
-
-      // Upsert the metric
-      await prisma?.modelMetric.upsert({
-        where: {
-          modelId_timeframe: { modelId, timeframe },
-        },
-        create: {
-          modelId,
-          timeframe,
-          downloadCount,
-          ratingCount,
-          rating,
-        },
-        update: {
-          downloadCount,
-          ratingCount,
-          rating,
-        },
-      });
-    }
-  };
-
-  const updateModelVersionMetrics = async (timeframe: MetricTimeframe) => {
-    // Get the date 24 hours ago
-    const sinceDate = new Date();
-    sinceDate.setDate(sinceDate.getDate() - timeframeDaysMap[timeframe]);
-
-    // Update the metrics for each affected version
-    for (const modelVersionId of affectedVersions) {
-      // Compute download metrics
-      const modelActivity = modelActivities.filter((a) => {
-        if (a.createdAt < sinceDate) return false;
-
-        const details = a.details as Prisma.JsonObject;
-        return details?.modelVersionId === modelVersionId;
-      });
-      const downloadCount = modelActivity.length;
-
-      // Compute rating metrics
-      const modelReview = modelReviews.filter(
-        (r) => r.createdAt > sinceDate && r.modelVersionId === modelVersionId
-      );
-      const ratingCount = modelReview.length;
-      const rating =
-        modelReview.length === 0
-          ? 0
-          : Math.round(modelReview.reduce((a, b) => a + b.rating, 0) / ratingCount);
-
-      // Upsert the metric
-      await prisma?.modelVersionMetric.upsert({
-        where: {
-          modelVersionId_timeframe: { modelVersionId, timeframe },
-        },
-        create: {
-          modelVersionId,
-          timeframe,
-          downloadCount,
-          ratingCount,
-          rating,
-        },
-        update: {
-          downloadCount,
-          ratingCount,
-          rating,
-        },
-      });
-    }
-  };
 
   // If this is the first metric update of the day, reset the day metrics
   // -------------------------------------------------------------------
@@ -203,12 +181,10 @@ export default JobEndpoint(async (req, res) => {
     });
   }
 
-  // Update all affected metrics in each timeframe
+  // Update all affected metrics
   // --------------------------------------------
-  for (const timeframe of Object.keys(MetricTimeframe)) {
-    await updateModelMetrics(timeframe as MetricTimeframe);
-    await updateModelVersionMetrics(timeframe as MetricTimeframe);
-  }
+  await updateMetrics("models");
+  await updateMetrics("versions");
 
   // Update the last update time
   // --------------------------------------------
