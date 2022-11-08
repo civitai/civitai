@@ -69,9 +69,7 @@ export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
   type: true,
   nsfw: true,
   modelVersions: {
-    orderBy: {
-      createdAt: 'desc',
-    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: 1,
     select: {
       images: {

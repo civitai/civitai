@@ -215,7 +215,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     return () => router.beforePopState(() => true);
   }, [router, id]); // Add any state variables to dependencies array if needed.
 
-  const latestVersion = model?.modelVersions[model.modelVersions.length - 1];
+  // Latest version is the first one based on sorting (createdAt - desc)
+  const latestVersion = model?.modelVersions[0];
 
   const { openImageLightbox } = useImageLightbox({
     images: latestVersion?.images.map(({ image }) => image) ?? [],

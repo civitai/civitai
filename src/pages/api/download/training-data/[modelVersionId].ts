@@ -27,7 +27,7 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
       data: {
         userId,
         activity: UserActivityType.TrainingDataDownload,
-        details: JSON.stringify({ modelId: modelVersion.model.id, modelVersionId }),
+        details: { modelId: modelVersion.model.id, modelVersionId },
       },
     });
   } catch (error) {

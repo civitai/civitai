@@ -25,8 +25,8 @@ export default JobEndpoint(async (req, res) => {
       WITH recent_activities AS 
       (
         SELECT 
-          CAST(CAST(a.details ->> 0 AS JSON) ->> 'modelId' AS INT) AS model_id,
-          CAST(CAST(a.details ->> 0 AS JSON) ->> 'modelVersionId' AS INT) AS model_version_id
+          CAST(a.details ->> 'modelId' AS INT) AS model_id,
+          CAST(a.details ->> 'modelVersionId' AS INT) AS model_version_id
         FROM "UserActivity" a
         WHERE (a."createdAt" > '${lastUpdate.toISOString()}')
         AND (a.activity IN ('ModelDownload'))
@@ -130,7 +130,7 @@ export default JobEndpoint(async (req, res) => {
           FROM
           (
             SELECT 
-              CAST(CAST(a.details ->> 0 AS JSON) ->> '${tableId}' AS INT) AS ${viewId},
+              CAST(a.details ->> '${tableId}' AS INT) AS ${viewId},
               a."createdAt" AS created_at
             FROM "UserActivity" a
           ) a
