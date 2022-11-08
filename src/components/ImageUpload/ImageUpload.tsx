@@ -27,11 +27,11 @@ import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useListState } from '@mantine/hooks';
 import { IconGripVertical } from '@tabler/icons';
 import { useEffect, useState } from 'react';
-import { useS3Upload } from '~/hooks/use-s3-upload';
 import { blurHashImage, loadImage } from '../../utils/blurhash';
 import produce from 'immer';
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import { SortableImage } from './SortableItem';
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 
 type Props = InputWrapperProps & {
   hasPrimaryImage?: boolean;
@@ -56,7 +56,7 @@ export function ImageUpload({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  const { uploadToS3, files: imageFiles } = useS3Upload();
+  const { uploadToCF, files: imageFiles } = useCFImageUpload();
   const [files, filesHandlers] = useListState<CustomFile>(
     value.map((file, index) => ({ ...file, index: index + 1 }))
   );
@@ -86,12 +86,12 @@ export function ImageUpload({
 
     await Promise.all(
       toUpload.map(async (image) => {
-        const { url } = await uploadToS3(image.file);
+        const { id } = await uploadToCF(image.file);
         filesHandlers.setState(
           produce((current) => {
             const index = current.findIndex((item) => item.file === image.file);
             if (index === -1) return;
-            current[index].url = url;
+            current[index].url = id;
             current[index].file = undefined;
           })
         );
@@ -121,9 +121,8 @@ export function ImageUpload({
             selectedFilesHandlers.setState(allFilesSelected ? [] : files.map((file) => file.url))
           }
         />
-        <Title order={5}>{`${selectedFilesCount} ${
-          selectedFilesCount > 1 ? 'files' : 'file '
-        } selected`}</Title>
+        <Title order={5}>{`${selectedFilesCount} ${selectedFilesCount > 1 ? 'files' : 'file '
+          } selected`}</Title>
       </Group>
       <Button
         color="red"

@@ -452,6 +452,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
                 slidesToScroll={mobile ? 1 : 2}
                 withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+                loop
               >
                 {latestVersion?.images.map(({ image }) => (
                   <Carousel.Slide key={image.id}>

@@ -1,7 +1,7 @@
 import { Stack, FileInput, Progress, FileInputProps, Group, Text } from '@mantine/core';
 import { IconUpload, IconCircleCheck, IconBan } from '@tabler/icons';
 import { useEffect, useState } from 'react';
-import { useS3Upload } from '~/hooks/use-s3-upload';
+import { useS3Upload } from '~/hooks/useS3Upload';
 import { UploadType, UploadTypeUnion } from '~/server/common/enums';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 
