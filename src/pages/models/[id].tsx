@@ -69,7 +69,6 @@ import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
@@ -233,8 +232,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     );
   if (!model) return <NotFound />;
   if (!!edit && model && isOwner) return <ModelForm model={model} />;
-  if (model.nsfw && (!session || session.user?.blurNsfw))
-    return <SensitiveShield redirectTo={router.asPath} />;
+  if (model.nsfw && !session) return <SensitiveShield redirectTo={router.asPath} />;
 
   const handleDeleteModel = () => {
     openConfirmModal({
