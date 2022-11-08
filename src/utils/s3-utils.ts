@@ -1,5 +1,10 @@
 import { env } from '~/env/server.mjs';
-import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  GetObjectCommand,
+  PutObjectCommand,
+  PutBucketCorsCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const missingEnvs = (): string[] => {
@@ -18,6 +23,24 @@ const missingEnvs = (): string[] => {
   }
   return keys;
 };
+
+export async function setCors(s3: S3Client | null = null) {
+  if (!s3) s3 = await getS3Client();
+  await s3.send(
+    new PutBucketCorsCommand({
+      Bucket: env.S3_UPLOAD_BUCKET,
+      CORSConfiguration: {
+        CORSRules: [
+          {
+            AllowedHeaders: ['content-type'],
+            AllowedMethods: ['PUT', 'GET'],
+            AllowedOrigins: env.S3_ORIGINS ? env.S3_ORIGINS.split(',') : [],
+          },
+        ],
+      },
+    })
+  );
+}
 
 export function getS3Client() {
   const missing = missingEnvs();
