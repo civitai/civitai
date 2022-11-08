@@ -11,7 +11,7 @@ import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
 import type { Session } from 'next-auth';
-import { SessionProvider } from 'next-auth/react';
+import { getSession, SessionProvider } from 'next-auth/react';
 import { ReactElement, ReactNode, useState } from 'react';
 
 import { AppLayout } from '~/components/AppLayout/AppLayout';
@@ -72,10 +72,12 @@ function MyApp(props: CustomAppProps<{ session: Session | null; colorScheme: Col
 
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const { pageProps, ...appProps } = await App.getInitialProps(appContext);
+  const session = await getSession(appContext.ctx);
 
   return {
     pageProps: {
       ...pageProps,
+      session,
       colorScheme: getCookie('mantine-color-scheme', appContext.ctx) || 'light',
     },
     ...appProps,

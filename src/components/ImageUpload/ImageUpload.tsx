@@ -30,7 +30,7 @@ import { useEffect, useState } from 'react';
 import { useS3Upload } from '~/hooks/use-s3-upload';
 import { blurHashImage, loadImage } from '../../utils/blurhash';
 import produce from 'immer';
-import { ImageUploadPreview } from '~/components/ImageUpload/ImagePreview';
+import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import { SortableImage } from './SortableItem';
 
 type Props = InputWrapperProps & {

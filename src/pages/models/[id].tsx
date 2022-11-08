@@ -68,11 +68,9 @@ import { trpc } from '~/utils/trpc';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
-import { getServerAuthSession } from '~/server/common/get-server-auth-session';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
-  const session = await getServerAuthSession(context);
   const ssg = createProxySSGHelpers({
     router: appRouter,
     ctx: await createContextInner({ session: null }),
@@ -88,7 +86,6 @@ export const getServerSideProps: GetServerSideProps<{ id: number }> = async (con
     props: {
       trpcState: ssg.dehydrate(),
       id,
-      session,
     },
   };
 };
@@ -456,9 +453,18 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 slidesToScroll={mobile ? 1 : 2}
                 withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
               >
-                {latestVersion?.images.map(({ image }, index) => (
+                {latestVersion?.images.map(({ image }) => (
                   <Carousel.Slide key={image.id}>
-                    <ImagePreview {...image} aspectRatio={1} nsfw={nsfw} radius="md" />
+                    <Center style={{ height: '100%' }}>
+                      <ImagePreview
+                        {...image}
+                        // aspectRatio={1}
+                        nsfw={nsfw}
+                        radius="md"
+                        lightboxImages={latestVersion.images.map((x) => x.image)}
+                        style={{ width: '100%' }}
+                      />
+                    </Center>
                   </Carousel.Slide>
                 ))}
               </Carousel>
