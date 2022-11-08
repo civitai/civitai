@@ -143,7 +143,7 @@ model ModelMetric {
 }
 
 model ModelVersionMetric {
-  modelVersion   ModelVersion    @relation(fields: [modelVersionId], references: [id])
+  modelVersion   ModelVersion    @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   modelVersionId Int
   timeframe      MetricTimeframe
   rating         Float
@@ -186,7 +186,7 @@ model Review {
   id             Int           @id @default(autoincrement())
   model          Model         @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId        Int
-  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id])
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   modelVersionId Int?
   user           User          @relation(fields: [userId], references: [id])
   userId         Int

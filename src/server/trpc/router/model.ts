@@ -142,77 +142,73 @@ export const modelRouter = router({
         });
         const versionIds = modelVersions.map((version) => version.id).filter(Boolean);
         const versionsToDelete = currentVersions
-          .filter((version) => versionIds.includes(version.id))
+          .filter((version) => !versionIds.includes(version.id))
           .map(({ id }) => id);
 
-        const [, model] = await ctx.prisma.$transaction([
-          ctx.prisma.modelVersion.deleteMany({
-            where: { id: { in: versionsToDelete } },
-          }),
-          ctx.prisma.model.update({
-            where: { id },
-            data: {
-              ...data,
-              modelVersions: {
-                upsert: modelVersions.map(({ id = -1, images, ...version }) => {
-                  const imagesWithIndex = images.map((image, index) => ({
-                    index,
-                    userId,
-                    ...image,
-                  }));
-                  const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
-                  const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
+        const model = await ctx.prisma.model.update({
+          where: { id },
+          data: {
+            ...data,
+            modelVersions: {
+              deleteMany: { id: { in: versionsToDelete } },
+              upsert: modelVersions.map(({ id = -1, images, ...version }) => {
+                const imagesWithIndex = images.map((image, index) => ({
+                  index,
+                  userId,
+                  ...image,
+                }));
+                const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
+                const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
 
-                  return {
-                    where: { id },
-                    create: {
-                      ...version,
-                      images: {
-                        create: imagesWithIndex.map(({ index, ...image }) => ({
-                          index,
-                          image: { create: image },
-                        })),
-                      },
+                return {
+                  where: { id },
+                  create: {
+                    ...version,
+                    images: {
+                      create: imagesWithIndex.map(({ index, ...image }) => ({
+                        index,
+                        image: { create: image },
+                      })),
                     },
-                    update: {
-                      ...version,
-                      images: {
-                        deleteMany: {
-                          NOT: images.map((image) => ({ imageId: image.id })),
+                  },
+                  update: {
+                    ...version,
+                    images: {
+                      deleteMany: {
+                        NOT: images.map((image) => ({ imageId: image.id })),
+                      },
+                      create: imagesToCreate.map(({ index, ...image }) => ({
+                        index,
+                        image: { create: image },
+                      })),
+                      update: imagesToUpdate.map(({ index, ...image }) => ({
+                        where: {
+                          imageId_modelVersionId: {
+                            imageId: image.id as number,
+                            modelVersionId: id,
+                          },
                         },
-                        create: imagesToCreate.map(({ index, ...image }) => ({
+                        data: {
                           index,
-                          image: { create: image },
-                        })),
-                        update: imagesToUpdate.map(({ index, ...image }) => ({
-                          where: {
-                            imageId_modelVersionId: {
-                              imageId: image.id as number,
-                              modelVersionId: id,
-                            },
-                          },
-                          data: {
-                            index,
-                          },
-                        })),
-                      },
+                        },
+                      })),
                     },
-                  };
-                }),
-              },
-              tagsOnModels: {
-                deleteMany: {},
-                connectOrCreate: tagsToUpdate.map((tag) => ({
-                  where: { modelId_tagId: { modelId: id, tagId: tag.id as number } },
-                  create: { tagId: tag.id as number },
-                })),
-                create: tagsToCreate.map((tag) => ({
-                  tag: { create: { name: tag.name } },
-                })),
-              },
+                  },
+                };
+              }),
             },
-          }),
-        ]);
+            tagsOnModels: {
+              deleteMany: {},
+              connectOrCreate: tagsToUpdate.map((tag) => ({
+                where: { modelId_tagId: { modelId: id, tagId: tag.id as number } },
+                create: { tagId: tag.id as number },
+              })),
+              create: tagsToCreate.map((tag) => ({
+                tag: { create: { name: tag.name } },
+              })),
+            },
+          },
+        });
 
         if (!model) {
           return handleDbError({
