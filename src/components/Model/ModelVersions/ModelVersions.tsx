@@ -21,7 +21,7 @@ import {
 } from '~/components/DescriptionTable/DescriptionTable';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { ImageUploadPreview } from '~/components/ImageUpload/ImagePreview';
+import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ModelWithDetails } from '~/server/validators/models/getById';
@@ -138,6 +138,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
               {...image}
               nsfw={nsfw}
               radius="md"
+              lightboxImages={versionImages}
               sx={{
                 height: '100%',
                 width: '100%',

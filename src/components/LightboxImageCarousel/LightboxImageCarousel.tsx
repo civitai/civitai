@@ -1,11 +1,11 @@
 import { Carousel } from '@mantine/carousel';
 import { Box, CloseButton } from '@mantine/core';
 import { ContextModalProps } from '@mantine/modals';
-import { ImageSimpleModel } from '~/server/validators/image/selectors';
+import { ImagePreviewModel } from '~/server/validators/image/selectors';
 
 type Props = {
   initialSlide?: number;
-  images?: ImageSimpleModel[];
+  images?: ImagePreviewModel[];
 };
 
 export default function LightboxImageCarousel({
@@ -22,10 +22,7 @@ export default function LightboxImageCarousel({
         variant="default"
         onClick={() => context.closeModal(id)}
       />
-      <Box
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex' }}
-        // p="xl"
-      >
+      <Box style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex' }}>
         <Carousel
           height="100%"
           sx={{ flex: 1 }}
