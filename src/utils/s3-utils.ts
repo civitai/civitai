@@ -1,5 +1,5 @@
 import { env } from '~/env/server.mjs';
-import { S3, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const missingEnvs = (): string[] => {
@@ -9,9 +9,6 @@ const missingEnvs = (): string[] => {
   }
   if (!env.S3_UPLOAD_SECRET) {
     keys.push('S3_UPLOAD_SECRET');
-  }
-  if (!env.S3_UPLOAD_REGION) {
-    keys.push('S3_UPLOAD_REGION');
   }
   if (!env.S3_UPLOAD_ENDPOINT) {
     keys.push('S3_UPLOAD_ENDPOINT');
@@ -26,7 +23,7 @@ export function getS3Client() {
   const missing = missingEnvs();
   if (missing.length > 0) throw new Error(`Next S3 Upload: Missing ENVs ${missing.join(', ')}`);
 
-  return new S3({
+  return new S3Client({
     credentials: {
       accessKeyId: env.S3_UPLOAD_KEY,
       secretAccessKey: env.S3_UPLOAD_SECRET,
@@ -36,7 +33,7 @@ export function getS3Client() {
   });
 }
 
-export async function getPutUrl(key: string, s3: S3 | null = null) {
+export async function getPutUrl(key: string, s3: S3Client | null = null) {
   if (!s3) s3 = getS3Client();
 
   const bucket = env.S3_UPLOAD_BUCKET;
@@ -47,7 +44,7 @@ export async function getPutUrl(key: string, s3: S3 | null = null) {
 }
 
 const keyParser = /https:\/\/.*?\/(.*)/;
-export async function getGetUrl(key: string, s3: S3 | null = null) {
+export async function getGetUrl(key: string, s3: S3Client | null = null) {
   if (!s3) s3 = getS3Client();
 
   const bucket = env.S3_UPLOAD_BUCKET;
