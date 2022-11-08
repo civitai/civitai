@@ -27,7 +27,7 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
       data: {
         userId,
         activity: UserActivityType.ModelDownload,
-        details: JSON.stringify({ modelId: modelVersion.model.id, modelVersionId }),
+        details: { modelId: modelVersion.model.id, modelVersionId },
       },
     });
   } catch (error) {
