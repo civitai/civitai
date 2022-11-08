@@ -7,7 +7,7 @@ type Props = {
   isPrimary?: boolean;
 } & React.ComponentPropsWithoutRef<'div'>;
 
-export const ImagePreview = forwardRef<HTMLDivElement, Props>(
+export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
   ({ image, children, isPrimary, ...props }, ref) => {
     const { classes } = useStyles({ url: image?.url, isPrimary });
     if (!image) return null;
@@ -18,7 +18,7 @@ export const ImagePreview = forwardRef<HTMLDivElement, Props>(
     );
   }
 );
-ImagePreview.displayName = 'ImagePreview';
+ImageUploadPreview.displayName = 'ImagePreview';
 
 const useStyles = createStyles(
   (

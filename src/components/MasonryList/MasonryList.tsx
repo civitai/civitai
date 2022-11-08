@@ -29,6 +29,8 @@ import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useRouter } from 'next/router';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 
 type MasonryListProps = {
   columnWidth: number;
@@ -104,9 +106,8 @@ const MasonryItem = ({
 }) => {
   const { id, image, name, rank, nsfw } = data ?? {};
   const { classes } = useStyles();
-  // console.log({ index, name });
 
-  // const hasDimensions = image.width && image.height;
+  const hasDimensions = image.width && image.height;
 
   const { ref, inView } = useInView();
 
@@ -115,7 +116,7 @@ const MasonryItem = ({
     const width = itemWidth > 0 ? itemWidth : 300;
     const aspectRatio = image.width / image.height;
     const heightT = width / aspectRatio;
-    return heightT + (rank.rating ? 72 : 36);
+    return heightT + (rank.rating ? 66 : 33);
   }, [itemWidth, image.width, image.height, rank.rating]);
 
   const modelText = (
@@ -158,7 +159,7 @@ const MasonryItem = ({
   const PreviewImage = (
     <Image
       src={image.url}
-      alt={name}
+      alt={image.name ?? undefined}
       objectFit="cover"
       objectPosition="top"
       // height={hasDimensions ? `${image.height}px` : undefined}
@@ -170,7 +171,14 @@ const MasonryItem = ({
   );
 
   return (
-    <Link href={`models/${id}`} prefetch={false}>
+    <Link
+      href={{
+        pathname: `models/${id}`,
+        query: nsfw ? { showNsfw: true } : undefined,
+      }}
+      as={`models/${id}`}
+      prefetch={false}
+    >
       <Card
         ref={ref}
         withBorder
@@ -182,7 +190,7 @@ const MasonryItem = ({
         {inView && (
           <>
             {nsfw ? (
-              <SensitiveContent mediaHash={image} style={{ height: '100%' }}>
+              <SensitiveContent placeholder={<MediaHash {...image} />} style={{ height: '100%' }}>
                 {PreviewImage}
               </SensitiveContent>
             ) : (

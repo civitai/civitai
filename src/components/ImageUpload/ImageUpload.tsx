@@ -30,7 +30,7 @@ import { useEffect, useState } from 'react';
 import { useS3Upload } from '~/hooks/use-s3-upload';
 import { blurHashImage, loadImage } from '../../utils/blurhash';
 import produce from 'immer';
-import { ImagePreview } from '~/components/ImageUpload/ImagePreview';
+import { ImageUploadPreview } from '~/components/ImageUpload/ImagePreview';
 import { SortableImage } from './SortableItem';
 
 type Props = InputWrapperProps & {
@@ -186,7 +186,7 @@ export function ImageUpload({
 
                   return (
                     <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
-                      <ImagePreview image={image} isPrimary={hasPrimaryImage && index === 0}>
+                      <ImageUploadPreview image={image} isPrimary={hasPrimaryImage && index === 0}>
                         {showLoading && (
                           <RingProgress
                             sx={{ position: 'absolute' }}
@@ -219,7 +219,7 @@ export function ImageUpload({
                             }}
                           />
                         </Group>
-                      </ImagePreview>
+                      </ImageUploadPreview>
                     </SortableImage>
                   );
                 })}
@@ -228,7 +228,7 @@ export function ImageUpload({
             {hasPrimaryImage && (
               <DragOverlay adjustScale={true}>
                 {activeId && (
-                  <ImagePreview
+                  <ImageUploadPreview
                     isPrimary={files.findIndex((file) => file.url === activeId) === 0}
                     image={files.find((file) => file.url === activeId)}
                   />

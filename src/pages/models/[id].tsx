@@ -18,6 +18,7 @@ import {
   Text,
   Title,
   useMantineTheme,
+  Modal,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
@@ -67,8 +68,11 @@ import { trpc } from '~/utils/trpc';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
+import { getServerAuthSession } from '~/server/common/get-server-auth-session';
+import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
+  const session = await getServerAuthSession(context);
   const ssg = createProxySSGHelpers({
     router: appRouter,
     ctx: await createContextInner({ session: null }),
@@ -84,6 +88,7 @@ export const getServerSideProps: GetServerSideProps<{ id: number }> = async (con
     props: {
       trpcState: ssg.dehydrate(),
       id,
+      session,
     },
   };
 };
@@ -134,6 +139,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       getNextPageParam: (lastPage) => lastPage.nextCursor,
     }
   );
+  const nsfw = (router.query.showNsfw !== 'true' && model?.nsfw) ?? false;
+
   const deleteMutation = trpc.model.delete.useMutation({
     onSuccess() {
       showSuccessNotification({
@@ -225,8 +232,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     );
   if (!model) return <NotFound />;
   if (!!edit && model && isOwner) return <ModelForm model={model} />;
-  if (model.nsfw && (!session || session.user?.blurNsfw))
-    return <SensitiveShield redirectTo={router.asPath} />;
+  if (model.nsfw && !session) return <SensitiveShield redirectTo={router.asPath} />;
 
   const handleDeleteModel = () => {
     openConfirmModal({
@@ -450,17 +456,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               >
                 {latestVersion?.images.map(({ image }, index) => (
                   <Carousel.Slide key={image.id}>
-                    <AspectRatio ratio={1}>
-                      <Image
-                        src={image.url}
-                        alt={image.name ?? 'Example results of the model'}
-                        layout="fill"
-                        objectFit="cover"
-                        objectPosition="top"
-                        style={{ borderRadius: theme.spacing.md }}
-                        onClick={() => openImageLightbox({ initialSlide: index })}
-                      />
-                    </AspectRatio>
+                    <ImagePreview {...image} aspectRatio={1} nsfw={nsfw} radius="md" />
                   </Carousel.Slide>
                 ))}
               </Carousel>
@@ -477,6 +473,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               <ModelVersions
                 items={model.modelVersions}
                 initialTab={latestVersion?.id.toString()}
+                nsfw={nsfw}
               />
             </Stack>
           </Grid.Col>
@@ -583,6 +580,38 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
           </Grid.Col>
         </Grid>
       </Container>
+      <Modal
+        opened={nsfw}
+        onClose={() => router.push('/')}
+        centered
+        withCloseButton={false}
+        padding={30}
+      >
+        <Stack spacing="xl">
+          <Text align="center">The content of this model has been marked NSFW</Text>
+          <Group position="center">
+            <Button variant="default" onClick={() => router.push('/')}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                router.replace(
+                  {
+                    pathname: router.asPath,
+                    query: { ...router.query, showNsfw: true },
+                  },
+                  router.asPath,
+                  {
+                    shallow: true,
+                  }
+                );
+              }}
+            >
+              Click to view NSFW
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </>
   );
 }
