@@ -49,6 +49,7 @@ export const authOptions: NextAuthOptions = {
         localSession.user.blurNsfw = user.blurNsfw;
         localSession.user.username = user.username;
         localSession.user.tos = user.tos;
+        localSession.user.isModerator = user.isModerator;
       }
 
       return localSession;

@@ -191,7 +191,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     () => reviewsData?.pages.flatMap((x) => x.reviews) ?? [],
     [reviewsData?.pages]
   );
-  const isOwner = model?.user.id === session?.user?.id;
+  const isModerator = session?.user?.isModerator ?? false;
+  const isOwner = model?.user.id === session?.user?.id || isModerator;
 
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
@@ -387,7 +388,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     </Menu.Item>
                   </>
                 ) : null}
-                {!session || !isOwner ? (
+                {!session || !isOwner || isModerator ? (
                   <>
                     <Menu.Item
                       icon={<IconFlag size={14} stroke={1.5} />}
@@ -571,8 +572,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       {isFetchingNextPage
                         ? 'Loading more...'
                         : hasNextPage
-                        ? 'Load More'
-                        : 'Nothing more to load'}
+                          ? 'Load More'
+                          : 'Nothing more to load'}
                     </Button>
                   )}
                 </InView>

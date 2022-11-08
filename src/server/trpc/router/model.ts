@@ -2,7 +2,7 @@ import { Prisma, ReportReason } from '@prisma/client';
 import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';
 import { modelSchema } from '~/server/common/validation/model';
-import { handleDbError } from '~/server/services/errorHandling';
+import { handleAuthorizationError, handleDbError } from '~/server/services/errorHandling';
 import {
   getAllModelsSchema,
   getAllModelsSelect,
@@ -137,6 +137,13 @@ export const modelRouter = router({
           }
         ) ?? { tagsToCreate: [], tagsToUpdate: [] };
 
+        // TODO DRY: this process is repeated in several locations that need this check
+        const isModerator = ctx.session.user.isModerator;
+        if (!isModerator) {
+          const ownerId = (await ctx.prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
+          if (ownerId !== userId) return handleAuthorizationError();
+        }
+
         const currentVersions = await ctx.prisma.modelVersion.findMany({
           where: { modelId: id },
         });
@@ -228,6 +235,15 @@ export const modelRouter = router({
     .mutation(async ({ ctx, input }) => {
       try {
         const { id } = input;
+
+        // TODO DRY: this process is repeated in several locations that need this check
+        const isModerator = ctx.session.user.isModerator;
+        if (!isModerator) {
+          const userId = ctx.session.user.id;
+          const ownerId = (await ctx.prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
+          if (ownerId !== userId) return handleAuthorizationError();
+        }
+
         const model = await ctx.prisma.model.delete({ where: { id } });
 
         if (!model) {
@@ -247,6 +263,21 @@ export const modelRouter = router({
     .mutation(async ({ ctx, input }) => {
       try {
         const { id } = input;
+
+        // TODO DRY: this process is repeated in several locations that need this check
+        const isModerator = ctx.session.user.isModerator;
+        if (!isModerator) {
+          const userId = ctx.session.user.id;
+          const ownerId =
+            (
+              await ctx.prisma.modelVersion.findUnique({
+                where: { id },
+                select: { model: { select: { userId: true } } },
+              })
+            )?.model?.userId ?? 0;
+          if (ownerId !== userId) return handleAuthorizationError();
+        }
+
         const modelVersion = await ctx.prisma.modelVersion.delete({ where: { id } });
 
         if (!modelVersion) {
