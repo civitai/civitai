@@ -36,22 +36,10 @@ export function FileInputUpload({
   };
 
   useEffect(() => {
-    async function getFileFromUrl(url: string, name: string, defaultType = 'image/jpeg') {
-      try {
-        const response = await fetch(url);
-        const data = await response.blob();
-
-        const tempFile = new File([data], name, {
-          type: data.type || defaultType,
-        });
-        setLocalFile(tempFile);
-      } catch (error) {
-        const fetchError = error as Error;
-        showErrorNotification({
-          error: fetchError,
-          title: 'Could not generate file',
-        });
-      }
+    async function getFileFromUrl(url: string, name: string) {
+      const data = new Blob(['']);
+      const tempFile = new File([data], name);
+      setLocalFile(tempFile);
     }
 
     if (initialFile)
