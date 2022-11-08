@@ -47,6 +47,7 @@ export function ImageUpload({
   label,
   max = 10,
   hasPrimaryImage,
+  withAsterisk,
   ...inputWrapperProps
 }: Props) {
   const { classes } = useStyles();
@@ -146,17 +147,24 @@ export function ImageUpload({
 
   return (
     <div>
-      {hasSelectedFile ? alternateLabel : <Text>{label}</Text>}
-      <Input.Wrapper {...inputWrapperProps}>
+      <Input.Wrapper
+        label={hasSelectedFile ? alternateLabel : label}
+        labelProps={hasSelectedFile ? { className: classes.fullWidth } : undefined}
+        withAsterisk={hasSelectedFile ? false : withAsterisk}
+        {...inputWrapperProps}
+      >
         <Stack>
           <Dropzone
             accept={IMAGE_MIME_TYPE}
             onDrop={handleDrop}
             maxFiles={max}
             styles={(theme) => ({
-              root: {
-                borderColor: !!inputWrapperProps.error ? theme.colors.red[6] : undefined,
-              },
+              root: !!inputWrapperProps.error
+                ? {
+                    borderColor: theme.colors.red[6],
+                    marginBottom: theme.spacing.xs / 2,
+                  }
+                : undefined,
             })}
           >
             <Text align="center">Drop images here</Text>
@@ -170,60 +178,65 @@ export function ImageUpload({
             onDragCancel={handleDragCancel}
           >
             <SortableContext items={files.map((x) => x.url)} disabled={hasSelectedFile}>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: `repeat(3, 1fr)`,
-                  gridGap: 10,
-                  padding: 10,
-                }}
-              >
-                {files.map((image, index) => {
-                  const match = imageFiles.find((file) => image.file === file.file);
-                  const { progress } = match ?? { progress: 0 };
-                  const showLoading = match && progress < 100 && !!image.file;
-                  const selected = selectedFiles.includes(image.url);
+              {files.length > 0 ? (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: `repeat(3, 1fr)`,
+                    gridGap: 10,
+                    padding: 10,
+                  }}
+                >
+                  {files.map((image, index) => {
+                    const match = imageFiles.find((file) => image.file === file.file);
+                    const { progress } = match ?? { progress: 0 };
+                    const showLoading = match && progress < 100 && !!image.file;
+                    const selected = selectedFiles.includes(image.url);
 
-                  return (
-                    <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
-                      <ImageUploadPreview image={image} isPrimary={hasPrimaryImage && index === 0}>
-                        {showLoading && (
-                          <RingProgress
-                            sx={{ position: 'absolute' }}
-                            sections={[{ value: progress, color: 'blue' }]}
-                            size={48}
-                            thickness={4}
-                            roundCaps
-                          />
-                        )}
-                        <Group align="center">
-                          {!hasSelectedFile && (
-                            <Group>
-                              <IconGripVertical
-                                size={24}
-                                stroke={1.5}
-                                className={classes.draggableIcon}
-                                color="white"
-                              />
-                            </Group>
+                    return (
+                      <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
+                        <ImageUploadPreview
+                          image={image}
+                          isPrimary={hasPrimaryImage && index === 0}
+                        >
+                          {showLoading && (
+                            <RingProgress
+                              sx={{ position: 'absolute' }}
+                              sections={[{ value: progress, color: 'blue' }]}
+                              size={48}
+                              thickness={4}
+                              roundCaps
+                            />
                           )}
-                          <Checkbox
-                            className={classes.checkbox}
-                            size="xs"
-                            checked={selected}
-                            onChange={() => {
-                              const index = selectedFiles.indexOf(image.url);
-                              index === -1
-                                ? selectedFilesHandlers.append(image.url)
-                                : selectedFilesHandlers.remove(index);
-                            }}
-                          />
-                        </Group>
-                      </ImageUploadPreview>
-                    </SortableImage>
-                  );
-                })}
-              </div>
+                          <Group align="center">
+                            {!hasSelectedFile && (
+                              <Group>
+                                <IconGripVertical
+                                  size={24}
+                                  stroke={1.5}
+                                  className={classes.draggableIcon}
+                                  color="white"
+                                />
+                              </Group>
+                            )}
+                            <Checkbox
+                              className={classes.checkbox}
+                              size="xs"
+                              checked={selected}
+                              onChange={() => {
+                                const index = selectedFiles.indexOf(image.url);
+                                index === -1
+                                  ? selectedFilesHandlers.append(image.url)
+                                  : selectedFilesHandlers.remove(index);
+                              }}
+                            />
+                          </Group>
+                        </ImageUploadPreview>
+                      </SortableImage>
+                    );
+                  })}
+                </div>
+              ) : null}
             </SortableContext>
             {hasPrimaryImage && (
               <DragOverlay adjustScale={true}>
@@ -307,5 +320,9 @@ const useStyles = createStyles((theme, _params, getRef) => ({
       transition: 'all .1s ease',
       background: theme.fn.rgba(theme.colors.gray[0], 0.4),
     },
+  },
+
+  fullWidth: {
+    width: '100%',
   },
 }));

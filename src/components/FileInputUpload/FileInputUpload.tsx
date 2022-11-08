@@ -1,7 +1,8 @@
 import { Stack, FileInput, Progress, FileInputProps, Group, Text } from '@mantine/core';
 import { IconUpload, IconCircleCheck, IconBan } from '@tabler/icons';
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { useS3Upload } from '~/hooks/use-s3-upload';
+import useIsClient from '~/hooks/useIsClient';
 import { UploadType, UploadTypeUnion } from '~/server/common/enums';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 
@@ -9,9 +10,10 @@ export function FileInputUpload({
   uploadType = 'default',
   onChange,
   fileUrlString: initialFile,
+  fileName = decodeURIComponent(initialFile?.split('/').pop() ?? ''),
   ...props
 }: Props) {
-  const [localFile, setLocalFile] = useState<File>();
+  const isClient = useIsClient();
   const { files, uploadToS3, resetFiles } = useS3Upload();
   const { file, progress, speed, timeRemaining, status, abort } = files[0] ?? {
     file: null,
@@ -34,16 +36,11 @@ export function FileInputUpload({
     onChange(file, url);
   };
 
-  useEffect(() => {
-    async function getFileFromUrl(url: string, name: string) {
-      const data = new Blob(['']);
-      const tempFile = new File([data], name);
-      setLocalFile(tempFile);
-    }
-
-    if (initialFile)
-      getFileFromUrl(initialFile, decodeURIComponent(initialFile.split('/').pop() ?? ''));
-  }, [initialFile]);
+  // Create a local empty file to display value in file input when editing
+  const localFile = useMemo<File | undefined>(
+    () => (isClient && fileName ? new File([], fileName) : undefined),
+    [fileName, isClient]
+  );
 
   return (
     <Stack>
@@ -102,4 +99,5 @@ type Props = Omit<FileInputProps, 'icon' | 'onChange'> & {
   onChange: (file: File | null, url: string | null) => void;
   uploadType?: UploadType | UploadTypeUnion;
   fileUrlString?: string;
+  fileName?: string;
 };
