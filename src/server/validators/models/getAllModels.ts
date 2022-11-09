@@ -68,17 +68,6 @@ export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
   name: true,
   type: true,
   nsfw: true,
-  metrics: {
-    select: {
-      rating: true,
-      ratingCount: true,
-      downloadCount: true,
-      timeframe: true,
-    },
-    where: {
-      timeframe: MetricTimeframe.AllTime,
-    },
-  },
   modelVersions: {
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: 1,
@@ -101,6 +90,9 @@ export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
       downloadCountAllTime: true,
       ratingCountAllTime: true,
       ratingAllTime: true,
+      downloadCountAllTimeRank: true,
+      ratingCountAllTimeRank: true,
+      ratingAllTimeRank: true,
     },
   },
 });
@@ -114,14 +106,9 @@ type ModelListProps = Prisma.ModelGetPayload<typeof modelList>;
 export type GetAllModelsReturnType = ReturnType<typeof getAllModelsTransform>;
 
 export const getAllModelsTransform = (items: ModelListProps[]) =>
-  items.map(({ rank, modelVersions, ...item }) => {
+  items.map(({ modelVersions, ...item }) => {
     return {
       ...item,
       image: modelVersions[0]?.images[0]?.image ?? {},
-      rank: {
-        downloadCount: rank?.downloadCountAllTime,
-        ratingCount: rank?.ratingCountAllTime,
-        rating: rank?.ratingAllTime,
-      },
     };
   });

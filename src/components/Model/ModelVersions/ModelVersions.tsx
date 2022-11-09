@@ -1,19 +1,4 @@
-import {
-  Button,
-  Image,
-  Grid,
-  Rating,
-  SimpleGrid,
-  Stack,
-  Tabs,
-  Text,
-  Title,
-  createStyles,
-  Box,
-  AspectRatio,
-  Group,
-} from '@mantine/core';
-import { MetricTimeframe } from '@prisma/client';
+import { Button, Grid, Rating, SimpleGrid, Stack, Tabs, Text, Group } from '@mantine/core';
 import { IconDownload } from '@tabler/icons';
 import React from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -21,9 +6,7 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -76,21 +59,18 @@ function TabContent({ version, nsfw }: TabContentProps) {
     initialSlide: 0,
     images: version.images.map(({ image }) => image),
   });
-  const allTimeMetric = version.metrics?.find(
-    (metric) => metric.timeframe === MetricTimeframe.AllTime
-  );
 
   const versionDetails: DescriptionTableProps['items'] = [
     {
       label: 'Rating',
       value: (
         <Group spacing={4}>
-          <Rating value={allTimeMetric?.rating ?? 0} fractions={2} readOnly />
-          <Text size="sm">({allTimeMetric?.ratingCount ?? 0})</Text>
+          <Rating value={version.rank?.ratingAllTime ?? 0} fractions={2} readOnly />
+          <Text size="sm">({version.rank?.ratingCountAllTime ?? 0})</Text>
         </Group>
       ),
     },
-    { label: 'Downloads', value: (allTimeMetric?.downloadCount ?? 0).toLocaleString() },
+    { label: 'Downloads', value: (version.rank?.downloadCountAllTime ?? 0).toLocaleString() },
     { label: 'Uploaded', value: formatDate(version.createdAt) },
     { label: 'Steps', value: version.steps?.toLocaleString() ?? 0 },
     { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0 },

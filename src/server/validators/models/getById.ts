@@ -42,15 +42,11 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           },
         },
       },
-      metrics: {
+      rank: {
         select: {
-          rating: true,
-          ratingCount: true,
-          downloadCount: true,
-          timeframe: true,
-        },
-        where: {
-          timeframe: MetricTimeframe.AllTime,
+          downloadCountAllTime: true,
+          ratingCountAllTime: true,
+          ratingAllTime: true,
         },
       },
     },
@@ -66,15 +62,11 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       imagesOnReviews: { select: { image: { select: imageSimpleSelect } } },
     },
   },
-  metrics: {
+  rank: {
     select: {
-      rating: true,
-      ratingCount: true,
-      downloadCount: true,
-      timeframe: true,
-    },
-    where: {
-      timeframe: MetricTimeframe.AllTime,
+      downloadCountAllTime: true,
+      ratingCountAllTime: true,
+      ratingAllTime: true,
     },
   },
   tagsOnModels: { select: { tag: true } },

@@ -26,7 +26,7 @@ export const modelRouter = router({
         case ModelSort.HighestRated: {
           orderBy.unshift({
             rank: {
-              [`rating${input.period}`]: 'desc',
+              [`rating${input.period}Rank`]: 'asc',
             },
           });
           break;
@@ -34,7 +34,7 @@ export const modelRouter = router({
         case ModelSort.MostDownloaded: {
           orderBy.unshift({
             rank: {
-              [`downloadCount${input.period}`]: 'desc',
+              [`downloadCount${input.period}Rank`]: 'asc',
             },
           });
           break;
@@ -152,8 +152,8 @@ export const modelRouter = router({
 
         // TODO DRY: this process is repeated in several locations that need this check
         const isModerator = ctx.session.user.isModerator;
+        const ownerId = (await ctx.prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
         if (!isModerator) {
-          const ownerId = (await ctx.prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
           if (ownerId !== userId) return handleAuthorizationError();
         }
 
@@ -175,7 +175,7 @@ export const modelRouter = router({
               upsert: modelVersions.map(({ id = -1, images, ...version }) => {
                 const imagesWithIndex = images.map((image, index) => ({
                   index,
-                  userId,
+                  userId: ownerId,
                   ...image,
                 }));
                 const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);

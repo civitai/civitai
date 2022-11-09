@@ -311,42 +311,72 @@ model KeyValue {
 
 /// @view
 model ModelRank {
-  model                Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
-  modelId              Int   @id
-  downloadCountDay     Int
-  downloadCountWeek    Int
-  downloadCountMonth   Int
-  downloadCountYear    Int
-  downloadCountAllTime Int
-  ratingCountDay       Int
-  ratingCountWeek      Int
-  ratingCountMonth     Int
-  ratingCountYear      Int
-  ratingCountAllTime   Int
-  ratingDay            Int
-  ratingWeek           Int
-  ratingMonth          Int
-  ratingYear           Int
-  ratingAllTime        Int
+  model                    Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
+  modelId                  Int   @id
+  downloadCountDay         Int
+  downloadCountWeek        Int
+  downloadCountMonth       Int
+  downloadCountYear        Int
+  downloadCountAllTime     Int
+  ratingCountDay           Int
+  ratingCountWeek          Int
+  ratingCountMonth         Int
+  ratingCountYear          Int
+  ratingCountAllTime       Int
+  ratingDay                Float
+  ratingWeek               Float
+  ratingMonth              Float
+  ratingYear               Float
+  ratingAllTime            Float
+  downloadCountDayRank     Int
+  downloadCountWeekRank    Int
+  downloadCountMonthRank   Int
+  downloadCountYearRank    Int
+  downloadCountAllTimeRank Int
+  ratingCountDayRank       Int
+  ratingCountWeekRank      Int
+  ratingCountMonthRank     Int
+  ratingCountYearRank      Int
+  ratingCountAllTimeRank   Int
+  ratingDayRank            Int
+  ratingWeekRank           Int
+  ratingMonthRank          Int
+  ratingYearRank           Int
+  ratingAllTimeRank        Int
 }
 
 /// @view
 model ModelVersionRank {
-  modelVersion         ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
-  modelVersionId       Int          @id
-  downloadCountDay     Int
-  downloadCountWeek    Int
-  downloadCountMonth   Int
-  downloadCountYear    Int
-  downloadCountAllTime Int
-  ratingCountDay       Int
-  ratingCountWeek      Int
-  ratingCountMonth     Int
-  ratingCountYear      Int
-  ratingCountAllTime   Int
-  ratingDay            Int
-  ratingWeek           Int
-  ratingMonth          Int
-  ratingYear           Int
-  ratingAllTime        Int
+  modelVersion             ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
+  modelVersionId           Int          @id
+  downloadCountDay         Int
+  downloadCountWeek        Int
+  downloadCountMonth       Int
+  downloadCountYear        Int
+  downloadCountAllTime     Int
+  ratingCountDay           Int
+  ratingCountWeek          Int
+  ratingCountMonth         Int
+  ratingCountYear          Int
+  ratingCountAllTime       Int
+  ratingDay                Float
+  ratingWeek               Float
+  ratingMonth              Float
+  ratingYear               Float
+  ratingAllTime            Float
+  downloadCountDayRank     Int
+  downloadCountWeekRank    Int
+  downloadCountMonthRank   Int
+  downloadCountYearRank    Int
+  downloadCountAllTimeRank Int
+  ratingCountDayRank       Int
+  ratingCountWeekRank      Int
+  ratingCountMonthRank     Int
+  ratingCountYearRank      Int
+  ratingCountAllTimeRank   Int
+  ratingDayRank            Int
+  ratingWeekRank           Int
+  ratingMonthRank          Int
+  ratingYearRank           Int
+  ratingAllTimeRank        Int
 }

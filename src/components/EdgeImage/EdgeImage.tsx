@@ -18,7 +18,7 @@ export type EdgeImageProps = Omit<
 };
 
 function getEdgeSrc(src: string, variantParams: Omit<EdgeImageProps, 'src'>) {
-  if (src.startsWith('http')) return src;
+  if (src.startsWith('http') || src.startsWith('blob')) return src;
 
   const params = Object.entries(variantParams)
     .filter(([, value]) => value !== undefined)
@@ -46,5 +46,3 @@ export function EdgeImage({
   // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
   return <img src={src} {...imgProps} />;
 }
-
-//53b2047e-3929-42c0-6494-a359cc3af300
