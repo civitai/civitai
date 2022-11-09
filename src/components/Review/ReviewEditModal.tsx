@@ -29,9 +29,9 @@ export default function ReviewEditModal({
 
   const handleSubmit = (data: ReviewUpsertProps) => {
     mutate(data, {
-      onSuccess: ({ modelId }) => {
+      onSuccess: async (_, { modelId }) => {
         context.closeModal(id);
-        queryUtils.review.getAll.invalidate({ modelId });
+        await queryUtils.review.getAll.invalidate({ modelId });
       },
       onError: () => {
         showNotification({

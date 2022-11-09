@@ -138,7 +138,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       keepPreviousData: true,
     }
   );
-  const nsfw = (router.query.showNsfw !== 'true' && model?.nsfw) ?? false;
+  const nsfw = router.query.showNsfw !== 'true' && !!model?.nsfw;
 
   const deleteMutation = trpc.model.delete.useMutation({
     onSuccess() {
@@ -167,12 +167,12 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         message: 'Sending report...',
       });
     },
-    onSuccess(_, variables) {
+    async onSuccess(_, variables) {
       showSuccessNotification({
         title: 'Model reported',
         message: 'Your request has been received',
       });
-      queryUtils.model.getById.invalidate({ id: variables.id });
+      await queryUtils.model.getById.invalidate({ id: variables.id });
     },
     onError(error) {
       showErrorNotification({
@@ -509,8 +509,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     variant="outline"
                     fullWidth={mobile}
                     size="xs"
-                    onClick={() =>
-                      openContextModal({
+                    onClick={() => {
+                      if (!session) return router.push(`/login?returnUrl=${router.asPath}`);
+
+                      return openContextModal({
                         modal: 'reviewEdit',
                         title: `Reviewing ${model.name}`,
                         closeOnClickOutside: false,
@@ -524,8 +526,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                                 : undefined,
                           },
                         },
-                      })
-                    }
+                      });
+                    }}
                   >
                     Add Review
                   </Button>

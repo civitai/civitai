@@ -82,7 +82,7 @@ export function ModelForm({ model }: Props) {
 
   const handleSubmit = (data: CreateModelProps) => {
     const commonOptions = {
-      onSuccess(results: void | Model) {
+      async onSuccess(results: void | Model) {
         const response = results as Model;
 
         showNotification({
@@ -91,8 +91,8 @@ export function ModelForm({ model }: Props) {
           color: 'teal',
           icon: <IconCheck size={18} />,
         });
-        queryUtils.model.invalidate();
-        queryUtils.tag.invalidate();
+        await queryUtils.model.invalidate();
+        await queryUtils.tag.invalidate();
         router.push(`/models/${response.id}`);
       },
       onError(error: TRPCClientErrorBase<DefaultErrorShape>) {

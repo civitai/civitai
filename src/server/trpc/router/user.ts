@@ -1,7 +1,7 @@
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
-import { handleDbError } from '~/server/services/errorHandling';
+import { handleAuthorizationError, handleDbError } from '~/server/services/errorHandling';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc/trpc';
 
 export const userRouter = router({
@@ -66,6 +66,9 @@ export const userRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const { id, ...data } = input;
+      const currentUser = ctx.session.user;
+      if (id !== currentUser.id) return handleAuthorizationError();
+
       try {
         const updatedUser = await ctx.prisma.user.update({ where: { id }, data });
         if (!updatedUser) {
@@ -94,8 +97,11 @@ export const userRouter = router({
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
+      const { id } = input;
+      const currentUser = ctx.session.user;
+      if (id !== currentUser.id) return handleAuthorizationError();
+
       try {
-        const { id } = input;
         const user = await ctx.prisma.user.delete({ where: { id } });
 
         if (!user) {

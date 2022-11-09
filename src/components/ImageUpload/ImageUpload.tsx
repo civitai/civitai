@@ -122,8 +122,9 @@ export function ImageUpload({
             selectedFilesHandlers.setState(allFilesSelected ? [] : files.map((file) => file.url))
           }
         />
-        <Title order={5}>{`${selectedFilesCount} ${selectedFilesCount > 1 ? 'files' : 'file '
-          } selected`}</Title>
+        <Title order={5}>{`${selectedFilesCount} ${
+          selectedFilesCount > 1 ? 'files' : 'file '
+        } selected`}</Title>
       </Group>
       <Button
         color="red"

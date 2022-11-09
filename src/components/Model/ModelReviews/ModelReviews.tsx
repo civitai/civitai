@@ -66,8 +66,8 @@ function ReviewItem({ data: review }: ItemProps) {
 
   const queryUtils = trpc.useContext();
   const deleteMutation = trpc.review.delete.useMutation({
-    onSuccess() {
-      queryUtils.review.getAll.invalidate({ modelId: review.modelId });
+    async onSuccess() {
+      await queryUtils.review.getAll.invalidate({ modelId: review.modelId });
       closeAllModals();
     },
     onError(error) {
@@ -106,8 +106,8 @@ function ReviewItem({ data: review }: ItemProps) {
         message: 'Sending report...',
       });
     },
-    onSuccess() {
-      queryUtils.review.getAll.invalidate({ modelId: review.modelId });
+    async onSuccess() {
+      await queryUtils.review.getAll.invalidate({ modelId: review.modelId });
       showSuccessNotification({
         title: 'Review reported',
         message: 'Your request has been received',

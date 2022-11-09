@@ -23,6 +23,7 @@ import React from 'react';
 import { SocialLabel } from '~/components/Social/SocialLabel';
 import { BuiltInProviderType } from 'next-auth/providers';
 import { reloadSession } from './../../utils/next-auth-helpers';
+import { showSuccessNotification } from '~/utils/notifications';
 
 export default function Account({ user, providers, accounts: initialAccounts }: Props) {
   const utils = trpc.useContext();
@@ -30,10 +31,15 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
     mutateAsync: updateUserAsync,
     isLoading: updatingUser,
     error: updateUserError,
-  } = trpc.user.update.useMutation();
+  } = trpc.user.update.useMutation({
+    async onSuccess() {
+      showSuccessNotification({ message: 'Your settings have been saved' });
+      await utils.model.getAll.invalidate();
+    },
+  });
   const { mutate: deleteAccount, isLoading: deletingAccount } = trpc.account.delete.useMutation({
-    onSuccess: () => {
-      utils.account.invalidate();
+    onSuccess: async () => {
+      await utils.account.invalidate();
     },
   });
   const { data: accounts = [] } = trpc.account.getAll.useQuery(undefined, {

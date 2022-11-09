@@ -31,6 +31,7 @@ import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { useSession } from 'next-auth/react';
 
 type MasonryListProps = {
   columnWidth: number;
@@ -104,6 +105,7 @@ const MasonryItem = ({
   data: GetAllModelsReturnType[0];
   width: number;
 }) => {
+  const { data: session } = useSession();
   const { id, image, name, rank, nsfw } = data ?? {};
   const { classes } = useStyles();
 
@@ -170,10 +172,10 @@ const MasonryItem = ({
     <Link
       href={{
         pathname: `models/${id}`,
-        query: nsfw ? { showNsfw: true } : undefined,
+        query: nsfw && !session?.user?.blurNsfw ? { showNsfw: true } : undefined,
       }}
       as={`models/${id}`}
-      prefetch={false}
+      // prefetch={false}
     >
       <Card
         ref={ref}
