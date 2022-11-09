@@ -15,84 +15,87 @@ export default JobEndpoint(async (req, res) => {
     )?.value as number) ?? 0
   );
 
-  const updateMetrics = async (target: "models" | "versions") => {
-    const [tableName, tableId, viewName, viewId] = target === "models"
-      ? ["ModelMetric", "modelId", "affected_models", "model_id"]
-      : ["ModelVersionMetric", "modelVersionId", "affected_versions", "model_version_id"];
+  const updateMetrics = async (target: 'models' | 'versions') => {
+    const [tableName, tableId, viewName, viewId] =
+      target === 'models'
+        ? ['ModelMetric', 'modelId', 'affected_models', 'model_id']
+        : ['ModelVersionMetric', 'modelVersionId', 'affected_versions', 'model_version_id'];
 
     await prisma?.$queryRawUnsafe(`
       -- Get all user activities that have happened since then that affect metrics
-      WITH recent_activities AS 
+      WITH recent_activities AS
       (
-        SELECT 
+        SELECT
           CAST(a.details ->> 'modelId' AS INT) AS model_id,
           CAST(a.details ->> 'modelVersionId' AS INT) AS model_version_id
         FROM "UserActivity" a
         WHERE (a."createdAt" > '${lastUpdate.toISOString()}')
         AND (a.activity IN ('ModelDownload'))
-        
+
       ),
       -- Get all reviews that have been created/updated since then
       recent_reviews AS
       (
-        SELECT 
+        SELECT
           r."modelId" AS model_id,
           r."modelVersionId" AS model_version_id
         FROM "Review" r
         WHERE (r."createdAt" > '${lastUpdate.toISOString()}' OR r."updatedAt" > '${lastUpdate.toISOString()}')
       ),
       -- Get all affected models
-      affected_models AS 
+      affected_models AS
       (
           SELECT DISTINCT
               r.model_id
           FROM recent_reviews r
           WHERE r.model_id IS NOT NULL
-      
+
           UNION
-          
-          SELECT DISTINCT 
+
+          SELECT DISTINCT
               a.model_id
           FROM recent_activities a
+          JOIN "Model" m ON m.Id = a.model_id
           WHERE a.model_id IS NOT NULL
       ),
       -- Get all affected versions
-      affected_versions AS 
+      affected_versions AS
       (
           SELECT DISTINCT
               r.model_version_id
           FROM recent_reviews r
           WHERE r.model_version_id IS NOT NULL
-      
+
           UNION
-          
-          SELECT DISTINCT 
+
+          SELECT DISTINCT
               a.model_version_id
           FROM recent_activities a
+          JOIN "ModelVersion" m ON m.Id = a.model_version_id
           WHERE a.model_version_id IS NOT NULL
       )
-      
+
       -- upsert metrics for all affected models
       -- perform a one-pass table scan producing all metrics for all affected models
-      INSERT INTO "${tableName}" ("${tableId}", timeframe, "downloadCount", "ratingCount", rating) 
-      SELECT 
+      INSERT INTO "${tableName}" ("${tableId}", timeframe, "downloadCount", "ratingCount", rating)
+      SELECT
         m.${viewId},
         tf.timeframe,
-        CASE 
+        CASE
           WHEN tf.timeframe = 'AllTime' THEN download_count
           WHEN tf.timeframe = 'Year' THEN year_download_count
           WHEN tf.timeframe = 'Month' THEN month_download_count
           WHEN tf.timeframe = 'Week' THEN week_download_count
           WHEN tf.timeframe = 'Day' THEN day_download_count
         END AS download_count,
-        CASE 
+        CASE
           WHEN tf.timeframe = 'AllTime' THEN rating_count
           WHEN tf.timeframe = 'Year' THEN year_rating_count
           WHEN tf.timeframe = 'Month' THEN month_rating_count
           WHEN tf.timeframe = 'Week' THEN week_rating_count
           WHEN tf.timeframe = 'Day' THEN day_rating_count
         END AS rating_count,
-        CASE 
+        CASE
           WHEN tf.timeframe = 'AllTime' THEN rating
           WHEN tf.timeframe = 'Year' THEN year_rating
           WHEN tf.timeframe = 'Month' THEN month_rating
@@ -101,7 +104,7 @@ export default JobEndpoint(async (req, res) => {
         END AS rating
       FROM
       (
-        SELECT 
+        SELECT
           m.${viewId},
           COALESCE(ds.download_count, 0) AS download_count,
           COALESCE(ds.year_download_count, 0) AS year_download_count,
@@ -118,7 +121,7 @@ export default JobEndpoint(async (req, res) => {
           COALESCE(rs.week_rating, 0) AS week_rating,
           COALESCE(rs.day_rating_count, 0) AS day_rating_count,
           COALESCE(rs.day_rating, 0) AS day_rating
-        FROM ${viewName} m 
+        FROM ${viewName} m
         LEFT JOIN (
           SELECT
             a.${viewId},
@@ -126,10 +129,10 @@ export default JobEndpoint(async (req, res) => {
             SUM(CASE WHEN a.created_at >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_download_count,
             SUM(CASE WHEN a.created_at >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_download_count,
             SUM(CASE WHEN a.created_at >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_download_count,
-            SUM(CASE WHEN a.created_at >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_download_count	
+            SUM(CASE WHEN a.created_at >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_download_count
           FROM
           (
-            SELECT 
+            SELECT
               CAST(a.details ->> '${tableId}' AS INT) AS ${viewId},
               a."createdAt" AS created_at
             FROM "UserActivity" a
@@ -151,7 +154,7 @@ export default JobEndpoint(async (req, res) => {
             AVG(CASE WHEN r.created_at >= (NOW() - interval '1 days') THEN r.rating ELSE NULL END) AS day_rating
           FROM
           (
-            SELECT 
+            SELECT
               r."${tableId}" AS ${viewId},
               r.rating,
               r."createdAt" AS created_at
@@ -163,10 +166,10 @@ export default JobEndpoint(async (req, res) => {
       CROSS JOIN (
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
-      ON CONFLICT ("${tableId}", timeframe) DO UPDATE 
+      ON CONFLICT ("${tableId}", timeframe) DO UPDATE
         SET "downloadCount" = EXCLUDED."downloadCount", "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating;
       `);
-  }
+  };
 
   // If this is the first metric update of the day, reset the day metrics
   // -------------------------------------------------------------------
@@ -183,8 +186,8 @@ export default JobEndpoint(async (req, res) => {
 
   // Update all affected metrics
   // --------------------------------------------
-  await updateMetrics("models");
-  await updateMetrics("versions");
+  await updateMetrics('models');
+  await updateMetrics('versions');
 
   // Update the last update time
   // --------------------------------------------
