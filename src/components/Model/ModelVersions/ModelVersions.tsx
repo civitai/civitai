@@ -76,21 +76,21 @@ function TabContent({ version, nsfw }: TabContentProps) {
     { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0 },
     ...(version.trainingDataUrl
       ? [
-        {
-          label: 'Training Images',
-          value: (
-            <Text
-              variant="link"
-              component="a"
-              href={`/api/download/training-data/${version.id}`}
-              target="_blank"
-              download
-            >
-              Download
-            </Text>
-          ),
-        },
-      ]
+          {
+            label: 'Training Images',
+            value: (
+              <Text
+                variant="link"
+                component="a"
+                href={`/api/download/training-data/${version.id}`}
+                target="_blank"
+                download
+              >
+                Download
+              </Text>
+            ),
+          },
+        ]
       : []),
   ];
 
@@ -138,6 +138,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
               edgeImageProps={{ width: 400 }}
               nsfw={nsfw}
               radius="md"
+              aspectRatio={1}
               lightboxImages={versionImages}
               sx={{
                 height: '100%',
@@ -145,10 +146,10 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 figure: { height: '100%', display: 'flex' },
                 ...(index === 0 && !mobile
                   ? {
-                    gridColumn: '1/3',
-                    gridRow: '1/5',
-                    figure: { height: '100%', display: 'flex' },
-                  }
+                      gridColumn: '1/3',
+                      gridRow: '1/3',
+                      figure: { height: '100%', display: 'flex' },
+                    }
                   : {}),
               }}
             />
