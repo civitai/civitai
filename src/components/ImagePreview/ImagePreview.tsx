@@ -11,8 +11,7 @@ type ImagePreviewProps = {
   lightboxImages?: ImagePreviewModel[];
   image: ImagePreviewModel;
   edgeImageProps?: Omit<EdgeImageProps, 'src'>;
-} & ImagePreviewModel &
-  Omit<PaperProps, 'component'>;
+} & Omit<PaperProps, 'component'>;
 
 export function ImagePreview({
   image: { url, name, width, height, hash },

@@ -174,10 +174,10 @@ const MasonryItem = ({
     <Link
       href={{
         pathname: `models/${id}`,
-        query: nsfw && !session?.user?.blurNsfw ? { showNsfw: true } : undefined,
+        query: nsfw && session?.user?.blurNsfw ? { showNsfw: true } : undefined,
       }}
       as={`models/${id}`}
-    // prefetch={false}
+      // prefetch={false}
     >
       <Card
         ref={ref}

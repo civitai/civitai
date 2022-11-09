@@ -54,15 +54,6 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
         if (user) {
           token.user = user;
         }
-        // if (account) {
-        //   token.account = {
-        //     provider: account.provider,
-        //     accessToken: account.access_token,
-        //     accessTokenExpires: account.expires_at
-        //       ? Date.now() + account.expires_at * 1000
-        //       : undefined,
-        //   };
-        // }
       }
       return token;
     },
