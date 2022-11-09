@@ -18,7 +18,6 @@ import {
   useScroller,
   useScrollToIndex,
 } from 'masonic';
-import Image from 'next/image';
 import Link from 'next/link';
 import React, { useEffect, useRef, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
@@ -31,6 +30,7 @@ import { useRouter } from 'next/router';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
+import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 
 type MasonryListProps = {
   columnWidth: number;
@@ -157,16 +157,12 @@ const MasonryItem = ({
   );
 
   const PreviewImage = (
-    <Image
+    <EdgeImage
       src={image.url}
       alt={image.name ?? undefined}
-      objectFit="cover"
-      objectPosition="top"
-      // height={hasDimensions ? `${image.height}px` : undefined}
-      // width={hasDimensions ? `${image.width}px` : undefined}
-      // layout={!hasDimensions ? 'fill' : undefined}
-      layout="fill"
+      width={450}
       placeholder="empty"
+      style={{ width: '100%' }}
     />
   );
 

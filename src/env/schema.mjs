@@ -23,12 +23,16 @@ export const serverSchema = z.object({
   GOOGLE_CLIENT_ID: z.string(),
   GOOGLE_CLIENT_SECRET: z.string(),
   S3_UPLOAD_KEY: z.string(),
-  S3_ORIGINS: z.string(),
+  S3_ORIGINS: z.preprocess((value) => {
+    const str = String(value);
+    return str.split(',');
+  }, z.array(z.string().url()).optional()),
   S3_UPLOAD_SECRET: z.string(),
   S3_UPLOAD_REGION: z.string(),
   S3_UPLOAD_ENDPOINT: z.string().url(),
   S3_UPLOAD_BUCKET: z.string(),
-  IMAGES_TOKEN: z.string().optional(),
+  CF_ACCOUNT_ID: z.string(),
+  CF_IMAGES_TOKEN: z.string(),
 });
 
 /**
@@ -37,7 +41,7 @@ export const serverSchema = z.object({
  * To expose them to the client, prefix them with `NEXT_PUBLIC_`.
  */
 export const clientSchema = z.object({
-  // NEXT_PUBLIC_BAR: z.string(),
+  NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
 });
 
 /**
@@ -47,5 +51,5 @@ export const clientSchema = z.object({
  * @type {{ [k in keyof z.infer<typeof clientSchema>]: z.infer<typeof clientSchema>[k] | undefined }}
  */
 export const clientEnv = {
-  // NEXT_PUBLIC_BAR: process.env.NEXT_PUBLIC_BAR,
+  NEXT_PUBLIC_IMAGE_LOCATION: process.env.NEXT_PUBLIC_IMAGE_LOCATION,
 };

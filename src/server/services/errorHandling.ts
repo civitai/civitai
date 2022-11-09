@@ -24,3 +24,11 @@ export function handleDbError({
     cause: error,
   });
 }
+
+export function handleAuthorizationError(message: string | null = null) {
+  message ??= 'You are not authorized to perform this action';
+  throw new TRPCError({
+    code: 'UNAUTHORIZED',
+    message,
+  });
+}

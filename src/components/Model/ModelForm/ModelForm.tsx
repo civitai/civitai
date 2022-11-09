@@ -11,7 +11,6 @@ import {
   Paper,
   Select,
   Stack,
-  Textarea,
   TextInput,
   Title,
 } from '@mantine/core';
@@ -31,6 +30,7 @@ import { ModelWithDetails } from '~/server/validators/models/getById';
 import { trpc } from '~/utils/trpc';
 import { ImageUpload } from '~/components/ImageUpload/ImageUpload';
 import { splitUppercase } from '~/utils/string-helpers';
+import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
 
 type CreateModelProps = z.infer<typeof modelSchema>;
 type UpdateModelProps = Omit<CreateModelProps, 'id'> & { id: number };
@@ -173,15 +173,15 @@ export function ModelForm({ model }: Props) {
               <Paper radius="md" p="xl" withBorder>
                 <Stack>
                   <TextInput
+                    {...form.getInputProps('name')}
                     label="Name"
                     placeholder="Name"
                     withAsterisk
-                    {...form.getInputProps('name')}
                   />
-                  <Textarea
-                    label="About your model"
-                    placeholder="Tell us what your model does"
+                  <RichTextEditor
                     {...form.getInputProps('description')}
+                    label="About your model"
+                    description="Tell us what your model does"
                   />
                 </Stack>
               </Paper>
@@ -238,10 +238,10 @@ export function ModelForm({ model }: Props) {
                               />
                             </Grid.Col>
                             <Grid.Col span={12}>
-                              <Textarea
-                                label="Version changes or notes"
-                                placeholder="Tell us about this version"
+                              <RichTextEditor
                                 {...form.getInputProps(`modelVersions.${index}.description`)}
+                                label="Version changes or notes"
+                                description="Tell us about this version"
                               />
                             </Grid.Col>
                             <Grid.Col span={6}>
@@ -304,6 +304,7 @@ export function ModelForm({ model }: Props) {
                               <ImageUpload
                                 label="Example Images"
                                 hasPrimaryImage
+                                withAsterisk
                                 {...form.getInputProps(`modelVersions.${index}.images`)}
                               />
                             </Grid.Col>

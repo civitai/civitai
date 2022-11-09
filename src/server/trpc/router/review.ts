@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { getAllReviewsSelect } from '~/server/validators/reviews/getAllReviews';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
-import { handleDbError } from '~/server/services/errorHandling';
+import { handleAuthorizationError, handleDbError } from '~/server/services/errorHandling';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { reviewUpsertSchema } from '~/server/validators/reviews/schemas';
 import { Prisma, ReportReason } from '@prisma/client';
@@ -46,9 +46,16 @@ export const reviewRouter = router({
       return { reviews, nextCursor, totalCount };
     }),
   upsert: protectedProcedure.input(reviewUpsertSchema).mutation(async ({ ctx, input }) => {
-    // TODO - allow admin to make changes to a review?
     const { user } = ctx.session;
-    const { images = [], ...reviewInput } = input;
+    const { images = [], id, ...reviewInput } = input;
+
+    // TODO DRY: this process is repeated in several locations that need this check
+    const isModerator = user.isModerator;
+    if (!isModerator && id !== undefined) {
+      const ownerId = (await ctx.prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
+      if (ownerId !== user.id) return handleAuthorizationError();
+    }
+
     const imagesWithIndex = images.map((image, index) => ({
       userId: user.id,
       ...image,
@@ -59,7 +66,7 @@ export const reviewRouter = router({
     const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
 
     return await ctx.prisma.review.upsert({
-      where: { id: input.id ?? -1 },
+      where: { id: id ?? -1 },
       create: {
         ...reviewInput,
         userId: user.id,
@@ -101,6 +108,15 @@ export const reviewRouter = router({
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
       const { id } = input;
+
+      // TODO DRY: this process is repeated in several locations that need this check
+      const { user } = ctx.session;
+      const isModerator = user.isModerator;
+      if (!isModerator) {
+        const ownerId = (await ctx.prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
+        if (ownerId !== user.id) return handleAuthorizationError();
+      }
+
       const deleted = await ctx.prisma.review.deleteMany({
         where: { AND: { id, userId: ctx.session.user.id } },
       });

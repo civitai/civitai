@@ -69,6 +69,7 @@ import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
   const ssg = createProxySSGHelpers({
@@ -189,7 +190,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     () => reviewsData?.pages.flatMap((x) => x.reviews) ?? [],
     [reviewsData?.pages]
   );
-  const isOwner = model?.user.id === session?.user?.id;
+  const isModerator = session?.user?.isModerator ?? false;
+  const isOwner = model?.user.id === session?.user?.id || isModerator;
 
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
@@ -385,7 +387,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     </Menu.Item>
                   </>
                 ) : null}
-                {!session || !isOwner ? (
+                {!session || !isOwner || isModerator ? (
                   <>
                     <Menu.Item
                       icon={<IconFlag size={14} stroke={1.5} />}
@@ -452,6 +454,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
                 slidesToScroll={mobile ? 1 : 2}
                 withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+                loop
               >
                 {latestVersion?.images.map(({ image }) => (
                   <Carousel.Slide key={image.id}>
@@ -468,9 +471,11 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   </Carousel.Slide>
                 ))}
               </Carousel>
-              <ContentClamp maxHeight={150}>
-                <Text>{model?.description}</Text>
-              </ContentClamp>
+              {model.description ? (
+                <ContentClamp maxHeight={150}>
+                  <RenderHtml html={model.description} />
+                </ContentClamp>
+              ) : null}
             </Stack>
           </Grid.Col>
           <Grid.Col span={12} orderSm={3} my="xl">

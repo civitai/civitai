@@ -1,6 +1,7 @@
 import { Carousel } from '@mantine/carousel';
 import { Box, CloseButton } from '@mantine/core';
 import { ContextModalProps } from '@mantine/modals';
+import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImagePreviewModel } from '~/server/validators/image/selectors';
 
 type Props = {
@@ -28,6 +29,7 @@ export default function LightboxImageCarousel({
           sx={{ flex: 1 }}
           initialSlide={initialSlide}
           withIndicators
+          loop
           styles={{
             control: {
               '&[data-inactive]': {
@@ -51,10 +53,11 @@ export default function LightboxImageCarousel({
                   alignItems: 'center',
                 }}
               >
-                <img
+                <EdgeImage
                   src={image.url}
                   alt={image.name ?? undefined}
                   style={{ maxHeight: '100%', maxWidth: '100%' }}
+                  width={image.width}
                 />
               </picture>
             </Carousel.Slide>

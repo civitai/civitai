@@ -22,6 +22,7 @@ import {
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ModelWithDetails } from '~/server/validators/models/getById';
@@ -81,21 +82,21 @@ function TabContent({ version, nsfw }: TabContentProps) {
     { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0 },
     ...(version.trainingDataUrl
       ? [
-          {
-            label: 'Training Images',
-            value: (
-              <Text
-                variant="link"
-                component="a"
-                href={`/api/download/training-data/${version.id}`}
-                target="_blank"
-                download
-              >
-                Download
-              </Text>
-            ),
-          },
-        ]
+        {
+          label: 'Training Images',
+          value: (
+            <Text
+              variant="link"
+              component="a"
+              href={`/api/download/training-data/${version.id}`}
+              target="_blank"
+              download
+            >
+              Download
+            </Text>
+          ),
+        },
+      ]
       : []),
   ];
 
@@ -118,9 +119,11 @@ function TabContent({ version, nsfw }: TabContentProps) {
           </Button>
           <DescriptionTable items={versionDetails} labelWidth="30%" />
           <Title order={3}>About this version</Title>
-          <ContentClamp>
-            <Text>{version.description}</Text>
-          </ContentClamp>
+          {version.description ? (
+            <ContentClamp>
+              <RenderHtml html={version.description} />
+            </ContentClamp>
+          ) : null}
         </Stack>
       </Grid.Col>
       <Grid.Col xs={12} md={8} orderMd={1}>
@@ -145,10 +148,10 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 figure: { height: '100%', display: 'flex' },
                 ...(index === 0 && !mobile
                   ? {
-                      gridColumn: '1/3',
-                      gridRow: '1/5',
-                      figure: { height: '100%', display: 'flex' },
-                    }
+                    gridColumn: '1/3',
+                    gridRow: '1/5',
+                    figure: { height: '100%', display: 'flex' },
+                  }
                   : {}),
               }}
             />

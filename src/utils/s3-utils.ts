@@ -34,7 +34,7 @@ export async function setCors(s3: S3Client | null = null) {
           {
             AllowedHeaders: ['content-type'],
             AllowedMethods: ['PUT', 'GET'],
-            AllowedOrigins: env.S3_ORIGINS ? env.S3_ORIGINS.split(',') : [],
+            AllowedOrigins: env.S3_ORIGINS ? env.S3_ORIGINS : ['*'],
           },
         ],
       },

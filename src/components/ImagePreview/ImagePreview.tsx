@@ -3,6 +3,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreviewModel } from '~/server/validators/image/selectors';
 import Image from 'next/image';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
+import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 
 //TODO - proper image preview component with nsfw hash built in
 type ImagePreviewProps = {
@@ -38,12 +39,12 @@ export function ImagePreview({
         {nsfw ? (
           <MediaHash hash={hash} width={width} height={height} />
         ) : (
-          <Image
+          <EdgeImage
             src={url}
             alt={name ?? undefined}
-            objectFit="cover"
-            objectPosition="top"
-            layout="fill"
+            width={width}
+            height={height}
+            fit="cover"
             onClick={includeLightbox ? handleClick : undefined}
             style={includeLightbox ? { cursor: 'pointer' } : undefined}
           />
