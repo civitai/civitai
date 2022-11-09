@@ -57,7 +57,7 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
               </span>
             }
             required
-            {...form.getInputProps('tos')}
+            {...form.getInputProps('tos', { type: 'checkbox' })}
           />
           {error && (
             <Alert color="red" variant="light">

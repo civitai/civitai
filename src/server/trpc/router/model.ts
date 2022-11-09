@@ -81,6 +81,19 @@ export const modelRouter = router({
       return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
     }
   }),
+  getVersions: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
+    try {
+      const { id } = input;
+      const modelVersions = await ctx.prisma.modelVersion.findMany({
+        where: { modelId: id },
+        select: { id: true, name: true },
+      });
+
+      return modelVersions;
+    } catch (error) {
+      return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    }
+  }),
   add: protectedProcedure.input(modelSchema).mutation(async ({ ctx, input }) => {
     try {
       const userId = ctx.session.user.id;

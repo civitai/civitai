@@ -527,7 +527,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                         title: `Reviewing ${model.name}`,
                         closeOnClickOutside: false,
                         innerProps: {
-                          modelVersions: model.modelVersions.map(({ id, name }) => ({ id, name })),
                           review: {
                             modelId: model.id,
                             modelVersionId:
@@ -595,8 +594,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       {isFetchingNextPage
                         ? 'Loading more...'
                         : hasNextPage
-                          ? 'Load More'
-                          : 'Nothing more to load'}
+                        ? 'Load More'
+                        : 'Nothing more to load'}
                     </Button>
                   )}
                 </InView>
