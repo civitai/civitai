@@ -138,7 +138,8 @@ function ReviewItem({ data: review }: ItemProps) {
       {review.imagesOnReviews.map(({ image }) => (
         <Carousel.Slide key={image.id}>
           <ImagePreview
-            {...image}
+            image={image}
+            edgeImageProps={{ width: 400 }}
             aspectRatio={16 / 9}
             lightboxImages={review.imagesOnReviews.map((x) => x.image)}
           />

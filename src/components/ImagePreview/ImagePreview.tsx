@@ -1,24 +1,22 @@
 import { AspectRatio, Paper, PaperProps } from '@mantine/core';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreviewModel } from '~/server/validators/image/selectors';
-import Image from 'next/image';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeImage, EdgeImageProps } from '~/components/EdgeImage/EdgeImage';
 
 //TODO - proper image preview component with nsfw hash built in
 type ImagePreviewProps = {
   nsfw?: boolean;
   aspectRatio?: number;
   lightboxImages?: ImagePreviewModel[];
+  image: ImagePreviewModel;
+  edgeImageProps?: Omit<EdgeImageProps, 'src'>;
 } & ImagePreviewModel &
   Omit<PaperProps, 'component'>;
 
 export function ImagePreview({
-  url,
-  name,
-  hash,
-  width,
-  height,
+  image: { url, name, width, height, hash },
+  edgeImageProps = {},
   nsfw,
   aspectRatio,
   lightboxImages = [],
@@ -27,6 +25,7 @@ export function ImagePreview({
 }: ImagePreviewProps) {
   const { openImageLightbox } = useImageLightbox();
 
+  if (!edgeImageProps.width && width) edgeImageProps.width = width;
   const includeLightbox = !!lightboxImages.length;
   const handleClick = () => {
     const index = lightboxImages.findIndex((image) => image.url === url);
@@ -42,9 +41,7 @@ export function ImagePreview({
           <EdgeImage
             src={url}
             alt={name ?? undefined}
-            width={width}
-            height={height}
-            fit="cover"
+            {...edgeImageProps}
             onClick={includeLightbox ? handleClick : undefined}
             style={includeLightbox ? { cursor: 'pointer' } : undefined}
           />

@@ -2,13 +2,13 @@ import { env } from '~/env/client.mjs';
 
 // from options available in CF Flexible variants:
 // https://developers.cloudflare.com/images/cloudflare-images/transform/flexible-variants/
-type Props = Omit<
+export type EdgeImageProps = Omit<
   JSX.IntrinsicElements['img'],
   'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'loading'
 > & {
   src: string;
-  width?: number;
-  height?: number;
+  width?: number | undefined;
+  height?: number | undefined;
   fit?: 'scale-down' | 'contain' | 'cover' | 'crop' | 'pad';
   anim?: boolean;
   blur?: number; // 0-250
@@ -17,7 +17,7 @@ type Props = Omit<
   metadata?: 'keep' | 'copyright' | 'none';
 };
 
-function getEdgeSrc(src: string, variantParams: Omit<Props, 'src'>) {
+function getEdgeSrc(src: string, variantParams: Omit<EdgeImageProps, 'src'>) {
   if (src.startsWith('http')) return src;
 
   const params = Object.entries(variantParams)
@@ -38,7 +38,7 @@ export function EdgeImage({
   gravity,
   metadata,
   ...imgProps
-}: Props) {
+}: EdgeImageProps) {
   if (width) width = Math.min(width, 4096);
   if (height) height = Math.min(height, 4096);
 

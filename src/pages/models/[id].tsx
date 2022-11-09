@@ -460,7 +460,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   <Carousel.Slide key={image.id}>
                     <Center style={{ height: '100%' }}>
                       <ImagePreview
-                        {...image}
+                        image={image}
+                        edgeImageProps={{ width: 400 }}
                         // aspectRatio={1}
                         nsfw={nsfw}
                         radius="md"
@@ -585,8 +586,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       {isFetchingNextPage
                         ? 'Loading more...'
                         : hasNextPage
-                        ? 'Load More'
-                        : 'Nothing more to load'}
+                          ? 'Load More'
+                          : 'Nothing more to load'}
                     </Button>
                   )}
                 </InView>
