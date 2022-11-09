@@ -28,7 +28,7 @@ import {
 import { signOut, useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 

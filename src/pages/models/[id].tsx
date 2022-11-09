@@ -134,6 +134,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     { modelId: id, limit: 5, ...reviewFilters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
+      keepPreviousData: true,
     }
   );
   const nsfw = (router.query.showNsfw !== 'true' && model?.nsfw) ?? false;

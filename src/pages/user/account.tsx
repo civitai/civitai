@@ -48,8 +48,13 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
     <Container p={0} size="xs">
       <form
         onSubmit={form.onSubmit(async (values) => {
-          await updateUserAsync(values);
-          reloadSession();
+          await updateUserAsync({
+            id: user?.id,
+            username: values.username,
+            showNsfw: values.showNsfw,
+            blurNsfw: values.blurNsfw,
+          });
+          await reloadSession();
         })}
       >
         <Stack>
@@ -88,39 +93,43 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
             <LoadingOverlay visible={deletingAccount} />
             <Table striped withBorder>
               <tbody>
-                {Object.values(providers).map((provider) => {
-                  const account = accounts.find((account) => account.provider === provider.id);
-                  return (
-                    <tr key={provider.id}>
-                      <td>
-                        <Group position="apart">
-                          <SocialLabel
-                            key={provider.id}
-                            type={provider.id as BuiltInProviderType}
-                          />
-                          {!account ? (
-                            <Text
-                              variant="link"
-                              style={{ cursor: 'pointer' }}
-                              onClick={() => signIn(provider.id, { callbackUrl: '/user/account' })}
-                            >
-                              Connect
-                            </Text>
-                          ) : accounts.length > 1 ? (
-                            <Text
-                              variant="link"
-                              color="red"
-                              style={{ cursor: 'pointer' }}
-                              onClick={() => deleteAccount({ accountId: account.id })}
-                            >
-                              Remove
-                            </Text>
-                          ) : null}
-                        </Group>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {Object.values(providers)
+                  .filter((provider) => provider.type === 'oauth')
+                  .map((provider) => {
+                    const account = accounts.find((account) => account.provider === provider.id);
+                    return (
+                      <tr key={provider.id}>
+                        <td>
+                          <Group position="apart">
+                            <SocialLabel
+                              key={provider.id}
+                              type={provider.id as BuiltInProviderType}
+                            />
+                            {!account ? (
+                              <Text
+                                variant="link"
+                                style={{ cursor: 'pointer' }}
+                                onClick={() =>
+                                  signIn(provider.id, { callbackUrl: '/user/account' })
+                                }
+                              >
+                                Connect
+                              </Text>
+                            ) : accounts.length > 1 ? (
+                              <Text
+                                variant="link"
+                                color="red"
+                                style={{ cursor: 'pointer' }}
+                                onClick={() => deleteAccount({ accountId: account.id })}
+                              >
+                                Remove
+                              </Text>
+                            ) : null}
+                          </Group>
+                        </td>
+                      </tr>
+                    );
+                  })}
               </tbody>
             </Table>
           </div>

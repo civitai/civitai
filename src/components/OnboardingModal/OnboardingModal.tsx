@@ -2,7 +2,7 @@ import { ContextModalProps } from '@mantine/modals';
 import { Button, Checkbox, Stack, TextInput, Text, Alert } from '@mantine/core';
 import { useForm, zodResolver } from '@mantine/form';
 import { z } from 'zod';
-import { signIn, useSession } from 'next-auth/react';
+import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { trpc } from '~/utils/trpc';
 import { reloadSession } from './../../utils/next-auth-helpers';
@@ -25,8 +25,8 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
     mutate(
       { ...session.data?.user, ...values },
       {
-        onSuccess: () => {
-          reloadSession();
+        onSuccess: async () => {
+          await reloadSession();
           context.closeModal(id);
         },
       }

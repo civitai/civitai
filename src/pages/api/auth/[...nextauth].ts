@@ -1,4 +1,4 @@
-import NextAuth, { type NextAuthOptions } from 'next-auth';
+import NextAuth, { Session, type NextAuthOptions } from 'next-auth';
 import DiscordProvider from 'next-auth/providers/discord';
 import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
@@ -8,6 +8,7 @@ import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import { env } from '~/env/server.mjs';
 import { prisma } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
+import { NextApiRequest, NextApiResponse } from 'next';
 
 const setUserName = async (email: string) => {
   try {
@@ -26,9 +27,12 @@ const setUserName = async (email: string) => {
   }
 };
 
-export const authOptions: NextAuthOptions = {
+export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   adapter: PrismaAdapter(prisma),
-  // Include user.id on session
+  session: {
+    strategy: 'jwt',
+    maxAge: 30 * 24 * 60 * 60, // 30 days
+  },
   events: {
     createUser: async ({ user }) => {
       if (!user.email) throw new Error('There is no email associated with this account');
@@ -40,17 +44,33 @@ export const authOptions: NextAuthOptions = {
     },
   },
   callbacks: {
-    session: async ({ session, user }) => {
-      const localSession = { ...session };
-
-      if (localSession.user) {
-        localSession.user.id = Number(user.id);
-        localSession.user.showNsfw = user.showNsfw;
-        localSession.user.blurNsfw = user.blurNsfw;
-        localSession.user.username = user.username;
-        localSession.user.tos = user.tos;
+    jwt: async ({ token, user, account }) => {
+      if (req.url === '/api/auth/session?update' && token.email) {
+        const user = await prisma.user.findUnique({ where: { email: token.email } });
+        token.user = user;
+      } else {
+        // have to do this to be able to connect to other providers
+        token.sub = Number(token.sub) as any;
+        if (user) {
+          token.user = user;
+        }
+        // if (account) {
+        //   token.account = {
+        //     provider: account.provider,
+        //     accessToken: account.access_token,
+        //     accessTokenExpires: account.expires_at
+        //       ? Date.now() + account.expires_at * 1000
+        //       : undefined,
+        //   };
+        // }
       }
-
+      return token;
+    },
+    session: async ({ session, token }) => {
+      const localSession = { ...session };
+      if (token.user) {
+        localSession.user = token.user as Session['user'];
+      }
       return localSession;
     },
   },
@@ -73,6 +93,10 @@ export const authOptions: NextAuthOptions = {
     signIn: '/login',
     error: '/login',
   },
+});
+
+const authOptions = async (req: NextApiRequest, res: NextApiResponse) => {
+  return NextAuth(req, res, createAuthOptions(req));
 };
 
-export default NextAuth(authOptions);
+export default authOptions;

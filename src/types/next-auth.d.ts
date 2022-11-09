@@ -6,6 +6,7 @@ interface ExtendedUser {
   blurNsfw: boolean;
   username?: string;
   tos?: boolean;
+  isModerator?: boolean;
 }
 
 declare module 'next-auth' {
@@ -19,5 +20,6 @@ declare module 'next-auth' {
    */
   interface Session {
     user?: ExtendedUser & DefaultSession['user'];
+    error?: string;
   }
 }
