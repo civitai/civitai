@@ -58,13 +58,14 @@ export const reviewRouter = router({
 
     // TODO DRY: this process is repeated in several locations that need this check
     const isModerator = user.isModerator;
+    let ownerId = user.id;
     if (!isModerator && id !== undefined) {
-      const ownerId = (await ctx.prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
+      ownerId = (await ctx.prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
       if (ownerId !== user.id) return handleAuthorizationError();
     }
 
     const imagesWithIndex = images.map((image, index) => ({
-      userId: user.id,
+      userId: ownerId,
       ...image,
       index,
     }));
@@ -76,7 +77,7 @@ export const reviewRouter = router({
       where: { id: id ?? -1 },
       create: {
         ...reviewInput,
-        userId: user.id,
+        userId: ownerId,
         imagesOnReviews: {
           create: imagesWithIndex.map(({ index, ...image }) => ({
             index,
