@@ -140,7 +140,7 @@ function ReviewItem({ data: review }: ItemProps) {
           <ImagePreview
             image={image}
             edgeImageProps={{ width: 400 }}
-            aspectRatio={16 / 9}
+            aspectRatio={1}
             lightboxImages={review.imagesOnReviews.map((x) => x.image)}
           />
         </Carousel.Slide>
@@ -221,9 +221,7 @@ function ReviewItem({ data: review }: ItemProps) {
             <SensitiveContent
               controls={<SensitiveContent.Toggle my="xs" mx="md" />}
               placeholder={
-                <AspectRatio ratio={16 / 9}>
-                  {firstImage && <MediaHash {...firstImage} />}
-                </AspectRatio>
+                <AspectRatio ratio={1}>{firstImage && <MediaHash {...firstImage} />}</AspectRatio>
               }
             >
               {carousel}
