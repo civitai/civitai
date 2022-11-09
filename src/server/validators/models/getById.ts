@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { MetricTimeframe, Prisma } from '@prisma/client';
 import { imageDetailsSelect, imageSimpleSelect } from '~/server/validators/image/selectors';
 
 export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
@@ -42,6 +42,17 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           },
         },
       },
+      metrics: {
+        select: {
+          rating: true,
+          ratingCount: true,
+          downloadCount: true,
+          timeframe: true,
+        },
+        where: {
+          timeframe: MetricTimeframe.AllTime,
+        },
+      },
     },
   },
   reviews: {
@@ -55,8 +66,18 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       imagesOnReviews: { select: { image: { select: imageSimpleSelect } } },
     },
   },
+  metrics: {
+    select: {
+      rating: true,
+      ratingCount: true,
+      downloadCount: true,
+      timeframe: true,
+    },
+    where: {
+      timeframe: MetricTimeframe.AllTime,
+    },
+  },
   tagsOnModels: { select: { tag: true } },
-  rank: true,
 });
 
 const modelWithDetails = Prisma.validator<Prisma.ModelArgs>()({

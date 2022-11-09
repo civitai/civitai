@@ -32,6 +32,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useSession } from 'next-auth/react';
+import { MetricTimeframe } from '@prisma/client';
 
 type MasonryListProps = {
   columnWidth: number;
@@ -106,7 +107,8 @@ const MasonryItem = ({
   width: number;
 }) => {
   const { data: session } = useSession();
-  const { id, image, name, rank, nsfw } = data ?? {};
+  const { id, image, name, rank, metrics, nsfw } = data ?? {};
+  const allTimeMetric = metrics?.find((metric) => metric.timeframe === MetricTimeframe.AllTime);
   const { classes } = useStyles();
 
   const hasDimensions = image.width && image.height;
@@ -122,21 +124,21 @@ const MasonryItem = ({
   }, [itemWidth, image.width, image.height, rank.rating]);
 
   const modelText = (
-    <Text size={14} lineClamp={2} style={{ flex: 1 }}>
+    <Text size={14} weight={500} lineClamp={2} style={{ flex: 1 }}>
       {name}
     </Text>
   );
 
   const modelRating = (
     <Group spacing={5}>
-      <Rating value={rank.rating} fractions={2} readOnly size="xs" />
-      <Text size="xs">({(rank.ratingCount ?? 0).toString()})</Text>
+      <Rating value={allTimeMetric?.rating ?? 0} fractions={2} readOnly size="xs" />
+      <Text size="xs">({(allTimeMetric?.ratingCount ?? 0).toString()})</Text>
     </Group>
   );
 
   const modelDownloads = (
     <Group spacing={5} align="bottom">
-      <Text size="xs">{abbreviateNumber(rank.downloadCount ?? 0).toString()}</Text>
+      <Text size="xs">{abbreviateNumber(allTimeMetric?.downloadCount ?? 0).toString()}</Text>
       <IconDownload size={16} />
     </Group>
   );
@@ -175,7 +177,7 @@ const MasonryItem = ({
         query: nsfw && !session?.user?.blurNsfw ? { showNsfw: true } : undefined,
       }}
       as={`models/${id}`}
-      // prefetch={false}
+    // prefetch={false}
     >
       <Card
         ref={ref}
@@ -195,7 +197,7 @@ const MasonryItem = ({
               PreviewImage
             )}
             <Box p="xs" className={classes.content}>
-              {!!rank.rating ? withRating : withoutRating}
+              {!!allTimeMetric?.rating ? withRating : withoutRating}
             </Box>
           </>
         )}

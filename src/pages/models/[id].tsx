@@ -23,7 +23,7 @@ import {
 import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { ReportReason } from '@prisma/client';
+import { MetricTimeframe, ReportReason } from '@prisma/client';
 import {
   IconArrowsSort,
   IconCopy,
@@ -282,7 +282,16 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
     {
       label: 'Downloads',
-      value: <Text>{model?.rank?.downloadCountAllTime.toLocaleString() ?? 0}</Text>,
+      value: (
+        <Text>
+          {
+            // TODO DRY: This is used in several places
+            model?.metrics
+              ?.find((x) => x.timeframe == MetricTimeframe.AllTime)
+              ?.downloadCount.toLocaleString() ?? 0
+          }
+        </Text>
+      ),
     },
     {
       label: 'Last Update',
@@ -408,7 +417,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Menu.Dropdown>
             </Menu>
           </Group>
-          <ModelRating rank={model.rank} />
+          <ModelRating metrics={model.metrics} />
         </Stack>
         <Grid gutter="xl">
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
@@ -497,7 +506,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 <Stack spacing={4}>
                   <Group spacing={4}>
                     <Title order={3}>Reviews</Title>
-                    <ModelRating rank={model.rank} />
+                    <ModelRating metrics={model.metrics} />
                   </Group>
                   <Text
                     size="md"
