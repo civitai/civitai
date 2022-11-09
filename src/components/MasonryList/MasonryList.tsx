@@ -120,7 +120,7 @@ const MasonryItem = ({
     const aspectRatio = image.width / image.height;
     const heightT = width / aspectRatio;
     return heightT + (rank?.ratingAllTime ? 66 : 33);
-  }, [itemWidth, image.width, image.height, rank.ratingAllTime]);
+  }, [itemWidth, image.width, image.height, rank?.ratingAllTime]);
 
   const modelText = (
     <Text size={14} weight={500} lineClamp={2} style={{ flex: 1 }}>
