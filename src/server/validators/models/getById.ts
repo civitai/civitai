@@ -1,4 +1,4 @@
-import { MetricTimeframe, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { imageDetailsSelect, imageSimpleSelect } from '~/server/validators/image/selectors';
 
 export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
