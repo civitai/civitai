@@ -132,7 +132,9 @@ function TabContent({ version, nsfw }: TabContentProps) {
             {`Download (${formatKBytes(version.sizeKB)})`}
           </Button>
           <DescriptionTable items={versionDetails} labelWidth="30%" />
-          <Title order={3}>About this version</Title>
+          <Text size={16} weight={500}>
+            About this version
+          </Text>
           {version.description ? (
             <ContentClamp>
               <RenderHtml html={version.description} />

@@ -1,4 +1,4 @@
-import { Group, Loader, Stack, Container, Center, ThemeIcon, Text } from '@mantine/core';
+import { Group, Loader, Stack, Container, Center, ThemeIcon, Text, Title } from '@mantine/core';
 import Head from 'next/head';
 import { useEffect, useMemo } from 'react';
 import { trpc } from '~/utils/trpc';
@@ -52,6 +52,7 @@ function Home() {
         <Center>test</Center>
       </Box> */}
       <Container size="xl" p={0}>
+        {filters.user && <Title>Models by {filters.user}</Title>}
         <Stack spacing="xs">
           <Group position="apart">
             <ListSort />

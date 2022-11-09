@@ -57,7 +57,7 @@ export default function LightboxImageCarousel({
                   src={image.url}
                   alt={image.name ?? undefined}
                   style={{ maxHeight: '100%', maxWidth: '100%' }}
-                  width={image.width}
+                  width={image.width ?? 1200}
                 />
               </picture>
             </Carousel.Slide>
