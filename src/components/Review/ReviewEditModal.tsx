@@ -10,7 +10,6 @@ import { trpc } from '~/utils/trpc';
 
 type ReviewModelProps = {
   review: ReviewUpsertProps;
-  modelVersions: { id: number; name: string }[];
 };
 
 export default function ReviewEditModal({
@@ -19,12 +18,16 @@ export default function ReviewEditModal({
   innerProps,
 }: ContextModalProps<ReviewModelProps>) {
   const queryUtils = trpc.useContext();
-  const { modelVersions, review } = innerProps;
+  const { review } = innerProps;
   const { mutate, isLoading } = trpc.review.upsert.useMutation();
 
   const form = useForm<ReviewUpsertProps>({
     validate: zodResolver(reviewUpsertSchema),
     initialValues: review,
+  });
+
+  const { data: versions = [] } = trpc.model.getVersions.useQuery({
+    id: review.modelId,
   });
 
   const handleSubmit = (data: ReviewUpsertProps) => {
@@ -50,7 +53,7 @@ export default function ReviewEditModal({
         <Stack>
           <Select
             {...form.getInputProps('modelVersionId')}
-            data={modelVersions.map(({ id, name }) => ({ label: name, value: id }))}
+            data={versions.map(({ id, name }) => ({ label: name, value: id }))}
             label="Version of the model"
             placeholder="Select a version"
             required
@@ -66,7 +69,7 @@ export default function ReviewEditModal({
           />
           <ImageUpload label="Generated Images" max={5} {...form.getInputProps('images')} />
           <Checkbox
-            {...form.getInputProps('nsfw')}
+            {...form.getInputProps('nsfw', { type: 'checkbox' })}
             label="This review or images associated with it are NSFW"
           />
           <Group position="apart">

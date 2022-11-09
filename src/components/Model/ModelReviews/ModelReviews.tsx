@@ -13,10 +13,10 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
+import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { ReportReason } from '@prisma/client';
-import { IconDotsVertical, IconFlag, IconTrash } from '@tabler/icons';
+import { IconDotsVertical, IconEdit, IconFlag, IconTrash } from '@tabler/icons';
 import dayjs from 'dayjs';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
@@ -165,13 +165,28 @@ function ReviewItem({ data: review }: ItemProps) {
             </Menu.Target>
             <Menu.Dropdown>
               {isOwner ? (
-                <Menu.Item
-                  icon={<IconTrash size={14} stroke={1.5} />}
-                  color="red"
-                  onClick={handleDeleteReview}
-                >
-                  Delete review
-                </Menu.Item>
+                <>
+                  <Menu.Item
+                    icon={<IconTrash size={14} stroke={1.5} />}
+                    color="red"
+                    onClick={handleDeleteReview}
+                  >
+                    Delete review
+                  </Menu.Item>
+                  <Menu.Item
+                    icon={<IconEdit size={14} stroke={1.5} />}
+                    onClick={() =>
+                      openContextModal({
+                        modal: 'reviewEdit',
+                        title: `Editing review`,
+                        closeOnClickOutside: false,
+                        innerProps: { review },
+                      })
+                    }
+                  >
+                    Edit review
+                  </Menu.Item>
+                </>
               ) : null}
               {!session || !isOwner ? (
                 <>
