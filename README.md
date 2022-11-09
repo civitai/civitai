@@ -2,6 +2,7 @@
 [![Forks][forks-shield]][forks-url]
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
+[![Apache License 2.0][license-shield]][license-url]
 
 <br />
 <div align="center">
@@ -118,3 +119,15 @@ Support this project by becoming a sponsor. Your logo will show up here with a l
 
 ## License
 Apache License 2.0 - Please have a look at the [LICENSE](/LICENSE) for more details.
+
+
+[contributors-shield]: https://img.shields.io/github/contributors/civitai/civitai.svg?style=for-the-badge
+[contributors-url]: https://github.com/civitai/civitai/graphs/contributors
+[forks-shield]: https://img.shields.io/github/forks/civitai/civitai.svg?style=for-the-badge
+[forks-url]: https://github.com/civitai/civitai/network/members
+[stars-shield]: https://img.shields.io/github/stars/civitai/civitai.svg?style=for-the-badge
+[stars-url]: https://github.com/civitai/civitai/stargazers
+[issues-shield]: https://img.shields.io/github/issues/civitai/civitai.svg?style=for-the-badge
+[issues-url]: https://github.com/civitai/civitai/issues
+[license-shield]: https://img.shields.io/github/license/civitai/civitai.svg?style=for-the-badge
+[license-url]: https://github.com/civitai/civitai/blob/master/LICENSE
