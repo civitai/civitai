@@ -347,9 +347,12 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       <Container size="xl" py="xl">
         <Stack spacing="xs" mb="xl">
           <Group align="center" sx={{ justifyContent: 'space-between' }}>
-            <Title className={classes.title} order={1}>
-              {model?.name}
-            </Title>
+            <Group align="center">
+              <Title className={classes.title} order={1} sx={{ paddingBottom: mobile ? 0 : 8 }}>
+                {model?.name}
+              </Title>
+              <ModelRating rank={model.rank} size="lg" />
+            </Group>
             <Menu position="bottom-end" transition="pop-top-right">
               <Menu.Target>
                 <ActionIcon variant="outline">
@@ -398,7 +401,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Menu.Dropdown>
             </Menu>
           </Group>
-          <ModelRating rank={model.rank} />
         </Stack>
         <Grid gutter="xl">
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
@@ -575,8 +577,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       {isFetchingNextPage
                         ? 'Loading more...'
                         : hasNextPage
-                        ? 'Load More'
-                        : 'Nothing more to load'}
+                          ? 'Load More'
+                          : 'Nothing more to load'}
                     </Button>
                   )}
                 </InView>

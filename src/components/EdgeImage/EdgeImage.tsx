@@ -46,5 +46,3 @@ export function EdgeImage({
   // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
   return <img src={src} {...imgProps} />;
 }
-
-//53b2047e-3929-42c0-6494-a359cc3af300
