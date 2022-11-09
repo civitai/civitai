@@ -31,6 +31,7 @@ import { trpc } from '~/utils/trpc';
 import { ImageUpload } from '~/components/ImageUpload/ImageUpload';
 import { splitUppercase } from '~/utils/string-helpers';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
+import { randomId } from '@mantine/hooks';
 
 type CreateModelProps = z.infer<typeof modelSchema>;
 type UpdateModelProps = Omit<CreateModelProps, 'id'> & { id: number };
@@ -205,6 +206,7 @@ export function ModelForm({ model }: Props) {
                             sizeKB: 0,
                             trainingDataUrl: '',
                             images: [],
+                            key: randomId(),
                           },
                           0
                         )
@@ -216,7 +218,7 @@ export function ModelForm({ model }: Props) {
                   </Group>
                   <Stack>
                     {form.values.modelVersions?.map((version, index) => (
-                      <React.Fragment key={version.id ?? index}>
+                      <React.Fragment key={version.id ?? version.key}>
                         <Group p="sm" sx={{ position: 'relative' }}>
                           {versionsCount > 1 && (
                             <ActionIcon

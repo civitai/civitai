@@ -1,7 +1,6 @@
 import { Carousel } from '@mantine/carousel';
 import {
   ActionIcon,
-  AspectRatio,
   Badge,
   Button,
   Center,
@@ -23,7 +22,7 @@ import {
 import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { MetricTimeframe, ReportReason } from '@prisma/client';
+import { ReportReason } from '@prisma/client';
 import {
   IconArrowsSort,
   IconCopy,
@@ -37,7 +36,6 @@ import {
 import { createProxySSGHelpers } from '@trpc/react-query/ssg';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { useSession } from 'next-auth/react';
-import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
@@ -65,7 +63,6 @@ import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
@@ -78,10 +75,7 @@ export const getServerSideProps: GetServerSideProps<{ id: number }> = async (con
     transformer: superjson,
   });
   const id = Number(context.params?.id as string);
-  await Promise.all([
-    ssg.model.getById.prefetch({ id }),
-    ssg.review.getAll.prefetchInfinite({ modelId: id }),
-  ]);
+  await ssg.model.getById.prefetch({ id });
 
   return {
     props: {
@@ -134,6 +128,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   } = trpc.review.getAll.useInfiniteQuery(
     { modelId: id, limit: 5, ...reviewFilters },
     {
+      // enabled: !edit,
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       keepPreviousData: true,
     }
@@ -217,11 +212,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model?.modelVersions[0];
-
-  const { openImageLightbox } = useImageLightbox({
-    images: latestVersion?.images.map(({ image }) => image) ?? [],
-    initialSlide: 0,
-  });
 
   if (loadingModel)
     return (
@@ -585,8 +575,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       {isFetchingNextPage
                         ? 'Loading more...'
                         : hasNextPage
-                          ? 'Load More'
-                          : 'Nothing more to load'}
+                        ? 'Load More'
+                        : 'Nothing more to load'}
                     </Button>
                   )}
                 </InView>

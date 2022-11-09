@@ -8,7 +8,7 @@ type DirectUploadResponse = {
     uploadURL: string;
     id: string;
   };
-  result_info: any;
+  result_info: unknown;
   errors: string[];
   messages: string[];
 };
@@ -20,7 +20,7 @@ const missingEnvs = (): string[] => {
   return keys;
 };
 
-async function getUploadUrl(userId: number, metadata: Record<string, any> | null = null) {
+async function getUploadUrl(userId: number, metadata: Record<string, unknown> | null = null) {
   const missing = missingEnvs();
   if (missing.length > 0)
     throw new Error(`CloudFlare Image Upload: Missing ENVs ${missing.join(', ')}`);

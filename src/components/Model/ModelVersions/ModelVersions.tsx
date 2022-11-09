@@ -1,19 +1,4 @@
-import {
-  Button,
-  Image,
-  Grid,
-  Rating,
-  SimpleGrid,
-  Stack,
-  Tabs,
-  Text,
-  Title,
-  createStyles,
-  Box,
-  AspectRatio,
-  Group,
-} from '@mantine/core';
-import { MetricTimeframe } from '@prisma/client';
+import { Button, Grid, Rating, SimpleGrid, Stack, Tabs, Text, Group } from '@mantine/core';
 import { IconDownload } from '@tabler/icons';
 import React from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -21,9 +6,7 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -93,21 +76,21 @@ function TabContent({ version, nsfw }: TabContentProps) {
     { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0 },
     ...(version.trainingDataUrl
       ? [
-        {
-          label: 'Training Images',
-          value: (
-            <Text
-              variant="link"
-              component="a"
-              href={`/api/download/training-data/${version.id}`}
-              target="_blank"
-              download
-            >
-              Download
-            </Text>
-          ),
-        },
-      ]
+          {
+            label: 'Training Images',
+            value: (
+              <Text
+                variant="link"
+                component="a"
+                href={`/api/download/training-data/${version.id}`}
+                target="_blank"
+                download
+              >
+                Download
+              </Text>
+            ),
+          },
+        ]
       : []),
   ];
 
@@ -162,10 +145,10 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 figure: { height: '100%', display: 'flex' },
                 ...(index === 0 && !mobile
                   ? {
-                    gridColumn: '1/3',
-                    gridRow: '1/5',
-                    figure: { height: '100%', display: 'flex' },
-                  }
+                      gridColumn: '1/3',
+                      gridRow: '1/5',
+                      figure: { height: '100%', display: 'flex' },
+                    }
                   : {}),
               }}
             />
