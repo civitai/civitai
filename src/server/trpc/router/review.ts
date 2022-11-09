@@ -43,7 +43,14 @@ export const reviewRouter = router({
         nextCursor = nextItem?.id;
       }
 
-      return { reviews, nextCursor, totalCount };
+      return {
+        reviews: reviews.map(({ imagesOnReviews, ...review }) => ({
+          ...review,
+          images: imagesOnReviews.map(({ image }) => image),
+        })),
+        nextCursor,
+        totalCount,
+      };
     }),
   upsert: protectedProcedure.input(reviewUpsertSchema).mutation(async ({ ctx, input }) => {
     const { user } = ctx.session;

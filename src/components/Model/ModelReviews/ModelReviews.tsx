@@ -15,7 +15,7 @@ import {
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { ReportReason } from '@prisma/client';
+import { Image, ReportReason } from '@prisma/client';
 import { IconDotsVertical, IconEdit, IconFlag, IconTrash } from '@tabler/icons';
 import dayjs from 'dayjs';
 import { useSession } from 'next-auth/react';
@@ -53,8 +53,12 @@ export function ModelReviews({ items, loading = false }: Props) {
   );
 }
 
+type ModReviewDetails = Omit<ReviewDetails, 'imagesOnReviews'> & {
+  images: Image[];
+};
+
 type Props = {
-  items: ReviewDetails[];
+  items: ModReviewDetails[];
   onFilterChange: (values: ReviewFilter[]) => void;
   loading?: boolean;
 };
@@ -129,19 +133,19 @@ function ReviewItem({ data: review }: ItemProps) {
     reportMutation.mutate({ id: review.id, reason });
   };
 
-  const hasImages = review.imagesOnReviews.length > 0;
-  const hasMultipleImages = review.imagesOnReviews.length > 1;
-  const firstImage = hasImages ? review.imagesOnReviews[0].image : undefined;
+  const hasImages = review.images.length > 0;
+  const hasMultipleImages = review.images.length > 1;
+  const firstImage = hasImages ? review.images[0] : undefined;
 
   const carousel = (
     <Carousel withControls={hasMultipleImages} draggable={hasMultipleImages} loop>
-      {review.imagesOnReviews.map(({ image }) => (
+      {review.images.map((image) => (
         <Carousel.Slide key={image.id}>
           <ImagePreview
             image={image}
             edgeImageProps={{ width: 400 }}
             aspectRatio={1}
-            lightboxImages={review.imagesOnReviews.map((x) => x.image)}
+            lightboxImages={review.images.map((image) => image)}
           />
         </Carousel.Slide>
       ))}
@@ -240,7 +244,7 @@ function ReviewItem({ data: review }: ItemProps) {
                 right: theme.spacing.md,
               })}
             >
-              {review.imagesOnReviews.length}
+              {review.images.length}
             </Badge>
           )}
         </Card.Section>
