@@ -1,3 +1,6 @@
+DROP VIEW IF EXISTS public."ModelRank";
+DROP VIEW IF EXISTS public."ModelVersionRank";
+
 CREATE OR REPLACE VIEW public."ModelRank"
 AS
 SELECT
@@ -48,7 +51,7 @@ FROM (
 	) tf
 	LEFT JOIN "ModelMetric" mm ON mm."modelId" = m.id AND mm.timeframe = tf.timeframe
 ) t
-GROUP BY t."modelId"
+GROUP BY t."modelId";
 
 CREATE OR REPLACE VIEW public."ModelVersionRank" AS
 SELECT
@@ -99,4 +102,4 @@ FROM (
 	) tf
 	LEFT JOIN "ModelVersionMetric" mm ON mm."modelVersionId" = m.id AND mm.timeframe = tf.timeframe
 ) t
-GROUP BY t."modelVersionId"
+GROUP BY t."modelVersionId";

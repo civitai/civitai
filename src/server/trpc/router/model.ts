@@ -26,7 +26,7 @@ export const modelRouter = router({
         case ModelSort.HighestRated: {
           orderBy.unshift({
             rank: {
-              [`rating${input.period}`]: 'desc',
+              [`rating${input.period}Rank`]: 'desc',
             },
           });
           break;
@@ -34,7 +34,7 @@ export const modelRouter = router({
         case ModelSort.MostDownloaded: {
           orderBy.unshift({
             rank: {
-              [`downloadCount${input.period}`]: 'desc',
+              [`downloadCount${input.period}Rank`]: 'desc',
             },
           });
           break;

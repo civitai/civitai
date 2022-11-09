@@ -107,8 +107,7 @@ const MasonryItem = ({
   width: number;
 }) => {
   const { data: session } = useSession();
-  const { id, image, name, rank, metrics, nsfw } = data ?? {};
-  const allTimeMetric = metrics?.find((metric) => metric.timeframe === MetricTimeframe.AllTime);
+  const { id, image, name, rank, nsfw } = data ?? {};
   const { classes } = useStyles();
 
   // const hasDimensions = image.width && image.height;
@@ -120,8 +119,8 @@ const MasonryItem = ({
     const width = itemWidth > 0 ? itemWidth : 300;
     const aspectRatio = image.width / image.height;
     const heightT = width / aspectRatio;
-    return heightT + (rank.rating ? 66 : 33);
-  }, [itemWidth, image.width, image.height, rank.rating]);
+    return heightT + (rank?.ratingAllTime ? 66 : 33);
+  }, [itemWidth, image.width, image.height, rank.ratingAllTime]);
 
   const modelText = (
     <Text size={14} weight={500} lineClamp={2} style={{ flex: 1 }}>
@@ -131,14 +130,14 @@ const MasonryItem = ({
 
   const modelRating = (
     <Group spacing={5}>
-      <Rating value={allTimeMetric?.rating ?? 0} fractions={2} readOnly size="xs" />
-      <Text size="xs">({(allTimeMetric?.ratingCount ?? 0).toString()})</Text>
+      <Rating value={rank?.ratingAllTime ?? 0} fractions={2} readOnly size="xs" />
+      <Text size="xs">({(rank?.ratingCountAllTime ?? 0).toString()})</Text>
     </Group>
   );
 
   const modelDownloads = (
     <Group spacing={5} align="bottom">
-      <Text size="xs">{abbreviateNumber(allTimeMetric?.downloadCount ?? 0).toString()}</Text>
+      <Text size="xs">{abbreviateNumber(rank?.downloadCountAllTime ?? 0).toString()}</Text>
       <IconDownload size={16} />
     </Group>
   );
@@ -177,7 +176,7 @@ const MasonryItem = ({
         query: nsfw && session?.user?.blurNsfw ? { showNsfw: true } : undefined,
       }}
       as={`models/${id}`}
-      // prefetch={false}
+    // prefetch={false}
     >
       <Card
         ref={ref}
@@ -197,7 +196,7 @@ const MasonryItem = ({
               PreviewImage
             )}
             <Box p="xs" className={classes.content}>
-              {!!allTimeMetric?.rating ? withRating : withoutRating}
+              {!!rank?.ratingAllTime ? withRating : withoutRating}
             </Box>
           </>
         )}

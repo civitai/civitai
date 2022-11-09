@@ -282,16 +282,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
     {
       label: 'Downloads',
-      value: (
-        <Text>
-          {
-            // TODO DRY: This is used in several places
-            model?.metrics
-              ?.find((x) => x.timeframe == MetricTimeframe.AllTime)
-              ?.downloadCount.toLocaleString() ?? 0
-          }
-        </Text>
-      ),
+      value: <Text>{(model?.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>,
     },
     {
       label: 'Last Update',
@@ -417,7 +408,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Menu.Dropdown>
             </Menu>
           </Group>
-          <ModelRating metrics={model.metrics} />
+          <ModelRating rank={model.rank} />
         </Stack>
         <Grid gutter="xl">
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
@@ -506,7 +497,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 <Stack spacing={4}>
                   <Group spacing={4}>
                     <Title order={3}>Reviews</Title>
-                    <ModelRating metrics={model.metrics} />
+                    <ModelRating rank={model.rank} />
                   </Group>
                   <Text
                     size="md"
@@ -594,8 +585,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       {isFetchingNextPage
                         ? 'Loading more...'
                         : hasNextPage
-                        ? 'Load More'
-                        : 'Nothing more to load'}
+                          ? 'Load More'
+                          : 'Nothing more to load'}
                     </Button>
                   )}
                 </InView>
