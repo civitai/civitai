@@ -17,7 +17,7 @@ type SelectWrapperProps<T extends string | number> = Omit<
 };
 
 export function SelectWrapper<T extends string | number>({
-  data,
+  data = [],
   value,
   defaultValue,
   loading,

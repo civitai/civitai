@@ -29,7 +29,7 @@ type MultiSelectWrapperProps<T extends string | number> = Omit<
 };
 
 export function MultiSelectWrapper<T extends string | number>({
-  data,
+  data = [],
   value,
   defaultValue,
   loading,
@@ -37,7 +37,7 @@ export function MultiSelectWrapper<T extends string | number>({
   ...props
 }: MultiSelectWrapperProps<T>) {
   const initialType =
-    !data.length || typeof data[0] !== 'object' ? typeof data[0] : typeof data[0].value;
+    !data.length || (typeof data[0] !== 'object' ? typeof data[0] : typeof data[0].value);
 
   // const parsedData = data.map((x): string | SelectItem => {
   //   if (typeof x === 'string') return x;

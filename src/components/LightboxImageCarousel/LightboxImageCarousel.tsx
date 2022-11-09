@@ -2,11 +2,11 @@ import { Carousel } from '@mantine/carousel';
 import { Box, CloseButton } from '@mantine/core';
 import { ContextModalProps } from '@mantine/modals';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { ImagePreviewModel } from '~/server/validators/image/selectors';
+import { ImageModel } from '~/server/validators/image/selectors';
 
 type Props = {
   initialSlide?: number;
-  images?: ImagePreviewModel[];
+  images?: ImageModel[];
 };
 
 export default function LightboxImageCarousel({

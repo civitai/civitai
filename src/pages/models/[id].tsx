@@ -49,7 +49,7 @@ import {
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { Meta } from '~/components/Meta/Meta';
-import { ModelForm } from '~/components/Model/ModelForm/ModelForm';
+import { ModelForm2 } from '~/components/Model/ModelForm/ModelForm2';
 import { ModelReviews } from '~/components/Model/ModelReviews/ModelReviews';
 import { ModelVersions } from '~/components/Model/ModelVersions/ModelVersions';
 import { ModelRating } from '~/components/ModelRating/ModelRating';
@@ -191,16 +191,16 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
     router.beforePopState(({ as }) => {
-      if (as !== router.asPath) {
+      if (as.startsWith('/?')) {
         const [route, queryString] = as.split('?');
         const queryParams = QS.parse(queryString);
-        const stringified = QS.stringify({ ...queryParams, model: id });
-        const url = stringified ? `${route}?${stringified}` : route;
-        if (as !== url) {
-          setTimeout(() => {
-            router.replace(url, undefined, { shallow: true });
-          }, 0);
-        }
+        // const stringified = QS.stringify({ ...queryParams, model: id });
+        // const url = stringified ? `${route}?${stringified}` : route;
+        setTimeout(() => {
+          router.replace({ pathname: route, query: { ...queryParams, model: id } }, undefined, {
+            shallow: true,
+          });
+        }, 0);
         // Will run when leaving the current page; on back/forward actions
         // Add your logic here, like toggling the modal state
       }
@@ -222,7 +222,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       </Container>
     );
   if (!model) return <NotFound />;
-  if (!!edit && model && isOwner) return <ModelForm model={model} />;
+  if (!!edit && model && isOwner) return <ModelForm2 model={model} />;
   if (model.nsfw && !session) return <SensitiveShield redirectTo={router.asPath} />;
 
   const handleDeleteModel = () => {
@@ -577,8 +577,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       {isFetchingNextPage
                         ? 'Loading more...'
                         : hasNextPage
-                          ? 'Load More'
-                          : 'Nothing more to load'}
+                        ? 'Load More'
+                        : 'Nothing more to load'}
                     </Button>
                   )}
                 </InView>
@@ -602,10 +602,12 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             </Button>
             <Button
               onClick={() => {
+                const [route, queryString] = router.asPath.split('?');
+                const query = QS.parse(queryString);
                 router.replace(
                   {
-                    pathname: router.asPath,
-                    query: { ...router.query, showNsfw: true },
+                    pathname: route,
+                    query: { ...query, showNsfw: true },
                   },
                   router.asPath,
                   {

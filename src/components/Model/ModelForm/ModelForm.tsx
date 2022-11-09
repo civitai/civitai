@@ -31,6 +31,7 @@ import { trpc } from '~/utils/trpc';
 import { ImageUpload } from '~/components/ImageUpload/ImageUpload';
 import { splitUppercase } from '~/utils/string-helpers';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
+import { isDefined } from '~/utils/type-guards';
 import { randomId } from '@mantine/hooks';
 
 type CreateModelProps = z.infer<typeof modelSchema>;
@@ -272,7 +273,7 @@ export function ModelForm({ model }: Props) {
                                 uploadType="model"
                                 accept=".ckpt,.pt"
                                 fileUrlString={form.values.modelVersions[index].url}
-                                onChange={(file, url) =>
+                                onChange={(url, file) =>
                                   handleFileChange({
                                     file,
                                     url,
@@ -292,7 +293,7 @@ export function ModelForm({ model }: Props) {
                                 fileUrlString={form.values.modelVersions[index].trainingDataUrl}
                                 uploadType="training-images"
                                 accept=".zip"
-                                onChange={(file, url) =>
+                                onChange={(url, file) =>
                                   handleFileChange({
                                     file,
                                     url,
@@ -321,100 +322,98 @@ export function ModelForm({ model }: Props) {
             </Stack>
           </Grid.Col>
           <Grid.Col lg={4}>
-            <Stack sx={{ position: 'sticky', top: 90 }}>
-              <Paper radius="md" p="xl" withBorder>
-                <Stack>
-                  <Title order={4}>Model Properties</Title>
-                  <Select
-                    {...form.getInputProps('type')}
-                    label="Type"
-                    placeholder="Type"
-                    data={Object.values(ModelType).map((type) => ({
-                      label: splitUppercase(type),
-                      value: type,
-                    }))}
-                    withAsterisk
-                  />
-                  <MultiSelect
-                    {...form.getInputProps('trainedWords')}
-                    label="Trained Words"
-                    placeholder="e.g.: Master Chief"
-                    description="Please input the words you have trained your model with"
-                    data={form.values.trainedWords.map((word) => ({ value: word, label: word }))}
-                    getCreateLabel={(query) => `+ Create ${query}`}
-                    onCreate={(query) => {
-                      const item = { value: query, label: query };
-                      const currentWords = form.values.trainedWords;
-                      form.setFieldValue('trainedWords', [...currentWords, query]);
+            <Paper radius="md" p="xl" withBorder>
+              <Stack>
+                <Title order={4}>Model Properties</Title>
+                <Select
+                  {...form.getInputProps('type')}
+                  label="Type"
+                  placeholder="Type"
+                  data={Object.values(ModelType).map((type) => ({
+                    label: splitUppercase(type),
+                    value: type,
+                  }))}
+                  withAsterisk
+                />
+                <MultiSelect
+                  {...form.getInputProps('trainedWords')}
+                  label="Trained Words"
+                  placeholder="e.g.: Master Chief"
+                  description="Please input the words you have trained your model with"
+                  data={form.values.trainedWords.map((word) => ({ value: word, label: word }))}
+                  getCreateLabel={(query) => `+ Create ${query}`}
+                  onCreate={(query) => {
+                    const item = { value: query, label: query };
+                    const currentWords = form.values.trainedWords;
+                    form.setFieldValue('trainedWords', [...currentWords, query].filter(isDefined));
 
-                      return item;
-                    }}
-                    clearButtonLabel="Clear trained words"
-                    creatable
-                    clearable
-                    searchable
-                    withAsterisk
-                  />
-                  <MultiSelect
-                    {...form.getInputProps('tagsOnModels')}
-                    label="Tags"
-                    placeholder="e.g.: portrait, sharp focus, etc."
-                    description="Please add your tags"
-                    getCreateLabel={(query) => `+ Create ${query}`}
-                    onCreate={(name) => {
-                      const item = { value: name, label: name, name };
-                      const currentTags = form.values.tagsOnModels ?? [];
-                      form.setFieldValue('tagsOnModels', [...currentTags, { name }]);
+                    return item;
+                  }}
+                  clearButtonLabel="Clear trained words"
+                  creatable
+                  clearable
+                  searchable
+                  withAsterisk
+                />
+                <MultiSelect
+                  {...form.getInputProps('tagsOnModels')}
+                  label="Tags"
+                  placeholder="e.g.: portrait, sharp focus, etc."
+                  description="Please add your tags"
+                  getCreateLabel={(query) => `+ Create ${query}`}
+                  onCreate={(name) => {
+                    const item = { value: name, label: name, name };
+                    const currentTags = form.values.tagsOnModels ?? [];
+                    form.setFieldValue('tagsOnModels', [...currentTags, { name }]);
 
-                      return item;
-                    }}
-                    data={
-                      tags
-                        ?.map(({ name }) => ({
+                    return item;
+                  }}
+                  data={
+                    tags
+                      ?.map(({ name }) => ({
+                        value: name,
+                        label: name,
+                        name,
+                      }))
+                      .concat(
+                        form.values.tagsOnModels?.map(({ name }) => ({
                           value: name,
                           label: name,
                           name,
-                        }))
-                        .concat(
-                          form.values.tagsOnModels?.map(({ name }) => ({
-                            value: name,
-                            label: name,
-                            name,
-                          })) ?? []
-                        ) ?? []
-                    }
-                    onChange={(values) => {
-                      const matches = tags?.filter((tag) => values.includes(tag.name)) ?? [];
-                      const unMatched = values
-                        .filter((value) => !matches.map((match) => match.name).includes(value))
-                        .map((value) => ({ name: value }));
-                      form.setFieldValue('tagsOnModels', [...matches, ...unMatched]);
-                    }}
-                    value={form.values.tagsOnModels?.map(({ name }) => name)}
-                    clearButtonLabel="Clear tags"
-                    clearable
-                    creatable
-                    searchable
-                  />
-                  <Checkbox
-                    {...form.getInputProps('nsfw', { type: 'checkbox' })}
-                    label="This model or images associated with it are NSFW"
-                  />
-                </Stack>
-              </Paper>
-              <Group position="right" mt="lg">
-                <Button
-                  variant="outline"
-                  onClick={() => form.reset()}
-                  disabled={!form.isDirty() || mutating}
-                >
-                  Discard changes
-                </Button>
-                <Button type="submit" loading={mutating} disabled={isUploadingImages}>
-                  Save
-                </Button>
-              </Group>
-            </Stack>
+                        })) ?? []
+                      ) ?? []
+                  }
+                  onChange={(values) => {
+                    const matches = tags?.filter((tag) => values.includes(tag.name)) ?? [];
+                    const unMatched = values
+                      .filter((value) => !matches.map((match) => match.name).includes(value))
+                      .map((value) => ({ name: value }));
+                    form.setFieldValue('tagsOnModels', [...matches, ...unMatched]);
+                  }}
+                  value={form.values.tagsOnModels?.map(({ name }) => name)}
+                  clearButtonLabel="Clear tags"
+                  clearable
+                  creatable
+                  searchable
+                />
+                <Checkbox
+                  {...form.getInputProps('nsfw', { type: 'checkbox' })}
+                  label="This model or images associated with it are NSFW"
+                />
+              </Stack>
+            </Paper>
+            <Group position="right" mt="lg">
+              <Button
+                variant="outline"
+                onClick={() => form.reset()}
+                disabled={!form.isDirty() || mutating}
+              >
+                Discard changes
+              </Button>
+              <Button type="submit" loading={mutating} disabled={isUploadingImages}>
+                Save
+              </Button>
+            </Group>
           </Grid.Col>
         </Grid>
       </form>
