@@ -111,7 +111,7 @@ const MasonryItem = ({
   const allTimeMetric = metrics?.find((metric) => metric.timeframe === MetricTimeframe.AllTime);
   const { classes } = useStyles();
 
-  const hasDimensions = image.width && image.height;
+  // const hasDimensions = image.width && image.height;
 
   const { ref, inView } = useInView();
 

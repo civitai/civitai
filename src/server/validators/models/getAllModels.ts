@@ -33,34 +33,34 @@ export const getAllModelsWhere = (input: z.infer<typeof getAllModelsSchema>) =>
   Prisma.validator<Prisma.ModelWhereInput>()({
     name: input.query
       ? {
-        contains: input.query,
-        mode: 'insensitive',
-      }
+          contains: input.query,
+          mode: 'insensitive',
+        }
       : undefined,
     tagsOnModels: input.tag
       ? {
-        some: {
-          tag: {
-            name: input.tag,
+          some: {
+            tag: {
+              name: input.tag,
+            },
           },
-        },
-      }
+        }
       : undefined,
     user: input.user
       ? {
-        username: input.user,
-      }
+          username: input.user,
+        }
       : undefined,
     type: input.types
       ? {
-        in: input.types,
-      }
+          in: input.types,
+        }
       : undefined,
     nsfw: input.showNsfw
       ? undefined
       : {
-        equals: false,
-      },
+          equals: false,
+        },
   });
 
 export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
