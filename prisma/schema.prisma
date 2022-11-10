@@ -103,19 +103,21 @@ model Model {
 }
 
 model ModelVersion {
-  id              Int      @id @default(autoincrement())
-  name            String
-  description     String?
-  url             String
-  sizeKB          Float
-  modelId         Int
-  model           Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  trainedWords    String[]
-  steps           Int?
-  epochs          Int?
-  trainingDataUrl String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                  Int      @id @default(autoincrement())
+  name                String
+  description         String?
+  url                 String
+  sizeKB              Float
+  modelId             Int
+  model               Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  trainedWords        String[]
+  steps               Int?
+  epochs              Int?
+  trainingDataUrl     String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  verified            Boolean  @default(false)
+  verificationMessage String?
 
   reviews Review[]
   images  ImagesOnModels[]

@@ -165,6 +165,16 @@ export const modelRouter = router({
           .filter((version) => !versionIds.includes(version.id))
           .map(({ id }) => id);
 
+        // TEMPORARY
+        // query existing model versions to compare the url to see if it has changed
+        const queriedModelVersions = await ctx.prisma.modelVersion.findMany({
+          where: { modelId: id },
+          select: {
+            id: true,
+            url: true,
+          },
+        });
+
         const model = await ctx.prisma.model.update({
           where: { id },
           data: {
@@ -194,6 +204,10 @@ export const modelRouter = router({
                   },
                   update: {
                     ...version,
+                    // temporary
+                    verified:
+                      queriedModelVersions.findIndex((x) => x.id === id && x.url === version.url) >
+                      -1,
                     epochs: version.epochs ?? null,
                     steps: version.steps ?? null,
                     images: {
