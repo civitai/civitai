@@ -178,33 +178,36 @@ const MasonryItem = ({
         query: nsfw && session?.user?.blurNsfw ? { showNsfw: true } : undefined,
       }}
       as={`models/${id}`}
+      passHref
       // prefetch={false}
     >
-      <Card
-        ref={ref}
-        withBorder
-        shadow="sm"
-        className={classes.card}
-        style={{ height: `${height}px` }}
-        p={0}
-        onClick={() => setLoading(true)}
-      >
-        <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
-        {inView && (
-          <>
-            {nsfw ? (
-              <SensitiveContent placeholder={<MediaHash {...image} />} style={{ height: '100%' }}>
-                {PreviewImage}
-              </SensitiveContent>
-            ) : (
-              PreviewImage
-            )}
-            <Box p="xs" className={classes.content}>
-              {!!rank?.ratingAllTime ? withRating : withoutRating}
-            </Box>
-          </>
-        )}
-      </Card>
+      <a>
+        <Card
+          ref={ref}
+          withBorder
+          shadow="sm"
+          className={classes.card}
+          style={{ height: `${height}px` }}
+          p={0}
+          onClick={() => setLoading(true)}
+        >
+          <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
+          {inView && (
+            <>
+              {nsfw ? (
+                <SensitiveContent placeholder={<MediaHash {...image} />} style={{ height: '100%' }}>
+                  {PreviewImage}
+                </SensitiveContent>
+              ) : (
+                PreviewImage
+              )}
+              <Box p="xs" className={classes.content}>
+                {!!rank?.ratingAllTime ? withRating : withoutRating}
+              </Box>
+            </>
+          )}
+        </Card>
+      </a>
     </Link>
   );
 };

@@ -259,7 +259,7 @@ export function ModelForm({ model }: Props) {
                                   if (file) {
                                     form.setValue(
                                       `modelVersions.${index}.sizeKB`,
-                                      file ? file.size / 1024 : 0
+                                      file.size ? file.size / 1024 : 0
                                     );
                                   }
                                 }}
