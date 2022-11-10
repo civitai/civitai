@@ -52,6 +52,7 @@ function MyApp(props: CustomAppProps<{ session: Session | null; colorScheme: Col
       <Head>
         <title>Civitai</title>
         <meta name="viewport" content="minimum-scale=1, initial-scale=1, width=device-width" />
+        <link rel="manifest" href="/site.webmanifest" />
       </Head>
 
       <SessionProvider session={session}>
