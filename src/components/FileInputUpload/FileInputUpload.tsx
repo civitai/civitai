@@ -9,6 +9,7 @@ import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 export function FileInputUpload({
   uploadType = 'default',
   onChange,
+  onLoading,
   value,
   fileName = decodeURIComponent(value?.split('/').pop() ?? ''),
   ...props
@@ -26,14 +27,14 @@ export function FileInputUpload({
   const handleOnChange: FileInputProps['onChange'] = async (file) => {
     // setDroppedFile(file);
     let url: string | null = null;
-
     if (file) {
+      onLoading?.(true);
       const uploaded = await uploadToS3(file, uploadType);
       url = uploaded.url;
+      onLoading?.(false);
       onChange?.(url, file);
     } else {
       resetFiles();
-      onChange?.(null, null);
     }
   };
 
@@ -99,6 +100,7 @@ export function FileInputUpload({
 type Props = Omit<FileInputProps, 'icon' | 'onChange' | 'value'> & {
   value?: string;
   onChange?: (url: string | null, file: File | null) => void;
+  onLoading?: (loading: boolean) => void;
   uploadType?: UploadType | UploadTypeUnion;
   fileName?: string;
 };

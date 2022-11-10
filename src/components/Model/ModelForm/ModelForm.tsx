@@ -254,9 +254,8 @@ export function ModelForm({ model }: Props) {
                                 placeholder="Pick your model"
                                 uploadType="model"
                                 accept=".ckpt,.pt"
+                                onLoading={setUploading}
                                 onChange={(url, file) => {
-                                  setUploading(!url);
-                                  console.log({ file });
                                   if (file) {
                                     form.setValue(
                                       `modelVersions.${index}.sizeKB`,
@@ -275,7 +274,7 @@ export function ModelForm({ model }: Props) {
                                 description="The data you used to train your model (as .zip archive)"
                                 uploadType="training-images"
                                 accept=".zip"
-                                onChange={(url) => setUploading(!url)}
+                                onLoading={setUploading}
                               />
                             </Grid.Col>
                             <Grid.Col span={12}>
