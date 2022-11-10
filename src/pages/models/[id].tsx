@@ -70,6 +70,7 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { isNumber } from '~/utils/type-guards';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
   const ssg = createProxySSGHelpers({
@@ -412,25 +413,31 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         <Grid gutter="xl">
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
             <Stack>
-              <LoginRedirect reason="download-auth">
-                <Button
-                  component="a"
-                  href={`/api/download/models/${latestVersion?.id}`}
-                  fullWidth={mobile}
-                  sx={{ height: 'auto' }}
-                  py={4}
-                  download
-                >
-                  <Text align="center">
-                    {`Download (${formatKBytes(latestVersion?.sizeKB ?? 0)})`}
-                    {latestVersion ? (
-                      <Text size="xs">
-                        {`${latestVersion.name} (${formatDate(latestVersion.createdAt)})`}
-                      </Text>
-                    ) : null}
-                  </Text>
-                </Button>
-              </LoginRedirect>
+              <Group spacing="xs">
+                <LoginRedirect reason="download-auth">
+                  <Button
+                    component="a"
+                    href={`/api/download/models/${latestVersion?.id}`}
+                    fullWidth={mobile}
+                    sx={{ flex: 1 }}
+                    download
+                  >
+                    <Text align="center">
+                      {`Download Latest (${formatKBytes(latestVersion?.sizeKB ?? 0)})`}
+                      {/* {latestVersion ? (
+                        <Text size="xs">
+                          {`${latestVersion.name} (${formatDate(latestVersion.createdAt)})`}
+                        </Text>
+                      ) : null} */}
+                    </Text>
+                  </Button>
+                </LoginRedirect>
+                <VerifiedShield
+                  verified={latestVersion?.verified}
+                  message={latestVersion?.verificationMessage}
+                  // py={4}
+                />
+              </Group>
 
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (

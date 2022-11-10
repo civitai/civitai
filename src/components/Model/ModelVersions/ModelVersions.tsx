@@ -24,6 +24,7 @@ import {
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ModelWithDetails } from '~/server/validators/models/getById';
@@ -144,17 +145,21 @@ function TabContent({ version, nsfw }: TabContentProps) {
     <Grid gutter="xl">
       <Grid.Col xs={12} md={4} orderMd={2}>
         <Stack spacing="xs">
-          <LoginRedirect reason="download-auth">
-            <Button
-              component="a"
-              href={`/api/download/models/${version.id}`}
-              leftIcon={<IconDownload size={16} />}
-              download
-              fullWidth
-            >
-              {`Download (${formatKBytes(version.sizeKB)})`}
-            </Button>
-          </LoginRedirect>
+          <Group noWrap spacing="xs">
+            <LoginRedirect reason="download-auth">
+              <Button
+                component="a"
+                href={`/api/download/models/${version.id}`}
+                leftIcon={<IconDownload size={16} />}
+                download
+                style={{ flex: 1 }}
+                variant="light"
+              >
+                {`Download (${formatKBytes(version.sizeKB)})`}
+              </Button>
+            </LoginRedirect>
+            <VerifiedShield verified={version.verified} />
+          </Group>
 
           <DescriptionTable items={versionDetails} labelWidth="30%" />
           <Text size={16} weight={500}>
