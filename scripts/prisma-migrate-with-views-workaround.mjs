@@ -26,10 +26,25 @@ console.log('Removing views from schema... Done');
 
 try {
   // Run the migration
-  console.log('Running `prisma migrate dev`... ');
-  let { error } = spawnSync('prisma migrate dev', argv.slice(2), spawnOptions);
-  if (error) throw error;
-  console.log('Running `prisma migrate dev`... Done');
+  console.log('Running `prisma migrate`... ');
+  const productionFlagIndex = argv.indexOf('-p');
+  let commandError = null;
+
+  if (productionFlagIndex > -1) {
+    const { error } = spawnSync('prisma migrate deploy', spawnOptions);
+    commandError = error;
+  } else {
+    const nameFlagIndex = argv.indexOf('--name');
+    const { error } = spawnSync(
+      'prisma migrate dev',
+      nameFlagIndex > -1 ? argv.slice(nameFlagIndex) : [],
+      spawnOptions
+    );
+    commandError = error;
+  }
+
+  if (commandError) throw error;
+  console.log('Running `prisma migrate`... Done');
 
   // Restore the schema
   console.log('Restoring backup and running `npx prisma generate`... ');

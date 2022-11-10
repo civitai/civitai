@@ -5,6 +5,7 @@
   "scripts": {
     "build": "next build",
     "dev": "next dev",
+    "deploy": "npm run build && npm run db:deploy",
     "postinstall": "prisma generate",
     "lint": "next lint",
     "start": "next start",
@@ -15,6 +16,7 @@
     "db:pull": "prisma db pull",
     "db:push": "prisma db push",
     "db:migrate": "node scripts/prisma-migrate-with-views-workaround.mjs",
+    "db:deploy": "node scripts/prisma-migrate-with-views-workaround.mjs -p",
     "db:generate": "prisma generate"
   },
   "prisma": {
