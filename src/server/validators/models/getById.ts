@@ -5,7 +5,6 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
   name: true,
   description: true,
-  trainedWords: true,
   nsfw: true,
   type: true,
   updatedAt: true,
@@ -31,6 +30,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       sizeKB: true,
       createdAt: true,
       updatedAt: true,
+      trainedWords: true,
       images: {
         orderBy: {
           index: 'asc',

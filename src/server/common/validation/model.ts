@@ -46,7 +46,7 @@ export const modelVersionSchema = z.object({
     .min(1, 'At least one example image must be uploaded')
     .max(10, 'You can only upload up to 10 images'),
   trainingDataUrl: z.string().nullish(),
-  key: z.string().optional(),
+  trainedWords: z.array(z.string()).min(1, 'At least one trained word is required.'),
 });
 
 export const modelSchema = z.object({
@@ -54,7 +54,6 @@ export const modelSchema = z.object({
   name: z.string().min(1, 'Name cannot be empty.'),
   description: sanitizedDescriptionSchema,
   type: z.nativeEnum(ModelType),
-  trainedWords: z.array(z.string()).min(1, 'At least one trained word is required.'),
   tagsOnModels: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   modelVersions: z.array(modelVersionSchema).min(1, 'At least one model version is required.'),

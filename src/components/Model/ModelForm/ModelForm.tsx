@@ -9,7 +9,6 @@ import {
   Stack,
   Title,
 } from '@mantine/core';
-import { randomId } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import { Model, ModelType } from '@prisma/client';
 import { IconArrowLeft, IconCheck, IconPlus, IconTrash, IconX } from '@tabler/icons';
@@ -61,11 +60,11 @@ export function ModelForm({ model }: Props) {
     defaultValues: {
       ...model,
       type: model?.type ?? 'Checkpoint',
-      trainedWords: model?.trainedWords ?? [],
       tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
       modelVersions: model?.modelVersions.map((version) => ({
         ...version,
-        images: version.images.map(({ image }) => image),
+        trainedWords: version.trainedWords ?? [],
+        images: version.images.map(({ image }) => image) ?? [],
       })) ?? [
         {
           name: '',
@@ -75,6 +74,7 @@ export function ModelForm({ model }: Props) {
           steps: null,
           sizeKB: 0,
           trainingDataUrl: '',
+          trainedWords: [],
           images: [],
         },
       ],
@@ -86,7 +86,6 @@ export function ModelForm({ model }: Props) {
     name: 'modelVersions',
   });
 
-  const trainedWords = form.watch('trainedWords');
   const tagsOnModels = form.watch('tagsOnModels');
 
   const tagsData = useMemo(() => {
@@ -177,6 +176,7 @@ export function ModelForm({ model }: Props) {
                           sizeKB: 0,
                           trainingDataUrl: '',
                           images: [],
+                          trainedWords: [],
                         })
                       }
                       compact
@@ -189,6 +189,7 @@ export function ModelForm({ model }: Props) {
                     {fields.map((version, index) => {
                       const modelFile = form.watch(`modelVersions.${index}.url`);
                       const trainingDataUrl = form.watch(`modelVersions.${index}.trainingDataUrl`);
+                      const trainedWords = form.watch(`modelVersions.${index}.trainedWords`);
                       return (
                         <Stack key={version.id ?? index} style={{ position: 'relative' }}>
                           {fields.length > 1 && (
@@ -214,6 +215,20 @@ export function ModelForm({ model }: Props) {
                                 name={`modelVersions.${index}.description`}
                                 label="Version changes or notes"
                                 description="Tell us about this version"
+                              />
+                            </Grid.Col>
+                            <Grid.Col span={12}>
+                              <InputMultiSelect
+                                name="trainedWords"
+                                label="Trained Words"
+                                placeholder="e.g.: Master Chief"
+                                description="Please input the words you have trained your model with"
+                                data={trainedWords}
+                                creatable
+                                getCreateLabel={(query) => `+ Create ${query}`}
+                                clearable
+                                searchable
+                                withAsterisk
                               />
                             </Grid.Col>
                             <Grid.Col span={6}>
@@ -300,18 +315,7 @@ export function ModelForm({ model }: Props) {
                     }))}
                     withAsterisk
                   />
-                  <InputMultiSelect
-                    name="trainedWords"
-                    label="Trained Words"
-                    placeholder="e.g.: Master Chief"
-                    description="Please input the words you have trained your model with"
-                    data={trainedWords}
-                    creatable
-                    getCreateLabel={(query) => `+ Create ${query}`}
-                    clearable
-                    searchable
-                    withAsterisk
-                  />
+
                   <InputMultiSelect
                     name="tagsOnModels"
                     label="Tags"
