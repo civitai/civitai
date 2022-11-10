@@ -60,6 +60,7 @@ export function ModelForm({ model }: Props) {
     mode: 'onChange',
     defaultValues: {
       ...model,
+      type: model?.type ?? 'Checkpoint',
       trainedWords: model?.trainedWords ?? [],
       tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
       modelVersions: model?.modelVersions.map((version) => ({
