@@ -1,7 +1,7 @@
 import { Prisma, ReportReason } from '@prisma/client';
 import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';
-import { modelSchema, modelSchema2 } from '~/server/common/validation/model';
+import { modelSchema } from '~/server/common/validation/model';
 import { handleAuthorizationError, handleDbError } from '~/server/services/errorHandling';
 import {
   getAllModelsSchema,
