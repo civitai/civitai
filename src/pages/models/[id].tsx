@@ -68,6 +68,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { QS } from '~/utils/qs';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { isNumber } from '~/utils/type-guards';
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
   const ssg = createProxySSGHelpers({
@@ -76,7 +77,7 @@ export const getServerSideProps: GetServerSideProps<{ id: number }> = async (con
     transformer: superjson,
   });
   const id = Number(context.params?.id as string);
-  await ssg.model.getById.prefetch({ id });
+  if (isNumber(id)) await ssg.model.getById.prefetch({ id });
 
   return {
     props: {
