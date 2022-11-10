@@ -4,14 +4,30 @@ import { env } from '~/env/server.mjs';
 import { createContext } from '~/server/trpc/context';
 import { appRouter } from '~/server/trpc/router';
 
+const PUBLIC_CACHE_MAX_AGE = 60;
+const PUBLIC_CACHE_STALE_WHILE_REVALIDATE = 30;
+
 // export API handler
 export default createNextApiHandler({
   router: appRouter,
   createContext,
+  responseMeta: ({ ctx, paths, type, errors }) => {
+    // only public GET requests are cacheable
+    const cacheable = !ctx?.session && type === 'query';
+    if (cacheable) {
+      return {
+        headers: {
+          'Cache-Control': `public, s-maxage=${PUBLIC_CACHE_MAX_AGE}, stale-while-revalidate=${PUBLIC_CACHE_STALE_WHILE_REVALIDATE}`,
+        }
+      };
+    }
+
+    return {};
+  },
   onError:
     env.NODE_ENV === 'development'
       ? ({ path, error }) => {
-          console.error(`❌ tRPC failed on ${path}: ${error}`);
-        }
+        console.error(`❌ tRPC failed on ${path}: ${error}`);
+      }
       : undefined,
 });
