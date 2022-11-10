@@ -9,7 +9,6 @@ import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 export function FileInputUpload({
   uploadType = 'default',
   onChange,
-  fileUrlString: initialFile,
   value,
   fileName = decodeURIComponent(value?.split('/').pop() ?? ''),
   ...props
@@ -25,17 +24,17 @@ export function FileInputUpload({
   };
 
   const handleOnChange: FileInputProps['onChange'] = async (file) => {
+    // setDroppedFile(file);
     let url: string | null = null;
 
     if (file) {
-      onChange?.(null, file);
       const uploaded = await uploadToS3(file, uploadType);
       url = uploaded.url;
+      onChange?.(url, file);
     } else {
       resetFiles();
+      onChange?.(null, null);
     }
-
-    onChange?.(url, file);
   };
 
   // Create a local empty file to display value in file input when editing
@@ -101,6 +100,5 @@ type Props = Omit<FileInputProps, 'icon' | 'onChange' | 'value'> & {
   value?: string;
   onChange?: (url: string | null, file: File | null) => void;
   uploadType?: UploadType | UploadTypeUnion;
-  fileUrlString?: string;
   fileName?: string;
 };

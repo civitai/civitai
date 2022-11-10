@@ -187,8 +187,6 @@ export function ModelForm({ model }: Props) {
                   <Stack>
                     {/* Model Versions */}
                     {fields.map((version, index) => {
-                      const modelFile = form.watch(`modelVersions.${index}.url`);
-                      const trainingDataUrl = form.watch(`modelVersions.${index}.trainingDataUrl`);
                       const trainedWords = form.watch(`modelVersions.${index}.trainedWords`);
                       return (
                         <Stack key={version.id ?? index} style={{ position: 'relative' }}>
@@ -256,9 +254,9 @@ export function ModelForm({ model }: Props) {
                                 placeholder="Pick your model"
                                 uploadType="model"
                                 accept=".ckpt,.pt"
-                                fileUrlString={modelFile}
                                 onChange={(url, file) => {
                                   setUploading(!url);
+                                  console.log({ file });
                                   if (file) {
                                     form.setValue(
                                       `modelVersions.${index}.sizeKB`,
@@ -275,7 +273,6 @@ export function ModelForm({ model }: Props) {
                                 label="Training Data"
                                 placeholder="Pick your training data"
                                 description="The data you used to train your model (as .zip archive)"
-                                fileUrlString={trainingDataUrl ?? ''}
                                 uploadType="training-images"
                                 accept=".zip"
                                 onChange={(url) => setUploading(!url)}

@@ -37,9 +37,9 @@ export function withController<
         render={({ field, fieldState, formState }) => {
           const mappedProps = mapper?.({ field, fieldState, formState, props: props as any });
 
-          const handleChange = (values: any) => {
-            props.onChange?.(values);
-            field.onChange(values);
+          const handleChange = (...values: any) => {
+            props.onChange?.(...values);
+            field.onChange(...values);
           };
 
           const handleBlur = () => {
