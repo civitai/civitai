@@ -46,7 +46,7 @@ export const modelVersionSchema = z.object({
     .min(1, 'At least one example image must be uploaded')
     .max(10, 'You can only upload up to 10 images'),
   trainingDataUrl: z.string().nullish(),
-  trainedWords: z.array(z.string()).min(1, 'At least one trained word is required.'),
+  trainedWords: z.array(z.string()),
 });
 
 export const modelSchema = z.object({

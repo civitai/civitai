@@ -93,6 +93,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
     { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0, visible: !!version.epochs },
     {
       label: 'Trained Words',
+      visible: !!version.trainedWords?.length,
       value: (
         <Group spacing={4}>
           {version?.trainedWords.map((word, index) => (

@@ -226,7 +226,6 @@ export function ModelForm({ model }: Props) {
                                 getCreateLabel={(query) => `+ Create ${query}`}
                                 clearable
                                 searchable
-                                withAsterisk
                               />
                             </Grid.Col>
                             <Grid.Col span={6}>
