@@ -42,7 +42,7 @@ const useStyles = createStyles((theme) => ({
     height: '100%',
     padding: 0,
 
-    [theme.fn.smallerThan('lg')]: {
+    [theme.fn.smallerThan('xl')]: {
       paddingLeft: theme.spacing.xs * 1.6, // 16px
       paddingRight: theme.spacing.xs * 1.6, // 16px
     },
