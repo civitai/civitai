@@ -86,7 +86,6 @@ model Model {
   name         String
   description  String?
   type         ModelType
-  trainedWords String[]
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   nsfw         Boolean   @default(false)
@@ -111,6 +110,7 @@ model ModelVersion {
   sizeKB          Float
   modelId         Int
   model           Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  trainedWords    String[]
   steps           Int?
   epochs          Int?
   trainingDataUrl String?
