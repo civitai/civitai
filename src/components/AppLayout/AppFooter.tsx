@@ -32,7 +32,7 @@ export function AppFooter() {
           <Text component={NextLink} href="/content/tos" size="sm">
             Terms of Service
           </Text>
-          <Text component="a" href="https://github.com/civitai" size="sm">
+          <Text component="a" href="https://github.com/civitai/civitai" size="sm">
             GitHub
           </Text>
           <Text component="a" href="https://discord.gg/UwX5wKwm6c" size="sm">
