@@ -3,5 +3,11 @@
   "editor.codeActionsOnSave": {
     "source.fixAll.eslint": true,
   },
-  "files.eol": "\n"
+  "files.eol": "\n",
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "dbaeumer.vscode-eslint"
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "dbaeumer.vscode-eslint"
+  },
 }
