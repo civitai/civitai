@@ -264,7 +264,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   };
 
   const handleReportModel = (reason: ReportReason) => {
-    if (!session) return router.push(`/login?returnUrl=${router.asPath}`);
     reportModelMutation.mutate({ id, reason });
   };
 
@@ -299,7 +298,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
     {
       label: 'Trained Words',
-      visible: !!latestVersion.trainedWords?.length,
+      visible: !!latestVersion?.trainedWords?.length,
       value: (
         <Group spacing={4}>
           {latestVersion?.trainedWords.map((word, index) => (
@@ -385,28 +384,26 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   </>
                 ) : null}
                 {!session || !isOwner || isModerator ? (
-                  <div
-                    onClickCapture={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      console.log('click');
-                    }}
-                  >
-                    <Menu.Item
-                      icon={<IconFlag size={14} stroke={1.5} />}
-                      onClick={() => handleReportModel(ReportReason.NSFW)}
-                      disabled={reportModelMutation.isLoading}
-                    >
-                      Report as NSFW
-                    </Menu.Item>
-                    <Menu.Item
-                      icon={<IconFlag size={14} stroke={1.5} />}
-                      onClick={() => handleReportModel(ReportReason.TOSViolation)}
-                      disabled={reportModelMutation.isLoading}
-                    >
-                      Report as Terms Violation
-                    </Menu.Item>
-                  </div>
+                  <>
+                    <LoginRedirect reason="report-model">
+                      <Menu.Item
+                        icon={<IconFlag size={14} stroke={1.5} />}
+                        onClick={() => handleReportModel(ReportReason.NSFW)}
+                        disabled={reportModelMutation.isLoading}
+                      >
+                        Report as NSFW
+                      </Menu.Item>
+                    </LoginRedirect>
+                    <LoginRedirect reason="report-model">
+                      <Menu.Item
+                        icon={<IconFlag size={14} stroke={1.5} />}
+                        onClick={() => handleReportModel(ReportReason.TOSViolation)}
+                        disabled={reportModelMutation.isLoading}
+                      >
+                        Report as Terms Violation
+                      </Menu.Item>
+                    </LoginRedirect>
+                  </>
                 ) : null}
               </Menu.Dropdown>
             </Menu>
@@ -526,15 +523,13 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   >{`${reviews.length.toLocaleString()} total reviews`}</Text>
                 </Stack>
                 <Stack align="flex-end" spacing="xs">
-                  <LoginRedirect reason="report">
+                  <LoginRedirect reason="create-review">
                     <Button
                       leftIcon={<IconPlus size={16} />}
                       variant="outline"
                       fullWidth={mobile}
                       size="xs"
-                      onClick={(e) => {
-                        if (!session) return router.push(`/login?returnUrl=${router.asPath}`);
-
+                      onClick={() => {
                         return openContextModal({
                           modal: 'reviewEdit',
                           title: `Reviewing ${model.name}`,

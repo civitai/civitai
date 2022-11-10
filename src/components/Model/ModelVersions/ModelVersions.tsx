@@ -22,6 +22,7 @@ import {
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -143,7 +144,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
     <Grid gutter="xl">
       <Grid.Col xs={12} md={4} orderMd={2}>
         <Stack spacing="xs">
-          {session ? (
+          <LoginRedirect reason="download-auth">
             <Button
               component="a"
               href={`/api/download/models/${version.id}`}
@@ -153,16 +154,8 @@ function TabContent({ version, nsfw }: TabContentProps) {
             >
               {`Download (${formatKBytes(version.sizeKB)})`}
             </Button>
-          ) : (
-            <Button
-              component={NextLink}
-              href={`/login?returnUrl=${router.asPath}`}
-              leftIcon={<IconDownload size={16} />}
-              fullWidth
-            >
-              {`Download (${formatKBytes(version.sizeKB)})`}
-            </Button>
-          )}
+          </LoginRedirect>
+
           <DescriptionTable items={versionDetails} labelWidth="30%" />
           <Text size={16} weight={500}>
             About this version

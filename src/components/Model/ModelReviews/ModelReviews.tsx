@@ -31,6 +31,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ImageModel } from '~/server/validators/image/selectors';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
 export function ModelReviews({ items, loading = false }: Props) {
   return (
@@ -131,7 +132,6 @@ function ReviewItem({ data: review }: ItemProps) {
     },
   });
   const handleReportReview = (reason: ReportReason) => {
-    if (!session) return router.push(`/login?returnUrl=${router.asPath}`);
     reportMutation.mutate({ id: review.id, reason });
   };
 
@@ -196,18 +196,22 @@ function ReviewItem({ data: review }: ItemProps) {
               ) : null}
               {!session || !isOwner ? (
                 <>
-                  <Menu.Item
-                    icon={<IconFlag size={14} stroke={1.5} />}
-                    onClick={() => handleReportReview(ReportReason.NSFW)}
-                  >
-                    Report as NSFW
-                  </Menu.Item>
-                  <Menu.Item
-                    icon={<IconFlag size={14} stroke={1.5} />}
-                    onClick={() => handleReportReview(ReportReason.TOSViolation)}
-                  >
-                    Report as Terms Violation
-                  </Menu.Item>
+                  <LoginRedirect reason="report-review">
+                    <Menu.Item
+                      icon={<IconFlag size={14} stroke={1.5} />}
+                      onClick={() => handleReportReview(ReportReason.NSFW)}
+                    >
+                      Report as NSFW
+                    </Menu.Item>
+                  </LoginRedirect>
+                  <LoginRedirect reason="report-review">
+                    <Menu.Item
+                      icon={<IconFlag size={14} stroke={1.5} />}
+                      onClick={() => handleReportReview(ReportReason.TOSViolation)}
+                    >
+                      Report as Terms Violation
+                    </Menu.Item>
+                  </LoginRedirect>
                 </>
               ) : null}
             </Menu.Dropdown>
