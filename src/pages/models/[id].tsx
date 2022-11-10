@@ -300,7 +300,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       label: 'Trained Words',
       value: (
         <Group spacing={4}>
-          {model?.trainedWords.map((word, index) => (
+          {latestVersion?.trainedWords.map((word, index) => (
             <CopyButton key={index} value={word}>
               {({ copy }) => (
                 <Badge

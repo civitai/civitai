@@ -1,5 +1,17 @@
-import { Button, Grid, Rating, SimpleGrid, Stack, Tabs, Text, Group } from '@mantine/core';
-import { IconDownload } from '@tabler/icons';
+import {
+  Button,
+  Grid,
+  Rating,
+  SimpleGrid,
+  Stack,
+  Tabs,
+  Text,
+  Group,
+  CopyButton,
+  Badge,
+} from '@mantine/core';
+import { showNotification } from '@mantine/notifications';
+import { IconCopy, IconDownload } from '@tabler/icons';
 import React from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import {
@@ -74,23 +86,50 @@ function TabContent({ version, nsfw }: TabContentProps) {
     { label: 'Uploaded', value: formatDate(version.createdAt) },
     { label: 'Steps', value: version.steps?.toLocaleString() ?? 0 },
     { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0 },
+    {
+      label: 'Trained Words',
+      value: (
+        <Group spacing={4}>
+          {version?.trainedWords.map((word, index) => (
+            <CopyButton key={index} value={word}>
+              {({ copy }) => (
+                <Badge
+                  size="sm"
+                  color="violet"
+                  sx={{ cursor: 'pointer' }}
+                  onClick={() => {
+                    copy();
+                    showNotification({ message: 'Copied trained word!', color: 'teal' });
+                  }}
+                >
+                  <Group spacing={4} align="center">
+                    {word}
+                    <IconCopy stroke={1.5} size={12} />
+                  </Group>
+                </Badge>
+              )}
+            </CopyButton>
+          ))}
+        </Group>
+      ),
+    },
     ...(version.trainingDataUrl
       ? [
-          {
-            label: 'Training Images',
-            value: (
-              <Text
-                variant="link"
-                component="a"
-                href={`/api/download/training-data/${version.id}`}
-                target="_blank"
-                download
-              >
-                Download
-              </Text>
-            ),
-          },
-        ]
+        {
+          label: 'Training Images',
+          value: (
+            <Text
+              variant="link"
+              component="a"
+              href={`/api/download/training-data/${version.id}`}
+              target="_blank"
+              download
+            >
+              Download
+            </Text>
+          ),
+        },
+      ]
       : []),
   ];
 
@@ -146,10 +185,10 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 figure: { height: '100%', display: 'flex' },
                 ...(index === 0 && !mobile
                   ? {
-                      gridColumn: '1/3',
-                      gridRow: '1/3',
-                      figure: { height: '100%', display: 'flex' },
-                    }
+                    gridColumn: '1/3',
+                    gridRow: '1/3',
+                    figure: { height: '100%', display: 'flex' },
+                  }
                   : {}),
               }}
             />
