@@ -1,0 +1,63 @@
+name: Bug Report
+description: Something seems to be broken
+title: '[Bug]: '
+labels: ['bug-report']
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        *Please fill this form with as much information as possible and provide screenshots if possible*
+  - type: textarea
+    id: what-did
+    attributes:
+      label: What happened?
+      description: Tell us what happened in a very clear and simple way
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce the problem
+      description: Please provide us with precise step by step information on how to reproduce the bug
+      value: |
+        1. Go to ....
+        2. Press ....
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: what-should
+    attributes:
+      label: What should have happened?
+      description: tell what you think the normal behavior should be
+    validations:
+      required: true
+  - type: dropdown
+    id: platforms
+    attributes:
+      label: What platforms do you use to access the site?
+      multiple: true
+      options:
+        - Windows
+        - Linux
+        - MacOS
+        - iOS
+        - Android
+        - Other/Cloud
+  - type: dropdown
+    id: browsers
+    attributes:
+      label: What browsers do you use to access the site?
+      multiple: true
+      options:
+        - Mozilla Firefox
+        - Google Chrome
+        - Brave
+        - Apple Safari
+        - Microsoft Edge
+  - type: textarea
+    id: misc
+    attributes:
+      label: Additional information, context and logs
+      description: Please provide us with any relevant additional info or context.

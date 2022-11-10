@@ -279,18 +279,6 @@ export function ModelForm2({ model }: Props) {
                       );
                     })}
                   </Stack>
-                  <Group position="right" mt="lg">
-                    <Button
-                      variant="outline"
-                      onClick={() => form.reset()}
-                      disabled={!form.formState.isDirty || mutating}
-                    >
-                      Discard changes
-                    </Button>
-                    <Button type="submit" loading={mutating} disabled={uploading}>
-                      Save
-                    </Button>
-                  </Group>
                 </Stack>
               </Paper>
             </Stack>
@@ -338,6 +326,18 @@ export function ModelForm2({ model }: Props) {
                 />
               </Stack>
             </Paper>
+            <Group position="right" mt="lg">
+              <Button
+                variant="outline"
+                onClick={() => form.reset()}
+                disabled={!form.formState.isDirty || mutating}
+              >
+                Discard changes
+              </Button>
+              <Button type="submit" loading={mutating} disabled={uploading}>
+                Save
+              </Button>
+            </Group>
           </Grid.Col>
         </Grid>
       </Form>

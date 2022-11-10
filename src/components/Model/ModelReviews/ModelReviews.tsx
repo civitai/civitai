@@ -68,6 +68,7 @@ function ReviewItem({ data: review }: ItemProps) {
   const { data: session } = useSession();
   const router = useRouter();
   const isOwner = session?.user?.id === review.user.id;
+  const isMod = session?.user?.isModerator ?? false;
 
   const queryUtils = trpc.useContext();
   const deleteMutation = trpc.review.delete.useMutation({
@@ -169,7 +170,7 @@ function ReviewItem({ data: review }: ItemProps) {
               </ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
-              {isOwner ? (
+              {isOwner || isMod ? (
                 <>
                   <Menu.Item
                     icon={<IconTrash size={14} stroke={1.5} />}

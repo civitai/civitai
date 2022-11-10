@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Feature Requests and Ideas
+    url: https://github.com/civitai/civitai/discussions/categories/ideas
+    about: Please share and vote on feature ideas here.
+  - name: Community Support
+    url: https://github.com/civitai/civitai/discussions/categories/general
+    about: Please ask and answer questions here.
+  - name: Discord Community
+    url: https://discord.gg/ZhhzhXbxFb
+    about: Join us to interact in realtime.
