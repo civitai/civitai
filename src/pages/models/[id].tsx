@@ -69,6 +69,7 @@ import { QS } from '~/utils/qs';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { isNumber } from '~/utils/type-guards';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
   const ssg = createProxySSGHelpers({
@@ -383,7 +384,13 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   </>
                 ) : null}
                 {!session || !isOwner || isModerator ? (
-                  <>
+                  <div
+                    onClickCapture={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      console.log('click');
+                    }}
+                  >
                     <Menu.Item
                       icon={<IconFlag size={14} stroke={1.5} />}
                       onClick={() => handleReportModel(ReportReason.NSFW)}
@@ -398,7 +405,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     >
                       Report as Terms Violation
                     </Menu.Item>
-                  </>
+                  </div>
                 ) : null}
               </Menu.Dropdown>
             </Menu>
@@ -407,7 +414,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         <Grid gutter="xl">
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
             <Stack>
-              {session ? (
+              <LoginRedirect reason="download-auth">
                 <Button
                   component="a"
                   href={`/api/download/models/${latestVersion?.id}`}
@@ -425,24 +432,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     ) : null}
                   </Text>
                 </Button>
-              ) : (
-                <Button
-                  component={NextLink}
-                  href={`/login?returnUrl=${router.asPath}`}
-                  fullWidth={mobile}
-                  sx={{ height: 'auto' }}
-                  py={4}
-                >
-                  <Text align="center">
-                    {`Download (${formatKBytes(latestVersion?.sizeKB ?? 0)})`}
-                    {latestVersion ? (
-                      <Text size="xs">
-                        {`${latestVersion.name} (${formatDate(latestVersion.createdAt)})`}
-                      </Text>
-                    ) : null}
-                  </Text>
-                </Button>
-              )}
+              </LoginRedirect>
+
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
                 <Group position="right" spacing="xs">
@@ -534,32 +525,34 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   >{`${reviews.length.toLocaleString()} total reviews`}</Text>
                 </Stack>
                 <Stack align="flex-end" spacing="xs">
-                  <Button
-                    leftIcon={<IconPlus size={16} />}
-                    variant="outline"
-                    fullWidth={mobile}
-                    size="xs"
-                    onClick={() => {
-                      if (!session) return router.push(`/login?returnUrl=${router.asPath}`);
+                  <LoginRedirect reason="report">
+                    <Button
+                      leftIcon={<IconPlus size={16} />}
+                      variant="outline"
+                      fullWidth={mobile}
+                      size="xs"
+                      onClick={(e) => {
+                        if (!session) return router.push(`/login?returnUrl=${router.asPath}`);
 
-                      return openContextModal({
-                        modal: 'reviewEdit',
-                        title: `Reviewing ${model.name}`,
-                        closeOnClickOutside: false,
-                        innerProps: {
-                          review: {
-                            modelId: model.id,
-                            modelVersionId:
-                              model.modelVersions.length === 1
-                                ? model.modelVersions[0].id
-                                : undefined,
+                        return openContextModal({
+                          modal: 'reviewEdit',
+                          title: `Reviewing ${model.name}`,
+                          closeOnClickOutside: false,
+                          innerProps: {
+                            review: {
+                              modelId: model.id,
+                              modelVersionId:
+                                model.modelVersions.length === 1
+                                  ? model.modelVersions[0].id
+                                  : undefined,
+                            },
                           },
-                        },
-                      });
-                    }}
-                  >
-                    Add Review
-                  </Button>
+                        });
+                      }}
+                    >
+                      Add Review
+                    </Button>
+                  </LoginRedirect>
                   <Group spacing="xs" noWrap grow>
                     <Select
                       defaultValue={ReviewSort.Newest}
