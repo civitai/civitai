@@ -50,7 +50,7 @@ function MyApp(props: CustomAppProps<{ session: Session | null; colorScheme: Col
   return (
     <>
       <Head>
-        <title>Civitai</title>
+        <title>Civitai | Share you models</title>
         <meta name="viewport" content="minimum-scale=1, initial-scale=1, width=device-width" />
         <link rel="manifest" href="/site.webmanifest" />
       </Head>
