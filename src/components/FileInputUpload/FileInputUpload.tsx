@@ -10,7 +10,8 @@ export function FileInputUpload({
   uploadType = 'default',
   onChange,
   fileUrlString: initialFile,
-  fileName = decodeURIComponent(initialFile?.split('/').pop() ?? ''),
+  value,
+  fileName = decodeURIComponent(value?.split('/').pop() ?? ''),
   ...props
 }: Props) {
   const isClient = useIsClient();
@@ -27,13 +28,14 @@ export function FileInputUpload({
     let url: string | null = null;
 
     if (file) {
+      onChange?.(null, file);
       const uploaded = await uploadToS3(file, uploadType);
       url = uploaded.url;
     } else {
       resetFiles();
     }
 
-    onChange(file, url);
+    onChange?.(url, file);
   };
 
   // Create a local empty file to display value in file input when editing
@@ -95,8 +97,9 @@ export function FileInputUpload({
   );
 }
 
-type Props = Omit<FileInputProps, 'icon' | 'onChange'> & {
-  onChange: (file: File | null, url: string | null) => void;
+type Props = Omit<FileInputProps, 'icon' | 'onChange' | 'value'> & {
+  value?: string;
+  onChange?: (url: string | null, file: File | null) => void;
   uploadType?: UploadType | UploadTypeUnion;
   fileUrlString?: string;
   fileName?: string;

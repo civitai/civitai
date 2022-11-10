@@ -30,6 +30,7 @@ import { ReviewDetails } from '~/server/validators/reviews/getAllReviews';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
+import { ImageModel } from '~/server/validators/image/selectors';
 
 export function ModelReviews({ items, loading = false }: Props) {
   return (
@@ -54,7 +55,7 @@ export function ModelReviews({ items, loading = false }: Props) {
 }
 
 type ModReviewDetails = Omit<ReviewDetails, 'imagesOnReviews'> & {
-  images: Image[];
+  images: ImageModel[];
 };
 
 type Props = {

@@ -1,4 +1,4 @@
-import { imagePreviewSelect } from './../image/selectors';
+import { imageSelect } from './../image/selectors';
 import { MetricTimeframe, ModelType, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';
@@ -79,7 +79,7 @@ export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
         take: 1,
         select: {
           image: {
-            select: imagePreviewSelect,
+            select: imageSelect,
           },
         },
       },

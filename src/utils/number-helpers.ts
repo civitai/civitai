@@ -65,3 +65,9 @@ export function getRandomInt(min: number, max: number) {
   const intMax = Math.floor(max);
   return Math.floor(Math.random() * (intMax - intMin + 1)) + intMin;
 }
+
+export function numberWithCommas(value: number | string | undefined) {
+  return value && !Number.isNaN(typeof value === 'string' ? parseFloat(value) : value)
+    ? `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+    : '';
+}

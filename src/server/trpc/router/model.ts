@@ -1,7 +1,7 @@
 import { Prisma, ReportReason } from '@prisma/client';
 import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';
-import { modelSchema } from '~/server/common/validation/model';
+import { modelSchema, modelSchema2 } from '~/server/common/validation/model';
 import { handleAuthorizationError, handleDbError } from '~/server/services/errorHandling';
 import {
   getAllModelsSchema,
@@ -225,7 +225,7 @@ export const modelRouter = router({
                 create: { tagId: tag.id as number },
               })),
               create: tagsToCreate.map((tag) => ({
-                tag: { create: { name: tag.name } },
+                tag: { create: { name: tag.name.toLowerCase() } },
               })),
             },
           },

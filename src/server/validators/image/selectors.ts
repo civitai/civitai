@@ -8,25 +8,17 @@ export const imagePreviewSelect = Prisma.validator<Prisma.ImageSelect>()({
   hash: true,
 });
 
-export const imageSimpleSelect = Prisma.validator<Prisma.ImageSelect>()({
+export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   id: true,
   name: true,
   url: true,
   nsfw: true,
-});
-
-export const imageDetailsSelect = Prisma.validator<Prisma.ImageSelect>()({
-  ...imageSimpleSelect,
-  prompt: true,
-  height: true,
   width: true,
+  height: true,
   hash: true,
+  prompt: true,
 });
 
-const imagePreview = Prisma.validator<Prisma.ImageArgs>()({ select: imagePreviewSelect });
-const imageSimple = Prisma.validator<Prisma.ImageArgs>()({ select: imageSimpleSelect });
-const imageDetails = Prisma.validator<Prisma.ImageArgs>()({ select: imageDetailsSelect });
+const image = Prisma.validator<Prisma.ImageArgs>()({ select: imageSelect });
 
-export type ImagePreviewModel = Prisma.ImageGetPayload<typeof imagePreview>;
-export type ImageSimpleModel = Prisma.ImageGetPayload<typeof imageSimple>;
-export type ImageDetailModel = Prisma.ImageGetPayload<typeof imageDetails>;
+export type ImageModel = Prisma.ImageGetPayload<typeof image>;

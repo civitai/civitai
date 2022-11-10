@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { imageDetailsSelect, imageSimpleSelect } from '~/server/validators/image/selectors';
+import { imageSelect } from '~/server/validators/image/selectors';
 
 export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
@@ -38,7 +38,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
         select: {
           index: true,
           image: {
-            select: imageDetailsSelect,
+            select: imageSelect,
           },
         },
       },
@@ -59,7 +59,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       nsfw: true,
       createdAt: true,
       modelVersion: { select: { id: true, name: true } },
-      imagesOnReviews: { select: { image: { select: imageSimpleSelect } } },
+      imagesOnReviews: { select: { image: { select: imageSelect } } },
     },
   },
   rank: {

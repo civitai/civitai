@@ -1,11 +1,11 @@
-import { ImagePreviewModel } from './../server/validators/image/selectors';
+import { ImageModel } from './../server/validators/image/selectors';
 import { useMantineTheme } from '@mantine/core';
 import { openContextModal } from '@mantine/modals';
 import { useCallback } from 'react';
 
 type OpenLightboxProps = {
   initialSlide?: number;
-  images?: ImagePreviewModel[];
+  images?: ImageModel[];
 };
 
 export const useImageLightbox = (options?: OpenLightboxProps) => {
