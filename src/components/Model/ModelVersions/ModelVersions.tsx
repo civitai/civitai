@@ -10,8 +10,11 @@ import {
   CopyButton,
   Badge,
 } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import { showNotification } from '@mantine/notifications';
 import { IconCopy, IconDownload } from '@tabler/icons';
+import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/router';
 import React from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import {
@@ -67,6 +70,8 @@ type Props = {
 
 function TabContent({ version, nsfw }: TabContentProps) {
   const mobile = useIsMobile();
+  const { data: session } = useSession();
+  const router = useRouter();
   const { openImageLightbox } = useImageLightbox({
     initialSlide: 0,
     images: version.images.map(({ image }) => image),
@@ -96,15 +101,15 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 <Badge
                   size="sm"
                   color="violet"
-                  sx={{ cursor: 'pointer' }}
+                  sx={{ cursor: 'pointer', height: 'auto' }}
                   onClick={() => {
                     copy();
                     showNotification({ message: 'Copied trained word!', color: 'teal' });
                   }}
+                  rightSection={<IconCopy stroke={1.5} size={12} />}
                 >
-                  <Group spacing={4} align="center">
+                  <Group spacing={4} align="center" noWrap sx={{ whiteSpace: 'normal' }}>
                     {word}
-                    <IconCopy stroke={1.5} size={12} />
                   </Group>
                 </Badge>
               )}
@@ -137,16 +142,26 @@ function TabContent({ version, nsfw }: TabContentProps) {
     <Grid gutter="xl">
       <Grid.Col xs={12} md={4} orderMd={2}>
         <Stack spacing="xs">
-          <Button
-            component="a"
-            target="_blank"
-            href={`/api/download/models/${version.id}`}
-            leftIcon={<IconDownload size={16} />}
-            fullWidth
-            download
-          >
-            {`Download (${formatKBytes(version.sizeKB)})`}
-          </Button>
+          {session ? (
+            <Button
+              component="a"
+              href={`/api/download/models/${version.id}`}
+              leftIcon={<IconDownload size={16} />}
+              download
+              fullWidth
+            >
+              {`Download (${formatKBytes(version.sizeKB)})`}
+            </Button>
+          ) : (
+            <Button
+              component={NextLink}
+              href={`/login?returnUrl=${router.asPath}`}
+              leftIcon={<IconDownload size={16} />}
+              fullWidth
+            >
+              {`Download (${formatKBytes(version.sizeKB)})`}
+            </Button>
+          )}
           <DescriptionTable items={versionDetails} labelWidth="30%" />
           <Text size={16} weight={500}>
             About this version

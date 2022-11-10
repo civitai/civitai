@@ -306,15 +306,15 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 <Badge
                   size="sm"
                   color="violet"
-                  sx={{ cursor: 'pointer' }}
+                  sx={{ cursor: 'pointer', height: 'auto' }}
                   onClick={() => {
                     copy();
                     showNotification({ message: 'Copied trained word!', color: 'teal' });
                   }}
+                  rightSection={<IconCopy stroke={1.5} size={12} />}
                 >
-                  <Group spacing={4} align="center">
+                  <Group spacing={4} align="center" noWrap sx={{ whiteSpace: 'normal' }}>
                     {word}
-                    <IconCopy stroke={1.5} size={12} />
                   </Group>
                 </Badge>
               )}
@@ -407,24 +407,42 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         <Grid gutter="xl">
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
             <Stack>
-              <Button
-                component="a"
-                href={`/api/download/models/${latestVersion?.id}`}
-                target="_blank"
-                fullWidth={mobile}
-                sx={{ height: 'auto' }}
-                py={4}
-                download
-              >
-                <Text align="center">
-                  {`Download (${formatKBytes(latestVersion?.sizeKB ?? 0)})`}
-                  {latestVersion ? (
-                    <Text size="xs">
-                      {`${latestVersion.name} (${formatDate(latestVersion.createdAt)})`}
-                    </Text>
-                  ) : null}
-                </Text>
-              </Button>
+              {session ? (
+                <Button
+                  component="a"
+                  href={`/api/download/models/${latestVersion?.id}`}
+                  fullWidth={mobile}
+                  sx={{ height: 'auto' }}
+                  py={4}
+                  download
+                >
+                  <Text align="center">
+                    {`Download (${formatKBytes(latestVersion?.sizeKB ?? 0)})`}
+                    {latestVersion ? (
+                      <Text size="xs">
+                        {`${latestVersion.name} (${formatDate(latestVersion.createdAt)})`}
+                      </Text>
+                    ) : null}
+                  </Text>
+                </Button>
+              ) : (
+                <Button
+                  component={NextLink}
+                  href={`/login?returnUrl=${router.asPath}`}
+                  fullWidth={mobile}
+                  sx={{ height: 'auto' }}
+                  py={4}
+                >
+                  <Text align="center">
+                    {`Download (${formatKBytes(latestVersion?.sizeKB ?? 0)})`}
+                    {latestVersion ? (
+                      <Text size="xs">
+                        {`${latestVersion.name} (${formatDate(latestVersion.createdAt)})`}
+                      </Text>
+                    ) : null}
+                  </Text>
+                </Button>
+              )}
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
                 <Group position="right" spacing="xs">
