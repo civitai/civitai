@@ -1,6 +1,8 @@
-import { Carousel } from '@mantine/carousel';
+import { Carousel, Embla } from '@mantine/carousel';
 import { Box, CloseButton } from '@mantine/core';
+import { useHotkeys } from '@mantine/hooks';
 import { ContextModalProps } from '@mantine/modals';
+import { useState } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageModel } from '~/server/validators/image/selectors';
 
@@ -15,6 +17,13 @@ export default function LightboxImageCarousel({
   innerProps,
 }: ContextModalProps<Props>) {
   const { initialSlide, images = [] } = innerProps;
+  const [embla, setEmbla] = useState<Embla | null>(null);
+
+  useHotkeys([
+    ['ArrowLeft', () => embla?.scrollPrev()],
+    ['ArrowRight', () => embla?.scrollNext()],
+  ]);
+
   return (
     <>
       <CloseButton
@@ -30,6 +39,7 @@ export default function LightboxImageCarousel({
           initialSlide={initialSlide}
           withIndicators
           loop
+          getEmblaApi={setEmbla}
           styles={{
             control: {
               '&[data-inactive]': {
