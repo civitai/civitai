@@ -9,6 +9,7 @@ import {
   Stack,
   Title,
 } from '@mantine/core';
+import { randomId } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import { Model, ModelType } from '@prisma/client';
 import { IconArrowLeft, IconCheck, IconPlus, IconTrash, IconX } from '@tabler/icons';
@@ -166,7 +167,7 @@ export function ModelForm2({ model }: Props) {
                       leftIcon={<IconPlus size={16} />}
                       variant="outline"
                       onClick={() =>
-                        append({
+                        prepend({
                           name: '',
                           description: '',
                           url: '',
@@ -284,60 +285,62 @@ export function ModelForm2({ model }: Props) {
             </Stack>
           </Grid.Col>
           <Grid.Col lg={4}>
-            <Paper radius="md" p="xl" withBorder>
-              <Stack>
-                <Title order={4}>Model Properties</Title>
-                <InputSelect
-                  name="type"
-                  label="Type"
-                  placeholder="Type"
-                  data={Object.values(ModelType).map((type) => ({
-                    label: splitUppercase(type),
-                    value: type,
-                  }))}
-                  withAsterisk
-                />
-                <InputMultiSelect
-                  name="trainedWords"
-                  label="Trained Words"
-                  placeholder="e.g.: Master Chief"
-                  description="Please input the words you have trained your model with"
-                  data={trainedWords}
-                  creatable
-                  getCreateLabel={(query) => `+ Create ${query}`}
-                  clearable
-                  searchable
-                  withAsterisk
-                />
-                <InputMultiSelect
-                  name="tagsOnModels"
-                  label="Tags"
-                  placeholder="e.g.: portrait, sharp focus, etc."
-                  description="Please add your tags"
-                  data={tagsData}
-                  creatable
-                  getCreateLabel={(query) => `+ Create ${query}`}
-                  clearable
-                  searchable
-                />
-                <InputCheckbox
-                  name="nsfw"
-                  label="This model or images associated with it are NSFW"
-                />
-              </Stack>
-            </Paper>
-            <Group position="right" mt="lg">
-              <Button
-                variant="outline"
-                onClick={() => form.reset()}
-                disabled={!form.formState.isDirty || mutating}
-              >
-                Discard changes
-              </Button>
-              <Button type="submit" loading={mutating} disabled={uploading}>
-                Save
-              </Button>
-            </Group>
+            <Stack sx={{ position: 'sticky', top: 90 }}>
+              <Paper radius="md" p="xl" withBorder>
+                <Stack>
+                  <Title order={4}>Model Properties</Title>
+                  <InputSelect
+                    name="type"
+                    label="Type"
+                    placeholder="Type"
+                    data={Object.values(ModelType).map((type) => ({
+                      label: splitUppercase(type),
+                      value: type,
+                    }))}
+                    withAsterisk
+                  />
+                  <InputMultiSelect
+                    name="trainedWords"
+                    label="Trained Words"
+                    placeholder="e.g.: Master Chief"
+                    description="Please input the words you have trained your model with"
+                    data={trainedWords}
+                    creatable
+                    getCreateLabel={(query) => `+ Create ${query}`}
+                    clearable
+                    searchable
+                    withAsterisk
+                  />
+                  <InputMultiSelect
+                    name="tagsOnModels"
+                    label="Tags"
+                    placeholder="e.g.: portrait, sharp focus, etc."
+                    description="Please add your tags"
+                    data={tagsData}
+                    creatable
+                    getCreateLabel={(query) => `+ Create ${query}`}
+                    clearable
+                    searchable
+                  />
+                  <InputCheckbox
+                    name="nsfw"
+                    label="This model or images associated with it are NSFW"
+                  />
+                </Stack>
+              </Paper>
+              <Group position="right" mt="lg">
+                <Button
+                  variant="outline"
+                  onClick={() => form.reset()}
+                  disabled={!form.formState.isDirty || mutating}
+                >
+                  Discard changes
+                </Button>
+                <Button type="submit" loading={mutating} disabled={uploading}>
+                  Save
+                </Button>
+              </Group>
+            </Stack>
           </Grid.Col>
         </Grid>
       </Form>
