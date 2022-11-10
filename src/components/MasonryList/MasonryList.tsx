@@ -4,6 +4,7 @@ import {
   createStyles,
   DefaultMantineColor,
   Group,
+  LoadingOverlay,
   Rating,
   Stack,
   Text,
@@ -19,7 +20,7 @@ import {
   useScrollToIndex,
 } from 'masonic';
 import Link from 'next/link';
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { useModelFilters } from '~/hooks/useModelFilters';
@@ -109,6 +110,7 @@ const MasonryItem = ({
   const { data: session } = useSession();
   const { id, image, name, rank, nsfw } = data ?? {};
   const { classes } = useStyles();
+  const [loading, setLoading] = useState(false);
 
   // const hasDimensions = image.width && image.height;
 
@@ -185,7 +187,9 @@ const MasonryItem = ({
         className={classes.card}
         style={{ height: `${height}px` }}
         p={0}
+        onClick={() => setLoading(true)}
       >
+        <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
         {inView && (
           <>
             {nsfw ? (

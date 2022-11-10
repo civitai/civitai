@@ -59,14 +59,3 @@ export const modelSchema = z.object({
   nsfw: z.boolean().optional(),
   modelVersions: z.array(modelVersionSchema).min(1, 'At least one model version is required.'),
 });
-
-export const modelSchema2 = z.object({
-  id: z.number().optional(),
-  name: z.string().min(1, 'Name cannot be empty.'),
-  description: sanitizedDescriptionSchema,
-  type: z.nativeEnum(ModelType),
-  trainedWords: z.array(z.string()).min(1, 'At least one trained word is required.'),
-  tagsOnModels: z.string().array().nullish(),
-  nsfw: z.boolean().optional(),
-  modelVersions: z.array(modelVersionSchema).min(1, 'At least one model version is required.'),
-});
