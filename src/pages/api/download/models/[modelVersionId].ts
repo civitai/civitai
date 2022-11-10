@@ -18,10 +18,15 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
     return res.status(404).json({ error: 'Model not found' });
   }
 
-  // Track activity
   const session = await getServerAuthSession({ req, res });
   const userId = session?.user?.id;
+  if (!userId) {
+    if (req.headers['content-type'] === 'application/json')
+      return res.status(401).json({ error: 'Unauthorized' });
+    else return res.redirect(`/login?returnUrl=/models/${modelVersion.model.id}`);
+  }
 
+  // Track activity
   try {
     await prisma.userActivity.create({
       data: {
