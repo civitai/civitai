@@ -84,8 +84,8 @@ function TabContent({ version, nsfw }: TabContentProps) {
     },
     { label: 'Downloads', value: (version.rank?.downloadCountAllTime ?? 0).toLocaleString() },
     { label: 'Uploaded', value: formatDate(version.createdAt) },
-    { label: 'Steps', value: version.steps?.toLocaleString() ?? 0 },
-    { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0 },
+    { label: 'Steps', value: version.steps?.toLocaleString() ?? 0, visible: !!version.steps },
+    { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0, visible: !!version.epochs },
     {
       label: 'Trained Words',
       value: (
@@ -113,24 +113,21 @@ function TabContent({ version, nsfw }: TabContentProps) {
         </Group>
       ),
     },
-    ...(version.trainingDataUrl
-      ? [
-        {
-          label: 'Training Images',
-          value: (
-            <Text
-              variant="link"
-              component="a"
-              href={`/api/download/training-data/${version.id}`}
-              target="_blank"
-              download
-            >
-              Download
-            </Text>
-          ),
-        },
-      ]
-      : []),
+    {
+      label: 'Training Images',
+      value: (
+        <Text
+          variant="link"
+          component="a"
+          href={`/api/download/training-data/${version.id}`}
+          target="_blank"
+          download
+        >
+          Download
+        </Text>
+      ),
+      visible: !!version.trainingDataUrl,
+    },
   ];
 
   const versionImages = version.images.map((x) => x.image);
@@ -185,10 +182,10 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 figure: { height: '100%', display: 'flex' },
                 ...(index === 0 && !mobile
                   ? {
-                    gridColumn: '1/3',
-                    gridRow: '1/3',
-                    figure: { height: '100%', display: 'flex' },
-                  }
+                      gridColumn: '1/3',
+                      gridRow: '1/3',
+                      figure: { height: '100%', display: 'flex' },
+                    }
                   : {}),
               }}
             />

@@ -2,21 +2,27 @@ import { Box, Paper, Table, TableProps, Text } from '@mantine/core';
 import React from 'react';
 
 export function DescriptionTable({ items, title, labelWidth, ...props }: Props) {
-  const rows = items.map((item, index) => (
-    <Box component="tr" key={index}>
-      <Box
-        component="td"
-        sx={(theme) => ({
-          backgroundColor:
-            theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-          width: labelWidth,
-        })}
-      >
-        {typeof item.label === 'string' ? <Text weight="500">{item.label}</Text> : item.label}
+  const rows = [];
+  for (let i = 0; i < items.length; i += 1) {
+    const item = items[i];
+    if (item.visible === false) continue;
+
+    rows.push(
+      <Box component="tr" key={i}>
+        <Box
+          component="td"
+          sx={(theme) => ({
+            backgroundColor:
+              theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+            width: labelWidth,
+          })}
+        >
+          {typeof item.label === 'string' ? <Text weight="500">{item.label}</Text> : item.label}
+        </Box>
+        <Box component="td">{item.value}</Box>
       </Box>
-      <Box component="td">{item.value}</Box>
-    </Box>
-  ));
+    );
+  }
 
   return (
     <Paper radius="sm" withBorder>
@@ -45,7 +51,7 @@ export function DescriptionTable({ items, title, labelWidth, ...props }: Props) 
 }
 
 export type Props = TableProps & {
-  items: Array<{ label: React.ReactNode; value: React.ReactNode }>;
+  items: Array<{ label: React.ReactNode; value: React.ReactNode; visible?: boolean }>;
   title?: React.ReactNode;
   labelWidth?: React.CSSProperties['width'];
 };
