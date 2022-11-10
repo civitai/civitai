@@ -30,6 +30,7 @@ import {
   IconEdit,
   IconFilter,
   IconFlag,
+  IconLicense,
   IconPlus,
   IconTrash,
 } from '@tabler/icons';
@@ -424,6 +425,23 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 </Text>
               </Button>
               <DescriptionTable items={modelDetails} labelWidth="30%" />
+              {model?.type === 'Checkpoint' && (
+                <Group position="right" spacing="xs">
+                  <IconLicense size={16} />
+                  <Text size="xs" color="dimmed">
+                    License:{' '}
+                    <Text
+                      component="a"
+                      href="https://huggingface.co/spaces/CompVis/stable-diffusion-license"
+                      rel="nofollow"
+                      td="underline"
+                      target="_blank"
+                    >
+                      creativeml-openrail-m
+                    </Text>
+                  </Text>
+                </Group>
+              )}
             </Stack>
           </Grid.Col>
           <Grid.Col
@@ -577,8 +595,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       {isFetchingNextPage
                         ? 'Loading more...'
                         : hasNextPage
-                        ? 'Load More'
-                        : 'Nothing more to load'}
+                          ? 'Load More'
+                          : 'Nothing more to load'}
                     </Button>
                   )}
                 </InView>
