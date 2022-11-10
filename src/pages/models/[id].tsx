@@ -298,6 +298,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
     {
       label: 'Trained Words',
+      visible: !!latestVersion.trainedWords?.length,
       value: (
         <Group spacing={4}>
           {latestVersion?.trainedWords.map((word, index) => (
