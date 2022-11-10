@@ -219,7 +219,7 @@ export function ModelForm({ model }: Props) {
                             </Grid.Col>
                             <Grid.Col span={12}>
                               <InputMultiSelect
-                                name="trainedWords"
+                                name={`modelVersions.${index}.trainedWords`}
                                 label="Trained Words"
                                 placeholder="e.g.: Master Chief"
                                 description="Please input the words you have trained your model with"

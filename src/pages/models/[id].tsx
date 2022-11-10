@@ -596,8 +596,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       {isFetchingNextPage
                         ? 'Loading more...'
                         : hasNextPage
-                          ? 'Load More'
-                          : 'Nothing more to load'}
+                        ? 'Load More'
+                        : 'Nothing more to load'}
                     </Button>
                   )}
                 </InView>

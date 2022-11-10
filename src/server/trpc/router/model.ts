@@ -194,6 +194,8 @@ export const modelRouter = router({
                   },
                   update: {
                     ...version,
+                    epochs: version.epochs ?? null,
+                    steps: version.steps ?? null,
                     images: {
                       deleteMany: {
                         NOT: images.map((image) => ({ imageId: image.id })),
