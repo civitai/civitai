@@ -30,10 +30,8 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { useRouter } from 'next/router';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useSession } from 'next-auth/react';
-import { MetricTimeframe } from '@prisma/client';
 
 type MasonryListProps = {
   columnWidth: number;
@@ -99,7 +97,6 @@ const mantineColors: DefaultMantineColor[] = [
 ];
 
 const MasonryItem = ({
-  index,
   data,
   width: itemWidth,
 }: {
@@ -178,8 +175,7 @@ const MasonryItem = ({
         query: nsfw && session?.user?.blurNsfw ? { showNsfw: true } : undefined,
       }}
       as={`models/${id}`}
-      passHref
-      // prefetch={false}
+      legacyBehavior
     >
       <a>
         <Card
@@ -189,7 +185,9 @@ const MasonryItem = ({
           className={classes.card}
           style={{ height: `${height}px` }}
           p={0}
-          onClick={() => setLoading(true)}
+          onClick={(e: React.MouseEvent<HTMLDivElement>) => {
+            if (!(e.ctrlKey || e.metaKey) || e.button === 0) setLoading(true);
+          }}
         >
           <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
           {inView && (

@@ -30,7 +30,11 @@ export const SensitiveContent = ({
 
   return (
     <SensitiveContentContext.Provider value={{ show, setShow }}>
-      <div className={cx(classes.root, className)} {...rootProps}>
+      <div
+        className={cx(classes.root, className)}
+        {...rootProps}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className={classes.controls}>{controls ?? <SensitiveContentToggle m="md" />}</div>
         {!show ? (
           <>
@@ -63,6 +67,8 @@ const SensitiveContentToggle = ({ ...props }: SensitiveContentToggleProps) => {
       sx={{ cursor: 'pointer', userSelect: 'none' }}
       onClick={(e) => {
         e.stopPropagation();
+        e.preventDefault();
+        e.nativeEvent.stopImmediatePropagation();
         setShow((value) => !value);
       }}
       {...props}
@@ -74,7 +80,7 @@ const SensitiveContentToggle = ({ ...props }: SensitiveContentToggleProps) => {
 
 SensitiveContent.Toggle = SensitiveContentToggle;
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   root: {
     position: 'relative',
   },
