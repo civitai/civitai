@@ -76,7 +76,8 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
           )}
           <TextInput label="Username" required {...form.getInputProps('username')} />
           <Switch
-            label="I am of legal age to view NSFW content"
+            label="Show me NSFW content"
+            description="If you are not of legal age to view NSFW content, please do not enable this option"
             checked={form.values.showNsfw}
             {...form.getInputProps('showNsfw')}
           />

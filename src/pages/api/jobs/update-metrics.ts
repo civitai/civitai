@@ -1,5 +1,5 @@
 import { MetricTimeframe, Prisma, UserActivityType } from '@prisma/client';
-import { JobEndpoint } from '~/server/common/jobs';
+import { JobEndpoint } from '~/server/common/endpoint-helpers';
 import { prisma } from '~/server/db/client';
 
 const METRIC_LAST_UPDATED_KEY = 'last-metrics-update';

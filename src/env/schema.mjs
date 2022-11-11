@@ -33,6 +33,8 @@ export const serverSchema = z.object({
   S3_UPLOAD_BUCKET: z.string(),
   CF_ACCOUNT_ID: z.string(),
   CF_IMAGES_TOKEN: z.string(),
+  JOB_TOKEN: z.string(),
+  WEBHOOK_TOKEN: z.string(),
 });
 
 /**
