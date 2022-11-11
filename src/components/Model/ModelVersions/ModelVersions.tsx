@@ -158,7 +158,11 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 {`Download (${formatKBytes(version.sizeKB)})`}
               </Button>
             </LoginRedirect>
-            <VerifiedShield verified={version.verified} />
+            <VerifiedShield
+              verified={version.verified}
+              message={version.verificationMessage}
+              variant="light"
+            />
           </Group>
 
           <DescriptionTable items={versionDetails} labelWidth="30%" />

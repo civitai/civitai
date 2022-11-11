@@ -1,4 +1,4 @@
-import { ButtonProps, Button, Popover } from '@mantine/core';
+import { ButtonProps, Button, Popover, Text } from '@mantine/core';
 import { IconShieldCheck, IconShieldX } from '@tabler/icons';
 import ReactMarkdown from 'react-markdown';
 
@@ -9,20 +9,35 @@ export function VerifiedShield({
   ...props
 }: { verified?: boolean; message?: string | null } & Omit<ButtonProps, 'children'>) {
   const icon = (
-    <Button color={verified ? 'blue' : 'gray'} style={{ cursor: 'pointer', ...style }} {...props}>
+    <Button
+      color={verified ? 'green' : 'gray'}
+      style={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px', ...style }}
+      {...props}
+    >
       {verified ? <IconShieldCheck /> : <IconShieldX />}
     </Button>
   );
 
-  if (!message) {
-    message = verified ? 'This model has been verified' : 'This model has not been verified';
-  }
+  message ??= verified ? 'This model has been verified' : 'This model has not been verified';
 
   return (
-    <Popover withArrow>
+    <Popover withArrow width={300} position="bottom-end">
       <Popover.Target>{icon}</Popover.Target>
       <Popover.Dropdown>
-        <ReactMarkdown>{message}</ReactMarkdown>
+        <Text weight={500} size="md" color={verified ? 'green' : 'red'} pb={5}>
+          Model {verified ? 'Verified' : 'Unverified'}
+        </Text>
+        <ReactMarkdown className="popover-markdown">{message}</ReactMarkdown>
+        <Text
+          component="a"
+          href="https://github.com/civitai/civitai/wiki/Model-Safety-Checks"
+          target="_blank"
+          size="xs"
+          color="dimmed"
+          td="underline"
+        >
+          What does this mean?
+        </Text>
       </Popover.Dropdown>
     </Popover>
   );

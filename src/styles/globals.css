@@ -14,3 +14,26 @@ a {
 * {
   box-sizing: border-box;
 }
+
+.popover-markdown pre {
+  overflow: auto;
+  margin-top: 5px;
+}
+
+.popover-markdown p {
+  margin-bottom: 5px;
+}
+
+.popover-markdown {
+  font-size: 0.75em;
+}
+
+.popover-markdown *:first-child {
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.popover-markdown *:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+}

@@ -71,6 +71,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { isNumber } from '~/utils/type-guards';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
+import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
   const ssg = createProxySSGHelpers({
@@ -345,7 +346,11 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       <Meta
         title={`Civitai - ${model.name}`}
         description={model.description ?? ''}
-        image={model.nsfw ? undefined : latestVersion?.images[0].image.url}
+        image={
+          model.nsfw || latestVersion?.images[0]?.image.url == null
+            ? undefined
+            : getEdgeUrl(latestVersion.images[0].image.url, { width: 1200 })
+        }
       />
 
       <Container size="xl" py="xl">

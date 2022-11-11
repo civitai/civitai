@@ -17,7 +17,7 @@ export type EdgeImageProps = Omit<
   metadata?: 'keep' | 'copyright' | 'none';
 };
 
-function getEdgeSrc(src: string, variantParams: Omit<EdgeImageProps, 'src'>) {
+export function getEdgeUrl(src: string, variantParams: Omit<EdgeImageProps, 'src'>) {
   if (src.startsWith('http') || src.startsWith('blob')) return src;
 
   const params = Object.entries(variantParams)
@@ -42,7 +42,7 @@ export function EdgeImage({
   if (width) width = Math.min(width, 4096);
   if (height) height = Math.min(height, 4096);
 
-  src = getEdgeSrc(src, { width, height, fit, anim, blur, quality, gravity, metadata });
+  src = getEdgeUrl(src, { width, height, fit, anim, blur, quality, gravity, metadata });
   // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
   return <img src={src} {...imgProps} />;
 }
