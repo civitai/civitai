@@ -1,6 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getGetUrl } from '~/utils/s3-utils';
-import { UserActivityType } from '@prisma/client';
+import { ModelFileType, UserActivityType } from '@prisma/client';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
 import { prisma } from '~/server/db/client';
 
@@ -12,7 +12,11 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
 
   const modelVersion = await prisma.modelVersion.findFirst({
     where: { id: parseInt(modelVersionId) },
-    select: { model: { select: { id: true, name: true } }, name: true, url: true },
+    select: {
+      model: { select: { id: true, name: true } },
+      name: true,
+      files: { where: { type: ModelFileType.Model }, select: { url: true } },
+    },
   });
   if (!modelVersion) {
     return res.status(404).json({ error: 'Model not found' });
@@ -39,7 +43,8 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
     return res.status(500).json({ error: 'Invalid database operation', cause: error });
   }
 
-  const { url } = await getGetUrl(modelVersion.url);
+  const [modelFile] = modelVersion.files;
+  const { url } = await getGetUrl(modelFile.url);
 
   res.redirect(url);
 }

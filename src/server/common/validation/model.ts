@@ -33,7 +33,7 @@ const sanitizedDescriptionSchema = z.preprocess((val) => {
   });
 }, z.string().nullish());
 
-const fileSchema = z.object({
+export const fileSchema = z.object({
   name: z.string(),
   url: z.string().url().min(1, 'You must select a file'),
   sizeKB: z.number(),

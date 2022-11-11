@@ -32,7 +32,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { modelSchema } from '~/server/common/validation/model';
-import { ModelWithDetails } from '~/server/validators/models/getById';
+import { ModelById } from '~/server/services/models';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -42,7 +42,7 @@ const schema = modelSchema.extend({ tagsOnModels: z.string().array() });
 type CreateModelProps = z.infer<typeof modelSchema>;
 type UpdateModelProps = Omit<CreateModelProps, 'id'> & { id: number };
 
-type Props = { model?: ModelWithDetails };
+type Props = { model?: ModelById };
 
 export function ModelForm({ model }: Props) {
   const router = useRouter();
@@ -63,17 +63,10 @@ export function ModelForm({ model }: Props) {
       ...model,
       type: model?.type ?? 'Checkpoint',
       tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
-      modelVersions: model?.modelVersions.map(({ trainedWords, images, files, ...version }) => ({
+      modelVersions: model?.modelVersions.map(({ trainedWords, images, ...version }) => ({
         ...version,
         trainedWords: trainedWords ?? [],
         images: images.map(({ image }) => image) ?? [],
-        modelFile: files.find((file) => file.type === ModelFileType.Model) ?? {
-          name: '',
-          url: '',
-          sizeKB: 0,
-          type: ModelFileType.Model,
-        },
-        trainingDataFile: files.find((file) => file.type === ModelFileType.TrainingData) ?? null,
       })) ?? [
         {
           name: '',
@@ -228,18 +221,19 @@ export function ModelForm({ model }: Props) {
                               />
                             </Grid.Col>
                             <Grid.Col span={12}>
-                              <InputMultiSelect
-                                name={`modelVersions.${index}.trainedWords`}
-                                label="Trained Words"
-                                placeholder="e.g.: Master Chief"
-                                description="Please input the words you have trained your model with"
-                                data={trainedWords}
-                                creatable
-                                getCreateLabel={(query) => `+ Create ${query}`}
-                                clearable
-                                searchable
-                                withAsterisk={hasTrainingWords}
-                              />
+                              {hasTrainingWords && (
+                                <InputMultiSelect
+                                  name={`modelVersions.${index}.trainedWords`}
+                                  label="Trained Words"
+                                  placeholder="e.g.: Master Chief"
+                                  description="Please input the words you have trained your model with"
+                                  data={trainedWords}
+                                  creatable
+                                  getCreateLabel={(query) => `+ Create ${query}`}
+                                  clearable
+                                  searchable
+                                />
+                              )}
                               <Switch
                                 label="This model doesn't require any trigger words"
                                 onChange={() => setHasTrainingWords((x) => !x)}

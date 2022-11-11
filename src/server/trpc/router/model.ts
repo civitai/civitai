@@ -11,18 +11,20 @@ import {
 } from '~/server/validators/models/getAllModels';
 import { modelWithDetailsSelect } from '~/server/validators/models/getById';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
+import { getModelById } from '~/server/services/models';
 
 function prepareFiles(
   modelFile: z.infer<typeof modelVersionSchema>['modelFile'],
   trainingDataFile: z.infer<typeof modelVersionSchema>['trainingDataFile']
 ) {
   const files = [{ ...modelFile, type: ModelFileType.Model }] as Partial<ModelFile>[];
-  if (trainingDataFile) files.push({ ...trainingDataFile, type: ModelFileType.TrainingData });
+  if (trainingDataFile != null)
+    files.push({ ...trainingDataFile, type: ModelFileType.TrainingData });
 
   return files;
 }
 
-export const modelRouter = router({
+const routes = {
   getAll: publicProcedure.input(getAllModelsSchema).query(async ({ ctx, input = {} }) => {
     try {
       const session = ctx.session;
@@ -73,22 +75,34 @@ export const modelRouter = router({
   }),
   getById: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     try {
-      const { id } = input;
+      const { id } = input as unknown as { id: number };
       const model = await ctx.prisma.model.findUnique({
         where: { id },
         select: modelWithDetailsSelect,
       });
 
       if (!model) {
-        return handleDbError({
+        handleDbError({
           code: 'NOT_FOUND',
           message: `No model with id ${id}`,
         });
+        return null;
       }
 
-      return model;
+      const { modelVersions } = model;
+      const transformedModel = {
+        ...model,
+        modelVersions: modelVersions.map(({ files, ...version }) => ({
+          ...version,
+          trainingDataFile: files.find((file) => file.type === ModelFileType.TrainingData),
+          modelFile: files.find((file) => file.type === ModelFileType.Model),
+        })),
+      };
+
+      return transformedModel;
     } catch (error) {
-      return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+      handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+      return null;
     }
   }),
   getVersions: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
@@ -178,7 +192,7 @@ export const modelRouter = router({
 
         // TEMPORARY
         // query existing model versions to compare the file url to see if it has changed
-        const queriedModelVersions = await ctx.prisma.modelVersion.findMany({
+        const existingVersions = await ctx.prisma.modelVersion.findMany({
           where: { modelId: id },
           select: {
             id: true,
@@ -205,7 +219,7 @@ export const modelRouter = router({
                     userId: ownerId,
                     ...image,
                   }));
-                  const existingVersion = queriedModelVersions.find((x) => x.id === id);
+                  const existingVersion = existingVersions.find((x) => x.id === id);
 
                   // Determine what files to create/update
                   const existingFileUrls: Record<string, string> = {};
@@ -394,4 +408,6 @@ export const modelRouter = router({
         });
       }
     }),
-});
+};
+
+export const modelRouter = router(routes);

@@ -420,31 +420,24 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         <Grid gutter="xl">
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
             <Stack>
-              <Group spacing="xs">
-                <LoginRedirect reason="download-auth">
-                  <Button
-                    component="a"
-                    href={`/api/download/models/${latestVersion?.id}`}
-                    fullWidth={mobile}
-                    sx={{ flex: 1 }}
-                    download
-                  >
-                    <Text align="center">
-                      {`Download Latest (${formatKBytes(latestVersion?.sizeKB ?? 0)})`}
-                      {/* {latestVersion ? (
-                        <Text size="xs">
-                          {`${latestVersion.name} (${formatDate(latestVersion.createdAt)})`}
-                        </Text>
-                      ) : null} */}
-                    </Text>
-                  </Button>
-                </LoginRedirect>
-                <VerifiedShield
-                  verified={latestVersion?.verified}
-                  message={latestVersion?.verificationMessage}
-                  // py={4}
-                />
-              </Group>
+              {latestVersion && (
+                <Group spacing="xs">
+                  <LoginRedirect reason="download-auth">
+                    <Button
+                      component="a"
+                      href={`/api/download/models/${latestVersion?.id}`}
+                      fullWidth={mobile}
+                      sx={{ flex: 1 }}
+                      download
+                    >
+                      <Text align="center">
+                        {`Download Latest (${formatKBytes(latestVersion?.modelFile?.sizeKB ?? 0)})`}
+                      </Text>
+                    </Button>
+                  </LoginRedirect>
+                  <VerifiedShield file={latestVersion.modelFile} />
+                </Group>
+              )}
 
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
