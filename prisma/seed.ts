@@ -124,20 +124,20 @@ async function seed() {
    * MODELS AND MODEL VERSIONS
    ************/
   const modelResults = await Promise.all(
-    [...Array(200)].map((x, i) =>
+    [...Array(10)].map((x, i) =>
       prisma.model.create({
         data: {
           userId: getRandomItem(userIds),
           name: `Model ${i}`,
           description: getRandomItem(descriptions),
           type: getRandomItem(modelTypes),
-          trainedWords: getRandomItems(trainedWords, 3),
           modelVersions: {
             create: [...Array(getRandomInt(1, 3))].map((y, j) => ({
               name: `Version ${j}`,
               description: getRandomItem(descriptions),
               url: 'https://www.google.com/',
               sizeKB: getRandomInt(1000000000, 4000000000),
+              trainedWords: getRandomItems(trainedWords, 3),
               steps: getRandomInt(1, 10),
               epochs: getRandomInt(1000, 3000),
             })),
