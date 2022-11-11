@@ -75,7 +75,7 @@ const pendingTrackedFile = {
   speed: 0,
   timeRemaining: 0,
   status: 'pending',
-  abort: () => { },
+  abort: () => {},
 };
 
 export const useS3Upload: UseS3Upload = (options = {}) => {

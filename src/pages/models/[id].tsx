@@ -291,7 +291,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       value: (
         <Group spacing={4}>
           {model.tagsOnModels.map(({ tag }) => (
-            <Badge key={tag.id} color={tag.color ?? 'blue'} size="sm">
+            <Badge key={tag.id} color={tag.color ?? 'blue'} size="sm" radius="sm">
               {tag.name}
             </Badge>
           ))}
@@ -299,6 +299,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       ),
     },
     {
+      // TODO DRY: We're doing this same thing here and in the modelversions
       label: 'Trained Words',
       visible: !!latestVersion?.trainedWords?.length,
       value: (
@@ -307,6 +308,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             <CopyButton key={index} value={word}>
               {({ copy }) => (
                 <Badge
+                  radius="sm"
                   size="sm"
                   color="violet"
                   sx={{ cursor: 'pointer', height: 'auto' }}
@@ -353,7 +355,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         }
       />
 
-      <Container size="xl" py="xl">
+      <Container size="xl" pt={0} pb="xl" px={0}>
         <Stack spacing="xs" mb="xl">
           <Group align="center" sx={{ justifyContent: 'space-between' }}>
             <Group align="center">

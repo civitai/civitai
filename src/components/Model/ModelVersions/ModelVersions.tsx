@@ -103,6 +103,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
               {({ copy }) => (
                 <Badge
                   size="sm"
+                  radius="sm"
                   color="violet"
                   sx={{ cursor: 'pointer', height: 'auto' }}
                   onClick={() => {
