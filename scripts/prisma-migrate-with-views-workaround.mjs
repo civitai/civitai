@@ -31,12 +31,9 @@ try {
   const runProduction = productionFlagIndex > -1;
   if (runProduction) argv.splice(productionFlagIndex, 1);
 
-  const nameFlagIndex = argv.indexOf('--name');
-  const hasName = nameFlagIndex > -1;
-
   let { error } = spawnSync(
     `prisma migrate ${runProduction ? 'deploy' : 'dev'}`,
-    hasName && !runProduction ? argv.slice(nameFlagIndex) : [],
+    !runProduction ? argv.slice(2) : [],
     spawnOptions
   );
   if (error) throw error;
