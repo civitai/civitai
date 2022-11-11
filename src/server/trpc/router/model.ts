@@ -1,7 +1,7 @@
-import { Prisma, ReportReason } from '@prisma/client';
+import { ModelFile, ModelFileType, Prisma, ReportReason, ScanResultCode } from '@prisma/client';
 import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';
-import { modelSchema } from '~/server/common/validation/model';
+import { modelSchema, modelVersionSchema } from '~/server/common/validation/model';
 import { handleAuthorizationError, handleDbError } from '~/server/services/errorHandling';
 import {
   getAllModelsSchema,
@@ -11,6 +11,16 @@ import {
 } from '~/server/validators/models/getAllModels';
 import { modelWithDetailsSelect } from '~/server/validators/models/getById';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
+
+function prepareFiles(
+  modelFile: z.infer<typeof modelVersionSchema>['modelFile'],
+  trainingDataFile: z.infer<typeof modelVersionSchema>['trainingDataFile']
+) {
+  const files = [{ ...modelFile, type: ModelFileType.Model }] as Partial<ModelFile>[];
+  if (trainingDataFile) files.push({ ...trainingDataFile, type: ModelFileType.TrainingData });
+
+  return files;
+}
 
 export const modelRouter = router({
   getAll: publicProcedure.input(getAllModelsSchema).query(async ({ ctx, input = {} }) => {
@@ -103,8 +113,9 @@ export const modelRouter = router({
           ...data,
           userId,
           modelVersions: {
-            create: modelVersions.map(({ images, ...version }) => ({
+            create: modelVersions.map(({ images, modelFile, trainingDataFile, ...version }) => ({
               ...version,
+              files: prepareFiles(modelFile, trainingDataFile),
               images: {
                 create: images.map((image, index) => ({
                   index,
@@ -166,12 +177,17 @@ export const modelRouter = router({
           .map(({ id }) => id);
 
         // TEMPORARY
-        // query existing model versions to compare the url to see if it has changed
+        // query existing model versions to compare the file url to see if it has changed
         const queriedModelVersions = await ctx.prisma.modelVersion.findMany({
           where: { modelId: id },
           select: {
             id: true,
-            url: true,
+            files: {
+              select: {
+                type: true,
+                url: true,
+              },
+            },
           },
         });
 
@@ -182,57 +198,87 @@ export const modelRouter = router({
             modelVersions: {
               deleteMany:
                 versionsToDelete.length > 0 ? { id: { in: versionsToDelete } } : undefined,
-              upsert: modelVersions.map(({ id = -1, images, ...version }) => {
-                const imagesWithIndex = images.map((image, index) => ({
-                  index,
-                  userId: ownerId,
-                  ...image,
-                }));
-                const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
-                const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
+              upsert: modelVersions.map(
+                ({ id = -1, images, modelFile, trainingDataFile, ...version }) => {
+                  const imagesWithIndex = images.map((image, index) => ({
+                    index,
+                    userId: ownerId,
+                    ...image,
+                  }));
+                  const existingVersion = queriedModelVersions.find((x) => x.id === id);
 
-                return {
-                  where: { id },
-                  create: {
-                    ...version,
-                    images: {
-                      create: imagesWithIndex.map(({ index, ...image }) => ({
-                        index,
-                        image: { create: image },
-                      })),
-                    },
-                  },
-                  update: {
-                    ...version,
-                    // temporary
-                    verified:
-                      queriedModelVersions.findIndex((x) => x.id === id && x.url === version.url) >
-                      -1,
-                    epochs: version.epochs ?? null,
-                    steps: version.steps ?? null,
-                    images: {
-                      deleteMany: {
-                        NOT: images.map((image) => ({ imageId: image.id })),
-                      },
-                      create: imagesToCreate.map(({ index, ...image }) => ({
-                        index,
-                        image: { create: image },
-                      })),
-                      update: imagesToUpdate.map(({ index, ...image }) => ({
-                        where: {
-                          imageId_modelVersionId: {
-                            imageId: image.id as number,
-                            modelVersionId: id,
-                          },
-                        },
-                        data: {
+                  // Determine what files to create/update
+                  const existingFileUrls: Record<string, string> = {};
+                  for (const existingFile of existingVersion?.files ?? [])
+                    existingFileUrls[existingFile.type] = existingFile.url;
+
+                  const files = prepareFiles(modelFile, trainingDataFile);
+                  const filesToCreate = [];
+                  const filesToUpdate = [];
+                  for (const file of files) {
+                    if (!file.type) continue;
+                    const existingUrl = existingFileUrls[file.type];
+                    if (!existingUrl) filesToCreate.push(file);
+                    else if (existingUrl !== file.url) filesToUpdate.push(file);
+                  }
+
+                  // Determine what images to create/update
+                  const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
+                  const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
+
+                  return {
+                    where: { id },
+                    create: {
+                      ...version,
+                      files,
+                      images: {
+                        create: imagesWithIndex.map(({ index, ...image }) => ({
                           index,
-                        },
-                      })),
+                          image: { create: image },
+                        })),
+                      },
                     },
-                  },
-                };
-              }),
+                    update: {
+                      ...version,
+                      epochs: version.epochs ?? null,
+                      steps: version.steps ?? null,
+                      files: {
+                        create: filesToCreate,
+                        update: filesToUpdate.map(
+                          ({ type, modelVersionId, url, name, sizeKB }) => ({
+                            where: { modelVersionId_type: { modelVersionId, type } },
+                            data: {
+                              url,
+                              name,
+                              sizeKB,
+                            },
+                          })
+                        ),
+                      },
+                      images: {
+                        deleteMany: {
+                          NOT: images.map((image) => ({ imageId: image.id })),
+                        },
+                        create: imagesToCreate.map(({ index, ...image }) => ({
+                          index,
+                          image: { create: image },
+                        })),
+                        update: imagesToUpdate.map(({ index, ...image }) => ({
+                          where: {
+                            imageId_modelVersionId: {
+                              imageId: image.id as number,
+                              modelVersionId: id,
+                            },
+                          },
+                          data: {
+                            index,
+                          },
+                        })),
+                      },
+                    },
+                  };
+                }
+              ),
             },
             tagsOnModels: {
               deleteMany: {},

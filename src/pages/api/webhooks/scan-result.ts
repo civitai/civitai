@@ -3,6 +3,36 @@ import { z } from 'zod';
 import { WebhookEndpoint } from '~/server/common/endpoint-helpers';
 import { prisma } from '~/server/db/client';
 
+export default WebhookEndpoint(async (req, res) => {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  const { modelVersionId, type } = querySchema.parse(req.query);
+  const scanResult: ScanResult = req.body;
+
+  const where = { modelVersionId_type: { modelVersionId, type } };
+  const file = await prisma.modelFile.findUnique({ where });
+  if (!file) return res.status(404).json({ error: 'File not found' });
+
+  const pickleScanMessage = preparePickleScanMessage(
+    scanResult.picklescanExitCode,
+    scanResult.picklescanOutput
+  );
+
+  await prisma.modelFile.update({
+    where,
+    data: {
+      scannedAt: new Date(),
+      rawScanResult: scanResult,
+      virusScanResult: resultCodeMap[scanResult.clamscanExitCode],
+      virusScanMessage:
+        scanResult.clamscanExitCode != ScanExitCode.Success ? scanResult.clamscanOutput : null,
+      pickleScanResult: resultCodeMap[scanResult.picklescanExitCode],
+      pickleScanMessage,
+    },
+  });
+
+  res.status(200).json({ ok: true });
+});
+
 enum ScanExitCode {
   Success = 0,
   Danger = 1,
@@ -31,32 +61,3 @@ const querySchema = z.object({
 function preparePickleScanMessage(picklescanExitCode: ScanExitCode, scanMessage: string) {
   return '';
 }
-
-export default WebhookEndpoint(async (req, res) => {
-  const { modelVersionId, type } = querySchema.parse(req.query);
-  const scanResult: ScanResult = req.body;
-
-  const where = { modelVersionId_type: { modelVersionId, type } };
-  const file = await prisma.modelFile.findUnique({ where });
-  if (!file) return res.status(404).json({ error: 'File not found' });
-
-  const pickleScanMessage = preparePickleScanMessage(
-    scanResult.picklescanExitCode,
-    scanResult.picklescanOutput
-  );
-
-  await prisma.modelFile.update({
-    where,
-    data: {
-      scannedAt: new Date(),
-      rawScanResult: scanResult,
-      virusScanResult: resultCodeMap[scanResult.clamscanExitCode],
-      virusScanMessage:
-        scanResult.clamscanExitCode != ScanExitCode.Success ? scanResult.clamscanOutput : null,
-      pickleScanResult: resultCodeMap[scanResult.picklescanExitCode],
-      pickleScanMessage,
-    },
-  });
-
-  res.status(200).json({ ok: true });
-});
