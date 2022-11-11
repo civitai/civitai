@@ -5,6 +5,7 @@ export const loginRedirectReasons = {
   'report-model': 'You need to be logged in to report this model',
   'report-review': 'You need to be logged in to report this review',
   'create-review': 'You need to be logged in to create a review',
+  'upload-model': 'You need to be logged in to upload a model',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;
