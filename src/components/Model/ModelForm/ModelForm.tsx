@@ -7,6 +7,7 @@ import {
   Group,
   Paper,
   Stack,
+  Switch,
   Title,
 } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
@@ -52,6 +53,7 @@ export function ModelForm({ model }: Props) {
   const addMutation = trpc.model.add.useMutation();
   const updateMutation = trpc.model.update.useMutation();
   const [uploading, setUploading] = useState(false);
+  const [hasTrainingWords, setHasTrainingWords] = useState(true);
 
   const form = useForm({
     schema: schema,
@@ -226,6 +228,11 @@ export function ModelForm({ model }: Props) {
                                 getCreateLabel={(query) => `+ Create ${query}`}
                                 clearable
                                 searchable
+                                withAsterisk={hasTrainingWords}
+                              />
+                              <Switch
+                                label="This model doesn't require any trigger words"
+                                onChange={() => setHasTrainingWords((x) => !x)}
                               />
                             </Grid.Col>
                             <Grid.Col span={6}>
