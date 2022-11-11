@@ -1,4 +1,4 @@
-import { ModelType } from '@prisma/client';
+import { ModelFileType, ModelType, ScanResultCode } from '@prisma/client';
 import sanitize from 'sanitize-html';
 import { z } from 'zod';
 
@@ -37,6 +37,12 @@ const fileSchema = z.object({
   name: z.string(),
   url: z.string().url().min(1, 'You must select a file'),
   sizeKB: z.number(),
+  type: z.nativeEnum(ModelFileType),
+  pickleScanResult: z.nativeEnum(ScanResultCode).nullish(),
+  pickleScanMessage: z.string().nullish(),
+  virusScanResult: z.nativeEnum(ScanResultCode).nullish(),
+  virusScanMessage: z.string().nullish(),
+  rawScanResult: z.object({}).nullish(),
 });
 
 export const modelVersionSchema = z.object({
@@ -46,7 +52,7 @@ export const modelVersionSchema = z.object({
   steps: z.number().nullish(),
   epochs: z.number().nullish(),
   modelFile: fileSchema,
-  trainingDataFile: fileSchema.optional(),
+  trainingDataFile: fileSchema.nullish(),
   images: z
     .array(imageSchema)
     .min(1, 'At least one example image must be uploaded')

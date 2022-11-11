@@ -11,7 +11,7 @@ import {
   Title,
 } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
-import { Model, ModelType } from '@prisma/client';
+import { Model, ModelFileType, ModelType } from '@prisma/client';
 import { IconArrowLeft, IconCheck, IconPlus, IconTrash, IconX } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -63,21 +63,27 @@ export function ModelForm({ model }: Props) {
       ...model,
       type: model?.type ?? 'Checkpoint',
       tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
-      modelVersions: model?.modelVersions.map((version) => ({
+      modelVersions: model?.modelVersions.map(({ trainedWords, images, files, ...version }) => ({
         ...version,
-        trainedWords: version.trainedWords ?? [],
-        images: version.images.map(({ image }) => image) ?? [],
+        trainedWords: trainedWords ?? [],
+        images: images.map(({ image }) => image) ?? [],
+        modelFile: files.find((file) => file.type === ModelFileType.Model) ?? {
+          name: '',
+          url: '',
+          sizeKB: 0,
+          type: ModelFileType.Model,
+        },
+        trainingDataFile: files.find((file) => file.type === ModelFileType.TrainingData) ?? null,
       })) ?? [
         {
           name: '',
           description: '',
-          url: '',
           epochs: null,
           steps: null,
-          sizeKB: 0,
-          trainingDataUrl: '',
           trainedWords: [],
           images: [],
+          modelFile: { name: '', url: '', sizeKB: 0, type: ModelFileType.Model },
+          trainingDataFile: null,
         },
       ],
     },
@@ -172,13 +178,17 @@ export function ModelForm({ model }: Props) {
                         prepend({
                           name: '',
                           description: '',
-                          url: '',
                           epochs: null,
                           steps: null,
-                          sizeKB: 0,
-                          trainingDataUrl: '',
                           images: [],
                           trainedWords: [],
+                          modelFile: {
+                            name: '',
+                            url: '',
+                            sizeKB: 0,
+                            type: ModelFileType.Model,
+                          },
+                          trainingDataFile: null,
                         })
                       }
                       compact
@@ -255,7 +265,7 @@ export function ModelForm({ model }: Props) {
                             </Grid.Col>
                             <Grid.Col span={12}>
                               <InputFileUpload
-                                name={`modelVersions.${index}.url`}
+                                name={`modelVersions.${index}.modelFile.url`}
                                 label="Model File"
                                 placeholder="Pick your model"
                                 uploadType="model"
@@ -264,7 +274,7 @@ export function ModelForm({ model }: Props) {
                                 onChange={(url, file) => {
                                   if (file) {
                                     form.setValue(
-                                      `modelVersions.${index}.sizeKB`,
+                                      `modelVersions.${index}.modelFile.sizeKB`,
                                       file.size ? file.size / 1024 : 0
                                     );
                                   }
@@ -274,7 +284,7 @@ export function ModelForm({ model }: Props) {
                             </Grid.Col>
                             <Grid.Col span={12}>
                               <InputFileUpload
-                                name={`modelVersions.${index}.trainingDataUrl`}
+                                name={`modelVersions.${index}.trainingDataUrl.url`}
                                 label="Training Data"
                                 placeholder="Pick your training data"
                                 description="The data you used to train your model (as .zip archive)"
