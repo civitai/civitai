@@ -6,9 +6,10 @@ import { getLoginLink, LoginRedirectReason } from '~/utils/login-helpers';
 type Props = {
   children: React.ReactElement<{ onClick?: MouseEventHandler<HTMLElement> }>;
   reason: LoginRedirectReason;
+  returnUrl?: string;
 };
 
-export function LoginRedirect({ children, reason }: Props) {
+export function LoginRedirect({ children, reason, returnUrl }: Props) {
   const router = useRouter();
   const { data: session } = useSession();
   return !session
@@ -16,7 +17,7 @@ export function LoginRedirect({ children, reason }: Props) {
         ...children.props,
         onClick: (e: MouseEvent<HTMLElement>) => {
           e.preventDefault();
-          router.push(getLoginLink({ returnUrl: router.asPath, reason }));
+          router.push(getLoginLink({ returnUrl: returnUrl ?? router.asPath, reason }));
         },
       })
     : children;

@@ -61,7 +61,6 @@
     "embla-carousel-react": "^7.0.3",
     "gray-matter": "^4.0.3",
     "immer": "^9.0.15",
-    "marked": "^4.2.1",
     "masonic": "^3.7.0",
     "next": "12.3.1",
     "next-auth": "^4.12.3",

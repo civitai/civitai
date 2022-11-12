@@ -1,8 +1,8 @@
 import fs from 'fs';
 import matter from 'gray-matter';
 import { GetStaticPaths, GetStaticProps, InferGetStaticPropsType } from 'next';
-import { marked } from 'marked';
-import { Container } from '@mantine/core';
+import { Container, Title } from '@mantine/core';
+import ReactMarkdown from 'react-markdown';
 
 const contentRoot = 'src/static-content';
 export const getStaticPaths: GetStaticPaths = async () => {
@@ -19,7 +19,7 @@ export const getStaticPaths: GetStaticPaths = async () => {
 };
 
 export const getStaticProps: GetStaticProps<{
-  frontmatter: { [key: string]: any };
+  frontmatter: MixedObject;
   content: string;
 }> = async ({ params }) => {
   const { slug } = params ?? {};
@@ -41,8 +41,8 @@ export default function ContentPage({
 }: InferGetStaticPropsType<typeof getStaticProps>) {
   return (
     <Container size="md">
-      <h1>{frontmatter.title}</h1>
-      <div dangerouslySetInnerHTML={{ __html: marked.parse(content) }} />
+      <Title order={1}>{frontmatter.title}</Title>
+      <ReactMarkdown>{content}</ReactMarkdown>
     </Container>
   );
 }

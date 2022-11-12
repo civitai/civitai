@@ -13,7 +13,7 @@ import {
   useMantineColorScheme,
   Transition,
   Paper,
-  Container,
+  Grid,
 } from '@mantine/core';
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
@@ -28,8 +28,9 @@ import {
 import { signOut, useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 
 const HEADER_HEIGHT = 70;
@@ -40,15 +41,19 @@ const useStyles = createStyles((theme) => ({
     alignItems: 'center',
     justifyContent: 'space-between',
     height: '100%',
-    padding: 0,
+    flexWrap: 'nowrap',
+    paddingLeft: theme.spacing.xs * 1.6, // 16px
+    paddingRight: theme.spacing.xs * 1.6, // 16px
 
-    [theme.fn.smallerThan('xl')]: {
-      paddingLeft: theme.spacing.xs * 1.6, // 16px
-      paddingRight: theme.spacing.xs * 1.6, // 16px
+    [theme.fn.smallerThan('sm')]: {
+      paddingLeft: theme.spacing.xs * 0.8, // 8px
+      paddingRight: theme.spacing.xs * 0.8, // 8px
     },
   },
 
   burger: {
+    display: 'flex',
+    justifyContent: 'flex-end',
     [theme.fn.largerThan('md')]: {
       display: 'none',
     },
@@ -77,6 +82,7 @@ const useStyles = createStyles((theme) => ({
   },
 
   links: {
+    display: 'flex',
     [theme.fn.smallerThan('md')]: {
       display: 'none',
     },
@@ -160,22 +166,24 @@ export function AppHeader({ links }: Props) {
       </Link>
     )) ?? [];
   const extendedMenuItems = [
+    <LoginRedirect key="upload-menu-item" reason="upload-model" returnUrl="/models/create">
+      <Link href="/models/create" passHref>
+        <Anchor
+          className={cx(classes.link, {
+            [classes.linkActive]: router.asPath.includes('/models/create'),
+          })}
+          variant="text"
+          onClick={() => closeBurger()}
+        >
+          <Group align="center" spacing="xs">
+            <IconUpload stroke={1.5} />
+            Upload a model
+          </Group>
+        </Anchor>
+      </Link>
+    </LoginRedirect>,
     session?.user
       ? [
-          <Link key="upload-menu-item" href="/models/create" passHref>
-            <Anchor
-              className={cx(classes.link, {
-                [classes.linkActive]: router.asPath.includes('/models/create'),
-              })}
-              variant="text"
-              onClick={() => closeBurger()}
-            >
-              <Group align="center" spacing="xs">
-                <IconUpload stroke={1.5} />
-                Upload a model
-              </Group>
-            </Anchor>
-          </Link>,
           <Link key="your-models-menu-item" href={`/?user=${session.user.username}`} passHref>
             <Anchor
               className={cx(classes.link, {
@@ -256,47 +264,57 @@ export function AppHeader({ links }: Props) {
 
   return (
     <Header ref={ref} height={HEADER_HEIGHT} fixed>
-      <Container size="xl" className={classes.header}>
-        <Group spacing="sm">
-          <Link href="/" passHref>
-            <Anchor variant="text" onClick={() => closeBurger()}>
-              <Title order={1}>
-                C
-                <Text
-                  component="span"
-                  sx={(theme) => ({
-                    display: 'none',
-                    [theme.fn.largerThan('xs')]: {
-                      display: 'inline',
-                    },
-                  })}
-                >
-                  ivit
-                </Text>
-                <Text component="span" color="blue">
-                  ai
-                </Text>
-              </Title>
-            </Anchor>
-          </Link>
-          <ListSearch onSearch={() => closeBurger()} />
-        </Group>
-        <Group spacing="sm" className={classes.links}>
-          <Group spacing="sm">{menuItems}</Group>
+      <Grid className={classes.header} m={0} gutter="xs" align="center">
+        <Grid.Col span="auto">
           <Group spacing="xs">
-            {session?.user ? (
-              <Button component={NextLink} href="/models/create" variant="subtle">
+            <Link href="/" passHref>
+              <Anchor variant="text" onClick={() => closeBurger()}>
+                <Title order={1}>
+                  C
+                  <Text
+                    component="span"
+                    sx={(theme) => ({
+                      display: 'none',
+                      [theme.fn.largerThan('xs')]: {
+                        display: 'inline',
+                      },
+                    })}
+                  >
+                    ivit
+                  </Text>
+                  <Text component="span" color="blue">
+                    ai
+                  </Text>
+                </Title>
+              </Anchor>
+            </Link>
+            <LoginRedirect reason="upload-model" returnUrl="/models/create">
+              <Button
+                className={classes.links}
+                component={NextLink}
+                href="/models/create"
+                variant="filled"
+              >
                 Upload a model
               </Button>
-            ) : (
+            </LoginRedirect>
+          </Group>
+        </Grid.Col>
+        <Grid.Col span={6} md={5}>
+          <ListSearch onSearch={() => closeBurger()} />
+        </Grid.Col>
+        <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
+          <Group spacing="sm">{menuItems}</Group>
+          <Group spacing="xs">
+            {!session ? (
               <Button
                 component={NextLink}
                 href={`/login?returnUrl=${router.asPath}`}
-                variant="outline"
+                variant="default"
               >
                 Sign In
               </Button>
-            )}
+            ) : null}
             <Menu
               width={260}
               opened={userMenuOpened}
@@ -363,21 +381,22 @@ export function AppHeader({ links }: Props) {
               </Menu.Dropdown>
             </Menu>
           </Group>
-        </Group>
-        <Burger
-          className={classes.burger}
-          opened={burgerOpened}
-          onClick={burgerOpened ? closeBurger : openBurger}
-          size="sm"
-        />
-        <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
-          {(styles) => (
-            <Paper className={classes.dropdown} withBorder style={styles}>
-              {extendedMenuItems}
-            </Paper>
-          )}
-        </Transition>
-      </Container>
+        </Grid.Col>
+        <Grid.Col span="auto" className={classes.burger}>
+          <Burger
+            opened={burgerOpened}
+            onClick={burgerOpened ? closeBurger : openBurger}
+            size="sm"
+          />
+          <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
+            {(styles) => (
+              <Paper className={classes.dropdown} withBorder style={styles}>
+                {extendedMenuItems}
+              </Paper>
+            )}
+          </Transition>
+        </Grid.Col>
+      </Grid>
     </Header>
   );
 }
