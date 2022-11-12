@@ -68,7 +68,9 @@ export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
   name: true,
   type: true,
   nsfw: true,
+  status: true,
   modelVersions: {
+    // TODO Model Statuses: only show published unless mod or owner
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: 1,
     select: {

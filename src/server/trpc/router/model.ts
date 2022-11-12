@@ -1,8 +1,19 @@
-import { ModelFile, ModelFileType, Prisma, ReportReason, ScanResultCode } from '@prisma/client';
+import {
+  ModelFile,
+  ModelFileType,
+  ModelStatus,
+  Prisma,
+  ReportReason,
+  ScanResultCode,
+} from '@prisma/client';
 import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';
 import { modelSchema, modelVersionSchema } from '~/server/common/validation/model';
-import { handleAuthorizationError, handleDbError } from '~/server/services/errorHandling';
+import {
+  handleAuthorizationError,
+  handleBadRequest,
+  handleDbError,
+} from '~/server/services/errorHandling';
 import {
   getAllModelsSchema,
   getAllModelsSelect,
@@ -10,6 +21,7 @@ import {
   getAllModelsWhere,
 } from '~/server/validators/models/getAllModels';
 import { modelWithDetailsSelect } from '~/server/validators/models/getById';
+import { checkFileExists, getGetUrl, getS3Client } from '~/utils/s3-utils';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
 
 function prepareFiles(
@@ -62,10 +74,17 @@ export const modelRouter = router({
         }
       }
 
+      // TODO TypeFix: too rushed to do this properly...
+      const where: any = { ...getAllModelsWhere(input) };
+      if (!session?.user?.isModerator) {
+        // Only show models that are ready to be used unless the user is the owner
+        where.OR = [{ status: ModelStatus.Published }, { user: { id: session?.user?.id } }];
+      }
+
       const items = await ctx.prisma.model.findMany({
         take: limit + 1, // get an extra item at the end which we'll use as next cursor
         cursor: cursor ? { id: cursor } : undefined,
-        where: getAllModelsWhere(input),
+        where,
         orderBy: orderBy,
         select: getAllModelsSelect,
       });
@@ -85,8 +104,16 @@ export const modelRouter = router({
   getById: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     try {
       const { id } = input as unknown as { id: number };
-      const model = await ctx.prisma.model.findUnique({
-        where: { id },
+
+      // TODO TypeFix: too rushed to do this properly...
+      const where: any = { id };
+      if (!ctx.session?.user?.isModerator) {
+        // Only show models that are ready to be used unless the user is the owner
+        where.OR = [{ status: ModelStatus.Published }, { user: { id: ctx.session?.user?.id } }];
+      }
+
+      const model = await ctx.prisma.model.findFirst({
+        where,
         select: modelWithDetailsSelect,
       });
 
@@ -128,16 +155,36 @@ export const modelRouter = router({
     }
   }),
   add: protectedProcedure.input(modelSchema).mutation(async ({ ctx, input }) => {
+    const userId = ctx.session.user.id;
+    const { modelVersions, tagsOnModels, ...data } = input;
+
+    // TODO DRY: This is used in add and update
+    // Check that files exist
+    const files = modelVersions.flatMap(({ modelFile, trainingDataFile }) =>
+      prepareFiles(modelFile, trainingDataFile)
+    );
+    const s3 = getS3Client();
+    for (const file of files) {
+      if (!file.url) continue;
+      const fileExists = await checkFileExists(file.url, s3);
+      if (!fileExists)
+        return handleBadRequest(`File ${file.name} could not be found. Please re-upload.`, {
+          file,
+        });
+    }
+
     try {
-      const userId = ctx.session.user.id;
-      const { modelVersions, tagsOnModels, ...data } = input;
       const createdModels = await ctx.prisma.model.create({
         data: {
           ...data,
           userId,
+          // TODO Model Status: Allow them to save as draft and publish/unpublish
+          status: ModelStatus.Published,
           modelVersions: {
             create: modelVersions.map(({ images, modelFile, trainingDataFile, ...version }) => ({
               ...version,
+              // TODO Model Status: Allow them to save as draft and publish/unpublish
+              status: ModelStatus.Published,
               files: {
                 create: (prepareFiles(modelFile, trainingDataFile) as typeof modelFile[]).map(
                   (file) => ({
@@ -175,56 +222,60 @@ export const modelRouter = router({
   update: protectedProcedure
     .input(modelSchema.extend({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      try {
-        const userId = ctx.session.user.id;
-        const { id, modelVersions, tagsOnModels, ...data } = input;
-        const { tagsToCreate, tagsToUpdate } = tagsOnModels?.reduce(
-          (acc, current) => {
-            if (!current.id) acc.tagsToCreate.push(current);
-            else acc.tagsToUpdate.push(current);
+      const userId = ctx.session.user.id;
+      const { id, modelVersions, tagsOnModels, ...data } = input;
+      const { tagsToCreate, tagsToUpdate } = tagsOnModels?.reduce(
+        (acc, current) => {
+          if (!current.id) acc.tagsToCreate.push(current);
+          else acc.tagsToUpdate.push(current);
 
-            return acc;
-          },
-          {
-            tagsToCreate: [] as Array<typeof tagsOnModels[number]>,
-            tagsToUpdate: [] as Array<typeof tagsOnModels[number]>,
-          }
-        ) ?? { tagsToCreate: [], tagsToUpdate: [] };
-
-        // TODO DRY: this process is repeated in several locations that need this check
-        const isModerator = ctx.session.user.isModerator;
-        const ownerId = (await ctx.prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
-        if (!isModerator) {
-          if (ownerId !== userId) return handleAuthorizationError();
+          return acc;
+        },
+        {
+          tagsToCreate: [] as Array<typeof tagsOnModels[number]>,
+          tagsToUpdate: [] as Array<typeof tagsOnModels[number]>,
         }
+      ) ?? { tagsToCreate: [], tagsToUpdate: [] };
 
+      // TODO DRY: this process is repeated in several locations that need this check
+      const isModerator = ctx.session.user.isModerator;
+      const ownerId = (await ctx.prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
+      if (!isModerator) {
+        if (ownerId !== userId) return handleAuthorizationError();
+      }
+
+      // TODO DRY: This is used in add and update
+      // Check that files exist
+      const files = modelVersions.flatMap(({ modelFile, trainingDataFile }) =>
+        prepareFiles(modelFile, trainingDataFile)
+      );
+      const s3 = getS3Client();
+      for (const file of files) {
+        if (!file.url) continue;
+        const fileExists = await checkFileExists(file.url, s3);
+        if (!fileExists)
+          return handleBadRequest(`File ${file.name} could not be found. Please re-upload.`, {
+            file,
+          });
+      }
+
+      try {
+        // Get current versions for file and version comparison
         const currentVersions = await ctx.prisma.modelVersion.findMany({
           where: { modelId: id },
+          select: { id: true, files: { select: { type: true, url: true } } },
         });
         const versionIds = modelVersions.map((version) => version.id).filter(Boolean);
         const versionsToDelete = currentVersions
           .filter((version) => !versionIds.includes(version.id))
           .map(({ id }) => id);
 
-        // TEMPORARY
-        // query existing model versions to compare the file url to see if it has changed
-        const existingVersions = await ctx.prisma.modelVersion.findMany({
-          where: { modelId: id },
-          select: {
-            id: true,
-            files: {
-              select: {
-                type: true,
-                url: true,
-              },
-            },
-          },
-        });
-
+        // TODO Model Status: Allow them to save as draft and publish/unpublish
         const model = await ctx.prisma.model.update({
           where: { id },
           data: {
             ...data,
+            status: ModelStatus.Published,
             modelVersions: {
               deleteMany:
                 versionsToDelete.length > 0 ? { id: { in: versionsToDelete } } : undefined,
@@ -235,7 +286,7 @@ export const modelRouter = router({
                     userId: ownerId,
                     ...image,
                   }));
-                  const existingVersion = existingVersions.find((x) => x.id === id);
+                  const existingVersion = currentVersions.find((x) => x.id === id);
 
                   // Determine what files to create/update
                   const existingFileUrls: Record<string, string> = {};
@@ -256,10 +307,12 @@ export const modelRouter = router({
                   const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
                   const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
 
+                  // TODO Model Status: Allow them to save as draft and publish/unpublish
                   return {
                     where: { id },
                     create: {
                       ...version,
+                      status: ModelStatus.Published,
                       files: {
                         create: filesToCreate.map(({ name, type, url, sizeKB }) => ({
                           name,
@@ -280,6 +333,7 @@ export const modelRouter = router({
                       ...version,
                       epochs: version.epochs ?? null,
                       steps: version.steps ?? null,
+                      status: ModelStatus.Published,
                       files: {
                         create: filesToCreate.map(({ name, type, url, sizeKB }) => ({
                           name,

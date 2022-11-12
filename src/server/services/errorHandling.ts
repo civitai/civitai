@@ -32,3 +32,12 @@ export function handleAuthorizationError(message: string | null = null) {
     message,
   });
 }
+
+export function handleBadRequest(message: string | null = null, error?: unknown) {
+  message ??= 'Your request is invalid';
+  throw new TRPCError({
+    code: 'BAD_REQUEST',
+    message,
+    cause: error,
+  });
+}

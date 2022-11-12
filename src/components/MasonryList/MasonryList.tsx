@@ -1,4 +1,5 @@
 import {
+  Badge,
   Box,
   Card,
   createStyles,
@@ -32,6 +33,7 @@ import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useSession } from 'next-auth/react';
+import { ModelStatus } from '@prisma/client';
 
 type MasonryListProps = {
   columnWidth: number;
@@ -121,10 +123,18 @@ const MasonryItem = ({
     return heightT + (rank?.ratingAllTime ? 66 : 33);
   }, [itemWidth, image.width, image.height, rank?.ratingAllTime]);
 
+  // TODO Model Status: If model is draft, show draft badge
   const modelText = (
-    <Text size={14} weight={500} lineClamp={2} style={{ flex: 1 }}>
-      {name}
-    </Text>
+    <Group position="left">
+      <Text size={14} weight={500} lineClamp={2} style={{ flex: 1 }}>
+        {name}
+      </Text>
+      {data.status !== ModelStatus.Published && (
+        <Badge color="yellow" radius="sm">
+          {data.status}
+        </Badge>
+      )}
+    </Group>
   );
 
   const modelRating = (

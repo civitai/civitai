@@ -8,6 +8,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   nsfw: true,
   type: true,
   updatedAt: true,
+  status: true,
   user: {
     select: {
       id: true,

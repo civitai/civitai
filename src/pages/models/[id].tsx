@@ -18,16 +18,19 @@ import {
   Title,
   useMantineTheme,
   Modal,
+  Alert,
+  ThemeIcon,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { ReportReason } from '@prisma/client';
+import { ModelStatus, ReportReason } from '@prisma/client';
 import {
   IconArrowsSort,
   IconCopy,
   IconDotsVertical,
   IconEdit,
+  IconExclamationMark,
   IconFilter,
   IconFlag,
   IconLicense,
@@ -272,7 +275,16 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const modelDetails: DescriptionTableProps['items'] = [
     {
       label: 'Type',
-      value: <Badge radius="sm">{splitUppercase(model?.type)}</Badge>,
+      value: (
+        <Group position="apart">
+          <Badge radius="sm">{splitUppercase(model?.type)}</Badge>
+          {model?.status !== ModelStatus.Published && (
+            <Badge color="yellow" radius="sm">
+              {model.status}
+            </Badge>
+          )}
+        </Group>
+      ),
     },
     {
       label: 'Downloads',
@@ -416,6 +428,19 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Menu.Dropdown>
             </Menu>
           </Group>
+          {model.status === ModelStatus.Unpublished && (
+            <Alert color="red">
+              <Group spacing="xs" noWrap align="flex-start">
+                <ThemeIcon color="red">
+                  <IconExclamationMark />
+                </ThemeIcon>
+                <Text size="md">
+                  This model has been unpublished because it looks like the model file failed to
+                  upload. Please re-upload the file.
+                </Text>
+              </Group>
+            </Alert>
+          )}
         </Stack>
         <Grid gutter="xl">
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>

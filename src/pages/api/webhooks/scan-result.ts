@@ -1,6 +1,7 @@
-import { ModelFileType, ScanResultCode } from '@prisma/client';
+import { ModelFileType, ModelStatus, ScanResultCode } from '@prisma/client';
 import { z } from 'zod';
 import { WebhookEndpoint } from '~/server/common/endpoint-helpers';
+import { modelVersionSchema } from '~/server/common/validation/model';
 import { prisma } from '~/server/db/client';
 
 export default WebhookEndpoint(async (req, res) => {
@@ -16,9 +17,12 @@ export default WebhookEndpoint(async (req, res) => {
   const { hasDanger, pickleScanMessage } = examinePickleScanMessage(scanResult);
   if (hasDanger) scanResult.picklescanExitCode = ScanExitCode.Danger;
 
+  const exists = scanResult.fileExists === 1;
+
   await prisma.modelFile.update({
     where,
     data: {
+      exists,
       scannedAt: new Date(),
       rawScanResult: scanResult,
       virusScanResult: resultCodeMap[scanResult.clamscanExitCode],
@@ -28,6 +32,43 @@ export default WebhookEndpoint(async (req, res) => {
       pickleScanMessage,
     },
   });
+
+  if (!exists) {
+    await prisma.modelVersion.update({
+      where: { id: modelVersionId },
+      data: { status: ModelStatus.Draft },
+    });
+
+    // Unpublish the model if there are no published versions
+    // TODO Model Status: We probably need to implement this logic everywhere we update statuses of versions
+    // 👆 This is why triggers like we have in dotnet + EF are so important...
+    // 😡 Too bad Prisma's middleware system doesn't actually track the changes down to the entity level...
+    const { modelId } =
+      (await prisma.modelVersion.findUnique({
+        where: { id: modelVersionId },
+        select: { modelId: true },
+      })) ?? {};
+    if (modelId) {
+      const modelVersionCount = await prisma.model.findUnique({
+        where: { id: modelId },
+        select: {
+          _count: {
+            select: {
+              modelVersions: {
+                where: { status: ModelStatus.Published },
+              },
+            },
+          },
+        },
+      });
+
+      if (modelVersionCount?._count.modelVersions === 0)
+        await prisma.model.update({
+          where: { id: modelId },
+          data: { status: ModelStatus.Unpublished },
+        });
+    }
+  }
 
   res.status(200).json({ ok: true });
 });
@@ -46,6 +87,7 @@ const resultCodeMap = {
 
 type ScanResult = {
   url: string;
+  fileExists: number;
   picklescanExitCode: ScanExitCode;
   picklescanOutput: string;
   picklescanGlobalImports: string[];

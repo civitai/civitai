@@ -5,6 +5,7 @@ import {
   PutObjectCommand,
   PutBucketCorsCommand,
   GetObjectCommandInput,
+  HeadObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -74,22 +75,42 @@ type GetObjectOptions = {
 };
 
 const keyParser = /https:\/\/.*?\/(.*)/;
+function parseKey(key: string) {
+  if (key.startsWith('http')) key = keyParser.exec(key)?.[1] ?? key;
+  if (key.startsWith(env.S3_UPLOAD_BUCKET)) key = key.replace(`${env.S3_UPLOAD_BUCKET}/`, '');
+
+  return key;
+}
+
 export async function getGetUrl(
   key: string,
   { s3, expiresIn = 60 * 60, fileName }: GetObjectOptions = {}
 ) {
   if (!s3) s3 = getS3Client();
 
-  const bucket = env.S3_UPLOAD_BUCKET;
-  if (key.startsWith('http')) key = keyParser.exec(key)?.[1] ?? key;
-  if (key.startsWith(bucket)) key = key.replace(`${bucket}/`, '');
-
   const command: GetObjectCommandInput = {
-    Bucket: bucket,
-    Key: key,
+    Bucket: env.S3_UPLOAD_BUCKET,
+    Key: parseKey(key),
   };
   if (fileName) command.ResponseContentDisposition = `attachment; filename="${fileName}"`;
 
   const url = await getSignedUrl(s3, new GetObjectCommand(command), { expiresIn });
-  return { url, bucket, key };
+  return { url, bucket: env.S3_UPLOAD_BUCKET, key };
+}
+
+export async function checkFileExists(key: string, s3: S3Client | null = null) {
+  if (!s3) s3 = getS3Client();
+
+  try {
+    await s3.send(
+      new HeadObjectCommand({
+        Key: parseKey(key),
+        Bucket: env.S3_UPLOAD_BUCKET,
+      })
+    );
+  } catch {
+    return false;
+  }
+
+  return true;
 }

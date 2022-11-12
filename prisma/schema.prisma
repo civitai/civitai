@@ -81,17 +81,24 @@ enum ModelType {
   AestheticGradient
 }
 
+enum ModelStatus {
+  Draft
+  Published
+  Unpublished
+}
+
 model Model {
-  id           Int       @id @default(autoincrement())
+  id           Int         @id @default(autoincrement())
   name         String
   description  String?
   type         ModelType
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  nsfw         Boolean   @default(false)
-  tosViolation Boolean   @default(false)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  nsfw         Boolean     @default(false)
+  tosViolation Boolean     @default(false)
   userId       Int
-  user         User      @relation(fields: [userId], references: [id])
+  user         User        @relation(fields: [userId], references: [id])
+  status       ModelStatus @default(Draft)
 
   modelVersions ModelVersion[]
   reviews       Review[]
@@ -103,16 +110,17 @@ model Model {
 }
 
 model ModelVersion {
-  id           Int      @id @default(autoincrement())
+  id           Int         @id @default(autoincrement())
   name         String
   description  String?
   modelId      Int
-  model        Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model        Model       @relation(fields: [modelId], references: [id], onDelete: Cascade)
   trainedWords String[]
   steps        Int?
   epochs       Int?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  status       ModelStatus @default(Draft)
 
   reviews Review[]
   images  ImagesOnModels[]
@@ -142,6 +150,7 @@ model ModelFile {
   modelVersionId    Int
   modelVersion      ModelVersion   @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   pickleScanResult  ScanResultCode @default(Pending)
+  exists            Boolean?
   pickleScanMessage String?
   virusScanResult   ScanResultCode @default(Pending)
   virusScanMessage  String?
