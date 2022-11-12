@@ -1,4 +1,4 @@
-import { createStyles, Footer, Group, Text } from '@mantine/core';
+import { Button, ButtonProps, createStyles, Footer, Group, Text } from '@mantine/core';
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 
@@ -12,6 +12,12 @@ function getScrollPosition(): ScrollPosition {
     ? { x: window.pageXOffset, y: window.pageYOffset }
     : { x: 0, y: 0 };
 }
+
+const buttonProps: ButtonProps = {
+  size: 'xs',
+  variant: 'subtle',
+  color: 'gray',
+};
 
 export function AppFooter() {
   const { classes, cx } = useStyles();
@@ -28,20 +34,45 @@ export function AppFooter() {
         <Text mr="md" weight={700}>
           &copy; Civitai {new Date().getFullYear()}
         </Text>
-        <Group spacing="lg">
-          <Text component={NextLink} href="/content/tos" size="sm">
+        <Group spacing="xs">
+          <Button component={NextLink} href="/content/tos" {...buttonProps}>
             Terms of Service
-          </Text>
-          <Text component="a" href="https://github.com/civitai/civitai" size="sm">
+          </Button>
+          <Button
+            component="a"
+            href="https://github.com/civitai/civitai"
+            {...buttonProps}
+            target="_blank"
+          >
             GitHub
-          </Text>
-          <Text component="a" href="https://discord.gg/UwX5wKwm6c" size="sm">
+          </Button>
+          <Button
+            component="a"
+            href="https://discord.gg/UwX5wKwm6c"
+            {...buttonProps}
+            target="_blank"
+          >
             Discord
-          </Text>
-          <Text component="a" href="https://twitter.com/HelloCivitai" size="sm">
+          </Button>
+          <Button
+            component="a"
+            href="https://twitter.com/HelloCivitai"
+            {...buttonProps}
+            target="_blank"
+          >
             Twitter
-          </Text>
+          </Button>
         </Group>
+        <Button
+          component="a"
+          href="https://github.com/civitai/civitai/discussions/categories/ideas"
+          ml="auto"
+          variant="light"
+          color="yellow"
+          target="_blank"
+        >
+          💡 Ideas!
+        </Button>
       </Group>
     </Footer>
   );
