@@ -1,6 +1,7 @@
 import { Button, ButtonProps, createStyles, Footer, Group, Text } from '@mantine/core';
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 interface ScrollPosition {
   x: number;
@@ -22,6 +23,7 @@ const buttonProps: ButtonProps = {
 export function AppFooter() {
   const { classes, cx } = useStyles();
   const [showFooter, setShowFooter] = useDebouncedState(true, 200);
+  const mobile = useIsMobile();
 
   useWindowEvent('scroll', () => {
     const scroll = getScrollPosition();
@@ -30,12 +32,12 @@ export function AppFooter() {
 
   return (
     <Footer className={cx(classes.root, { [classes.down]: !showFooter })} height="auto" p="sm">
-      <Group spacing="lg">
-        <Text mr="md" weight={700}>
+      <Group spacing={mobile ? 'sm' : 'lg'} sx={{ flexWrap: 'nowrap' }}>
+        <Text weight={700} sx={{ whiteSpace: 'nowrap' }}>
           &copy; Civitai {new Date().getFullYear()}
         </Text>
-        <Group spacing="xs">
-          <Button component={NextLink} href="/content/tos" {...buttonProps}>
+        <Group spacing={0} sx={{ flexWrap: 'nowrap' }}>
+          <Button component={NextLink} href="/content/tos" {...buttonProps} px={mobile ? 5 : 'xs'}>
             Terms of Service
           </Button>
           <Button
@@ -91,6 +93,7 @@ const useStyles = createStyles((theme) => ({
     transitionProperty: 'transform',
     transitionDuration: '0.3s',
     transitionTimingFunction: 'linear',
+    overflowX: 'auto',
     // transform: 'translateY(0)',
   },
   down: {
