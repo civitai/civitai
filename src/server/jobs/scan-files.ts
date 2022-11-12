@@ -44,7 +44,7 @@ async function requestFileScan({ modelVersionId, type, url: fileUrl }: FileScanR
     });
 
   const res = await fetch(scanUrl, {
-    method: 'GET',
+    method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
