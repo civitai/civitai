@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
 import { UploadType } from '~/server/common/enums';
 import { extname } from 'node:path';
-import { generateToken } from '~/utils/string-helpers';
+import { filenamize, generateToken } from '~/utils/string-helpers';
 import { getPutUrl } from '~/utils/s3-utils';
 
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
@@ -15,7 +15,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
 
   const { filename: fullFilename } = req.body;
   const ext = extname(fullFilename);
-  const filename = fullFilename.replace(ext, '');
+  const filename = filenamize(fullFilename.replace(ext, ''));
   let { type } = req.body;
   if (!type || !Object.values(UploadType).includes(type)) type = UploadType.Default;
 
