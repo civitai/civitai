@@ -67,7 +67,11 @@ export async function getPutUrl(key: string, s3: S3Client | null = null) {
 }
 
 const keyParser = /https:\/\/.*?\/(.*)/;
-export async function getGetUrl(key: string, s3: S3Client | null = null) {
+export async function getGetUrl(
+  key: string,
+  s3: S3Client | null = null,
+  expiresIn: number = 60 * 60 // 1 hour
+) {
   if (!s3) s3 = getS3Client();
 
   const bucket = env.S3_UPLOAD_BUCKET;
@@ -75,7 +79,7 @@ export async function getGetUrl(key: string, s3: S3Client | null = null) {
   if (key.startsWith(bucket)) key = key.replace(`${bucket}/`, '');
 
   const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: bucket, Key: key }), {
-    expiresIn: 60 * 60, // 1 hour
+    expiresIn,
   });
   return { url, bucket, key };
 }

@@ -5,14 +5,16 @@ import { prisma } from '~/server/db/client';
 
 export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  const { modelVersionId, type } = querySchema.parse(req.query);
+  const { modelVersionId: modelVersionIdString, type } = querySchema.parse(req.query);
+  const modelVersionId = parseInt(modelVersionIdString);
   const scanResult: ScanResult = req.body;
 
   const where = { modelVersionId_type: { modelVersionId, type } };
   const file = await prisma.modelFile.findUnique({ where });
   if (!file) return res.status(404).json({ error: 'File not found' });
 
-  const pickleScanMessage = preparePickleScanMessage(scanResult);
+  const { hasDanger, pickleScanMessage } = examinePickleScanMessage(scanResult);
+  if (hasDanger) scanResult.picklescanExitCode = ScanExitCode.Danger;
 
   await prisma.modelFile.update({
     where,
@@ -53,7 +55,7 @@ type ScanResult = {
 };
 
 const querySchema = z.object({
-  modelVersionId: z.number(),
+  modelVersionId: z.string(),
   type: z.nativeEnum(ModelFileType),
 });
 
@@ -63,15 +65,32 @@ function processImport(importStr: string) {
   return importParts.join('.');
 }
 
-function preparePickleScanMessage({
+const specialImports: string[] = ['pytorch_lightning.callbacks.model_checkpoint.ModelCheckpoint'];
+
+function examinePickleScanMessage({
   picklescanDangerousImports,
   picklescanGlobalImports,
 }: ScanResult) {
   const importCount = picklescanDangerousImports.length + picklescanGlobalImports.length;
-  if (importCount === 0) return 'No Pickle imports';
+  if (importCount === 0)
+    return {
+      pickleScanMessage: 'No Pickle imports',
+      hasDanger: false,
+    };
 
+  // Check for special imports...
+  const dangerousGlobals = picklescanGlobalImports.filter((x) =>
+    specialImports.includes(processImport(x))
+  );
+  for (const imp of dangerousGlobals) {
+    picklescanDangerousImports.push(imp);
+    picklescanGlobalImports.splice(picklescanDangerousImports.indexOf(imp), 1);
+  }
+
+  // Write message header...
   const lines: string[] = [`**Detected Pickle imports (${importCount})**`];
-  if (picklescanDangerousImports.length > 0) lines.push('*Dangerous import detected*');
+  const hasDanger = picklescanDangerousImports.length > 0;
+  if (hasDanger) lines.push('*Dangerous import detected*');
 
   // Pre block with imports
   lines.push('```');
@@ -79,5 +98,8 @@ function preparePickleScanMessage({
   for (const imp of picklescanGlobalImports) lines.push(processImport(imp));
   lines.push('```');
 
-  return lines.join('\n');
+  return {
+    pickleScanMessage: lines.join('\n'),
+    hasDanger,
+  };
 }

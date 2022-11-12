@@ -31,6 +31,8 @@ const statusMessage: Record<ScanResultCode, string> = {
   Error: "We couldn't scan this file. Be extra cautious.",
 };
 
+const StatusCodeOrder = ['Pending', 'Danger', 'Error', 'Success'] as const;
+
 export function VerifiedShield({ file, style, ...props }: Props) {
   if (!file) return null;
 
@@ -38,9 +40,8 @@ export function VerifiedShield({ file, style, ...props }: Props) {
     file;
 
   const minimumStatus =
-    Object.values(ScanResultCode).find(
-      (code) => code === virusScanResult || code === pickleScanResult
-    ) ?? ScanResultCode.Pending;
+    StatusCodeOrder.find((code) => code === virusScanResult || code === pickleScanResult) ??
+    ScanResultCode.Pending;
   const color = statusColors[minimumStatus];
   const icon = statusIcon[minimumStatus];
   const defaultMessage = statusMessage[minimumStatus];
@@ -48,7 +49,7 @@ export function VerifiedShield({ file, style, ...props }: Props) {
   const scannedDate = !scannedAt ? null : dayjs(scannedAt);
 
   return (
-    <Popover withArrow width={300} position="bottom-end">
+    <Popover withArrow width={350} position="bottom-end">
       <Popover.Target>
         <Button
           color={color}
@@ -59,7 +60,7 @@ export function VerifiedShield({ file, style, ...props }: Props) {
         </Button>
       </Popover.Target>
       <Popover.Dropdown>
-        <Text weight={500} size="md" color={color} pb={5}>
+        <Text weight={500} size="md" color={verified ? 'green' : 'red'} pb={5}>
           File {verified ? 'Verified' : 'Unverified'}
         </Text>
         <Text pb={5}>{defaultMessage}</Text>

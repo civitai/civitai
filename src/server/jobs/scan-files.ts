@@ -3,6 +3,8 @@ import { prisma } from '~/server/db/client';
 import { ModelFileType, ScanResultCode } from '@prisma/client';
 import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
+import { getGetUrl, getS3Client } from '~/utils/s3-utils';
+import { S3Client } from '@aws-sdk/client-s3';
 
 export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
   const scanCutOff = dayjs().subtract(1, 'day').toDate();
@@ -16,7 +18,8 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
     select: { modelVersionId: true, type: true, url: true },
   });
 
-  for (const file of files) await requestFileScan(file);
+  const s3 = await getS3Client();
+  for (const file of files) await requestFileScan(file, s3);
 
   await prisma.modelFile.updateMany({
     where,
@@ -26,7 +29,10 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
   });
 });
 
-async function requestFileScan({ modelVersionId, type, url: fileUrl }: FileScanRequest) {
+async function requestFileScan(
+  { modelVersionId, type, url: s3Url }: FileScanRequest,
+  s3: S3Client
+) {
   const callbackUrl =
     `${env.NEXTAUTH_URL}/api/webhooks/scan-result?` +
     new URLSearchParams({
@@ -34,6 +40,8 @@ async function requestFileScan({ modelVersionId, type, url: fileUrl }: FileScanR
       type: type.toString(),
       token: env.WEBHOOK_TOKEN,
     });
+
+  const { url: fileUrl } = await getGetUrl(s3Url, s3, 7 * 24 * 60 * 60);
 
   const scanUrl =
     env.SCANNING_ENDPOINT +
@@ -43,14 +51,12 @@ async function requestFileScan({ modelVersionId, type, url: fileUrl }: FileScanR
       callbackUrl,
     });
 
-  const res = await fetch(scanUrl, {
+  await fetch(scanUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
   });
-
-  return res.json();
 }
 
 type FileScanRequest = {
