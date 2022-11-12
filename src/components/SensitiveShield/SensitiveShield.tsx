@@ -1,6 +1,6 @@
-import { Container, Paper, Stack, Text } from '@mantine/core';
+import { Button, Container, Group, Paper, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconEyeOff } from '@tabler/icons';
+import { IconEyeOff, IconKey } from '@tabler/icons';
 
 export function SensitiveShield({ redirectTo }: Props) {
   return (
@@ -11,13 +11,16 @@ export function SensitiveShield({ redirectTo }: Props) {
           <Text size="xl" weight={500}>
             Sensitive Content
           </Text>
-          <Text>
-            This content has been marked as NSFW, please{' '}
-            <Text component={NextLink} variant="link" href={`/login?returnUrl=${redirectTo}`}>
-              log in
-            </Text>{' '}
-            if you wish to continue
-          </Text>
+          <Text>This content has been marked as NSFW</Text>
+          <Group>
+            <Button
+              component={NextLink}
+              href={`/login?returnUrl=${redirectTo}`}
+              leftIcon={<IconKey />}
+            >
+              Log in to view
+            </Button>
+          </Group>
         </Stack>
       </Paper>
     </Container>
