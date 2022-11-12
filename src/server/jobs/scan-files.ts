@@ -32,6 +32,7 @@ async function requestFileScan({ modelVersionId, type, url: fileUrl }: FileScanR
     new URLSearchParams({
       modelVersionId: modelVersionId.toString(),
       type: type.toString(),
+      token: env.WEBHOOK_TOKEN,
     });
 
   const scanUrl =
