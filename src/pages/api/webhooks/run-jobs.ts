@@ -3,15 +3,20 @@ import { scanFilesJob } from '~/server/jobs/scan-files';
 import { updateMetricsJob } from '~/server/jobs/update-metrics';
 import cronParser from 'cron-parser';
 import dayjs from 'dayjs';
+import { z } from 'zod';
 
 const jobs = [scanFilesJob, updateMetricsJob];
 
 export default WebhookEndpoint(async (req, res) => {
+  const { run: runJob } = querySchema.parse(req.query);
   const ran = [];
 
   const now = new Date();
   for (const { name, cron, run } of jobs) {
-    if (!isCronMatch(cron, now)) continue;
+    if (runJob) {
+      if (runJob !== name) continue;
+    } else if (!isCronMatch(cron, now)) continue;
+
     await run();
     ran.push(name);
   }
@@ -43,3 +48,7 @@ function isCronMatch(
     return false;
   }
 }
+
+const querySchema = z.object({
+  run: z.string().optional(),
+});

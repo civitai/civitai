@@ -1,6 +1,6 @@
 import { createJob } from './job';
 import { prisma } from '~/server/db/client';
-import { ScanResultCode } from '@prisma/client';
+import { ModelFileType, ScanResultCode } from '@prisma/client';
 import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
 
@@ -28,7 +28,7 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
 
 async function requestFileScan({ modelVersionId, type, url: fileUrl }: FileScanRequest) {
   const callbackUrl =
-    `${env.NEXTAUTH_URL}/api/webhooks/scan-result` +
+    `${env.NEXTAUTH_URL}/api/webhooks/scan-result?` +
     new URLSearchParams({
       modelVersionId: modelVersionId.toString(),
       type: type.toString(),
@@ -36,6 +36,7 @@ async function requestFileScan({ modelVersionId, type, url: fileUrl }: FileScanR
 
   const scanUrl =
     env.SCANNING_ENDPOINT +
+    '?' +
     new URLSearchParams({
       fileUrl,
       callbackUrl,
