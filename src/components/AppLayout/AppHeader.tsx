@@ -21,6 +21,7 @@ import {
   IconFile,
   IconLogout,
   IconPalette,
+  IconPlus,
   IconSettings,
   IconUpload,
   IconUserCircle,
@@ -294,7 +295,11 @@ export function AppHeader({ links }: Props) {
                 component={NextLink}
                 href="/models/create"
                 variant="filled"
+                size="xs"
+                ml="xs"
+                pl={5}
               >
+                <IconPlus size={16} />
                 Upload a model
               </Button>
             </LoginRedirect>

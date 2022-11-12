@@ -103,7 +103,7 @@ export function ListSearch({ onSearch }: Props) {
         >
           <ClearableTextInput
             icon={<IconSearch />}
-            placeholder="Search"
+            placeholder="Search models, #tags, @users"
             {...form.getInputProps('query')}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
