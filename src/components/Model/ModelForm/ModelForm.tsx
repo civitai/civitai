@@ -126,6 +126,10 @@ export function ModelForm({ model }: Props) {
 
     const data = {
       ...values,
+      modelVersions: values.modelVersions.map(({ trainingDataFile, ...version }) => ({
+        ...version,
+        trainingDataFile: trainingDataFile?.url ? null : trainingDataFile,
+      })),
       tagsOnModels: values.tagsOnModels?.map((name) => {
         const match = tags.find((x) => x.name === name);
         return match ?? { name };
@@ -278,7 +282,7 @@ export function ModelForm({ model }: Props) {
                                 withAsterisk
                               />
                             </Grid.Col>
-                            <Grid.Col span={12}>
+                            {/* <Grid.Col span={12}>
                               <InputFileUpload
                                 name={`modelVersions.${index}.trainingDataFile.url`}
                                 label="Training Data"
@@ -304,7 +308,7 @@ export function ModelForm({ model }: Props) {
                                   }
                                 }}
                               />
-                            </Grid.Col>
+                            </Grid.Col> */}
                             <Grid.Col span={12}>
                               <InputImageUpload
                                 name={`modelVersions.${index}.images`}
