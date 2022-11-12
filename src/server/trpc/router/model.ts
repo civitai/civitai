@@ -23,9 +23,10 @@ function prepareFiles(
   return files;
 }
 
-const unscannedFile: Partial<ModelFile> = {
+const unscannedFile = {
   scannedAt: null,
-  rawScanResult: null,
+  scanRequestedAt: null,
+  rawScanResult: Prisma.JsonNull,
   virusScanMessage: null,
   virusScanResult: ScanResultCode.Pending,
   pickleScanMessage: null,
@@ -137,10 +138,14 @@ export const modelRouter = router({
           modelVersions: {
             create: modelVersions.map(({ images, modelFile, trainingDataFile, ...version }) => ({
               ...version,
-              files: prepareFiles(modelFile, trainingDataFile).map((file) => ({
-                ...file,
-                ...unscannedFile,
-              })),
+              files: {
+                create: (prepareFiles(modelFile, trainingDataFile) as typeof modelFile[]).map(
+                  (file) => ({
+                    ...file,
+                    ...unscannedFile,
+                  })
+                ),
+              },
               images: {
                 create: images.map((image, index) => ({
                   index,
