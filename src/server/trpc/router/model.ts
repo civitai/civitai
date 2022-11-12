@@ -1,7 +1,7 @@
-import { Prisma, ReportReason } from '@prisma/client';
+import { ModelFile, ModelFileType, Prisma, ReportReason, ScanResultCode } from '@prisma/client';
 import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';
-import { modelSchema } from '~/server/common/validation/model';
+import { modelSchema, modelVersionSchema } from '~/server/common/validation/model';
 import { handleAuthorizationError, handleDbError } from '~/server/services/errorHandling';
 import {
   getAllModelsSchema,
@@ -11,6 +11,27 @@ import {
 } from '~/server/validators/models/getAllModels';
 import { modelWithDetailsSelect } from '~/server/validators/models/getById';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
+
+function prepareFiles(
+  modelFile: z.infer<typeof modelVersionSchema>['modelFile'],
+  trainingDataFile: z.infer<typeof modelVersionSchema>['trainingDataFile']
+) {
+  const files: Partial<ModelFile>[] = [{ ...modelFile, type: ModelFileType.Model }];
+  if (trainingDataFile != null)
+    files.push({ ...trainingDataFile, type: ModelFileType.TrainingData });
+
+  return files;
+}
+
+const unscannedFile = {
+  scannedAt: null,
+  scanRequestedAt: null,
+  rawScanResult: Prisma.JsonNull,
+  virusScanMessage: null,
+  virusScanResult: ScanResultCode.Pending,
+  pickleScanMessage: null,
+  pickleScanResult: ScanResultCode.Pending,
+};
 
 export const modelRouter = router({
   getAll: publicProcedure.input(getAllModelsSchema).query(async ({ ctx, input = {} }) => {
@@ -63,22 +84,34 @@ export const modelRouter = router({
   }),
   getById: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     try {
-      const { id } = input;
+      const { id } = input as unknown as { id: number };
       const model = await ctx.prisma.model.findUnique({
         where: { id },
         select: modelWithDetailsSelect,
       });
 
       if (!model) {
-        return handleDbError({
+        handleDbError({
           code: 'NOT_FOUND',
           message: `No model with id ${id}`,
         });
+        return null;
       }
 
-      return model;
+      const { modelVersions } = model;
+      const transformedModel = {
+        ...model,
+        modelVersions: modelVersions.map(({ files, ...version }) => ({
+          ...version,
+          trainingDataFile: files.find((file) => file.type === ModelFileType.TrainingData),
+          modelFile: files.find((file) => file.type === ModelFileType.Model),
+        })),
+      };
+
+      return transformedModel;
     } catch (error) {
-      return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+      handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+      return null;
     }
   }),
   getVersions: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
@@ -103,8 +136,16 @@ export const modelRouter = router({
           ...data,
           userId,
           modelVersions: {
-            create: modelVersions.map(({ images, ...version }) => ({
+            create: modelVersions.map(({ images, modelFile, trainingDataFile, ...version }) => ({
               ...version,
+              files: {
+                create: (prepareFiles(modelFile, trainingDataFile) as typeof modelFile[]).map(
+                  (file) => ({
+                    ...file,
+                    ...unscannedFile,
+                  })
+                ),
+              },
               images: {
                 create: images.map((image, index) => ({
                   index,
@@ -166,12 +207,17 @@ export const modelRouter = router({
           .map(({ id }) => id);
 
         // TEMPORARY
-        // query existing model versions to compare the url to see if it has changed
-        const queriedModelVersions = await ctx.prisma.modelVersion.findMany({
+        // query existing model versions to compare the file url to see if it has changed
+        const existingVersions = await ctx.prisma.modelVersion.findMany({
           where: { modelId: id },
           select: {
             id: true,
-            url: true,
+            files: {
+              select: {
+                type: true,
+                url: true,
+              },
+            },
           },
         });
 
@@ -182,57 +228,100 @@ export const modelRouter = router({
             modelVersions: {
               deleteMany:
                 versionsToDelete.length > 0 ? { id: { in: versionsToDelete } } : undefined,
-              upsert: modelVersions.map(({ id = -1, images, ...version }) => {
-                const imagesWithIndex = images.map((image, index) => ({
-                  index,
-                  userId: ownerId,
-                  ...image,
-                }));
-                const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
-                const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
+              upsert: modelVersions.map(
+                ({ id = -1, images, modelFile, trainingDataFile, ...version }) => {
+                  const imagesWithIndex = images.map((image, index) => ({
+                    index,
+                    userId: ownerId,
+                    ...image,
+                  }));
+                  const existingVersion = existingVersions.find((x) => x.id === id);
 
-                return {
-                  where: { id },
-                  create: {
-                    ...version,
-                    images: {
-                      create: imagesWithIndex.map(({ index, ...image }) => ({
-                        index,
-                        image: { create: image },
-                      })),
-                    },
-                  },
-                  update: {
-                    ...version,
-                    // temporary
-                    verified:
-                      queriedModelVersions.findIndex((x) => x.id === id && x.url === version.url) >
-                      -1,
-                    epochs: version.epochs ?? null,
-                    steps: version.steps ?? null,
-                    images: {
-                      deleteMany: {
-                        NOT: images.map((image) => ({ imageId: image.id })),
+                  // Determine what files to create/update
+                  const existingFileUrls: Record<string, string> = {};
+                  for (const existingFile of existingVersion?.files ?? [])
+                    existingFileUrls[existingFile.type] = existingFile.url;
+
+                  const files = prepareFiles(modelFile, trainingDataFile) as typeof modelFile[];
+                  const filesToCreate: typeof modelFile[] = [];
+                  const filesToUpdate: typeof modelFile[] = [];
+                  for (const file of files) {
+                    if (!file.type) continue;
+                    const existingUrl = existingFileUrls[file.type];
+                    if (!existingUrl) filesToCreate.push(file);
+                    else if (existingUrl !== file.url) filesToUpdate.push(file);
+                  }
+
+                  // Determine what images to create/update
+                  const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
+                  const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
+
+                  return {
+                    where: { id },
+                    create: {
+                      ...version,
+                      files: {
+                        create: filesToCreate.map(({ name, type, url, sizeKB }) => ({
+                          name,
+                          type,
+                          url,
+                          sizeKB,
+                          ...unscannedFile,
+                        })),
                       },
-                      create: imagesToCreate.map(({ index, ...image }) => ({
-                        index,
-                        image: { create: image },
-                      })),
-                      update: imagesToUpdate.map(({ index, ...image }) => ({
-                        where: {
-                          imageId_modelVersionId: {
-                            imageId: image.id as number,
-                            modelVersionId: id,
-                          },
-                        },
-                        data: {
+                      images: {
+                        create: imagesWithIndex.map(({ index, ...image }) => ({
                           index,
-                        },
-                      })),
+                          image: { create: image },
+                        })),
+                      },
                     },
-                  },
-                };
-              }),
+                    update: {
+                      ...version,
+                      epochs: version.epochs ?? null,
+                      steps: version.steps ?? null,
+                      files: {
+                        create: filesToCreate.map(({ name, type, url, sizeKB }) => ({
+                          name,
+                          type,
+                          url,
+                          sizeKB,
+                          ...unscannedFile,
+                        })),
+                        update: filesToUpdate.map(({ type, url, name, sizeKB }) => ({
+                          where: { modelVersionId_type: { modelVersionId: id, type } },
+                          data: {
+                            url,
+                            name,
+                            sizeKB,
+                            ...unscannedFile,
+                          },
+                        })),
+                      },
+                      images: {
+                        deleteMany: {
+                          NOT: images.map((image) => ({ imageId: image.id })),
+                        },
+                        create: imagesToCreate.map(({ index, ...image }) => ({
+                          index,
+                          image: { create: image },
+                        })),
+                        update: imagesToUpdate.map(({ index, ...image }) => ({
+                          where: {
+                            imageId_modelVersionId: {
+                              imageId: image.id as number,
+                              modelVersionId: id,
+                            },
+                          },
+                          data: {
+                            index,
+                          },
+                        })),
+                      },
+                    },
+                  };
+                }
+              ),
             },
             tagsOnModels: {
               deleteMany: {},

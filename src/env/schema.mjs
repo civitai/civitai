@@ -35,6 +35,7 @@ export const serverSchema = z.object({
   CF_IMAGES_TOKEN: z.string(),
   JOB_TOKEN: z.string(),
   WEBHOOK_TOKEN: z.string(),
+  SCANNING_ENDPOINT: z.string(),
 });
 
 /**

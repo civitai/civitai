@@ -1,6 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getGetUrl } from '~/utils/s3-utils';
-import { UserActivityType } from '@prisma/client';
+import { ModelFileType, UserActivityType } from '@prisma/client';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
 import { prisma } from '~/server/db/client';
 
@@ -12,9 +12,13 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
 
   const modelVersion = await prisma.modelVersion.findFirst({
     where: { id: parseInt(modelVersionId) },
-    select: { model: { select: { id: true, name: true } }, name: true, trainingDataUrl: true },
+    select: {
+      model: { select: { id: true, name: true } },
+      name: true,
+      files: { where: { type: ModelFileType.TrainingData }, select: { url: true } },
+    },
   });
-  if (!modelVersion || !modelVersion.trainingDataUrl) {
+  if (!modelVersion || !modelVersion.files.length) {
     return res.status(404).json({ error: 'Training data not found' });
   }
 
@@ -39,7 +43,8 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
     return res.status(500).json({ error: 'Invalid database operation', cause: error });
   }
 
-  const { url } = await getGetUrl(modelVersion.trainingDataUrl);
+  const [trainingDataFile] = modelVersion.files;
+  const { url } = await getGetUrl(trainingDataFile.url);
 
   res.redirect(url);
 }

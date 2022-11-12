@@ -10,11 +10,8 @@ import {
   CopyButton,
   Badge,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { showNotification } from '@mantine/notifications';
 import { IconCopy, IconDownload } from '@tabler/icons';
-import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/router';
 import React from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import {
@@ -27,7 +24,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { ModelWithDetails } from '~/server/validators/models/getById';
+import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 
@@ -65,15 +62,13 @@ export function ModelVersions({ items, initialTab, nsfw }: Props) {
 }
 
 type Props = {
-  items: ModelWithDetails['modelVersions'];
+  items: NonNullable<ModelById>['modelVersions'];
   initialTab?: string | null;
   nsfw?: boolean;
 };
 
 function TabContent({ version, nsfw }: TabContentProps) {
   const mobile = useIsMobile();
-  const { data: session } = useSession();
-  const router = useRouter();
   const { openImageLightbox } = useImageLightbox({
     initialSlide: 0,
     images: version.images.map(({ image }) => image),
@@ -135,7 +130,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
           Download
         </Text>
       ),
-      visible: !!version.trainingDataUrl,
+      visible: !!version.trainingDataFile?.url,
     },
   ];
 
@@ -156,14 +151,10 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 style={{ flex: 1 }}
                 variant="light"
               >
-                {`Download (${formatKBytes(version.sizeKB)})`}
+                {`Download (${formatKBytes(version.modelFile?.sizeKB ?? 0)})`}
               </Button>
             </LoginRedirect>
-            <VerifiedShield
-              verified={version.verified}
-              message={version.verificationMessage}
-              variant="light"
-            />
+            <VerifiedShield file={version.modelFile} variant="light" />
           </Group>
 
           <DescriptionTable items={versionDetails} labelWidth="30%" />

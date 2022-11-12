@@ -103,26 +103,53 @@ model Model {
 }
 
 model ModelVersion {
-  id                  Int      @id @default(autoincrement())
-  name                String
-  description         String?
-  url                 String
-  sizeKB              Float
-  modelId             Int
-  model               Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  trainedWords        String[]
-  steps               Int?
-  epochs              Int?
-  trainingDataUrl     String?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-  verified            Boolean  @default(false)
-  verificationMessage String?
+  id           Int      @id @default(autoincrement())
+  name         String
+  description  String?
+  modelId      Int
+  model        Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  trainedWords String[]
+  steps        Int?
+  epochs       Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   reviews Review[]
   images  ImagesOnModels[]
   metrics ModelVersionMetric[]
   rank    ModelVersionRank?
+  files   ModelFile[]
+}
+
+enum ScanResultCode {
+  Pending
+  Success
+  Danger
+  Error
+}
+
+enum ModelFileType {
+  Model
+  TrainingData
+}
+
+model ModelFile {
+  name              String
+  url               String
+  sizeKB            Float
+  createdAt         DateTime       @default(now())
+  type              ModelFileType
+  modelVersionId    Int
+  modelVersion      ModelVersion   @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  pickleScanResult  ScanResultCode @default(Pending)
+  pickleScanMessage String?
+  virusScanResult   ScanResultCode @default(Pending)
+  virusScanMessage  String?
+  scannedAt         DateTime?
+  scanRequestedAt   DateTime?
+  rawScanResult     Json?
+
+  @@id([modelVersionId, type])
 }
 
 enum MetricTimeframe {

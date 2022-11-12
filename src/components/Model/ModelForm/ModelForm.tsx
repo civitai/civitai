@@ -7,10 +7,11 @@ import {
   Group,
   Paper,
   Stack,
+  Switch,
   Title,
 } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
-import { Model, ModelType } from '@prisma/client';
+import { Model, ModelFileType, ModelType } from '@prisma/client';
 import { IconArrowLeft, IconCheck, IconPlus, IconTrash, IconX } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -31,7 +32,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { modelSchema } from '~/server/common/validation/model';
-import { ModelWithDetails } from '~/server/validators/models/getById';
+import { ModelById } from '~/types/router';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -41,7 +42,7 @@ const schema = modelSchema.extend({ tagsOnModels: z.string().array() });
 type CreateModelProps = z.infer<typeof modelSchema>;
 type UpdateModelProps = Omit<CreateModelProps, 'id'> & { id: number };
 
-type Props = { model?: ModelWithDetails };
+type Props = { model?: ModelById };
 
 export function ModelForm({ model }: Props) {
   const router = useRouter();
@@ -52,6 +53,7 @@ export function ModelForm({ model }: Props) {
   const addMutation = trpc.model.add.useMutation();
   const updateMutation = trpc.model.update.useMutation();
   const [uploading, setUploading] = useState(false);
+  const [hasTrainingWords, setHasTrainingWords] = useState(true);
 
   const form = useForm({
     schema: schema,
@@ -61,21 +63,19 @@ export function ModelForm({ model }: Props) {
       ...model,
       type: model?.type ?? 'Checkpoint',
       tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
-      modelVersions: model?.modelVersions.map((version) => ({
+      modelVersions: model?.modelVersions.map(({ trainedWords, images, ...version }) => ({
         ...version,
-        trainedWords: version.trainedWords ?? [],
-        images: version.images.map(({ image }) => image) ?? [],
+        trainedWords: trainedWords ?? [],
+        images: images.map(({ image }) => image) ?? [],
       })) ?? [
         {
           name: '',
           description: '',
-          url: '',
           epochs: null,
           steps: null,
-          sizeKB: 0,
-          trainingDataUrl: '',
           trainedWords: [],
           images: [],
+          modelFile: { name: '', url: '', sizeKB: 0, type: ModelFileType.Model },
         },
       ],
     },
@@ -170,13 +170,16 @@ export function ModelForm({ model }: Props) {
                         prepend({
                           name: '',
                           description: '',
-                          url: '',
                           epochs: null,
                           steps: null,
-                          sizeKB: 0,
-                          trainingDataUrl: '',
                           images: [],
                           trainedWords: [],
+                          modelFile: {
+                            name: '',
+                            url: '',
+                            sizeKB: 0,
+                            type: ModelFileType.Model,
+                          },
                         })
                       }
                       compact
@@ -216,16 +219,22 @@ export function ModelForm({ model }: Props) {
                               />
                             </Grid.Col>
                             <Grid.Col span={12}>
-                              <InputMultiSelect
-                                name={`modelVersions.${index}.trainedWords`}
-                                label="Trained Words"
-                                placeholder="e.g.: Master Chief"
-                                description="Please input the words you have trained your model with"
-                                data={trainedWords}
-                                creatable
-                                getCreateLabel={(query) => `+ Create ${query}`}
-                                clearable
-                                searchable
+                              {hasTrainingWords && (
+                                <InputMultiSelect
+                                  name={`modelVersions.${index}.trainedWords`}
+                                  label="Trained Words"
+                                  placeholder="e.g.: Master Chief"
+                                  description="Please input the words you have trained your model with"
+                                  data={trainedWords}
+                                  creatable
+                                  getCreateLabel={(query) => `+ Create ${query}`}
+                                  clearable
+                                  searchable
+                                />
+                              )}
+                              <Switch
+                                label="This model doesn't require any trigger words"
+                                onChange={() => setHasTrainingWords((x) => !x)}
                               />
                             </Grid.Col>
                             <Grid.Col span={6}>
@@ -248,7 +257,7 @@ export function ModelForm({ model }: Props) {
                             </Grid.Col>
                             <Grid.Col span={12}>
                               <InputFileUpload
-                                name={`modelVersions.${index}.url`}
+                                name={`modelVersions.${index}.modelFile.url`}
                                 label="Model File"
                                 placeholder="Pick your model"
                                 uploadType="model"
@@ -257,7 +266,7 @@ export function ModelForm({ model }: Props) {
                                 onChange={(url, file) => {
                                   if (file) {
                                     form.setValue(
-                                      `modelVersions.${index}.sizeKB`,
+                                      `modelVersions.${index}.modelFile.sizeKB`,
                                       file.size ? file.size / 1024 : 0
                                     );
                                   }
@@ -267,7 +276,7 @@ export function ModelForm({ model }: Props) {
                             </Grid.Col>
                             <Grid.Col span={12}>
                               <InputFileUpload
-                                name={`modelVersions.${index}.trainingDataUrl`}
+                                name={`modelVersions.${index}.trainingDataUrl.url`}
                                 label="Training Data"
                                 placeholder="Pick your training data"
                                 description="The data you used to train your model (as .zip archive)"

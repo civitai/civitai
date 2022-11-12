@@ -1,4 +1,4 @@
-import { ModelType, ReviewReactions, PrismaClient } from '@prisma/client';
+import { ModelType, ReviewReactions, PrismaClient, ScanResultCode, ModelFileType } from '@prisma/client';
 import { getRandomInt } from '../src/utils/number-helpers';
 
 const prisma = new PrismaClient();
@@ -135,11 +135,20 @@ async function seed() {
             create: [...Array(getRandomInt(1, 3))].map((y, j) => ({
               name: `Version ${j}`,
               description: getRandomItem(descriptions),
-              url: 'https://www.google.com/',
-              sizeKB: getRandomInt(1000000000, 4000000000),
               trainedWords: getRandomItems(trainedWords, 3),
               steps: getRandomInt(1, 10),
               epochs: getRandomInt(1000, 3000),
+              files: {
+                create: [...Array(getRandomInt(1, 2))].map((z, k) => ({
+                  name: `File ${k}`,
+                  url: 'https://www.google.com/',
+                  sizeKB: getRandomInt(1000000000, 4000000000),
+                  type: [ModelFileType.Model, ModelFileType.TrainingData][k],
+                  pickleScanResult: getRandomItem([ScanResultCode.Success, ScanResultCode.Danger, ScanResultCode.Error]),
+                  virusScanResult: getRandomItem([ScanResultCode.Success, ScanResultCode.Danger, ScanResultCode.Error]),
+                  scannedAt: new Date(),
+                })),
+              }
             })),
           },
         },
