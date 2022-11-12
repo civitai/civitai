@@ -13,7 +13,6 @@ import {
 import { showNotification } from '@mantine/notifications';
 import { IconCopy, IconDownload } from '@tabler/icons';
 import React from 'react';
-import z from 'zod';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import {
   DescriptionTable,
@@ -25,7 +24,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { ModelById } from '~/server/services/models';
+import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 
@@ -63,7 +62,7 @@ export function ModelVersions({ items, initialTab, nsfw }: Props) {
 }
 
 type Props = {
-  items: ModelById['modelVersions'];
+  items: NonNullable<ModelById>['modelVersions'];
   initialTab?: string | null;
   nsfw?: boolean;
 };
@@ -131,7 +130,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
           Download
         </Text>
       ),
-      visible: !!version.trainingDataFile.url,
+      visible: !!version.trainingDataFile?.url,
     },
   ];
 
@@ -152,7 +151,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 style={{ flex: 1 }}
                 variant="light"
               >
-                {`Download (${formatKBytes(version.modelFile.sizeKB)})`}
+                {`Download (${formatKBytes(version.modelFile?.sizeKB ?? 0)})`}
               </Button>
             </LoginRedirect>
             <VerifiedShield file={version.modelFile} variant="light" />

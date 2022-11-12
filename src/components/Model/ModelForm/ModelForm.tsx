@@ -32,7 +32,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { modelSchema } from '~/server/common/validation/model';
-import { ModelById } from '~/server/services/models';
+import { ModelById } from '~/types/router';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -76,7 +76,6 @@ export function ModelForm({ model }: Props) {
           trainedWords: [],
           images: [],
           modelFile: { name: '', url: '', sizeKB: 0, type: ModelFileType.Model },
-          trainingDataFile: null,
         },
       ],
     },
@@ -181,7 +180,6 @@ export function ModelForm({ model }: Props) {
                             sizeKB: 0,
                             type: ModelFileType.Model,
                           },
-                          trainingDataFile: null,
                         })
                       }
                       compact

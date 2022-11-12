@@ -1,4 +1,4 @@
-import { ModelFile, ModelFileType, Prisma, ReportReason, ScanResultCode } from '@prisma/client';
+import { ModelFile, ModelFileType, Prisma, ReportReason } from '@prisma/client';
 import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';
 import { modelSchema, modelVersionSchema } from '~/server/common/validation/model';
@@ -11,20 +11,19 @@ import {
 } from '~/server/validators/models/getAllModels';
 import { modelWithDetailsSelect } from '~/server/validators/models/getById';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
-import { getModelById } from '~/server/services/models';
 
 function prepareFiles(
   modelFile: z.infer<typeof modelVersionSchema>['modelFile'],
   trainingDataFile: z.infer<typeof modelVersionSchema>['trainingDataFile']
 ) {
-  const files = [{ ...modelFile, type: ModelFileType.Model }] as Partial<ModelFile>[];
+  const files: Partial<ModelFile>[] = [{ ...modelFile, type: ModelFileType.Model }];
   if (trainingDataFile != null)
     files.push({ ...trainingDataFile, type: ModelFileType.TrainingData });
 
   return files;
 }
 
-const routes = {
+export const modelRouter = router({
   getAll: publicProcedure.input(getAllModelsSchema).query(async ({ ctx, input = {} }) => {
     try {
       const session = ctx.session;
@@ -226,9 +225,9 @@ const routes = {
                   for (const existingFile of existingVersion?.files ?? [])
                     existingFileUrls[existingFile.type] = existingFile.url;
 
-                  const files = prepareFiles(modelFile, trainingDataFile);
-                  const filesToCreate = [];
-                  const filesToUpdate = [];
+                  const files = prepareFiles(modelFile, trainingDataFile) as typeof modelFile[];
+                  const filesToCreate: typeof modelFile[] = [];
+                  const filesToUpdate: typeof modelFile[] = [];
                   for (const file of files) {
                     if (!file.type) continue;
                     const existingUrl = existingFileUrls[file.type];
@@ -244,7 +243,14 @@ const routes = {
                     where: { id },
                     create: {
                       ...version,
-                      files,
+                      files: {
+                        create: files.map(({ name, type, url, sizeKB }) => ({
+                          name,
+                          type,
+                          url,
+                          sizeKB,
+                        })),
+                      },
                       images: {
                         create: imagesWithIndex.map(({ index, ...image }) => ({
                           index,
@@ -257,17 +263,20 @@ const routes = {
                       epochs: version.epochs ?? null,
                       steps: version.steps ?? null,
                       files: {
-                        create: filesToCreate,
-                        update: filesToUpdate.map(
-                          ({ type, modelVersionId, url, name, sizeKB }) => ({
-                            where: { modelVersionId_type: { modelVersionId, type } },
-                            data: {
-                              url,
-                              name,
-                              sizeKB,
-                            },
-                          })
-                        ),
+                        create: filesToCreate.map(({ name, type, url, sizeKB }) => ({
+                          name,
+                          type,
+                          url,
+                          sizeKB,
+                        })),
+                        update: filesToUpdate.map(({ type, url, name, sizeKB }) => ({
+                          where: { modelVersionId_type: { modelVersionId: id, type } },
+                          data: {
+                            url,
+                            name,
+                            sizeKB,
+                          },
+                        })),
                       },
                       images: {
                         deleteMany: {
@@ -408,6 +417,4 @@ const routes = {
         });
       }
     }),
-};
-
-export const modelRouter = router(routes);
+});
