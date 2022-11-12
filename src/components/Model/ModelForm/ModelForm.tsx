@@ -269,6 +269,10 @@ export function ModelForm({ model }: Props) {
                                       `modelVersions.${index}.modelFile.sizeKB`,
                                       file.size ? file.size / 1024 : 0
                                     );
+                                    form.setValue(
+                                      `modelVersions.${index}.modelFile.name`,
+                                      file.name
+                                    );
                                   }
                                 }}
                                 withAsterisk
@@ -276,13 +280,29 @@ export function ModelForm({ model }: Props) {
                             </Grid.Col>
                             <Grid.Col span={12}>
                               <InputFileUpload
-                                name={`modelVersions.${index}.trainingDataUrl.url`}
+                                name={`modelVersions.${index}.trainingDataFile.url`}
                                 label="Training Data"
                                 placeholder="Pick your training data"
                                 description="The data you used to train your model (as .zip archive)"
                                 uploadType="training-images"
                                 accept=".zip"
                                 onLoading={setUploading}
+                                onChange={(url, file) => {
+                                  if (file) {
+                                    form.setValue(
+                                      `modelVersions.${index}.trainingDataFile.type`,
+                                      ModelFileType.TrainingData
+                                    );
+                                    form.setValue(
+                                      `modelVersions.${index}.trainingDataFile.sizeKB`,
+                                      file.size ? file.size / 1024 : 0
+                                    );
+                                    form.setValue(
+                                      `modelVersions.${index}.trainingDataFile.name`,
+                                      file.name
+                                    );
+                                  }
+                                }}
                               />
                             </Grid.Col>
                             <Grid.Col span={12}>
