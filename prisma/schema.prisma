@@ -146,6 +146,7 @@ model ModelFile {
   virusScanResult   ScanResultCode @default(Pending)
   virusScanMessage  String?
   scannedAt         DateTime?
+  scanRequestedAt   DateTime?
   rawScanResult     Json?
 
   @@id([modelVersionId, type])

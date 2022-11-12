@@ -1,4 +1,4 @@
-import { ModelFile, ModelFileType, Prisma, ReportReason } from '@prisma/client';
+import { ModelFile, ModelFileType, Prisma, ReportReason, ScanResultCode } from '@prisma/client';
 import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';
 import { modelSchema, modelVersionSchema } from '~/server/common/validation/model';
@@ -22,6 +22,15 @@ function prepareFiles(
 
   return files;
 }
+
+const unscannedFile: Partial<ModelFile> = {
+  scannedAt: null,
+  rawScanResult: null,
+  virusScanMessage: null,
+  virusScanResult: ScanResultCode.Pending,
+  pickleScanMessage: null,
+  pickleScanResult: ScanResultCode.Pending,
+};
 
 export const modelRouter = router({
   getAll: publicProcedure.input(getAllModelsSchema).query(async ({ ctx, input = {} }) => {
@@ -128,7 +137,10 @@ export const modelRouter = router({
           modelVersions: {
             create: modelVersions.map(({ images, modelFile, trainingDataFile, ...version }) => ({
               ...version,
-              files: prepareFiles(modelFile, trainingDataFile),
+              files: prepareFiles(modelFile, trainingDataFile).map((file) => ({
+                ...file,
+                ...unscannedFile,
+              })),
               images: {
                 create: images.map((image, index) => ({
                   index,
@@ -244,11 +256,12 @@ export const modelRouter = router({
                     create: {
                       ...version,
                       files: {
-                        create: files.map(({ name, type, url, sizeKB }) => ({
+                        create: filesToCreate.map(({ name, type, url, sizeKB }) => ({
                           name,
                           type,
                           url,
                           sizeKB,
+                          ...unscannedFile,
                         })),
                       },
                       images: {
@@ -268,6 +281,7 @@ export const modelRouter = router({
                           type,
                           url,
                           sizeKB,
+                          ...unscannedFile,
                         })),
                         update: filesToUpdate.map(({ type, url, name, sizeKB }) => ({
                           where: { modelVersionId_type: { modelVersionId: id, type } },
@@ -275,6 +289,7 @@ export const modelRouter = router({
                             url,
                             name,
                             sizeKB,
+                            ...unscannedFile,
                           },
                         })),
                       },
