@@ -24,13 +24,14 @@ export const reviewRouter = router({
     .query(async ({ ctx, input = {} }) => {
       const { cursor, limit = 20, modelId, modelVersionId, userId } = input;
       const commonWhere = { modelId, modelVersionId, userId };
+      const showNsfw = ctx.session?.user?.showNsfw ?? true;
       const [reviews, totalCount] = await Promise.all([
         ctx.prisma.review.findMany({
           take: limit + 1, // get an extra item at the end which we'll use as next cursor
           cursor: cursor ? { id: cursor } : undefined,
           where: {
             ...commonWhere,
-            nsfw: ctx.session?.user?.showNsfw ? undefined : false,
+            nsfw: showNsfw ? undefined : false,
           },
           select: getAllReviewsSelect,
         }),

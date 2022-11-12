@@ -108,6 +108,7 @@ const MasonryItem = ({
 }) => {
   const { data: session } = useSession();
   const { id, image, name, rank, nsfw } = data ?? {};
+  const blurNsfw = session?.user?.blurNsfw ?? true;
   const { classes } = useStyles();
   const [loading, setLoading] = useState(false);
 
@@ -182,7 +183,7 @@ const MasonryItem = ({
     <Link
       href={{
         pathname: `models/${id}`,
-        query: nsfw && session?.user?.blurNsfw ? { showNsfw: true } : undefined,
+        query: nsfw && blurNsfw ? { showNsfw: true } : undefined,
       }}
       as={`models/${id}`}
       legacyBehavior

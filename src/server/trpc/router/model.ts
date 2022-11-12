@@ -50,7 +50,7 @@ export const modelRouter = router({
     try {
       const session = ctx.session;
       const { cursor, limit = 50 } = input;
-      input.showNsfw = session?.user?.showNsfw;
+      input.showNsfw = session?.user?.showNsfw ?? true;
 
       const orderBy: Prisma.Enumerable<Prisma.ModelOrderByWithRelationInput> = [
         { createdAt: 'desc' },

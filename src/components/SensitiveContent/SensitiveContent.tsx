@@ -1,7 +1,20 @@
-import { Badge, BadgeProps, createStyles, Stack, Text } from '@mantine/core';
-import { IconEyeOff } from '@tabler/icons';
+import {
+  Badge,
+  BadgeProps,
+  createStyles,
+  Stack,
+  Text,
+  Popover,
+  Button,
+  ThemeIcon,
+  Center,
+  Group,
+} from '@mantine/core';
+import { useDisclosure } from '@mantine/hooks';
+import { NextLink } from '@mantine/next';
+import { IconEyeOff, IconKey, IconLock } from '@tabler/icons';
 import { useSession } from 'next-auth/react';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useState } from 'react';
 
 const SensitiveContentContext = React.createContext<{
@@ -26,7 +39,8 @@ export const SensitiveContent = ({
   const { classes, cx } = useStyles();
   const [show, setShow] = useState(false);
   const { data: session } = useSession();
-  if (!session?.user?.blurNsfw) return <>{children}</>;
+  const shouldBlur = session?.user?.blurNsfw ?? true;
+  if (!shouldBlur) return <>{children}</>;
 
   return (
     <SensitiveContentContext.Provider value={{ show, setShow }}>
@@ -58,7 +72,11 @@ export const SensitiveContent = ({
 type SensitiveContentToggleProps = BadgeProps;
 const SensitiveContentToggle = ({ ...props }: SensitiveContentToggleProps) => {
   const { show, setShow } = useSensitiveContentContext();
-  return (
+  const { data: session } = useSession();
+  const [opened, { close, open }] = useDisclosure(false);
+  const isAuthenticated = !!session?.user;
+
+  const badge = (
     <Badge
       component="div"
       color="red"
@@ -69,12 +87,49 @@ const SensitiveContentToggle = ({ ...props }: SensitiveContentToggleProps) => {
         e.stopPropagation();
         e.preventDefault();
         e.nativeEvent.stopImmediatePropagation();
-        setShow((value) => !value);
+        if (isAuthenticated) setShow((value) => !value);
+        else opened ? close() : open();
       }}
       {...props}
     >
       {!show ? 'Show' : 'Hide'}
     </Badge>
+  );
+
+  if (isAuthenticated) return badge;
+
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const returnUrl = useMemo(() => {
+    const { pathname, search } = window.location;
+    return pathname + search;
+  }, []);
+  return (
+    <Popover
+      width={300}
+      position="bottom"
+      opened={opened}
+      withArrow
+      closeOnClickOutside
+      withinPortal
+    >
+      <Popover.Target>{badge}</Popover.Target>
+      <Popover.Dropdown>
+        <Stack spacing="xs">
+          <Group>
+            <ThemeIcon color="red" size="xl" variant="outline">
+              <IconLock />
+            </ThemeIcon>
+            <Text size="sm" weight={500} sx={{ flex: 1 }}>
+              You must be logged in to view NSFW content
+            </Text>
+          </Group>
+
+          <Button size="xs" component={NextLink} href={`/login?returnUrl=${returnUrl}`}>
+            Login
+          </Button>
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
   );
 };
 
