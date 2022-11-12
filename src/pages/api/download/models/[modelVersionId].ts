@@ -3,6 +3,7 @@ import { getGetUrl } from '~/utils/s3-utils';
 import { ModelFileType, UserActivityType } from '@prisma/client';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
 import { prisma } from '~/server/db/client';
+import { filenamize } from '~/utils/string-helpers';
 
 export default async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
   const modelVersionId = req.query.modelVersionId as string;
@@ -15,7 +16,7 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
     select: {
       model: { select: { id: true, name: true } },
       name: true,
-      files: { where: { type: ModelFileType.Model }, select: { url: true } },
+      files: { where: { type: ModelFileType.Model }, select: { url: true, name: true } },
     },
   });
   if (!modelVersion) {
@@ -44,7 +45,9 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
   }
 
   const [modelFile] = modelVersion.files;
-  const { url } = await getGetUrl(modelFile.url);
+  const ext = modelFile.name.split('.').pop();
+  const fileName = `${filenamize(modelVersion.model.name)}_${filenamize(modelVersion.name)}.${ext}`;
+  const { url } = await getGetUrl(modelFile.url, { fileName });
 
   res.redirect(url);
 }

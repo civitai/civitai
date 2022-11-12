@@ -61,6 +61,7 @@
     "embla-carousel-react": "^7.0.3",
     "gray-matter": "^4.0.3",
     "immer": "^9.0.15",
+    "lodash": "^4.17.21",
     "masonic": "^3.7.0",
     "next": "12.3.1",
     "next-auth": "^4.12.3",
@@ -79,6 +80,7 @@
   "devDependencies": {
     "@babel/core": "^7.19.3",
     "@next/eslint-plugin-next": "^12.1.4",
+    "@types/lodash": "^4.14.188",
     "@types/node": "18.11.0",
     "@types/react": "18.0.14",
     "@types/react-dom": "18.0.5",

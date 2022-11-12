@@ -4,6 +4,7 @@ import {
   GetObjectCommand,
   PutObjectCommand,
   PutBucketCorsCommand,
+  GetObjectCommandInput,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -66,11 +67,16 @@ export async function getPutUrl(key: string, s3: S3Client | null = null) {
   return { url, bucket, key };
 }
 
+type GetObjectOptions = {
+  s3?: S3Client | null;
+  expiresIn?: number;
+  fileName?: string;
+};
+
 const keyParser = /https:\/\/.*?\/(.*)/;
 export async function getGetUrl(
   key: string,
-  s3: S3Client | null = null,
-  expiresIn: number = 60 * 60 // 1 hour
+  { s3, expiresIn = 60 * 60, fileName }: GetObjectOptions = {}
 ) {
   if (!s3) s3 = getS3Client();
 
@@ -78,8 +84,12 @@ export async function getGetUrl(
   if (key.startsWith('http')) key = keyParser.exec(key)?.[1] ?? key;
   if (key.startsWith(bucket)) key = key.replace(`${bucket}/`, '');
 
-  const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: bucket, Key: key }), {
-    expiresIn,
-  });
+  const command: GetObjectCommandInput = {
+    Bucket: bucket,
+    Key: key,
+  };
+  if (fileName) command.ResponseContentDisposition = `attachment; filename="${fileName}"`;
+
+  const url = await getSignedUrl(s3, new GetObjectCommand(command), { expiresIn });
   return { url, bucket, key };
 }

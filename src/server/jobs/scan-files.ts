@@ -41,7 +41,7 @@ async function requestFileScan(
       token: env.WEBHOOK_TOKEN,
     });
 
-  const { url: fileUrl } = await getGetUrl(s3Url, s3, 7 * 24 * 60 * 60);
+  const { url: fileUrl } = await getGetUrl(s3Url, { s3, expiresIn: 7 * 24 * 60 * 60 });
 
   const scanUrl =
     env.SCANNING_ENDPOINT +

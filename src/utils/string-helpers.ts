@@ -1,3 +1,5 @@
+import { truncate, camelCase } from 'lodash';
+
 export function splitUppercase(value: string) {
   return value
     .trim()
@@ -22,4 +24,8 @@ export function generateToken(length: number) {
   for (let i = 0; i < length; i++)
     result += tokenCharacters.charAt(Math.floor(Math.random() * tokenCharactersLength));
   return result;
+}
+
+export function filenamize(value: string, length = 20) {
+  return truncate(camelCase(value), { length });
 }
