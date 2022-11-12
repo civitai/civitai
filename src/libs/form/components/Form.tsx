@@ -30,7 +30,7 @@ export function Form<TFieldValues extends FieldValues = FieldValues>({
   const handleError: SubmitErrorHandler<TFieldValues> = (errors, e) => {
     onError?.(errors, e);
     Object.entries(errors).forEach(([key, value]) =>
-      console.warn(`${key}: Form validation: ${value.message}`)
+      console.warn(`${key}: Form validation: ${value.message}`, { value })
     );
   };
 
