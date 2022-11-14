@@ -31,7 +31,7 @@ const schema = z.object({
 });
 
 export default function Account({ providers, accounts: initialAccounts }: Props) {
-  const { data: session, status } = useSession();
+  const { data: session } = useSession();
   const utils = trpc.useContext();
   const {
     mutateAsync: updateUserAsync,
@@ -81,7 +81,13 @@ export default function Account({ providers, accounts: initialAccounts }: Props)
             ...data,
           });
           await reloadSession();
-          form.reset({ ...user });
+          if (user)
+            form.reset({
+              ...user,
+              username: user.username ?? undefined,
+              showNsfw: user.showNsfw ?? undefined,
+              blurNsfw: user.blurNsfw ?? undefined,
+            });
         }}
       >
         <Stack>
