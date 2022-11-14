@@ -553,7 +553,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   <Text
                     size="md"
                     color="dimmed"
-                  >{`${reviews.length.toLocaleString()} total reviews`}</Text>
+                  >{`${model.rank?.ratingCountAllTime.toLocaleString()} total reviews`}</Text>
                 </Stack>
                 <Stack align="flex-end" spacing="xs">
                   <LoginRedirect reason="create-review">

@@ -80,7 +80,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
       value: (
         <Group spacing={4}>
           <Rating value={version.rank?.ratingAllTime ?? 0} fractions={2} readOnly />
-          <Text size="sm">({version.rank?.ratingCountAllTime ?? 0})</Text>
+          <Text size="sm">({version.rank?.ratingCountAllTime.toLocaleString() ?? 0})</Text>
         </Group>
       ),
     },
