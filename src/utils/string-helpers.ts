@@ -30,3 +30,10 @@ export function generateToken(length: number) {
 export function filenamize(value: string, length = 20) {
   return truncate(camelCase(value.replace(/[^a-z0-9]/gi, '_')), { length });
 }
+
+/**
+ * @see https://stackoverflow.com/a/12900504
+ */
+export function getFileExtension(value: string) {
+  return value.slice(((value.lastIndexOf('.') - 1) >>> 0) + 2);
+}

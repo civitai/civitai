@@ -1,10 +1,12 @@
 import { Stack, FileInput, Progress, FileInputProps, Group, Text } from '@mantine/core';
 import { IconUpload, IconCircleCheck, IconBan } from '@tabler/icons';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useS3Upload } from '~/hooks/useS3Upload';
 import useIsClient from '~/hooks/useIsClient';
 import { UploadType, UploadTypeUnion } from '~/server/common/enums';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
+import { getFileExtension } from '~/utils/string-helpers';
+import { toStringList } from '~/utils/array-helpers';
 
 //TODO File Safety: Limit to the specific file extensions we want to allow
 export function FileInputUpload({
@@ -25,15 +27,29 @@ export function FileInputUpload({
     status: 'pending',
   };
 
+  const [fileTypeError, setFileTypeError] = useState('');
+
   const handleOnChange: FileInputProps['onChange'] = async (file) => {
-    // setDroppedFile(file);
+    setFileTypeError('');
+
     let url: string | null = null;
     if (file) {
-      onLoading?.(true);
-      const uploaded = await uploadToS3(file, uploadType);
-      url = uploaded.url;
-      onLoading?.(false);
-      onChange?.(url, file);
+      const acceptTypes = props.accept?.split(',').map((ext) => ext.trim()) ?? [];
+      const fileExt = '.' + getFileExtension(file.name);
+
+      if (
+        acceptTypes.length === 0 || // Accepts all files
+        acceptTypes.includes(file.type) || // Check with MIME type
+        acceptTypes.includes(fileExt) // Check with file extension
+      ) {
+        onLoading?.(true);
+        const uploaded = await uploadToS3(file, uploadType);
+        url = uploaded.url;
+        onLoading?.(false);
+        onChange?.(url, file);
+      } else {
+        setFileTypeError(`This input only accepts ${toStringList(acceptTypes)} files`);
+      }
     } else {
       resetFiles();
     }
@@ -48,6 +64,7 @@ export function FileInputUpload({
   return (
     <Stack>
       <FileInput
+        error={fileTypeError}
         {...props}
         icon={<IconUpload size={16} />}
         onChange={handleOnChange}
