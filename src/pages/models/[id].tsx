@@ -523,7 +523,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 ))}
               </Carousel>
               {model.description ? (
-                <ContentClamp maxHeight={150}>
+                <ContentClamp maxHeight={300}>
                   <RenderHtml html={model.description} />
                 </ContentClamp>
               ) : null}
