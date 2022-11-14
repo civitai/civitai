@@ -33,7 +33,7 @@ const pendingTrackedFile = {
   speed: 0,
   timeRemaining: 0,
   status: 'pending',
-  abort: () => { },
+  abort: () => undefined,
 };
 
 export const useCFImageUpload: UseCFImageUpload = () => {

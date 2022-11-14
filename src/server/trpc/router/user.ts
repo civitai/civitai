@@ -61,6 +61,7 @@ export const userRouter = router({
           showNsfw: z.boolean(),
           blurNsfw: z.boolean(),
           tos: z.boolean(),
+          image: z.string().nullable(),
         })
         .partial()
     )

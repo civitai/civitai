@@ -24,6 +24,7 @@ import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { MultiSelectWrapper } from '~/libs/form/components/MultiSelectWrapper';
 import { DatePicker } from '@mantine/dates';
 import { FileInputUpload } from '~/components/FileInputUpload/FileInputUpload';
+import { ProfileImageUpload } from '~/components/ProfileImageUpload/ProfileImageUpload';
 
 export * from './Form';
 
@@ -49,6 +50,7 @@ export const InputFileInput = withController(FileInput);
 export const InputRTE = withController(RichTextEditor);
 export const InputImageUpload = withController(ImageUpload);
 export const InputFileUpload = withController(FileInputUpload);
+export const InputProfileImageUpload = withController(ProfileImageUpload);
 
 export const InputSwitch = withController(Switch, ({ field }) => ({
   checked: field.value ?? false,

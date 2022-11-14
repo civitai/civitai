@@ -2,8 +2,6 @@ import {
   Button,
   Container,
   Stack,
-  Switch,
-  TextInput,
   Title,
   Text,
   Table,
@@ -11,7 +9,6 @@ import {
   LoadingOverlay,
   Alert,
 } from '@mantine/core';
-import { useForm } from '@mantine/form';
 import { GetServerSideProps } from 'next';
 import { Session } from 'next-auth';
 import { getProviders, signIn } from 'next-auth/react';
@@ -24,6 +21,23 @@ import { prisma } from '~/server/db/client';
 import { reloadSession } from '~/utils/next-auth-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import {
+  Form,
+  InputFileUpload,
+  InputProfileImageUpload,
+  InputSwitch,
+  InputText,
+  useForm,
+} from '~/libs/form';
+import { z } from 'zod';
+import { ImageUpload } from '~/components/ImageUpload/ImageUpload';
+
+const schema = z.object({
+  username: z.string(),
+  showNsfw: z.boolean().optional(),
+  blurNsfw: z.boolean().optional(),
+  image: z.string().nullable(),
+});
 
 export default function Account({ user, providers, accounts: initialAccounts }: Props) {
   const utils = trpc.useContext();
@@ -48,52 +62,49 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
   });
 
   const form = useForm({
-    initialValues: user,
+    schema,
+    mode: 'onChange',
+    defaultValues: user,
   });
 
   return (
     <Container p={0} size="xs">
-      <form
-        onSubmit={form.onSubmit(async (values) => {
+      <Stack mb="md">
+        <Title order={1}>Manage Account</Title>
+        <Text>
+          Take a moment to review your account information and preferences to personalize your
+          experience on the site
+        </Text>
+        {updateUserError && (
+          <Alert color="red" variant="light">
+            {updateUserError.message}
+          </Alert>
+        )}
+      </Stack>
+      <Form
+        form={form}
+        onSubmit={async (data) => {
           await updateUserAsync({
             id: user?.id,
-            username: values.username,
-            showNsfw: values.showNsfw,
-            blurNsfw: values.blurNsfw,
+            ...data,
           });
           await reloadSession();
-        })}
+        }}
       >
         <Stack>
-          <Title order={1}>Manage Account</Title>
-          <Text>
-            Take a moment to review your account information and preferences to personalize your
-            experience on the site
-          </Text>
-          {updateUserError && (
-            <Alert color="red" variant="light">
-              {updateUserError.message}
-            </Alert>
-          )}
-          <TextInput label="Username" required {...form.getInputProps('username')} />
-          <Switch
+          <InputText name="username" label="Username" required />
+          <InputProfileImageUpload name="image" label="Profile image" />
+          <InputSwitch
+            name="showNsfw"
             label="Show me NSFW content"
             description="If you are not of legal age to view NSFW content, please do not enable this option"
-            checked={form.values.showNsfw}
-            {...form.getInputProps('showNsfw')}
           />
-          {form.values.showNsfw && (
-            <Switch
-              label="Blur NSFW content"
-              checked={form.values.blurNsfw}
-              {...form.getInputProps('blurNsfw')}
-            />
-          )}
-          <Button type="submit" loading={updatingUser} disabled={!form.isDirty()}>
+          <InputSwitch name="blurNsfw" label="Blur NSFW content" />
+          <Button type="submit" loading={updatingUser} disabled={!form.formState.isDirty}>
             Save
           </Button>
         </Stack>
-      </form>
+      </Form>
       {accounts.length > 0 && providers && (
         <Stack mt="md" spacing="xs">
           <Title order={4}>Accounts</Title>
