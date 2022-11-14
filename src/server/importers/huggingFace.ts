@@ -4,6 +4,7 @@ import { prisma } from '~/server/db/client';
 import { getS3Client } from '~/utils/s3-utils';
 import { uploadViaUrl } from '~/utils/cf-images-utils';
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import matter from 'gray-matter';
 
 // Find match for URL like: https://huggingface.co/nitrosocke/Arcane-Diffusion
 const huggingFaceRegex = /^https:\/\/huggingface\.co\/([\w\-]+)\/([\w\-]+)/;
@@ -36,11 +37,24 @@ export const huggingFaceImporter = createImporter(
     // if it doesn't exist, create it
     const createModel = model == null;
     if (!model) {
+      let description = `<p>Originally posted to <a href="${source}">HuggingFace by ${author}</a></p>`
+      // Get README
+      try {
+        const readme = await fetch(`https://huggingface.co/${hfModel.id}/raw/main/README.md`).then(
+          (r) => r.text()
+        );
+        // TODO IMPORT: Use Remark to parse markdown
+        const { data: frontmatter, content } = matter(readme);
+        description += content
+      } catch (error) {
+        // This is fine... 🔥
+      }
+
       // Create model
       model = await prisma.model.create({
         data: {
           name: modelName,
-          description: `Originally posted to <a href="${source}">HuggingFace by ${author}</a>`,
+          ,
           fromImportId: id,
           type: ModelType.Checkpoint,
           userId: 1,
