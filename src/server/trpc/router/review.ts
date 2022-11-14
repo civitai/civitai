@@ -17,26 +17,39 @@ export const reviewRouter = router({
           modelVersionId: z.number(),
           userId: z.number(),
           filterBy: z.array(z.nativeEnum(ReviewFilter)),
-          sort: z.nativeEnum(ReviewSort),
+          sort: z.nativeEnum(ReviewSort).default(ReviewSort.Newest),
         })
         .partial()
     )
     .query(async ({ ctx, input = {} }) => {
-      const { cursor, limit = 20, modelId, modelVersionId, userId } = input;
+      const { cursor, limit = 20, modelId, modelVersionId, userId, sort, filterBy = [] } = input;
       const commonWhere = { modelId, modelVersionId, userId };
       const showNsfw = ctx.session?.user?.showNsfw ?? true;
-      const [reviews, totalCount] = await Promise.all([
-        ctx.prisma.review.findMany({
-          take: limit + 1, // get an extra item at the end which we'll use as next cursor
-          cursor: cursor ? { id: cursor } : undefined,
-          where: {
-            ...commonWhere,
-            nsfw: showNsfw ? undefined : false,
-          },
-          select: getAllReviewsSelect,
-        }),
-        ctx.prisma.review.count({ where: commonWhere }),
-      ]);
+      let orderBy: Prisma.ReviewFindManyArgs['orderBy'] = { createdAt: 'desc' };
+
+      switch (sort) {
+        // TODO: implement more order cases once reactions are live
+        case ReviewSort.Oldest:
+          orderBy = { createdAt: 'asc' };
+          break;
+        default:
+          orderBy = { createdAt: 'desc' };
+          break;
+      }
+
+      const reviews = await ctx.prisma.review.findMany({
+        take: limit + 1, // get an extra item at the end which we'll use as next cursor
+        cursor: cursor ? { id: cursor } : undefined,
+        where: {
+          ...commonWhere,
+          nsfw: showNsfw ? (filterBy.includes(ReviewFilter.NSFW) ? true : undefined) : false,
+          imagesOnReviews: filterBy.includes(ReviewFilter.IncludesImages)
+            ? { some: {} }
+            : undefined,
+        },
+        select: getAllReviewsSelect,
+        orderBy,
+      });
 
       let nextCursor: typeof cursor | undefined = undefined;
       if (reviews.length > limit) {
@@ -50,7 +63,6 @@ export const reviewRouter = router({
           images: imagesOnReviews.map(({ image }) => image),
         })),
         nextCursor,
-        totalCount,
       };
     }),
   upsert: protectedProcedure.input(reviewUpsertSchema).mutation(async ({ ctx, input }) => {

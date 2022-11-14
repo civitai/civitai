@@ -38,6 +38,7 @@ import {
   IconTrash,
 } from '@tabler/icons';
 import { createProxySSGHelpers } from '@trpc/react-query/ssg';
+import startCase from 'lodash/startCase';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
@@ -136,7 +137,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   } = trpc.review.getAll.useInfiniteQuery(
     { modelId: id, limit: 5, ...reviewFilters },
     {
-      // enabled: !edit,
+      enabled: !edit,
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       keepPreviousData: true,
     }
@@ -585,21 +586,23 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     <Select
                       defaultValue={ReviewSort.Newest}
                       icon={<IconArrowsSort size={14} />}
-                      data={[
-                        { label: 'Newest', value: ReviewSort.Newest },
-                        { label: 'Most Liked', value: ReviewSort.MostLiked },
-                        { label: 'Most Disiked', value: ReviewSort.MostDisliked },
-                      ]}
+                      data={Object.values(ReviewSort)
+                        // Only include Newest and Oldest until reactions are implemented
+                        .filter((sort) => [ReviewSort.Newest, ReviewSort.Oldest].includes(sort))
+                        .map((sort) => ({
+                          label: startCase(sort),
+                          value: sort,
+                        }))}
                       onChange={handleReviewSortChange}
                       size="xs"
                     />
                     <MultiSelect
                       placeholder="Filters"
                       icon={<IconFilter size={14} />}
-                      data={[
-                        { label: 'NSFW', value: ReviewFilter.NSFW },
-                        { label: 'Includes Images', value: ReviewFilter.IncludesImages },
-                      ]}
+                      data={Object.values(ReviewFilter).map((sort) => ({
+                        label: startCase(sort),
+                        value: sort,
+                      }))}
                       onChange={handleReviewFilterChange}
                       size="xs"
                       zIndex={500}

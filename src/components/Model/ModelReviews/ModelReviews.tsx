@@ -15,13 +15,13 @@ import {
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { Image, ReportReason } from '@prisma/client';
+import { ReportReason } from '@prisma/client';
 import { IconDotsVertical, IconEdit, IconFlag, IconTrash } from '@tabler/icons';
 import dayjs from 'dayjs';
 import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/router';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -31,7 +31,6 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ImageModel } from '~/server/validators/image/selectors';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
 export function ModelReviews({ items, loading = false }: Props) {
   return (
@@ -67,7 +66,6 @@ type Props = {
 
 function ReviewItem({ data: review }: ItemProps) {
   const { data: session } = useSession();
-  const router = useRouter();
   const isOwner = session?.user?.id === review.user.id;
   const isMod = session?.user?.isModerator ?? false;
 

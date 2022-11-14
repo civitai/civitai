@@ -11,19 +11,19 @@ import {
   LoadingOverlay,
   Alert,
 } from '@mantine/core';
+import { useForm } from '@mantine/form';
 import { GetServerSideProps } from 'next';
 import { Session } from 'next-auth';
-import { getServerAuthSession } from '~/server/common/get-server-auth-session';
-import { useForm } from '@mantine/form';
 import { getProviders, signIn } from 'next-auth/react';
-import { trpc } from '~/utils/trpc';
-import { prisma } from '~/server/db/client';
+import { BuiltInProviderType } from 'next-auth/providers';
 import React from 'react';
 
 import { SocialLabel } from '~/components/Social/SocialLabel';
-import { BuiltInProviderType } from 'next-auth/providers';
-import { reloadSession } from './../../utils/next-auth-helpers';
+import { getServerAuthSession } from '~/server/common/get-server-auth-session';
+import { prisma } from '~/server/db/client';
+import { reloadSession } from '~/utils/next-auth-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 export default function Account({ user, providers, accounts: initialAccounts }: Props) {
   const utils = trpc.useContext();
@@ -35,6 +35,7 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
     async onSuccess() {
       showSuccessNotification({ message: 'Your settings have been saved' });
       await utils.model.getAll.invalidate();
+      await utils.review.getAll.invalidate();
     },
   });
   const { mutate: deleteAccount, isLoading: deletingAccount } = trpc.account.delete.useMutation({

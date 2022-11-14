@@ -1,4 +1,5 @@
-import { truncate, camelCase } from 'lodash';
+import camelCase from 'lodash/camelCase';
+import truncate from 'lodash/truncate';
 
 export function splitUppercase(value: string) {
   return value

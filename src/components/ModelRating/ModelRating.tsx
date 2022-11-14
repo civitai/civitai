@@ -1,6 +1,4 @@
 import { Group, Rating, RatingProps, Text } from '@mantine/core';
-import { MetricTimeframe } from '@prisma/client';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { ModelWithDetails } from '~/server/validators/models/getById';
 
 export function ModelRating({ rank, ...props }: Props) {
