@@ -1,13 +1,5 @@
 import { Prisma } from '@prisma/client';
 
-export const imagePreviewSelect = Prisma.validator<Prisma.ImageSelect>()({
-  width: true,
-  url: true,
-  height: true,
-  name: true,
-  hash: true,
-});
-
 export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   id: true,
   name: true,
@@ -16,7 +8,7 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   width: true,
   height: true,
   hash: true,
-  prompt: true,
+  meta: true,
 });
 
 const image = Prisma.validator<Prisma.ImageArgs>()({ select: imageSelect });

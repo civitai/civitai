@@ -13,7 +13,7 @@ type ImagePreviewProps = {
 } & Omit<PaperProps, 'component'>;
 
 export function ImagePreview({
-  image: { url, name, width, height, hash },
+  image: { url, name, width, height, hash, meta },
   edgeImageProps = {},
   nsfw,
   aspectRatio,
