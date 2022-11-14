@@ -3,7 +3,7 @@ import { prisma } from '~/server/db/client';
 import { ModelFileType, ScanResultCode } from '@prisma/client';
 import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
-import { getGetUrl, getS3Client } from '~/utils/s3-utils';
+import { checkFileExists, getGetUrl, getS3Client } from '~/utils/s3-utils';
 import { S3Client } from '@aws-sdk/client-s3';
 
 export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
@@ -41,7 +41,10 @@ async function requestFileScan(
       token: env.WEBHOOK_TOKEN,
     });
 
-  const { url: fileUrl } = await getGetUrl(s3Url, { s3, expiresIn: 7 * 24 * 60 * 60 });
+  let fileUrl = s3Url;
+  const fileExists = await checkFileExists(s3Url, s3);
+  // If the file isn't in our bucket, keep the raw url...
+  if (fileExists) ({ url: fileUrl } = await getGetUrl(s3Url, { s3, expiresIn: 7 * 24 * 60 * 60 }));
 
   const scanUrl =
     env.SCANNING_ENDPOINT +
