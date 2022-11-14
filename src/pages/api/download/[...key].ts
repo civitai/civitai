@@ -17,7 +17,7 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
   }
 
   // Track activity
-  // TODO Tracking: Add a new activity type for downloading other keys...
+  // TODO Tracking: Add a new activity type for downloading other keys... @JustMaier
 
   const { url } = await getGetUrl(key);
 

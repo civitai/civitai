@@ -1,5 +1,5 @@
 import { imageSelect } from './../image/selectors';
-import { MetricTimeframe, ModelType, Prisma } from '@prisma/client';
+import { MetricTimeframe, ModelStatus, ModelType, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';
 
@@ -70,8 +70,8 @@ export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
   nsfw: true,
   status: true,
   modelVersions: {
-    // TODO Model Statuses: only show published unless mod or owner
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    where: { status: ModelStatus.Published },
     take: 1,
     select: {
       images: {

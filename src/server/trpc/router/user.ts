@@ -81,7 +81,7 @@ export const userRouter = router({
         return updatedUser;
       } catch (error) {
         if (error instanceof PrismaClientKnownRequestError) {
-          // TODO - more robust error handling
+          // TODO Error Handling: Add more robust TRPC<->prisma error handling
           // console.log('___ERROR___');
           // console.log(error.code);
           // console.log(error.meta?.target); // target is the field(s) that had a problem

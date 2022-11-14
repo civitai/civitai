@@ -6,6 +6,7 @@ import useIsClient from '~/hooks/useIsClient';
 import { UploadType, UploadTypeUnion } from '~/server/common/enums';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 
+//TODO File Safety: Limit to the specific file extensions we want to allow
 export function FileInputUpload({
   uploadType = 'default',
   onChange,

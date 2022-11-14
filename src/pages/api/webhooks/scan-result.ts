@@ -40,7 +40,7 @@ export default WebhookEndpoint(async (req, res) => {
     });
 
     // Unpublish the model if there are no published versions
-    // TODO Model Status: We probably need to implement this logic everywhere we update statuses of versions
+    // We probably need to implement this logic everywhere we update statuses of versions
     // 👆 This is why triggers like we have in dotnet + EF are so important...
     // 😡 Too bad Prisma's middleware system doesn't actually track the changes down to the entity level...
     const { modelId } =

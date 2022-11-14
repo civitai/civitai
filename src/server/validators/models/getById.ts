@@ -63,18 +63,6 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       },
     },
   },
-  // TODO Review Removal: It doesn't seem like we're using this...
-  // reviews: {
-  //   select: {
-  //     text: true,
-  //     rating: true,
-  //     user: true,
-  //     nsfw: true,
-  //     createdAt: true,
-  //     modelVersion: { select: { id: true, name: true } },
-  //     imagesOnReviews: { select: { image: { select: imageSelect } } },
-  //   },
-  // },
   rank: {
     select: {
       downloadCountAllTime: true,

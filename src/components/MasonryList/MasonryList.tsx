@@ -124,7 +124,6 @@ const MasonryItem = ({
     return heightT + (rank?.ratingAllTime ? 66 : 33);
   }, [itemWidth, image.width, image.height, rank?.ratingAllTime]);
 
-  // TODO Model Status: If model is draft, show draft badge
   const modelText = (
     <Group position="left">
       <Text size={14} weight={500} lineClamp={2} style={{ flex: 1 }}>

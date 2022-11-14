@@ -41,7 +41,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   onChange?: (value: Array<CustomFile>) => void;
 };
 
-//TODO - make sure the max is applying to the total number of images and not just each time the user adds new images via the input
+//TODO File Safety: Limit to the specific file extensions we want to allow
 export function ImageUpload({
   value = [],
   onChange,

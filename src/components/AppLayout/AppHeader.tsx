@@ -340,7 +340,6 @@ export function AppHeader({ links }: Props) {
                   <Menu.Item
                     icon={<IconFile size={14} color={theme.colors.blue[6]} stroke={1.5} />}
                     component={NextLink}
-                    // TODO - replace?
                     href={`/?user=${session.user.username}`}
                   >
                     Your models

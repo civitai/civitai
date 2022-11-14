@@ -4,7 +4,6 @@ import { ImageModel } from '~/server/validators/image/selectors';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { EdgeImage, EdgeImageProps } from '~/components/EdgeImage/EdgeImage';
 
-//TODO - proper image preview component with nsfw hash built in
 type ImagePreviewProps = {
   nsfw?: boolean;
   aspectRatio?: number;

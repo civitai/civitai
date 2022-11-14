@@ -3,7 +3,7 @@ import { ColorScheme, ColorSchemeProvider, MantineProvider } from '@mantine/core
 import { NotificationsProvider } from '@mantine/notifications';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { getCookie, setCookie } from 'cookies-next';
-import * as dayjs from 'dayjs';
+import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import type { NextPage } from 'next';
@@ -42,7 +42,9 @@ function MyApp(props: CustomAppProps<{ session: Session | null; colorScheme: Col
   const toggleColorScheme = (value?: ColorScheme) => {
     const nextColorScheme = value || (colorScheme === 'dark' ? 'light' : 'dark');
     setColorScheme(nextColorScheme);
-    setCookie('mantine-color-scheme', nextColorScheme);
+    setCookie('mantine-color-scheme', nextColorScheme, {
+      expires: dayjs().add(1, 'year').toDate(),
+    });
   };
 
   const getLayout = Component.getLayout ?? ((page) => <AppLayout>{page}</AppLayout>);
