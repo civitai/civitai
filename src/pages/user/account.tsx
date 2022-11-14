@@ -59,11 +59,6 @@ export default function Account({ providers, accounts: initialAccounts }: Props)
     defaultValues: session?.user,
   });
 
-  useEffect(() => {
-    console.log({ session, status });
-    // if(status === 'authenticated')
-  }, [session, status]); //eslint
-
   return (
     <Container p={0} size="xs">
       <Stack mb="md">
