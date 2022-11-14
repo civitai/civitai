@@ -1,4 +1,4 @@
-import { ModelType, ReviewReactions, PrismaClient, ScanResultCode, ModelFileType } from '@prisma/client';
+import { ModelType, ReviewReactions, PrismaClient, ScanResultCode, ModelFileType, ModelStatus } from '@prisma/client';
 import { getRandomInt } from '../src/utils/number-helpers';
 
 const prisma = new PrismaClient();
@@ -18,7 +18,8 @@ const trainedWords = [
   'do a barrel roll',
   'eat it',
 ];
-const modelTypes: ModelType[] = ['Checkpoint', 'TextualInversion', 'Hypernetwork'];
+const modelTypes = Object.values(ModelType);
+const modelStatus = Object.values(ModelStatus);
 const descriptions = [
   'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.',
   'Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.',
@@ -95,7 +96,7 @@ async function seed() {
     create: {
       name: 'Manuel Emilio Urena',
       email: 'manuel.ureh@hotmail.com',
-      image: 'https://avatars.githubusercontent.com/u/607609?v=4',
+      image: 'https://avatars.githubusercontent.com/u/12631159?v=4',
     },
     select: {
       id: true,
@@ -124,13 +125,16 @@ async function seed() {
    * MODELS AND MODEL VERSIONS
    ************/
   const modelResults = await Promise.all(
-    [...Array(10)].map((x, i) =>
-      prisma.model.create({
+    [...Array(10)].map((x, i) => {
+      const status = getRandomItem(modelStatus);
+
+      return prisma.model.create({
         data: {
           userId: getRandomItem(userIds),
           name: `Model ${i}`,
           description: getRandomItem(descriptions),
           type: getRandomItem(modelTypes),
+          status,
           modelVersions: {
             create: [...Array(getRandomInt(1, 3))].map((y, j) => ({
               name: `Version ${j}`,
@@ -138,6 +142,7 @@ async function seed() {
               trainedWords: getRandomItems(trainedWords, 3),
               steps: getRandomInt(1, 10),
               epochs: getRandomInt(1000, 3000),
+              status,
               files: {
                 create: [...Array(getRandomInt(1, 2))].map((z, k) => ({
                   name: `File ${k}`,
@@ -162,7 +167,7 @@ async function seed() {
           },
         },
       })
-    )
+    })
   );
 
   /************

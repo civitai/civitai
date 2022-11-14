@@ -6,6 +6,7 @@ import {
   ReportReason,
   ScanResultCode,
 } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';
 import { modelSchema, modelVersionSchema } from '~/server/common/validation/model';
@@ -21,8 +22,8 @@ import {
   getAllModelsWhere,
 } from '~/server/validators/models/getAllModels';
 import { modelWithDetailsSelect } from '~/server/validators/models/getById';
-import { checkFileExists, getGetUrl, getS3Client } from '~/utils/s3-utils';
-import { protectedProcedure, publicProcedure, router } from '../trpc';
+import { checkFileExists, getS3Client } from '~/utils/s3-utils';
+import { middleware, protectedProcedure, publicProcedure, router } from '../trpc';
 
 function prepareFiles(
   modelFile: z.infer<typeof modelVersionSchema>['modelFile'],
@@ -44,6 +45,26 @@ const unscannedFile = {
   pickleScanMessage: null,
   pickleScanResult: ScanResultCode.Pending,
 };
+
+const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
+  if (!ctx.session || !ctx.session.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+
+  const { id } = input as { id: number };
+  const userId = ctx.session.user.id;
+  const isModerator = ctx.session?.user?.isModerator;
+  const ownerId = (await ctx.prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
+  if (!isModerator) {
+    if (ownerId !== userId) throw handleAuthorizationError();
+  }
+
+  return next({
+    ctx: {
+      // infers the `session` as non-nullable
+      session: { ...ctx.session, user: ctx.session.user },
+      ownerId,
+    },
+  });
+});
 
 export const modelRouter = router({
   getAll: publicProcedure.input(getAllModelsSchema).query(async ({ ctx, input = {} }) => {
@@ -74,8 +95,7 @@ export const modelRouter = router({
         }
       }
 
-      // TODO TypeFix: too rushed to do this properly...
-      const where: any = { ...getAllModelsWhere(input) };
+      const where: Prisma.ModelFindManyArgs['where'] = { ...getAllModelsWhere(input) };
       if (!session?.user?.isModerator) {
         // Only show models that are ready to be used unless the user is the owner
         where.OR = [{ status: ModelStatus.Published }, { user: { id: session?.user?.id } }];
@@ -103,10 +123,9 @@ export const modelRouter = router({
   }),
   getById: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     try {
-      const { id } = input as unknown as { id: number };
+      const { id } = input;
 
-      // TODO TypeFix: too rushed to do this properly...
-      const where: any = { id };
+      const where: Prisma.ModelFindFirstArgs['where'] = { id };
       if (!ctx.session?.user?.isModerator) {
         // Only show models that are ready to be used unless the user is the owner
         where.OR = [{ status: ModelStatus.Published }, { user: { id: ctx.session?.user?.id } }];
@@ -178,13 +197,10 @@ export const modelRouter = router({
         data: {
           ...data,
           userId,
-          // TODO Model Status: Allow them to save as draft and publish/unpublish
-          status: ModelStatus.Published,
           modelVersions: {
             create: modelVersions.map(({ images, modelFile, trainingDataFile, ...version }) => ({
               ...version,
-              // TODO Model Status: Allow them to save as draft and publish/unpublish
-              status: ModelStatus.Published,
+              status: data.status,
               files: {
                 create: (prepareFiles(modelFile, trainingDataFile) as typeof modelFile[]).map(
                   (file) => ({
@@ -221,8 +237,8 @@ export const modelRouter = router({
   }),
   update: protectedProcedure
     .input(modelSchema.extend({ id: z.number() }))
+    .use(isOwnerOrModerator)
     .mutation(async ({ ctx, input }) => {
-      const userId = ctx.session.user.id;
       const { id, modelVersions, tagsOnModels, ...data } = input;
       const { tagsToCreate, tagsToUpdate } = tagsOnModels?.reduce(
         (acc, current) => {
@@ -236,13 +252,7 @@ export const modelRouter = router({
           tagsToUpdate: [] as Array<typeof tagsOnModels[number]>,
         }
       ) ?? { tagsToCreate: [], tagsToUpdate: [] };
-
-      // TODO DRY: this process is repeated in several locations that need this check
-      const isModerator = ctx.session.user.isModerator;
-      const ownerId = (await ctx.prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
-      if (!isModerator) {
-        if (ownerId !== userId) return handleAuthorizationError();
-      }
+      const { ownerId } = ctx;
 
       // TODO DRY: This is used in add and update
       // Check that files exist
@@ -270,12 +280,10 @@ export const modelRouter = router({
           .filter((version) => !versionIds.includes(version.id))
           .map(({ id }) => id);
 
-        // TODO Model Status: Allow them to save as draft and publish/unpublish
         const model = await ctx.prisma.model.update({
           where: { id },
           data: {
             ...data,
-            status: ModelStatus.Published,
             modelVersions: {
               deleteMany:
                 versionsToDelete.length > 0 ? { id: { in: versionsToDelete } } : undefined,
@@ -307,12 +315,11 @@ export const modelRouter = router({
                   const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
                   const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
 
-                  // TODO Model Status: Allow them to save as draft and publish/unpublish
                   return {
                     where: { id },
                     create: {
                       ...version,
-                      status: ModelStatus.Published,
+                      status: data.status,
                       files: {
                         create: filesToCreate.map(({ name, type, url, sizeKB }) => ({
                           name,
@@ -333,7 +340,7 @@ export const modelRouter = router({
                       ...version,
                       epochs: version.epochs ?? null,
                       steps: version.steps ?? null,
-                      status: ModelStatus.Published,
+                      status: data.status,
                       files: {
                         create: filesToCreate.map(({ name, type, url, sizeKB }) => ({
                           name,
@@ -404,18 +411,10 @@ export const modelRouter = router({
     }),
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))
+    .use(isOwnerOrModerator)
     .mutation(async ({ ctx, input }) => {
       try {
         const { id } = input;
-
-        // TODO DRY: this process is repeated in several locations that need this check
-        const isModerator = ctx.session.user.isModerator;
-        if (!isModerator) {
-          const userId = ctx.session.user.id;
-          const ownerId = (await ctx.prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
-          if (ownerId !== userId) return handleAuthorizationError();
-        }
-
         const model = await ctx.prisma.model.delete({ where: { id } });
 
         if (!model) {
@@ -426,40 +425,6 @@ export const modelRouter = router({
         }
 
         return model;
-      } catch (error) {
-        return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
-      }
-    }),
-  deleteModelVersion: protectedProcedure
-    .input(z.object({ id: z.number() }))
-    .mutation(async ({ ctx, input }) => {
-      try {
-        const { id } = input;
-
-        // TODO DRY: this process is repeated in several locations that need this check
-        const isModerator = ctx.session.user.isModerator;
-        if (!isModerator) {
-          const userId = ctx.session.user.id;
-          const ownerId =
-            (
-              await ctx.prisma.modelVersion.findUnique({
-                where: { id },
-                select: { model: { select: { userId: true } } },
-              })
-            )?.model?.userId ?? 0;
-          if (ownerId !== userId) return handleAuthorizationError();
-        }
-
-        const modelVersion = await ctx.prisma.modelVersion.delete({ where: { id } });
-
-        if (!modelVersion) {
-          return handleDbError({
-            code: 'NOT_FOUND',
-            message: `No model version with id ${id}`,
-          });
-        }
-
-        return modelVersion;
       } catch (error) {
         return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
       }
@@ -490,5 +455,25 @@ export const modelRouter = router({
           error,
         });
       }
+    }),
+  unpublish: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .use(isOwnerOrModerator)
+    .mutation(async ({ ctx, input }) => {
+      const { id } = input;
+
+      const model = await ctx.prisma.model.update({
+        where: { id },
+        data: { status: ModelStatus.Unpublished },
+      });
+
+      if (!model) {
+        return handleDbError({
+          code: 'NOT_FOUND',
+          message: `No model with id ${id}`,
+        });
+      }
+
+      return model;
     }),
 });

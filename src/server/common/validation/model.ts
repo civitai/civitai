@@ -1,4 +1,4 @@
-import { ModelFileType, ModelType } from '@prisma/client';
+import { ModelFileType, ModelStatus, ModelType } from '@prisma/client';
 import sanitize from 'sanitize-html';
 import { z } from 'zod';
 
@@ -60,6 +60,7 @@ export const modelSchema = z.object({
   name: z.string().min(1, 'Name cannot be empty.'),
   description: sanitizedDescriptionSchema,
   type: z.nativeEnum(ModelType),
+  status: z.nativeEnum(ModelStatus),
   tagsOnModels: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   modelVersions: z.array(modelVersionSchema).min(1, 'At least one model version is required.'),

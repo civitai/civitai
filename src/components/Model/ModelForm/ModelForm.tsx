@@ -11,7 +11,7 @@ import {
   Title,
 } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
-import { Model, ModelFileType, ModelType } from '@prisma/client';
+import { Model, ModelFileType, ModelStatus, ModelType } from '@prisma/client';
 import { IconArrowLeft, IconCheck, IconPlus, IconTrash, IconX } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -61,7 +61,8 @@ export function ModelForm({ model }: Props) {
     mode: 'onChange',
     defaultValues: {
       ...model,
-      type: model?.type ?? 'Checkpoint',
+      type: model?.type ?? ModelType.Checkpoint,
+      status: model?.status ?? ModelStatus.Published,
       tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
       modelVersions: model?.modelVersions.map(({ trainedWords, images, ...version }) => ({
         ...version,
@@ -333,6 +334,13 @@ export function ModelForm({ model }: Props) {
               <Paper radius="md" p="xl" withBorder>
                 <Stack>
                   <Title order={4}>Model Properties</Title>
+                  <InputSelect
+                    name="status"
+                    label="Status"
+                    placeholder="Status"
+                    data={[ModelStatus.Published, ModelStatus.Draft]}
+                    withAsterisk
+                  />
                   <InputSelect
                     name="type"
                     label="Type"

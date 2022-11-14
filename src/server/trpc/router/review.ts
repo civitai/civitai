@@ -1,10 +1,31 @@
 import { z } from 'zod';
 import { getAllReviewsSelect } from '~/server/validators/reviews/getAllReviews';
-import { protectedProcedure, publicProcedure, router } from '../trpc';
+import { middleware, protectedProcedure, publicProcedure, router } from '../trpc';
 import { handleAuthorizationError, handleDbError } from '~/server/services/errorHandling';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { reviewUpsertSchema } from '~/server/validators/reviews/schemas';
 import { Prisma, ReportReason } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+
+const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
+  if (!ctx.session || !ctx.session.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+
+  const { id } = input as { id: number };
+  const userId = ctx.session.user.id;
+  const isModerator = ctx.session?.user?.isModerator;
+  const ownerId = (await ctx.prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
+  if (!isModerator && ownerId) {
+    if (ownerId !== userId) throw handleAuthorizationError();
+  }
+
+  return next({
+    ctx: {
+      // infers the `session` as non-nullable
+      session: { ...ctx.session, user: ctx.session.user },
+      ownerId,
+    },
+  });
+});
 
 export const reviewRouter = router({
   getAll: publicProcedure
@@ -65,78 +86,66 @@ export const reviewRouter = router({
         nextCursor,
       };
     }),
-  upsert: protectedProcedure.input(reviewUpsertSchema).mutation(async ({ ctx, input }) => {
-    const { user } = ctx.session;
-    const { images = [], id, ...reviewInput } = input;
+  upsert: protectedProcedure
+    .input(reviewUpsertSchema)
+    .use(isOwnerOrModerator)
+    .mutation(async ({ ctx, input }) => {
+      const { images = [], id, ...reviewInput } = input;
+      const { ownerId } = ctx;
 
-    // TODO DRY: this process is repeated in several locations that need this check
-    const isModerator = user.isModerator;
-    let ownerId = user.id;
-    if (!isModerator && id !== undefined) {
-      ownerId = (await ctx.prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
-      if (ownerId !== user.id) return handleAuthorizationError();
-    }
-
-    const imagesWithIndex = images.map((image, index) => ({
-      userId: ownerId,
-      ...image,
-      index,
-    }));
-
-    const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
-    const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
-
-    return await ctx.prisma.review.upsert({
-      where: { id: id ?? -1 },
-      create: {
-        ...reviewInput,
+      const imagesWithIndex = images.map((image, index) => ({
         userId: ownerId,
-        imagesOnReviews: {
-          create: imagesWithIndex.map(({ index, ...image }) => ({
-            index,
-            image: { create: image },
-          })),
-        },
-      },
-      update: {
-        ...reviewInput,
-        imagesOnReviews: {
-          deleteMany: {
-            NOT: imagesToUpdate.map((image) => ({ imageId: image.id })),
+        ...image,
+        index,
+      }));
+
+      const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
+      const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
+
+      return await ctx.prisma.review.upsert({
+        where: { id: id ?? -1 },
+        create: {
+          ...reviewInput,
+          userId: ownerId,
+          imagesOnReviews: {
+            create: imagesWithIndex.map(({ index, ...image }) => ({
+              index,
+              image: { create: image },
+            })),
           },
-          create: imagesToCreate.map(({ index, ...image }) => ({
-            index,
-            image: { create: image },
-          })),
-          update: imagesToUpdate.map(({ index, ...image }) => ({
-            where: {
-              imageId_reviewId: {
-                imageId: image.id as number,
-                reviewId: input.id as number,
-              },
-            },
-            data: { index },
-          })),
         },
-      },
-      select: {
-        id: true,
-        modelId: true,
-      },
-    });
-  }),
+        update: {
+          ...reviewInput,
+          imagesOnReviews: {
+            deleteMany: {
+              NOT: imagesToUpdate.map((image) => ({ imageId: image.id })),
+            },
+            create: imagesToCreate.map(({ index, ...image }) => ({
+              index,
+              image: { create: image },
+            })),
+            update: imagesToUpdate.map(({ index, ...image }) => ({
+              where: {
+                imageId_reviewId: {
+                  imageId: image.id as number,
+                  reviewId: input.id as number,
+                },
+              },
+              data: { index },
+            })),
+          },
+        },
+        select: {
+          id: true,
+          modelId: true,
+        },
+      });
+    }),
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))
+    .use(isOwnerOrModerator)
     .mutation(async ({ ctx, input }) => {
       const { id } = input;
-
-      // TODO DRY: this process is repeated in several locations that need this check
-      const { user } = ctx.session;
-      const isModerator = user.isModerator;
-      if (!isModerator) {
-        const ownerId = (await ctx.prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
-        if (ownerId !== user.id) return handleAuthorizationError();
-      }
 
       const deleted = await ctx.prisma.review.deleteMany({
         where: { AND: { id, userId: ctx.session.user.id } },

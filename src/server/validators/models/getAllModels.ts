@@ -1,6 +1,6 @@
-import { imageSelect } from './../image/selectors';
-import { MetricTimeframe, ModelStatus, ModelType, Prisma } from '@prisma/client';
+import { MetricTimeframe, ModelType, Prisma } from '@prisma/client';
 import { z } from 'zod';
+import { imageSelect } from '../image/selectors';
 import { ModelSort } from '~/server/common/enums';
 
 // const timeframeDaysMap: Record<MetricTimeframe, number> = {
@@ -71,7 +71,6 @@ export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
   status: true,
   modelVersions: {
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    where: { status: ModelStatus.Published },
     take: 1,
     select: {
       images: {

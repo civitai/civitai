@@ -27,6 +27,7 @@ import { hideNotification, showNotification } from '@mantine/notifications';
 import { ModelStatus, ReportReason } from '@prisma/client';
 import {
   IconArrowsSort,
+  IconBan,
   IconCopy,
   IconDotsVertical,
   IconEdit,
@@ -189,6 +190,14 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       hideNotification('sending-report');
     },
   });
+  const unpublishModelMutation = trpc.model.unpublish.useMutation({
+    onSuccess() {
+      queryUtils.model.getById.invalidate({ id });
+    },
+    onError(error) {
+      showErrorNotification({ error: new Error(error.message) });
+    },
+  });
 
   const reviews = useMemo(
     () => reviewsData?.pages.flatMap((x) => x.reviews) ?? [],
@@ -273,6 +282,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     reportModelMutation.mutate({ id, reason });
   };
 
+  const handleUnpublishModel = () => {
+    unpublishModelMutation.mutate({ id });
+  };
+
   const modelDetails: DescriptionTableProps['items'] = [
     {
       label: 'Type',
@@ -355,6 +368,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       ),
     },
   ];
+  const published = model.status === ModelStatus.Published;
 
   return (
     <>
@@ -403,6 +417,16 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       Edit Model
                     </Menu.Item>
                   </>
+                ) : null}
+                {session && published ? (
+                  <Menu.Item
+                    icon={<IconBan size={14} stroke={1.5} />}
+                    color="yellow"
+                    onClick={handleUnpublishModel}
+                    disabled={unpublishModelMutation.isLoading}
+                  >
+                    Unpublish
+                  </Menu.Item>
                 ) : null}
                 {!session || !isOwner || isModerator ? (
                   <>
