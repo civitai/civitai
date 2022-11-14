@@ -21,16 +21,8 @@ import { prisma } from '~/server/db/client';
 import { reloadSession } from '~/utils/next-auth-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import {
-  Form,
-  InputFileUpload,
-  InputProfileImageUpload,
-  InputSwitch,
-  InputText,
-  useForm,
-} from '~/libs/form';
+import { Form, InputProfileImageUpload, InputSwitch, InputText, useForm } from '~/libs/form';
 import { z } from 'zod';
-import { ImageUpload } from '~/components/ImageUpload/ImageUpload';
 
 const schema = z.object({
   username: z.string(),
@@ -99,7 +91,11 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
             label="Show me NSFW content"
             description="If you are not of legal age to view NSFW content, please do not enable this option"
           />
-          <InputSwitch name="blurNsfw" label="Blur NSFW content" />
+          <InputSwitch
+            name="blurNsfw"
+            label="Blur NSFW content"
+            visible={({ showNsfw }) => !!showNsfw}
+          />
           <Button type="submit" loading={updatingUser} disabled={!form.formState.isDirty}>
             Save
           </Button>
