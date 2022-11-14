@@ -10,10 +10,9 @@ import {
   Alert,
 } from '@mantine/core';
 import { GetServerSideProps } from 'next';
-import { Session } from 'next-auth';
-import { getProviders, signIn } from 'next-auth/react';
+import { getProviders, signIn, useSession } from 'next-auth/react';
 import { BuiltInProviderType } from 'next-auth/providers';
-import React from 'react';
+import React, { useEffect } from 'react';
 
 import { SocialLabel } from '~/components/Social/SocialLabel';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
@@ -31,7 +30,8 @@ const schema = z.object({
   image: z.string().nullable(),
 });
 
-export default function Account({ user, providers, accounts: initialAccounts }: Props) {
+export default function Account({ providers, accounts: initialAccounts }: Props) {
+  const { data: session, status } = useSession();
   const utils = trpc.useContext();
   const {
     mutateAsync: updateUserAsync,
@@ -56,8 +56,13 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
   const form = useForm({
     schema,
     mode: 'onChange',
-    defaultValues: user,
+    defaultValues: session?.user,
   });
+
+  useEffect(() => {
+    console.log({ session, status });
+    // if(status === 'authenticated')
+  }, [session, status]); //eslint
 
   return (
     <Container p={0} size="xs">
@@ -76,11 +81,12 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
       <Form
         form={form}
         onSubmit={async (data) => {
-          await updateUserAsync({
-            id: user?.id,
+          const user = await updateUserAsync({
+            id: session?.user?.id,
             ...data,
           });
           await reloadSession();
+          form.reset({ ...user });
         }}
       >
         <Stack>
@@ -155,7 +161,6 @@ export default function Account({ user, providers, accounts: initialAccounts }: 
 }
 
 type Props = {
-  user: Session['user'];
   accounts: AsyncReturnType<typeof getUserAccounts>;
   providers: AsyncReturnType<typeof getProviders>;
 };
@@ -177,5 +182,5 @@ export const getServerSideProps: GetServerSideProps<Props> = async (context) => 
   const accounts = await getUserAccounts(session.user.id);
   const providers = await getProviders();
 
-  return { props: { user: session.user, accounts, providers } };
+  return { props: { accounts, providers } };
 };
