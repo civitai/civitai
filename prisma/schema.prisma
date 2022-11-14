@@ -64,6 +64,7 @@ model User {
   saves           SavedModel[]
   modelReports    ModelReport[]
   reviewReports   ReviewReport[]
+  Import          Import[]
 }
 
 model VerificationToken {
@@ -79,6 +80,28 @@ enum ModelType {
   TextualInversion
   Hypernetwork
   AestheticGradient
+}
+
+enum ImportStatus {
+  Pending
+  Processing
+  Failed
+  Completed
+}
+
+model Import {
+  id         Int          @id @default(autoincrement())
+  userId     Int?
+  user       User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt  DateTime     @default(now())
+  startedAt  DateTime?
+  finishedAt DateTime?
+  source     String
+  status     ImportStatus @default(Pending)
+  data       Json?
+
+  modelVersion ModelVersion?
+  model        Model?
 }
 
 enum ModelStatus {
@@ -99,6 +122,8 @@ model Model {
   userId       Int
   user         User        @relation(fields: [userId], references: [id])
   status       ModelStatus @default(Draft)
+  fromImport   Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImportId Int?        @unique
 
   modelVersions ModelVersion[]
   reviews       Review[]
@@ -121,6 +146,8 @@ model ModelVersion {
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
   status       ModelStatus @default(Draft)
+  fromImport   Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImportId Int?        @unique
 
   reviews Review[]
   images  ImagesOnModels[]
