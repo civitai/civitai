@@ -1,5 +1,5 @@
 import { ModelFileType, ModelStatus, ModelType } from '@prisma/client';
-import sanitize from 'sanitize-html';
+import { sanitizeHtml } from '~/utils/html-helpers';
 import { z } from 'zod';
 
 export const imageSchema = z.object({
@@ -22,15 +22,7 @@ const sanitizedDescriptionSchema = z.preprocess((val) => {
   if (!val) return null;
 
   const str = String(val);
-  return sanitize(str, {
-    allowedTags: ['p', 'strong', 'em', 'u', 's', 'ul', 'ol', 'li', 'a', 'br'],
-    allowedAttributes: {
-      a: ['rel', 'href', 'target'],
-    },
-    transformTags: {
-      a: sanitize.simpleTransform('a', { rel: 'ugc' }),
-    },
-  });
+  return sanitizeHtml(str);
 }, z.string().nullish());
 
 export const fileSchema = z.object({

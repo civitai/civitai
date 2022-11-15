@@ -192,6 +192,17 @@ export const modelRouter = router({
         });
     }
 
+    // TODO Cleaning: Merge Add & Update + Transaction
+    // Create prisma transaction
+    // Upsert Model: separate function
+    // Upsert ModelVersions: separate function
+    // Upsert Tags: separate function
+    // Upsert Images: separate function
+    // Upsert ImagesOnModels: separate function
+    // Upsert ModelFiles: separate function
+    // 👆 Ideally the whole thing will only be this many lines
+    //    All of the logic would be in the separate functions
+
     try {
       const createdModels = await ctx.prisma.model.create({
         data: {

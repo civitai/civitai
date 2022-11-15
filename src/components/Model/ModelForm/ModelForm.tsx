@@ -33,6 +33,7 @@ import {
 } from '~/libs/form';
 import { modelSchema } from '~/server/common/validation/model';
 import { ModelById } from '~/types/router';
+import { bytesToKB } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -272,7 +273,7 @@ export function ModelForm({ model }: Props) {
                                   if (file) {
                                     form.setValue(
                                       `modelVersions.${index}.modelFile.sizeKB`,
-                                      file.size ? file.size / 1024 : 0
+                                      file.size ? bytesToKB(file.size) : 0
                                     );
                                     form.setValue(
                                       `modelVersions.${index}.modelFile.name`,
@@ -300,7 +301,7 @@ export function ModelForm({ model }: Props) {
                                     );
                                     form.setValue(
                                       `modelVersions.${index}.trainingDataFile.sizeKB`,
-                                      file.size ? file.size / 1024 : 0
+                                      file.size ? bytesToKB(file.size) : 0
                                     );
                                     form.setValue(
                                       `modelVersions.${index}.trainingDataFile.name`,

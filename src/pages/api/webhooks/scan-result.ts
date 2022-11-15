@@ -1,7 +1,7 @@
-import { ModelFileType, ModelStatus, ScanResultCode } from '@prisma/client';
+import { ModelFileType, ModelStatus, Prisma, ScanResultCode } from '@prisma/client';
 import { z } from 'zod';
+import { env } from '~/env/server.mjs';
 import { WebhookEndpoint } from '~/server/common/endpoint-helpers';
-import { modelVersionSchema } from '~/server/common/validation/model';
 import { prisma } from '~/server/db/client';
 
 export default WebhookEndpoint(async (req, res) => {
@@ -11,27 +11,30 @@ export default WebhookEndpoint(async (req, res) => {
   const scanResult: ScanResult = req.body;
 
   const where = { modelVersionId_type: { modelVersionId, type } };
-  const file = await prisma.modelFile.findUnique({ where });
-  if (!file) return res.status(404).json({ error: 'File not found' });
+  const { url } = (await prisma.modelFile.findUnique({ where })) ?? {};
+  if (!url) return res.status(404).json({ error: 'File not found' });
 
   const { hasDanger, pickleScanMessage } = examinePickleScanMessage(scanResult);
   if (hasDanger) scanResult.picklescanExitCode = ScanExitCode.Danger;
 
   const exists = scanResult.fileExists === 1;
 
-  await prisma.modelFile.update({
-    where,
-    data: {
-      exists,
-      scannedAt: new Date(),
-      rawScanResult: scanResult,
-      virusScanResult: resultCodeMap[scanResult.clamscanExitCode],
-      virusScanMessage:
-        scanResult.clamscanExitCode != ScanExitCode.Success ? scanResult.clamscanOutput : null,
-      pickleScanResult: resultCodeMap[scanResult.picklescanExitCode],
-      pickleScanMessage,
-    },
-  });
+  const data: Prisma.ModelFileUpdateInput = {
+    exists,
+    scannedAt: new Date(),
+    rawScanResult: scanResult,
+    virusScanResult: resultCodeMap[scanResult.clamscanExitCode],
+    virusScanMessage:
+      scanResult.clamscanExitCode != ScanExitCode.Success ? scanResult.clamscanOutput : null,
+    pickleScanResult: resultCodeMap[scanResult.picklescanExitCode],
+    pickleScanMessage,
+  };
+
+  const bucket = env.S3_UPLOAD_BUCKET;
+  const scannerImportedFile = !url.includes(bucket) && scanResult.url.includes(bucket);
+  if (exists && scannerImportedFile) data.url = scanResult.url;
+
+  await prisma.modelFile.update({ where, data });
 
   if (!exists) {
     await prisma.modelVersion.update({
@@ -39,10 +42,6 @@ export default WebhookEndpoint(async (req, res) => {
       data: { status: ModelStatus.Draft },
     });
 
-    // Unpublish the model if there are no published versions
-    // We probably need to implement this logic everywhere we update statuses of versions
-    // 👆 This is why triggers like we have in dotnet + EF are so important...
-    // 😡 Too bad Prisma's middleware system doesn't actually track the changes down to the entity level...
     const { modelId } =
       (await prisma.modelVersion.findUnique({
         where: { id: modelVersionId },

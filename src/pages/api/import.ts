@@ -10,9 +10,9 @@ const importSchema = z.object({
 
 export default async function importSource(req: NextApiRequest, res: NextApiResponse) {
   const session = await getServerAuthSession({ req, res });
-  const userId = session?.user?.id;
-  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-  const { source } = importSchema.parse(req.body);
+  const { id: userId, isModerator } = session?.user ?? {};
+  if (!isModerator) return res.status(401).json({ error: 'Unauthorized' });
+  const { source } = importSchema.parse(req.query);
 
   const result = await prisma.import.create({
     data: {
