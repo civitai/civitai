@@ -227,7 +227,7 @@ export const modelRouter = router({
                     create: {
                       ...image,
                       userId,
-                      meta: (image.meta as Prisma.JsonObject) ?? undefined,
+                      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
                     },
                   },
                 })),
@@ -305,8 +305,9 @@ export const modelRouter = router({
                 where: { id: image.id },
                 data: {
                   ...image,
-                  meta: (image.meta as Prisma.JsonObject) ?? undefined,
+                  meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
                 },
+                select: { id: true },
               })
             )
           );
@@ -326,7 +327,7 @@ export const modelRouter = router({
                       index,
                       userId: ownerId,
                       ...image,
-                      meta: (image.meta as Prisma.JsonObject) ?? undefined,
+                      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
                     }));
                     const existingVersion = currentVersions.find((x) => x.id === id);
 

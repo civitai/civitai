@@ -335,7 +335,7 @@ function ImageMetaPopover({
     if (prompt) meta.prompt = prompt;
     if (negativePrompt) meta.negativePrompt = negativePrompt;
     if (gscale) meta.gscale = gscale;
-    onSubmit?.(meta);
+    onSubmit?.(Object.keys(meta).length ? meta : null);
     setOpened(false);
   };
 
