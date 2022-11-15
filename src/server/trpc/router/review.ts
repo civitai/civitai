@@ -4,7 +4,7 @@ import { middleware, protectedProcedure, publicProcedure, router } from '../trpc
 import { handleAuthorizationError, handleDbError } from '~/server/services/errorHandling';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { reviewUpsertSchema } from '~/server/validators/reviews/schemas';
-import { Prisma, ReportReason } from '@prisma/client';
+import { Prisma, ReportReason, ReviewReactions } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
@@ -185,6 +185,37 @@ export const reviewRouter = router({
           code: 'INTERNAL_SERVER_ERROR',
           error,
         });
+      }
+    }),
+  toggleReaction: protectedProcedure
+    .input(z.object({ id: z.number(), reaction: z.nativeEnum(ReviewReactions) }))
+    .mutation(async ({ ctx, input }) => {
+      const { user } = ctx.session;
+      const { id, reaction } = input;
+      const reactionSearch = { reaction, userId: user.id };
+
+      const reviewReaction = await ctx.prisma.reviewReaction.findFirst({ where: reactionSearch });
+
+      try {
+        const review = await ctx.prisma.review.update({
+          where: { id },
+          data: {
+            reactions: {
+              create: reviewReaction ? undefined : reactionSearch,
+              deleteMany: reviewReaction ? reactionSearch : undefined,
+            },
+          },
+          select: getAllReviewsSelect,
+        });
+
+        if (!review) {
+          handleDbError({ code: 'NOT_FOUND', message: `No review with id ${id}` });
+          return;
+        }
+
+        return review;
+      } catch (error) {
+        handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
       }
     }),
 });

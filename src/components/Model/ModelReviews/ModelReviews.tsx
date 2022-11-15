@@ -15,22 +15,23 @@ import {
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { ReportReason } from '@prisma/client';
+import { ReportReason, ReviewReactions } from '@prisma/client';
 import { IconDotsVertical, IconEdit, IconFlag, IconTrash } from '@tabler/icons';
 import dayjs from 'dayjs';
 import { useSession } from 'next-auth/react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
+import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ReviewFilter } from '~/server/common/enums';
+import { ImageModel } from '~/server/validators/image/selectors';
 import { ReviewDetails } from '~/server/validators/reviews/getAllReviews';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { ImageModel } from '~/server/validators/image/selectors';
 
 export function ModelReviews({ items, loading = false }: Props) {
   return (
@@ -131,6 +132,15 @@ function ReviewItem({ data: review }: ItemProps) {
   });
   const handleReportReview = (reason: ReportReason) => {
     reportMutation.mutate({ id: review.id, reason });
+  };
+
+  const toggleReactionMutation = trpc.review.toggleReaction.useMutation({
+    async onSuccess() {
+      await queryUtils.review.getAll.invalidate({ modelId: review.modelId });
+    },
+  });
+  const handleReactionClick = (reaction: ReviewReactions) => {
+    toggleReactionMutation.mutate({ id: review.id, reaction });
   };
 
   const hasImages = review.images.length > 0;
@@ -253,9 +263,16 @@ function ReviewItem({ data: review }: ItemProps) {
           )}
         </Card.Section>
       )}
+
       <ContentClamp maxHeight={100}>
         <Text>{review.text}</Text>
       </ContentClamp>
+
+      <ReactionPicker
+        reactions={review.reactions}
+        onSelect={handleReactionClick}
+        disabled={toggleReactionMutation.isLoading}
+      />
     </Card>
   );
 }
