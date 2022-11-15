@@ -1,6 +1,6 @@
 import { signIn, useSession } from 'next-auth/react';
 import { useEffect } from 'react';
-import { openContextModal } from '@mantine/modals';
+import { closeAllModals, closeModal, openContextModal } from '@mantine/modals';
 import { useRouter } from 'next/router';
 
 export function TosProvider({ children }: { children: React.ReactNode }) {
@@ -11,6 +11,7 @@ export function TosProvider({ children }: { children: React.ReactNode }) {
     // if (!session.data?.user) return;
     if (status !== 'authenticated' || router.pathname.startsWith('/content')) return;
     if (!session?.user?.tos) {
+      closeModal('onboarding');
       openContextModal({
         modal: 'onboarding',
         withCloseButton: false,
@@ -27,6 +28,17 @@ export function TosProvider({ children }: { children: React.ReactNode }) {
       signIn();
     }
   }, [session]);
+
+  useEffect(() => {
+    router.beforePopState(({ as }) => {
+      if (as !== router.asPath) {
+        closeAllModals();
+      }
+      return true;
+    });
+
+    return () => router.beforePopState(() => true);
+  }, [router]);
 
   return <>{children}</>;
 }

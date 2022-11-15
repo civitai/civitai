@@ -7,6 +7,7 @@ import { UploadType, UploadTypeUnion } from '~/server/common/enums';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { getFileExtension } from '~/utils/string-helpers';
 import { toStringList } from '~/utils/array-helpers';
+import { useDidUpdate } from '@mantine/hooks';
 
 //TODO File Safety: Limit to the specific file extensions we want to allow
 export function FileInputUpload({
@@ -14,10 +15,11 @@ export function FileInputUpload({
   onChange,
   onLoading,
   value,
-  fileName = decodeURIComponent(value?.split('/').pop() ?? ''),
+  // fileName = decodeURIComponent(value?.split('/').pop() ?? ''),
   ...props
 }: Props) {
   const isClient = useIsClient();
+  const [state, setState] = useState<string | null>(value ?? null);
   const { files, uploadToS3, resetFiles } = useS3Upload();
   const { file, progress, speed, timeRemaining, status, abort } = files[0] ?? {
     file: null,
@@ -28,6 +30,12 @@ export function FileInputUpload({
   };
 
   const [fileTypeError, setFileTypeError] = useState('');
+
+  const fileName = decodeURIComponent(state?.split('/').pop() ?? '');
+
+  useDidUpdate(() => {
+    if (value !== state) setState(value ?? null);
+  }, [value]);
 
   const handleOnChange: FileInputProps['onChange'] = async (file) => {
     setFileTypeError('');
@@ -46,12 +54,15 @@ export function FileInputUpload({
         const uploaded = await uploadToS3(file, uploadType);
         url = uploaded.url;
         onLoading?.(false);
+        setState(url);
         onChange?.(url, file);
       } else {
         setFileTypeError(`This input only accepts ${toStringList(acceptTypes)} files`);
+        setState(null);
       }
     } else {
       resetFiles();
+      setState(null);
     }
   };
 

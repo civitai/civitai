@@ -2,7 +2,6 @@ import {
   useSensors,
   useSensor,
   PointerSensor,
-  KeyboardSensor,
   DndContext,
   closestCenter,
   DragEndEvent,
@@ -10,9 +9,8 @@ import {
   DragStartEvent,
   DragOverlay,
 } from '@dnd-kit/core';
-import { arrayMove, sortableKeyboardCoordinates, SortableContext } from '@dnd-kit/sortable';
+import { arrayMove, SortableContext } from '@dnd-kit/sortable';
 import {
-  Checkbox,
   createStyles,
   Group,
   Input,
@@ -27,22 +25,20 @@ import {
   Textarea,
   NumberInput,
   ScrollArea,
-  Paper,
-  Modal,
-  Box,
   Divider,
+  Grid,
+  Select,
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
-import { IconGripVertical, IconInfoCircle } from '@tabler/icons';
+import { IconPencil, IconTrash } from '@tabler/icons';
 import { cloneElement, useEffect, useState } from 'react';
 import { blurHashImage, loadImage } from '../../utils/blurhash';
-import produce from 'immer';
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
-import { SortableImage } from './SortableItem';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/validators/image/schemas';
+import isEqual from 'lodash/isEqual';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -58,7 +54,6 @@ export function ImageUpload({
   label,
   max = 10,
   hasPrimaryImage,
-  withAsterisk,
   ...inputWrapperProps
 }: Props) {
   const { classes } = useStyles();
@@ -70,16 +65,23 @@ export function ImageUpload({
   );
 
   const { uploadToCF, files: imageFiles } = useCFImageUpload();
-  const [files, filesHandlers] = useListState<CustomFile>(
-    value.map((file, index) => ({ ...file, index: index + 1 }))
-  );
+  const [files, filesHandlers] = useListState<CustomFile>(value);
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
-  const [selectedFiles, selectedFilesHandlers] = useListState<string>([]);
 
   useEffect(() => {
     // clear any remaining urls when unmounting
     return () => files.forEach((file) => URL.revokeObjectURL(file.url));
   }, [files]);
+
+  useDidUpdate(() => {
+    const shouldReset = !isEqual(value, files);
+    if (shouldReset) filesHandlers.setState(value);
+  }, [value]);
+
+  useDidUpdate(() => {
+    if (files) onChange?.(files);
+    // don't disable the eslint-disable
+  }, [files]); //eslint-disable-line
 
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
     const toUpload = await Promise.all(
@@ -95,76 +97,27 @@ export function ImageUpload({
         };
       })
     );
+
     filesHandlers.setState((current) => [...current, ...toUpload]);
 
     await Promise.all(
       toUpload.map(async (image) => {
         const { id } = await uploadToCF(image.file);
-        filesHandlers.setState(
-          produce((current) => {
-            const index = current.findIndex((item) => item.file === image.file);
-            if (index === -1) return;
-            current[index].url = id;
-            current[index].file = undefined;
-          })
-        );
+        filesHandlers.setState((state) => {
+          const index = state.findIndex((item) => item.file === image.file);
+          if (index === -1) return state;
+          const cloned = [...state];
+          cloned[index] = { ...cloned[index], url: id, file: undefined };
+          return cloned;
+        });
         URL.revokeObjectURL(image.url);
       })
     );
   };
 
-  useDidUpdate(() => {
-    if (files) onChange?.(files);
-    // don't disable the eslint-disable
-  }, [files]); //eslint-disable-line
-
-  const selectedFilesCount = selectedFiles.length;
-  const allFilesSelected = selectedFiles.length === files.length && files.length !== 0;
-  const partialFilesSelected = !allFilesSelected && selectedFiles.length !== 0;
-  const hasSelectedFile = selectedFilesCount > 0;
-
-  const alternateLabel = (
-    <Group sx={{ justifyContent: 'space-between', flex: 1 }}>
-      <Group align="center">
-        <Checkbox
-          sx={{ display: 'flex' }}
-          checked={allFilesSelected}
-          indeterminate={partialFilesSelected}
-          onChange={() =>
-            selectedFilesHandlers.setState(allFilesSelected ? [] : files.map((file) => file.url))
-          }
-        />
-        <Title order={5}>{`${selectedFilesCount} ${
-          selectedFilesCount > 1 ? 'files' : 'file '
-        } selected`}</Title>
-      </Group>
-      <Button
-        color="red"
-        variant="subtle"
-        size="xs"
-        compact
-        onClick={() => {
-          filesHandlers.setState((items) =>
-            items
-              .filter((item) => !selectedFiles.includes(item.url))
-              .map((file, index) => ({ ...file, index: index + 1 }))
-          );
-          selectedFilesHandlers.setState([]);
-        }}
-      >
-        {selectedFilesCount > 1 ? 'Delete Files' : 'Delete File'}
-      </Button>
-    </Group>
-  );
-
   return (
     <div>
-      <Input.Wrapper
-        label={hasSelectedFile ? alternateLabel : label}
-        labelProps={hasSelectedFile ? { className: classes.fullWidth } : undefined}
-        withAsterisk={hasSelectedFile ? false : withAsterisk}
-        {...inputWrapperProps}
-      >
+      <Input.Wrapper label={label} {...inputWrapperProps}>
         <Stack>
           <Dropzone
             accept={IMAGE_MIME_TYPE}
@@ -190,7 +143,7 @@ export function ImageUpload({
               onDragStart={handleDragStart}
               onDragCancel={handleDragCancel}
             >
-              <SortableContext items={files.map((x) => x.url)} disabled={hasSelectedFile}>
+              <SortableContext items={files.map((x) => x.url)}>
                 {files.length > 0 ? (
                   <div
                     style={{
@@ -204,7 +157,6 @@ export function ImageUpload({
                       const match = imageFiles.find((file) => image.file === file.file);
                       const { progress } = match ?? { progress: 0 };
                       const showLoading = match && progress < 100 && !!image.file;
-                      const selected = selectedFiles.includes(image.url);
 
                       return (
                         // <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
@@ -212,7 +164,7 @@ export function ImageUpload({
                           key={image.url}
                           image={image}
                           isPrimary={hasPrimaryImage && index === 0}
-                          disabled={hasSelectedFile}
+                          // disabled={hasSelectedFile}
                           id={image.url}
                         >
                           {showLoading && (
@@ -224,41 +176,37 @@ export function ImageUpload({
                               roundCaps
                             />
                           )}
-                          <Group align="center">
-                            {!hasSelectedFile && (
-                              <>
-                                <ImageMetaPopover
-                                  meta={image.meta}
-                                  onSubmit={(meta) =>
-                                    filesHandlers.setItem(index, { ...image, meta })
-                                  }
-                                >
-                                  <ActionIcon
-                                    className={classes.meta}
-                                    variant="filled"
-                                    size="lg"
-                                    color={
-                                      image.meta && Object.keys(image.meta).length
-                                        ? 'blue'
-                                        : 'orange'
-                                    }
-                                  >
-                                    <IconInfoCircle />
-                                  </ActionIcon>
-                                </ImageMetaPopover>
-                              </>
-                            )}
-                            <Checkbox
-                              className={classes.checkbox}
-                              size="xs"
-                              checked={selected}
-                              onChange={() => {
-                                const index = selectedFiles.indexOf(image.url);
-                                index === -1
-                                  ? selectedFilesHandlers.append(image.url)
-                                  : selectedFilesHandlers.remove(index);
-                              }}
-                            />
+                          <Group
+                            className={classes.actionsGroup}
+                            align="center"
+                            position="right"
+                            p={4}
+                            spacing="sm"
+                          >
+                            <ImageMetaPopover
+                              meta={image.meta}
+                              onSubmit={(meta) => filesHandlers.setItem(index, { ...image, meta })}
+                            >
+                              <ActionIcon
+                                variant="outline"
+                                color={
+                                  image.meta && Object.keys(image.meta).length ? 'green' : undefined
+                                }
+                              >
+                                <IconPencil />
+                              </ActionIcon>
+                            </ImageMetaPopover>
+                            <ActionIcon
+                              color="red"
+                              variant="outline"
+                              onClick={() =>
+                                filesHandlers.setState((state) => [
+                                  ...state.filter((x) => x.url !== image.url),
+                                ])
+                              }
+                            >
+                              <IconTrash size={16} />
+                            </ActionIcon>
                           </Group>
                         </ImageUploadPreview>
                         // </SortableImage>
@@ -321,20 +269,29 @@ function ImageMetaPopover({
 
   const [prompt, setPrompt] = useState<string | undefined>(meta?.prompt);
   const [negativePrompt, setNegativePrompt] = useState<string | undefined>(meta?.negativePrompt);
-  const [gscale, setGscale] = useState<number | undefined>(meta?.gscale);
+  const [cfgScale, setCfgScale] = useState<number | undefined>(meta?.cfgScale);
+  const [step, setStep] = useState<number | undefined>(meta?.step);
+  const [sampler, setSampler] = useState<string | undefined>(meta?.sampler);
+  const [seed, setSeed] = useState<number | undefined>(meta?.seed);
 
   const handleClose = () => {
     setPrompt(meta?.prompt);
     setNegativePrompt(meta?.negativePrompt);
-    setGscale(meta?.gscale);
+    setCfgScale(meta?.cfgScale);
+    setStep(meta?.step);
+    setSampler(meta?.sampler);
+    setSeed(meta?.seed);
     setOpened((v) => !v);
   };
 
   const handleSubmit = () => {
-    const meta: Record<string, unknown> = {};
+    const meta: ImageMetaProps = {};
     if (prompt) meta.prompt = prompt;
     if (negativePrompt) meta.negativePrompt = negativePrompt;
-    if (gscale) meta.gscale = gscale;
+    if (cfgScale) meta.cfgScale = cfgScale;
+    if (step) meta.step = step;
+    if (sampler) meta.sampler = sampler;
+    if (seed) meta.seed = seed;
     onSubmit?.(Object.keys(meta).length ? meta : null);
     setOpened(false);
   };
@@ -343,28 +300,66 @@ function ImageMetaPopover({
     <Popover opened={opened} onClose={handleClose} withArrow withinPortal width={400}>
       <Popover.Target>{cloneElement(children, { onClick: handleClose })}</Popover.Target>
       <Popover.Dropdown>
-        <ScrollArea.Autosize maxHeight={400} offsetScrollbars={true} pb={0}>
+        <ScrollArea.Autosize maxHeight={500} offsetScrollbars={true} pb={0}>
           <Stack spacing="sm">
             <Title order={4}>Image Meta</Title>
-            <Textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              label="Prompt"
-              autosize
-            />
-            <Textarea
-              value={negativePrompt}
-              onChange={(e) => setNegativePrompt(e.target.value)}
-              label="Negative prompt"
-              autosize
-            />
-            <NumberInput
-              value={gscale}
-              onChange={(number) => setGscale(number)}
-              label="Guidance scale"
-              min={0}
-              max={30}
-            />
+            <Grid>
+              <Grid.Col span={12}>
+                <Textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  label="Prompt"
+                  autosize
+                />
+              </Grid.Col>
+              <Grid.Col span={12}>
+                <Textarea
+                  value={negativePrompt}
+                  onChange={(e) => setNegativePrompt(e.target.value)}
+                  label="Negative prompt"
+                  autosize
+                />
+              </Grid.Col>
+              <Grid.Col span={6}>
+                <NumberInput
+                  value={cfgScale}
+                  onChange={(number) => setCfgScale(number)}
+                  label="Guidance scale"
+                  min={0}
+                  max={30}
+                />
+              </Grid.Col>
+              <Grid.Col span={6}>
+                <NumberInput value={step} onChange={(value) => setStep(value)} label="Step" />
+              </Grid.Col>
+              <Grid.Col span={6}>
+                <Select
+                  clearable
+                  searchable
+                  data={[
+                    'Euler a',
+                    'Euler',
+                    'LMS',
+                    'Heun',
+                    'DPM2',
+                    'DPM2 a',
+                    'DPM fast',
+                    'DPM adaptive',
+                    'LMS Karras',
+                    'DPM2 Karras',
+                    'DPM2 a Karras',
+                    'DDIM',
+                    'PLMS',
+                  ]}
+                  value={sampler}
+                  onChange={(value) => setSampler(value ?? undefined)}
+                  label="Sampler"
+                />
+              </Grid.Col>
+              <Grid.Col span={6}>
+                <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
+              </Grid.Col>
+            </Grid>
           </Stack>
         </ScrollArea.Autosize>
         <Divider pb="sm" />
@@ -403,14 +398,10 @@ const useStyles = createStyles((theme, _params, getRef) => ({
 
   actionsGroup: {
     ref: getRef('actionsGroup'),
-    opacity: 0,
     position: 'absolute',
-    background: theme.fn.rgba(theme.colors.dark[9], 0.4),
-    justifyContent: 'center',
-    width: '100%',
-    height: '100%',
+    background: theme.fn.rgba(theme.colors.dark[9], 0.6),
     top: 0,
-    left: 0,
+    right: 0,
   },
 
   selected: {

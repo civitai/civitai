@@ -1,10 +1,15 @@
 import { z } from 'zod';
 
-export const imageMetaSchema = z.object({
-  prompt: z.string().optional(),
-  negativePrompt: z.string().optional(),
-  gscale: z.number().optional(),
-});
+export const imageMetaSchema = z
+  .object({
+    prompt: z.string(),
+    negativePrompt: z.string(),
+    cfgScale: z.number(),
+    step: z.number(),
+    sampler: z.string(),
+    seed: z.number(),
+  })
+  .partial();
 
 export const imageSchema = z.object({
   id: z.number().optional(),

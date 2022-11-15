@@ -56,31 +56,33 @@ export function ModelForm({ model }: Props) {
   const [uploading, setUploading] = useState(false);
   const [hasTrainingWords, setHasTrainingWords] = useState(true);
 
+  const defaultModelVersion = {
+    name: '',
+    description: '',
+    epochs: null,
+    steps: null,
+    trainedWords: [],
+    images: [],
+    modelFile: { name: '', url: '', sizeKB: 0, type: ModelFileType.Model },
+  };
+
+  const defaultValues: z.infer<typeof schema> = {
+    ...model,
+    type: model?.type ?? ModelType.Checkpoint,
+    status: model?.status ?? ModelStatus.Published,
+    tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
+    modelVersions: model?.modelVersions.map(({ trainedWords, images, ...version }) => ({
+      ...version,
+      trainedWords: trainedWords ?? [],
+      images: images.map(({ image }) => image) ?? [],
+    })) ?? [defaultModelVersion],
+  };
+
   const form = useForm({
     schema: schema,
     shouldUnregister: false,
     mode: 'onChange',
-    defaultValues: {
-      ...model,
-      type: model?.type ?? ModelType.Checkpoint,
-      status: model?.status ?? ModelStatus.Published,
-      tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
-      modelVersions: model?.modelVersions.map(({ trainedWords, images, ...version }) => ({
-        ...version,
-        trainedWords: trainedWords ?? [],
-        images: images.map(({ image }) => image) ?? [],
-      })) ?? [
-        {
-          name: '',
-          description: '',
-          epochs: null,
-          steps: null,
-          trainedWords: [],
-          images: [],
-          modelFile: { name: '', url: '', sizeKB: 0, type: ModelFileType.Model },
-        },
-      ],
-    },
+    defaultValues,
   });
 
   const { fields, append, prepend, remove, swap, move, insert } = useFieldArray({
@@ -172,22 +174,7 @@ export function ModelForm({ model }: Props) {
                       size="xs"
                       leftIcon={<IconPlus size={16} />}
                       variant="outline"
-                      onClick={() =>
-                        prepend({
-                          name: '',
-                          description: '',
-                          epochs: null,
-                          steps: null,
-                          images: [],
-                          trainedWords: [],
-                          modelFile: {
-                            name: '',
-                            url: '',
-                            sizeKB: 0,
-                            type: ModelFileType.Model,
-                          },
-                        })
-                      }
+                      onClick={() => prepend(defaultModelVersion)}
                       compact
                     >
                       Add Version
