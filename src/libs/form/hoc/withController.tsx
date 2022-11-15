@@ -51,7 +51,7 @@ export function withController<
             onChange: handleChange,
             error:
               fieldState.error && Array.isArray(fieldState.error)
-                ? fieldState.error[0].message
+                ? fieldState.error[0]?.message
                 : fieldState.error?.message,
             value: field.value ?? '',
             onBlur: handleBlur,

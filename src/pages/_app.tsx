@@ -59,7 +59,14 @@ function MyApp(props: CustomAppProps<{ session: Session | null; colorScheme: Col
 
       <SessionProvider session={session}>
         <ColorSchemeProvider colorScheme={colorScheme} toggleColorScheme={toggleColorScheme}>
-          <MantineProvider theme={{ colorScheme }} withGlobalStyles withNormalizeCSS>
+          <MantineProvider
+            theme={{
+              colorScheme,
+              components: { Popover: { styles: { dropdown: { maxWidth: '100vw' } } } },
+            }}
+            withGlobalStyles
+            withNormalizeCSS
+          >
             <CustomModalsProvider>
               <NotificationsProvider>
                 <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>

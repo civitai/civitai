@@ -1,16 +1,17 @@
 import { ModelFileType, ModelStatus, ModelType } from '@prisma/client';
 import { sanitizeHtml } from '~/utils/html-helpers';
 import { z } from 'zod';
+import { imageSchema } from '~/server/validators/image/schemas';
 
-export const imageSchema = z.object({
-  id: z.number().optional(),
-  name: z.string().nullable(),
-  url: z.string(),
-  prompt: z.string().nullish(),
-  hash: z.string().nullish(),
-  height: z.number().nullish(),
-  width: z.number().nullish(),
-});
+// export const imageSchema = z.object({
+//   id: z.number().optional(),
+//   name: z.string().nullable(),
+//   url: z.string(),
+//   meta: z.object(),
+//   hash: z.string().nullish(),
+//   height: z.number().nullish(),
+//   width: z.number().nullish(),
+// });
 
 export const tagSchema = z.object({
   id: z.number().optional(),

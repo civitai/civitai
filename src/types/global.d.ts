@@ -17,7 +17,7 @@ declare global {
     id?: number;
     url: string;
     name?: string;
-    prompt?: string;
+    meta?: Record<string, unknown> | null;
     file?: FileWithPath;
     height?: number | null;
     width?: number | null;
