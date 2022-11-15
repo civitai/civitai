@@ -16,15 +16,6 @@ export const getAllReviewsSelect = Prisma.validator<Prisma.ReviewSelect>()({
   user: {
     select: simpleUserSelect,
   },
-  reactions: {
-    select: {
-      id: true,
-      reaction: true,
-      user: {
-        select: simpleUserSelect,
-      },
-    },
-  },
   imagesOnReviews: {
     select: {
       index: true,

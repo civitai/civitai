@@ -5,7 +5,7 @@ import groupBy from 'lodash/groupBy';
 import { Session } from 'next-auth';
 import { useSession } from 'next-auth/react';
 import { createContext, useContext, useMemo } from 'react';
-import { ReviewDetails } from '~/server/validators/reviews/getAllReviews';
+import { ReactionDetails } from '~/server/validators/reviews/getReactions';
 import { toStringList } from '~/utils/array-helpers';
 
 type ReactionToEmoji = { [k in ReviewReactions]: string };
@@ -19,7 +19,7 @@ const availableReactions: ReactionToEmoji = {
 
 const ReactionPickerContext = createContext<{
   onEmojiClick: (reaction: ReviewReactions) => void;
-  reactions: ReviewDetails['reactions'];
+  reactions: ReactionDetails[];
   disabled: boolean;
   user?: Session['user'];
 }>({
@@ -61,7 +61,7 @@ export function ReactionPicker({ reactions, disabled = false, onSelect }: Reacti
 }
 
 type ReactionPickerProps = {
-  reactions: ReviewDetails['reactions'];
+  reactions: ReactionDetails[];
   onSelect: (reaction: ReviewReactions) => void;
   disabled?: boolean;
 };

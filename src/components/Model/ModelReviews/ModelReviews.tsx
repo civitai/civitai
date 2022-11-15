@@ -30,6 +30,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ReviewFilter } from '~/server/common/enums';
 import { ImageModel } from '~/server/validators/image/selectors';
 import { ReviewDetails } from '~/server/validators/reviews/getAllReviews';
+import { ReactionDetails } from '~/server/validators/reviews/getReactions';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -67,8 +68,11 @@ type Props = {
 
 function ReviewItem({ data: review }: ItemProps) {
   const { data: session } = useSession();
-  const isOwner = session?.user?.id === review.user.id;
-  const isMod = session?.user?.isModerator ?? false;
+  const currentUser = session?.user;
+  const isOwner = currentUser?.id === review.user.id;
+  const isMod = currentUser?.isModerator ?? false;
+
+  const { data: reactions = [] } = trpc.review.getReactions.useQuery({ reviewId: review.id });
 
   const queryUtils = trpc.useContext();
   const deleteMutation = trpc.review.delete.useMutation({
@@ -135,8 +139,44 @@ function ReviewItem({ data: review }: ItemProps) {
   };
 
   const toggleReactionMutation = trpc.review.toggleReaction.useMutation({
-    async onSuccess() {
-      await queryUtils.review.getAll.invalidate({ modelId: review.modelId });
+    async onMutate({ id, reaction }) {
+      await queryUtils.review.getReactions.cancel({ reviewId: id });
+
+      const previousReactions = queryUtils.review.getReactions.getData({ reviewId: id }) ?? [];
+      const latestReaction =
+        previousReactions.length > 0 ? previousReactions[previousReactions.length - 1] : { id: 0 };
+
+      if (currentUser) {
+        const newReaction: ReactionDetails = {
+          id: latestReaction.id + 1,
+          reaction,
+          user: {
+            id: currentUser.id,
+            name: currentUser.name ?? '',
+            username: currentUser.username ?? '',
+            image: currentUser.image ?? '',
+          },
+        };
+        const reacted = previousReactions.find(
+          (r) => r.reaction === reaction && r.user.id === currentUser.id
+        );
+        queryUtils.review.getReactions.setData({ reviewId: id }, (old = []) =>
+          reacted
+            ? old.filter((oldReaction) => oldReaction.id !== reacted.id)
+            : [...old, newReaction]
+        );
+      }
+
+      return { previousReactions };
+    },
+    onError(_error, variables, context) {
+      queryUtils.review.getReactions.setData(
+        { reviewId: variables.id },
+        context?.previousReactions
+      );
+    },
+    async onSettled() {
+      await queryUtils.review.getReactions.invalidate({ reviewId: review.id });
     },
   });
   const handleReactionClick = (reaction: ReviewReactions) => {
@@ -269,7 +309,7 @@ function ReviewItem({ data: review }: ItemProps) {
       </ContentClamp>
 
       <ReactionPicker
-        reactions={review.reactions}
+        reactions={reactions}
         onSelect={handleReactionClick}
         disabled={toggleReactionMutation.isLoading}
       />
