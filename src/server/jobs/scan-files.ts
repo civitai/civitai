@@ -42,9 +42,9 @@ async function requestFileScan(
     });
 
   let fileUrl = s3Url;
-  const fileExists = await checkFileExists(s3Url, s3);
-  // If the file isn't in our bucket, keep the raw url...
-  if (fileExists) ({ url: fileUrl } = await getGetUrl(s3Url, { s3, expiresIn: 7 * 24 * 60 * 60 }));
+  if (s3Url.includes(env.S3_UPLOAD_BUCKET)) {
+    ({ url: fileUrl } = await getGetUrl(s3Url, { s3, expiresIn: 7 * 24 * 60 * 60 }));
+  }
 
   const scanUrl =
     env.SCANNING_ENDPOINT +
