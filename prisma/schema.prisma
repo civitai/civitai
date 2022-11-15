@@ -294,6 +294,8 @@ model ReviewReaction {
   reaction  ReviewReactions
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
+
+  @@unique([reviewId, userId, reaction])
 }
 
 model Image {
