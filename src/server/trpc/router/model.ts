@@ -310,141 +310,147 @@ export const modelRouter = router({
           .filter((version) => !versionIds.includes(version.id))
           .map(({ id }) => id);
 
-        const model = await ctx.prisma.$transaction(async (tx) => {
-          const imagesToUpdate = modelVersions.flatMap((x) => x.images).filter((x) => !!x.id);
-          await Promise.all(
-            imagesToUpdate.map(async (image) =>
-              tx.image.update({
-                where: { id: image.id },
-                data: {
-                  ...image,
-                  meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                },
-              })
-            )
-          );
+        const model = await ctx.prisma.$transaction(
+          async (tx) => {
+            const imagesToUpdate = modelVersions.flatMap((x) => x.images).filter((x) => !!x.id);
+            await Promise.all(
+              imagesToUpdate.map(async (image) =>
+                tx.image.update({
+                  where: { id: image.id },
+                  data: {
+                    ...image,
+                    meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                  },
+                })
+              )
+            );
 
-          // TODO Model Status: Allow them to save as draft and publish/unpublish
-          return await ctx.prisma.model.update({
-            where: { id },
-            data: {
-              ...data,
-              status: data.status,
-              modelVersions: {
-                deleteMany:
-                  versionsToDelete.length > 0 ? { id: { in: versionsToDelete } } : undefined,
-                upsert: modelVersions.map(
-                  ({ id = -1, images, modelFile, trainingDataFile, ...version }) => {
-                    const imagesWithIndex = images.map((image, index) => ({
-                      index,
-                      userId: ownerId,
-                      ...image,
-                      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                    }));
-                    const existingVersion = currentVersions.find((x) => x.id === id);
+            // TODO Model Status: Allow them to save as draft and publish/unpublish
+            return await ctx.prisma.model.update({
+              where: { id },
+              data: {
+                ...data,
+                status: data.status,
+                modelVersions: {
+                  deleteMany:
+                    versionsToDelete.length > 0 ? { id: { in: versionsToDelete } } : undefined,
+                  upsert: modelVersions.map(
+                    ({ id = -1, images, modelFile, trainingDataFile, ...version }) => {
+                      const imagesWithIndex = images.map((image, index) => ({
+                        index,
+                        userId: ownerId,
+                        ...image,
+                        meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                      }));
+                      const existingVersion = currentVersions.find((x) => x.id === id);
 
-                    // Determine what files to create/update
-                    const existingFileUrls: Record<string, string> = {};
-                    for (const existingFile of existingVersion?.files ?? [])
-                      existingFileUrls[existingFile.type] = existingFile.url;
+                      // Determine what files to create/update
+                      const existingFileUrls: Record<string, string> = {};
+                      for (const existingFile of existingVersion?.files ?? [])
+                        existingFileUrls[existingFile.type] = existingFile.url;
 
-                    const files = prepareFiles(modelFile, trainingDataFile) as typeof modelFile[];
-                    const filesToCreate: typeof modelFile[] = [];
-                    const filesToUpdate: typeof modelFile[] = [];
-                    for (const file of files) {
-                      if (!file.type) continue;
-                      const existingUrl = existingFileUrls[file.type];
-                      if (!existingUrl) filesToCreate.push(file);
-                      else if (existingUrl !== file.url) filesToUpdate.push(file);
-                    }
+                      const files = prepareFiles(modelFile, trainingDataFile) as typeof modelFile[];
+                      const filesToCreate: typeof modelFile[] = [];
+                      const filesToUpdate: typeof modelFile[] = [];
+                      for (const file of files) {
+                        if (!file.type) continue;
+                        const existingUrl = existingFileUrls[file.type];
+                        if (!existingUrl) filesToCreate.push(file);
+                        else if (existingUrl !== file.url) filesToUpdate.push(file);
+                      }
 
-                    // Determine what images to create/update
-                    const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
-                    const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
+                      // Determine what images to create/update
+                      const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
+                      const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
 
-                    // TODO Model Status: Allow them to save as draft and publish/unpublish
-                    return {
-                      where: { id },
-                      create: {
-                        ...version,
-                        status: data.status,
-                        files: {
-                          create: filesToCreate.map(({ name, type, url, sizeKB }) => ({
-                            name,
-                            type,
-                            url,
-                            sizeKB,
-                            ...unscannedFile,
-                          })),
-                        },
-                        images: {
-                          create: imagesWithIndex.map(({ index, ...image }) => ({
-                            index,
-                            image: { create: image },
-                          })),
-                        },
-                      },
-                      update: {
-                        ...version,
-                        epochs: version.epochs ?? null,
-                        steps: version.steps ?? null,
-                        status: data.status,
-                        files: {
-                          create: filesToCreate.map(({ name, type, url, sizeKB }) => ({
-                            name,
-                            type,
-                            url,
-                            sizeKB,
-                            ...unscannedFile,
-                          })),
-                          update: filesToUpdate.map(({ type, url, name, sizeKB }) => ({
-                            where: { modelVersionId_type: { modelVersionId: id, type } },
-                            data: {
-                              url,
+                      // TODO Model Status: Allow them to save as draft and publish/unpublish
+                      return {
+                        where: { id },
+                        create: {
+                          ...version,
+                          status: data.status,
+                          files: {
+                            create: filesToCreate.map(({ name, type, url, sizeKB }) => ({
                               name,
+                              type,
+                              url,
                               sizeKB,
                               ...unscannedFile,
-                            },
-                          })),
-                        },
-                        images: {
-                          deleteMany: {
-                            NOT: images.map((image) => ({ imageId: image.id })),
+                            })),
                           },
-                          create: imagesToCreate.map(({ index, ...image }) => ({
-                            index,
-                            image: { create: image },
-                          })),
-                          update: imagesToUpdate.map(({ index, ...image }) => ({
-                            where: {
-                              imageId_modelVersionId: {
-                                imageId: image.id as number,
-                                modelVersionId: id,
-                              },
-                            },
-                            data: {
+                          images: {
+                            create: imagesWithIndex.map(({ index, ...image }) => ({
                               index,
-                            },
-                          })),
+                              image: { create: image },
+                            })),
+                          },
                         },
-                      },
-                    };
-                  }
-                ),
+                        update: {
+                          ...version,
+                          epochs: version.epochs ?? null,
+                          steps: version.steps ?? null,
+                          status: data.status,
+                          files: {
+                            create: filesToCreate.map(({ name, type, url, sizeKB }) => ({
+                              name,
+                              type,
+                              url,
+                              sizeKB,
+                              ...unscannedFile,
+                            })),
+                            update: filesToUpdate.map(({ type, url, name, sizeKB }) => ({
+                              where: { modelVersionId_type: { modelVersionId: id, type } },
+                              data: {
+                                url,
+                                name,
+                                sizeKB,
+                                ...unscannedFile,
+                              },
+                            })),
+                          },
+                          images: {
+                            deleteMany: {
+                              NOT: images.map((image) => ({ imageId: image.id })),
+                            },
+                            create: imagesToCreate.map(({ index, ...image }) => ({
+                              index,
+                              image: { create: image },
+                            })),
+                            update: imagesToUpdate.map(({ index, ...image }) => ({
+                              where: {
+                                imageId_modelVersionId: {
+                                  imageId: image.id as number,
+                                  modelVersionId: id,
+                                },
+                              },
+                              data: {
+                                index,
+                              },
+                            })),
+                          },
+                        },
+                      };
+                    }
+                  ),
+                },
+                tagsOnModels: {
+                  deleteMany: {},
+                  connectOrCreate: tagsToUpdate.map((tag) => ({
+                    where: { modelId_tagId: { modelId: id, tagId: tag.id as number } },
+                    create: { tagId: tag.id as number },
+                  })),
+                  create: tagsToCreate.map((tag) => ({
+                    tag: { create: { name: tag.name.toLowerCase() } },
+                  })),
+                },
               },
-              tagsOnModels: {
-                deleteMany: {},
-                connectOrCreate: tagsToUpdate.map((tag) => ({
-                  where: { modelId_tagId: { modelId: id, tagId: tag.id as number } },
-                  create: { tagId: tag.id as number },
-                })),
-                create: tagsToCreate.map((tag) => ({
-                  tag: { create: { name: tag.name.toLowerCase() } },
-                })),
-              },
-            },
-          });
-        });
+            });
+          },
+          {
+            maxWait: 5000,
+            timeout: 10000,
+          }
+        );
 
         if (!model) {
           return handleDbError({
