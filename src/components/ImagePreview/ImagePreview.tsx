@@ -3,7 +3,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageModel } from '~/server/validators/image/selectors';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { EdgeImage, EdgeImageProps } from '~/components/EdgeImage/EdgeImage';
-import { ImageMetaProps } from '~/server/validators/image/schemas';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { IconInfoCircle } from '@tabler/icons';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 

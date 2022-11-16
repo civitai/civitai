@@ -3,7 +3,7 @@ import { getAllReviewsSelect } from '~/server/validators/reviews/getAllReviews';
 import { middleware, protectedProcedure, publicProcedure, router } from '../trpc';
 import { handleAuthorizationError, handleDbError } from '~/server/services/errorHandling';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
-import { reviewUpsertSchema } from '~/server/validators/reviews/schemas';
+import { reviewUpsertSchema } from '~/server/schema/review.schema';
 import { Prisma, ReportReason, ReviewReactions } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { getReactionsSelect } from '~/server/validators/reviews/getReactions';

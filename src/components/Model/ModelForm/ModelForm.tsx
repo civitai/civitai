@@ -32,7 +32,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { modelSchema } from '~/server/common/validation/model';
-import { ImageMetaProps } from '~/server/validators/image/schemas';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ModelById } from '~/types/router';
 import { bytesToKB } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';

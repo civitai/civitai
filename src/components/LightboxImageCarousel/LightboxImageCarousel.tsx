@@ -18,7 +18,7 @@ import { IconInfoCircle, IconMinus, IconPlus, IconX } from '@tabler/icons';
 import { useEffect, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageMeta, ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { ImageMetaProps } from '~/server/validators/image/schemas';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageModel } from '~/server/validators/image/selectors';
 
 type Props = {

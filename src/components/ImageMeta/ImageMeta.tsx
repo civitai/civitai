@@ -1,5 +1,5 @@
 import { Stack, Text, Code, Popover, PopoverProps, Title } from '@mantine/core';
-import { ImageMetaProps } from '~/server/validators/image/schemas';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 type Props = {
   meta: ImageMetaProps;

@@ -4,12 +4,13 @@ export const imageMetaSchema = z
   .object({
     prompt: z.string(),
     negativePrompt: z.string(),
-    cfgScale: z.number(),
-    steps: z.number(),
+    cfgScale: z.preprocess((value) => Number(value), z.number()),
+    steps: z.preprocess((value) => Number(value), z.number()),
     sampler: z.string(),
-    seed: z.number(),
+    seed: z.preprocess((value) => Number(value), z.number()),
   })
-  .partial();
+  .partial()
+  .passthrough();
 
 export const imageSchema = z.object({
   id: z.number().optional(),
@@ -22,4 +23,4 @@ export const imageSchema = z.object({
 });
 
 export type ImageUploadProps = z.infer<typeof imageSchema>;
-export type ImageMetaProps = z.infer<typeof imageMetaSchema>;
+export type ImageMetaProps = z.infer<typeof imageMetaSchema> & Record<string, unknown>;
