@@ -418,7 +418,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     </Menu.Item>
                   </>
                 ) : null}
-                {session && published ? (
+                {session && isOwner && published ? (
                   <Menu.Item
                     icon={<IconBan size={14} stroke={1.5} />}
                     color="yellow"
