@@ -67,11 +67,6 @@ export function ImageUpload({
   const [files, filesHandlers] = useListState<CustomFile>(value);
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
 
-  useEffect(() => {
-    // clear any remaining urls when unmounting
-    return () => files.forEach((file) => URL.revokeObjectURL(file.url));
-  }, [files]);
-
   useDidUpdate(() => {
     const shouldReset = !isEqual(value, files);
     if (shouldReset) filesHandlers.setState(value);
@@ -92,6 +87,7 @@ export function ImageUpload({
         return {
           name: file.name,
           url: src,
+          previewUrl: src,
           file,
           meta,
           ...hashResult,
@@ -101,17 +97,23 @@ export function ImageUpload({
 
     filesHandlers.setState((current) => [...current, ...toUpload]);
 
-    await Promise.all(
-      toUpload.map(async (image) => {
-        const { id } = await uploadToCF(image.file);
-        filesHandlers.setState((state) => {
-          const index = state.findIndex((item) => item.file === image.file);
-          if (index === -1) return state;
-          const cloned = [...state];
-          cloned[index] = { ...cloned[index], url: id, file: undefined };
-          return cloned;
-        });
-        URL.revokeObjectURL(image.url);
+    const uploads = await Promise.all(
+      toUpload.map(async ({ url, file, previewUrl }) => {
+        const { id } = await uploadToCF(file);
+        return { url, file, id, previewUrl };
+      })
+    );
+
+    filesHandlers.setState((states) =>
+      states.map((state) => {
+        const matchingUpload = uploads.find((x) => x.file == state.file);
+        if (!matchingUpload) return state;
+        return {
+          ...state,
+          url: matchingUpload.id,
+          onLoad: () => URL.revokeObjectURL(matchingUpload.previewUrl),
+          file: null,
+        };
       })
     );
   };

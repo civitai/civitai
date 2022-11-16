@@ -1,10 +1,11 @@
-import { forwardRef, CSSProperties } from 'react';
+import { forwardRef, CSSProperties, useState } from 'react';
 import { ActionIcon, Center, createStyles, Paper } from '@mantine/core';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeImage, EdgeImageProps } from '~/components/EdgeImage/EdgeImage';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { UniqueIdentifier } from '@dnd-kit/core';
 import { IconArrowsMaximize } from '@tabler/icons';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 type Props = {
   image?: CustomFile;
@@ -18,6 +19,7 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
   ({ image, children, isPrimary, disabled, id, ...props }, ref) => {
     const { classes } = useStyles({ isPrimary });
     const { classes: imageClasses } = useImageStyles();
+    const [ready, setReady] = useState(false);
 
     const sortable = useSortable({ id });
 
@@ -38,12 +40,16 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
         radius="sm"
         style={{ ...style, ...props.style }}
       >
-        <EdgeImage
-          className={imageClasses.root}
-          src={image?.url}
-          height={410}
-          style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: '50% 50%' }}
-        />
+        {!ready && image.previewUrl && <StyledEdgeImage src={image.previewUrl} />}
+        {image.url && image.url != image.previewUrl && (
+          <StyledEdgeImage
+            src={image.url}
+            onLoad={() => {
+              image.onLoad?.();
+              setReady(true);
+            }}
+          />
+        )}
 
         <Center className={classes.draggable} {...listeners} {...attributes}>
           <Paper className={classes.draggableIcon} p="xl" radius={100}>
@@ -61,6 +67,22 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
   }
 );
 ImageUploadPreview.displayName = 'ImagePreview';
+
+const StyledEdgeImage = (props: EdgeImageProps) => (
+  <EdgeImage
+    {...props}
+    height={410}
+    style={{
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      width: '100%',
+      height: '100%',
+      objectFit: 'cover',
+      objectPosition: '50% 50%',
+    }}
+  />
+);
 
 const useStyles = createStyles(
   (

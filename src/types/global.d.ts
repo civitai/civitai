@@ -16,6 +16,8 @@ declare global {
   type CustomFile = {
     id?: number;
     url: string;
+    previewUrl?: string;
+    onLoad?: () => void;
     name?: string;
     meta?: Record<string, unknown> | null;
     file?: FileWithPath;
