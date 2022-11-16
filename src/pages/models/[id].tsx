@@ -34,6 +34,7 @@ import {
   IconExclamationMark,
   IconFilter,
   IconFlag,
+  IconInfoCircle,
   IconLicense,
   IconPlus,
   IconTrash,
@@ -77,6 +78,8 @@ import { isNumber } from '~/utils/type-guards';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { ImageMetaProps } from '~/server/validators/image/schemas';
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
   const ssg = createProxySSGHelpers({
@@ -542,6 +545,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                         radius="md"
                         lightboxImages={latestVersion.images.map((x) => x.image)}
                         style={{ width: '100%' }}
+                        withMeta
                       />
                     </Center>
                   </Carousel.Slide>

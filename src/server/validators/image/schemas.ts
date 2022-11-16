@@ -5,7 +5,7 @@ export const imageMetaSchema = z
     prompt: z.string(),
     negativePrompt: z.string(),
     cfgScale: z.number(),
-    step: z.number(),
+    steps: z.number(),
     sampler: z.string(),
     seed: z.number(),
   })

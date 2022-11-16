@@ -96,49 +96,65 @@ export const reviewRouter = router({
       const imagesWithIndex = images.map((image, index) => ({
         userId: ownerId,
         ...image,
+        meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
         index,
       }));
 
       const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
       const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
 
-      return await ctx.prisma.review.upsert({
-        where: { id: id ?? -1 },
-        create: {
-          ...reviewInput,
-          userId: ownerId,
-          imagesOnReviews: {
-            create: imagesWithIndex.map(({ index, ...image }) => ({
-              index,
-              image: { create: image },
-            })),
-          },
-        },
-        update: {
-          ...reviewInput,
-          imagesOnReviews: {
-            deleteMany: {
-              NOT: imagesToUpdate.map((image) => ({ imageId: image.id })),
-            },
-            create: imagesToCreate.map(({ index, ...image }) => ({
-              index,
-              image: { create: image },
-            })),
-            update: imagesToUpdate.map(({ index, ...image }) => ({
-              where: {
-                imageId_reviewId: {
-                  imageId: image.id as number,
-                  reviewId: input.id as number,
-                },
+      return await ctx.prisma.$transaction(async (tx) => {
+        await Promise.all(
+          // extract index because index is not a part of the prisma schema for this model
+          imagesToUpdate.map(async ({ index, ...image }) =>
+            tx.image.update({
+              where: { id: image.id },
+              data: {
+                ...image,
+                meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
               },
-              data: { index },
-            })),
+            })
+          )
+        );
+
+        return await ctx.prisma.review.upsert({
+          where: { id: id ?? -1 },
+          create: {
+            ...reviewInput,
+            userId: ownerId,
+            imagesOnReviews: {
+              create: imagesWithIndex.map(({ index, ...image }) => ({
+                index,
+                image: { create: image },
+              })),
+            },
           },
-        },
-        select: {
-          id: true,
-          modelId: true,
-        },
+          update: {
+            ...reviewInput,
+            imagesOnReviews: {
+              deleteMany: {
+                NOT: imagesToUpdate.map((image) => ({ imageId: image.id })),
+              },
+              create: imagesToCreate.map(({ index, ...image }) => ({
+                index,
+                image: { create: image },
+              })),
+              update: imagesToUpdate.map(({ index, ...image }) => ({
+                where: {
+                  imageId_reviewId: {
+                    imageId: image.id as number,
+                    reviewId: input.id as number,
+                  },
+                },
+                data: { index },
+              })),
+            },
+          },
+          select: {
+            id: true,
+            modelId: true,
+          },
+        });
       });
     }),
   delete: protectedProcedure

@@ -181,7 +181,7 @@ export function ImageUpload({
                             align="center"
                             position="right"
                             p={4}
-                            spacing="sm"
+                            spacing={4}
                           >
                             <ImageMetaPopover
                               meta={image.meta}
@@ -270,7 +270,7 @@ function ImageMetaPopover({
   const [prompt, setPrompt] = useState<string | undefined>(meta?.prompt);
   const [negativePrompt, setNegativePrompt] = useState<string | undefined>(meta?.negativePrompt);
   const [cfgScale, setCfgScale] = useState<number | undefined>(meta?.cfgScale);
-  const [step, setStep] = useState<number | undefined>(meta?.step);
+  const [steps, setSteps] = useState<number | undefined>(meta?.steps);
   const [sampler, setSampler] = useState<string | undefined>(meta?.sampler);
   const [seed, setSeed] = useState<number | undefined>(meta?.seed);
 
@@ -278,7 +278,7 @@ function ImageMetaPopover({
     setPrompt(meta?.prompt);
     setNegativePrompt(meta?.negativePrompt);
     setCfgScale(meta?.cfgScale);
-    setStep(meta?.step);
+    setSteps(meta?.steps);
     setSampler(meta?.sampler);
     setSeed(meta?.seed);
     setOpened((v) => !v);
@@ -289,7 +289,7 @@ function ImageMetaPopover({
     if (prompt) meta.prompt = prompt;
     if (negativePrompt) meta.negativePrompt = negativePrompt;
     if (cfgScale) meta.cfgScale = cfgScale;
-    if (step) meta.step = step;
+    if (steps) meta.steps = steps;
     if (sampler) meta.sampler = sampler;
     if (seed) meta.seed = seed;
     onSubmit?.(Object.keys(meta).length ? meta : null);
@@ -300,68 +300,68 @@ function ImageMetaPopover({
     <Popover opened={opened} onClose={handleClose} withArrow withinPortal width={400}>
       <Popover.Target>{cloneElement(children, { onClick: handleClose })}</Popover.Target>
       <Popover.Dropdown>
-        <ScrollArea.Autosize maxHeight={500} offsetScrollbars={true} pb={0}>
-          <Stack spacing="sm">
-            <Title order={4}>Image Meta</Title>
-            <Grid>
-              <Grid.Col span={12}>
-                <Textarea
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  label="Prompt"
-                  autosize
-                />
-              </Grid.Col>
-              <Grid.Col span={12}>
-                <Textarea
-                  value={negativePrompt}
-                  onChange={(e) => setNegativePrompt(e.target.value)}
-                  label="Negative prompt"
-                  autosize
-                />
-              </Grid.Col>
-              <Grid.Col span={6}>
-                <NumberInput
-                  value={cfgScale}
-                  onChange={(number) => setCfgScale(number)}
-                  label="Guidance scale"
-                  min={0}
-                  max={30}
-                />
-              </Grid.Col>
-              <Grid.Col span={6}>
-                <NumberInput value={step} onChange={(value) => setStep(value)} label="Step" />
-              </Grid.Col>
-              <Grid.Col span={6}>
-                <Select
-                  clearable
-                  searchable
-                  data={[
-                    'Euler a',
-                    'Euler',
-                    'LMS',
-                    'Heun',
-                    'DPM2',
-                    'DPM2 a',
-                    'DPM fast',
-                    'DPM adaptive',
-                    'LMS Karras',
-                    'DPM2 Karras',
-                    'DPM2 a Karras',
-                    'DDIM',
-                    'PLMS',
-                  ]}
-                  value={sampler}
-                  onChange={(value) => setSampler(value ?? undefined)}
-                  label="Sampler"
-                />
-              </Grid.Col>
-              <Grid.Col span={6}>
-                <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
-              </Grid.Col>
-            </Grid>
-          </Stack>
-        </ScrollArea.Autosize>
+        <Stack spacing="sm">
+          <Title order={4}>Image Meta</Title>
+          <Grid>
+            <Grid.Col span={12}>
+              <Textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                label="Prompt"
+                autosize
+                maxRows={3}
+              />
+            </Grid.Col>
+            <Grid.Col span={12}>
+              <Textarea
+                value={negativePrompt}
+                onChange={(e) => setNegativePrompt(e.target.value)}
+                label="Negative prompt"
+                autosize
+                maxRows={3}
+              />
+            </Grid.Col>
+            <Grid.Col span={6}>
+              <NumberInput
+                value={cfgScale}
+                onChange={(number) => setCfgScale(number)}
+                label="Guidance scale"
+                min={0}
+                max={30}
+              />
+            </Grid.Col>
+            <Grid.Col span={6}>
+              <NumberInput value={steps} onChange={(value) => setSteps(value)} label="Steps" />
+            </Grid.Col>
+            <Grid.Col span={6}>
+              <Select
+                clearable
+                searchable
+                data={[
+                  'Euler a',
+                  'Euler',
+                  'LMS',
+                  'Heun',
+                  'DPM2',
+                  'DPM2 a',
+                  'DPM fast',
+                  'DPM adaptive',
+                  'LMS Karras',
+                  'DPM2 Karras',
+                  'DPM2 a Karras',
+                  'DDIM',
+                  'PLMS',
+                ]}
+                value={sampler}
+                onChange={(value) => setSampler(value ?? undefined)}
+                label="Sampler"
+              />
+            </Grid.Col>
+            <Grid.Col span={6}>
+              <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
+            </Grid.Col>
+          </Grid>
+        </Stack>
         <Divider pb="sm" />
         <Button fullWidth onClick={() => handleSubmit()}>
           Submit

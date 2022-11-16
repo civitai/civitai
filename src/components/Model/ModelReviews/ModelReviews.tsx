@@ -156,6 +156,7 @@ function ReviewItem({ data: review }: ItemProps) {
             edgeImageProps={{ width: 400 }}
             aspectRatio={1}
             lightboxImages={review.images.map((image) => image)}
+            withMeta
           />
         </Carousel.Slide>
       ))}

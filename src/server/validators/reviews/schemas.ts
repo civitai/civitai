@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { imageSchema } from '~/server/common/validation/model';
+import { imageSchema } from '~/server/validators/image/schemas';
 
 export const reviewUpsertSchema = z.object({
   id: z.number().optional(),

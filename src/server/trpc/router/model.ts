@@ -307,7 +307,6 @@ export const modelRouter = router({
                   ...image,
                   meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
                 },
-                select: { id: true },
               })
             )
           );

@@ -186,6 +186,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
               radius="md"
               aspectRatio={1}
               lightboxImages={versionImages}
+              withMeta
               sx={{
                 height: '100%',
                 width: '100%',

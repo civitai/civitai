@@ -1,8 +1,11 @@
-import { AspectRatio, Paper, PaperProps } from '@mantine/core';
+import { ActionIcon, AspectRatio, Paper, PaperProps } from '@mantine/core';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageModel } from '~/server/validators/image/selectors';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { EdgeImage, EdgeImageProps } from '~/components/EdgeImage/EdgeImage';
+import { ImageMetaProps } from '~/server/validators/image/schemas';
+import { IconInfoCircle } from '@tabler/icons';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 
 type ImagePreviewProps = {
   nsfw?: boolean;
@@ -10,6 +13,7 @@ type ImagePreviewProps = {
   lightboxImages?: ImageModel[];
   image: ImageModel;
   edgeImageProps?: Omit<EdgeImageProps, 'src'>;
+  withMeta?: boolean;
 } & Omit<PaperProps, 'component'>;
 
 export function ImagePreview({
@@ -19,6 +23,7 @@ export function ImagePreview({
   aspectRatio,
   lightboxImages = [],
   style,
+  withMeta,
   ...props
 }: ImagePreviewProps) {
   const { openImageLightbox } = useImageLightbox();
@@ -31,7 +36,7 @@ export function ImagePreview({
   };
 
   return (
-    <Paper style={{ overflow: 'hidden', ...style }} {...props}>
+    <Paper style={{ overflow: 'hidden', position: 'relative', ...style }} {...props}>
       <AspectRatio ratio={aspectRatio ?? (width ?? 16) / (height ?? 9)}>
         {nsfw ? (
           <MediaHash hash={hash} width={width} height={height} />
@@ -45,6 +50,16 @@ export function ImagePreview({
           />
         )}
       </AspectRatio>
+      {!nsfw && withMeta && meta && (
+        <ImageMetaPopover meta={meta as ImageMetaProps}>
+          <ActionIcon
+            style={{ position: 'absolute', top: '5px', left: '5px', zIndex: 100 }}
+            size="lg"
+          >
+            <IconInfoCircle />
+          </ActionIcon>
+        </ImageMetaPopover>
+      )}
     </Paper>
   );
 }
