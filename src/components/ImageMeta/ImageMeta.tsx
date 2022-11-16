@@ -95,14 +95,7 @@ export function ImageMetaPopover({
   ...popoverProps
 }: Props & { children: React.ReactElement } & PopoverProps) {
   return (
-    <Popover
-      width={350}
-      shadow="md"
-      position="bottom-start"
-      withArrow
-      withinPortal
-      {...popoverProps}
-    >
+    <Popover width={350} shadow="md" position="top-end" withArrow withinPortal {...popoverProps}>
       <Popover.Target>{children}</Popover.Target>
       <Popover.Dropdown>
         <ImageMeta meta={meta} />
