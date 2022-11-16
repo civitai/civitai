@@ -99,9 +99,13 @@ model Import {
   source     String
   status     ImportStatus @default(Pending)
   data       Json?
+  parentId   Int?
+  parent     Import?      @relation("ImportChildren", fields: [parentId], references: [id], onDelete: SetNull)
 
-  modelVersion ModelVersion?
+  modelVersion ModelVersion[]
   model        Model?
+  children     Import[]       @relation("ImportChildren")
+  importId     Int?
 }
 
 enum ModelStatus {
@@ -147,7 +151,7 @@ model ModelVersion {
   updatedAt    DateTime    @updatedAt
   status       ModelStatus @default(Draft)
   fromImport   Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
-  fromImportId Int?        @unique
+  fromImportId Int?
 
   reviews Review[]
   images  ImagesOnModels[]

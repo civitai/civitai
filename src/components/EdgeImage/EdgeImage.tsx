@@ -18,7 +18,7 @@ export type EdgeImageProps = Omit<
 };
 
 export function getEdgeUrl(src: string, variantParams: Omit<EdgeImageProps, 'src'>) {
-  if (src.startsWith('http') || src.startsWith('blob')) return src;
+  if (!src || src.startsWith('http') || src.startsWith('blob')) return src;
 
   const params = Object.entries(variantParams)
     .filter(([, value]) => value !== undefined)

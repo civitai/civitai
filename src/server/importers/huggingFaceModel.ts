@@ -13,16 +13,18 @@ export const hfModelImporter = createImporter(
   (source) => {
     return hfModelRegex.test(source);
   },
-  async (id, source) => {
+  async ({ id, source, data }) => {
     // Get the author and model name from the URL
     const [, author, modelName] = hfModelRegex.exec(source) ?? [];
 
     // Get the model from HuggingFace
-    let hfModel: HuggingFaceModel | undefined;
-    try {
-      hfModel = await getHuggingFaceModel(author, modelName);
-    } catch (error) {
-      throw new Error(`Could not find model ${author}/${modelName}`);
+    let hfModel: HuggingFaceModel | undefined = data;
+    if (!hfModel) {
+      try {
+        hfModel = await getHuggingFaceModel(author, modelName);
+      } catch (error) {
+        throw new Error(`Could not find model ${author}/${modelName}`);
+      }
     }
 
     await importModelFromHuggingFace(hfModel, { id, source });
@@ -51,6 +53,43 @@ export async function importModelFromHuggingFace(
   });
   const images: { id: number }[] =
     model?.modelVersions[0]?.images.map((x) => ({ id: x.imageId })) ?? [];
+
+  // Prepare modelVersions files
+  // for each file in the model, create a modelVersion on the model
+  const modelVersions: Prisma.ModelVersionUncheckedCreateInput[] = [];
+  let type: ModelType = ModelType.Checkpoint;
+  for (const { name, url } of files) {
+    // TODO Import: Improve this to handle models that aren't saved as `.ckpt`
+    // Example: https://huggingface.co/sd-dreambooth-library/the-witcher-game-ciri/tree/main
+    if (!modelFileRegex.test(name)) continue;
+
+    const existingVersion = model?.modelVersions.find((v) => v.files.some((f) => f.name === name));
+    if (existingVersion) continue;
+
+    // HEAD the file to get the size
+    const { headers } = await fetch(url, { method: 'HEAD' });
+    const size = bytesToKB(parseInt(headers.get('Content-Length') ?? '0'));
+    type = fileToModelType(name, size);
+
+    modelVersions.push({
+      modelId: 0,
+      name: filenameToVersionName(name, id),
+      fromImportId: importId,
+      files: {
+        create: [
+          {
+            url,
+            sizeKB: size,
+            name,
+            type: ModelFileType.Model,
+          },
+        ],
+      },
+    });
+  }
+
+  // If there aren't versions, there's nothing for us to do...
+  if (modelVersions.length === 0) return;
 
   // Prep image and description if needed
   const imagesToCreate: Prisma.ImageUncheckedCreateInput[] = [];
@@ -86,40 +125,6 @@ export async function importModelFromHuggingFace(
         console.error(error);
       }
     }
-  }
-
-  // Prepare modelVersions files
-  // for each file in the model, create a modelVersion on the model
-  const modelVersions: Prisma.ModelVersionUncheckedCreateInput[] = [];
-  let type: ModelType = ModelType.Checkpoint;
-  for (const { name, url } of files) {
-    // TODO Import: Improve this to handle models that aren't saved as `.ckpt`
-    // Example: https://huggingface.co/sd-dreambooth-library/the-witcher-game-ciri/tree/main
-    if (!modelFileRegex.test(name)) continue;
-
-    const existingVersion = model?.modelVersions.find((v) => v.files.some((f) => f.name === name));
-    if (existingVersion) continue;
-
-    // HEAD the file to get the size
-    const { headers } = await fetch(url, { method: 'HEAD' });
-    const size = bytesToKB(parseInt(headers.get('Content-Length') ?? '0'));
-    type = fileToModelType(name, size);
-
-    modelVersions.push({
-      modelId: 0,
-      name: filenameToVersionName(name, id),
-      fromImportId: importId,
-      files: {
-        create: [
-          {
-            url,
-            sizeKB: size,
-            name,
-            type: ModelFileType.Model,
-          },
-        ],
-      },
-    });
   }
 
   await prisma.$transaction(
