@@ -150,7 +150,20 @@ export const modelRouter = router({
         modelVersions: modelVersions.map(({ files, ...version }) => ({
           ...version,
           trainingDataFile: files.find((file) => file.type === ModelFileType.TrainingData),
-          modelFile: files.find((file) => file.type === ModelFileType.Model),
+          modelFile:
+            files.find((file) => file.type === ModelFileType.Model) ??
+            ({
+              name: '',
+              type: ModelFileType.Model,
+              url: '',
+              sizeKB: 0,
+              virusScanResult: ScanResultCode.Pending,
+              virusScanMessage: null,
+              pickleScanResult: ScanResultCode.Pending,
+              pickleScanMessage: null,
+              scannedAt: null,
+              rawScanResult: null,
+            } as ModelFile),
         })),
       };
 

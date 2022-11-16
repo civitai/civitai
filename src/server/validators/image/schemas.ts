@@ -13,7 +13,7 @@ export const imageMetaSchema = z
 
 export const imageSchema = z.object({
   id: z.number().optional(),
-  name: z.string(),
+  name: z.string().nullish(),
   url: z.string(),
   meta: imageMetaSchema.nullish(),
   hash: z.string().nullish(),

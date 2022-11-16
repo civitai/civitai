@@ -11,14 +11,14 @@ const PUBLIC_CACHE_STALE_WHILE_REVALIDATE = 30;
 export default createNextApiHandler({
   router: appRouter,
   createContext,
-  responseMeta: ({ ctx, paths, type, errors }) => {
+  responseMeta: ({ ctx, type }) => {
     // only public GET requests are cacheable
     const cacheable = !ctx?.session && type === 'query';
     if (cacheable) {
       return {
         headers: {
           'Cache-Control': `public, s-maxage=${PUBLIC_CACHE_MAX_AGE}, stale-while-revalidate=${PUBLIC_CACHE_STALE_WHILE_REVALIDATE}`,
-        }
+        },
       };
     }
 
@@ -27,7 +27,7 @@ export default createNextApiHandler({
   onError:
     env.NODE_ENV === 'development'
       ? ({ path, error }) => {
-        console.error(`❌ tRPC failed on ${path}: ${error}`);
-      }
+          console.error(`❌ tRPC failed on ${path}: ${error}`);
+        }
       : undefined,
 });

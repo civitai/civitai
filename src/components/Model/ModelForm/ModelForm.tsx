@@ -32,6 +32,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { modelSchema } from '~/server/common/validation/model';
+import { ImageMetaProps } from '~/server/validators/image/schemas';
 import { ModelById } from '~/types/router';
 import { bytesToKB } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
@@ -68,13 +69,15 @@ export function ModelForm({ model }: Props) {
 
   const defaultValues: z.infer<typeof schema> = {
     ...model,
+    name: model?.name ?? '',
     type: model?.type ?? ModelType.Checkpoint,
     status: model?.status ?? ModelStatus.Published,
     tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
     modelVersions: model?.modelVersions.map(({ trainedWords, images, ...version }) => ({
       ...version,
       trainedWords: trainedWords ?? [],
-      images: images.map(({ image }) => image) ?? [],
+      // Casting image.meta to hotfix type issue with generated prisma schema
+      images: images.map(({ image }) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
     })) ?? [defaultModelVersion],
   };
 
@@ -85,7 +88,7 @@ export function ModelForm({ model }: Props) {
     defaultValues,
   });
 
-  const { fields, append, prepend, remove, swap, move, insert } = useFieldArray({
+  const { fields, prepend, remove } = useFieldArray({
     control: form.control,
     name: 'modelVersions',
   });
