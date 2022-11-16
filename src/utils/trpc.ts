@@ -32,6 +32,7 @@ export const trpc = createTRPCNext<AppRouter>({
         }),
         httpBatchLink({
           url: `${getBaseUrl()}/api/trpc`,
+          maxURLLength: 2083,
         }),
       ],
     };

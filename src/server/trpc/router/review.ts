@@ -6,6 +6,7 @@ import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { reviewUpsertSchema } from '~/server/validators/reviews/schemas';
 import { Prisma, ReportReason, ReviewReactions } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { getReactionsSelect } from '~/server/validators/reviews/getReactions';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
   if (!ctx.session || !ctx.session.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
@@ -85,6 +86,17 @@ export const reviewRouter = router({
         })),
         nextCursor,
       };
+    }),
+  getReactions: publicProcedure
+    .input(z.object({ reviewId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      const { reviewId } = input;
+      const reactions = await ctx.prisma.reviewReaction.findMany({
+        where: { reviewId },
+        select: getReactionsSelect,
+      });
+
+      return reactions;
     }),
   upsert: protectedProcedure
     .input(reviewUpsertSchema)
@@ -208,17 +220,18 @@ export const reviewRouter = router({
     .mutation(async ({ ctx, input }) => {
       const { user } = ctx.session;
       const { id, reaction } = input;
-      const reactionSearch = { reaction, userId: user.id };
 
-      const reviewReaction = await ctx.prisma.reviewReaction.findFirst({ where: reactionSearch });
+      const reviewReaction = await ctx.prisma.reviewReaction.findFirst({
+        where: { reaction, userId: user.id, reviewId: id },
+      });
 
       try {
         const review = await ctx.prisma.review.update({
           where: { id },
           data: {
             reactions: {
-              create: reviewReaction ? undefined : reactionSearch,
-              deleteMany: reviewReaction ? reactionSearch : undefined,
+              create: reviewReaction ? undefined : { reaction, userId: user.id },
+              deleteMany: reviewReaction ? { reaction, userId: user.id } : undefined,
             },
           },
           select: getAllReviewsSelect,
