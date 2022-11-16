@@ -33,6 +33,8 @@ export const fileSchema = z.object({
   type: z.nativeEnum(ModelFileType),
 });
 
+export type FileProps = z.infer<typeof fileSchema>;
+
 export const modelVersionSchema = z.object({
   id: z.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
@@ -40,7 +42,7 @@ export const modelVersionSchema = z.object({
   steps: z.number().nullish(),
   epochs: z.number().nullish(),
   modelFile: fileSchema,
-  trainingDataFile: fileSchema.optional(),
+  trainingDataFile: fileSchema.nullish(),
   images: z
     .array(imageSchema)
     .min(1, 'At least one example image must be uploaded')
