@@ -39,26 +39,10 @@ export default function LightboxImageCarousel({
 
   const { classes, cx } = useStyles();
 
-  const handlePrev = () => {
-    setIndex((prev) => {
-      const index = prev - 1;
-      return index === -1 ? images.length - 1 : index;
-    });
-  };
-
-  const handleNext = () => {
-    setIndex((prev) => {
-      const index = prev + 1;
-      return index === images.length ? 0 : index;
-    });
-  };
-
   useHotkeys([
     ['ArrowLeft', () => embla?.scrollPrev()],
     ['ArrowRight', () => embla?.scrollNext()],
   ]);
-
-  useEffect(() => console.log({ show }), [show]);
 
   return (
     <MantineProvider theme={{ colorScheme: 'dark' }}>
@@ -85,8 +69,7 @@ export default function LightboxImageCarousel({
           initialSlide={initialSlide}
           withIndicators
           loop
-          onPreviousSlide={handlePrev}
-          onNextSlide={handleNext}
+          onSlideChange={(index) => setIndex(index)}
           getEmblaApi={setEmbla}
           styles={{
             control: {
@@ -119,40 +102,9 @@ export default function LightboxImageCarousel({
                   width={image.width ?? 1200}
                 />
               </div>
-              {/* {image.meta && (
-                <Box
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    top: 0,
-                    width: '350px',
-                    maxWidth: '100%',
-                  }}
-                  sx={(theme) => ({
-                    background: theme.fn.rgba(theme.black, 0.65),
-                  })}
-                  p="md"
-                >
-                  <Stack>
-                    <Title order={4}>Metadata</Title>
-                    <ImageMeta meta={image.meta as ImageMetaProps} />
-                  </Stack>
-                </Box>
-              )} */}
             </Carousel.Slide>
           ))}
         </Carousel>
-        {/* {images[index]?.meta && (
-          <ImageMetaPopover meta={images[index].meta as ImageMetaProps}>
-            <ActionIcon
-              style={{ position: 'absolute', top: 15, left: 15, zIndex: 100 }}
-              size="lg"
-              variant="default"
-            >
-              <IconInfoCircle />
-            </ActionIcon>
-          </ImageMetaPopover>
-        )} */}
         {images[index]?.meta && (
           <Paper className={cx(classes.meta, { [classes.metaActive]: show })} p="md" withBorder>
             <Stack>
