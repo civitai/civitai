@@ -1,10 +1,19 @@
-import { huggingFaceImporter } from '~/server/importers/huggingFace';
+import { hfModelImporter } from '~/server/importers/huggingFaceModel';
 import { prisma } from '~/server/db/client';
 import { ImportStatus } from '@prisma/client';
+import { hfAuthorImporter } from '~/server/importers/huggingFaceAuthor';
 
-const importers = [huggingFaceImporter];
+const importers = [hfModelImporter, hfAuthorImporter];
 
-export async function processImport({ id, source }: { id: number; source: string }) {
+export async function processImport({
+  id,
+  source,
+  userId,
+}: {
+  id: number;
+  source: string;
+  userId?: number | null;
+}) {
   const importer = importers.find((i) => i.canHandle(source));
 
   const updateStatus = async (status: ImportStatus, data?: any) => {
@@ -12,21 +21,23 @@ export async function processImport({ id, source }: { id: number; source: string
       where: { id },
       data: { status, data },
     });
+    return { id, status, data };
   };
 
   if (!importer) {
-    await updateStatus(ImportStatus.Failed, { error: 'No importer found' });
-    return false;
+    return await updateStatus(ImportStatus.Failed, { error: 'No importer found' });
   }
 
   await updateStatus(ImportStatus.Processing);
   try {
-    const { status, data } = await importer.run(id, source);
-    await updateStatus(status, data);
-  } catch (error) {
-    await updateStatus(ImportStatus.Failed, { error });
-    return false;
-  }
+    const { status, data, dependencies } = await importer.run(id, source, userId ?? 1);
+    try {
+      if (dependencies) for (const importJob of dependencies) await processImport(importJob);
+    } catch (e) {} // We handle this inside the processImport...
 
-  return true;
+    return await updateStatus(status, data);
+  } catch (error: any) {
+    console.error(error);
+    return await updateStatus(ImportStatus.Failed, { error: error.message, stack: error.stack });
+  }
 }

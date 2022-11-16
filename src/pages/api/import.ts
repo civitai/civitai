@@ -6,26 +6,28 @@ import { processImport } from '~/server/importers/importRouter';
 
 const importSchema = z.object({
   source: z.string().url(),
+  wait: z.boolean().optional().default(false),
 });
 
 export default async function importSource(req: NextApiRequest, res: NextApiResponse) {
   const session = await getServerAuthSession({ req, res });
   const { id: userId, isModerator } = session?.user ?? {};
   if (!isModerator) return res.status(401).json({ error: 'Unauthorized' });
-  const { source } = importSchema.parse(req.query);
+  const { source, wait } = importSchema.parse(req.query);
 
-  const result = await prisma.import.create({
+  const { id } = await prisma.import.create({
     data: {
       source,
       userId,
     },
-    select: {
-      id: true,
-      status: true,
-    },
+    select: { id: true },
   });
 
-  res.status(200).json(result);
-
-  await processImport({ id: result.id, source });
+  if (wait) {
+    const result = await processImport({ id, source });
+    res.status(200).json(result);
+  } else {
+    res.status(200).json({ id });
+    await processImport({ id, source });
+  }
 }
