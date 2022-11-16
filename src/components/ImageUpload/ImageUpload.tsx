@@ -39,6 +39,7 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/validators/image/schemas';
 import isEqual from 'lodash/isEqual';
+import { getMetadata } from '~/utils/image-metadata';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -87,12 +88,14 @@ export function ImageUpload({
     const toUpload = await Promise.all(
       droppedFiles.map(async (file) => {
         const src = URL.createObjectURL(file);
+        const meta = await getMetadata(file);
         const img = await loadImage(src);
         const hashResult = blurHashImage(img);
         return {
           name: file.name,
           url: src,
           file,
+          meta,
           ...hashResult,
         };
       })
@@ -285,14 +288,13 @@ function ImageMetaPopover({
   };
 
   const handleSubmit = () => {
-    const meta: ImageMetaProps = {};
-    if (prompt) meta.prompt = prompt;
-    if (negativePrompt) meta.negativePrompt = negativePrompt;
-    if (cfgScale) meta.cfgScale = cfgScale;
-    if (steps) meta.steps = steps;
-    if (sampler) meta.sampler = sampler;
-    if (seed) meta.seed = seed;
-    onSubmit?.(Object.keys(meta).length ? meta : null);
+    const newMeta = { ...meta, prompt, negativePrompt, cfgScale, steps, sampler, seed };
+    const keys = Object.keys(newMeta) as Array<keyof typeof newMeta>;
+    const toSubmit = keys.reduce<ImageMetaProps>((acc, key) => {
+      if (newMeta[key]) return { ...acc, [key]: newMeta[key] };
+      return acc;
+    }, {});
+    onSubmit?.(Object.keys(toSubmit).length ? toSubmit : null);
     setOpened(false);
   };
 
@@ -362,8 +364,7 @@ function ImageMetaPopover({
             </Grid.Col>
           </Grid>
         </Stack>
-        <Divider pb="sm" />
-        <Button fullWidth onClick={() => handleSubmit()}>
+        <Button mt="xs" fullWidth onClick={() => handleSubmit()}>
           Submit
         </Button>
       </Popover.Dropdown>

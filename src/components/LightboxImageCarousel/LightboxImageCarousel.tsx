@@ -11,13 +11,14 @@ import {
   ActionIcon,
   createStyles,
   Popover,
+  MantineProvider,
 } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { ContextModalProps } from '@mantine/modals';
 import { IconInfoCircle, IconMinus, IconPlus, IconX } from '@tabler/icons';
 import { useEffect, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { ImageMeta, ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
 import { ImageMetaProps } from '~/server/validators/image/schemas';
 import { ImageModel } from '~/server/validators/image/selectors';
 
@@ -33,7 +34,7 @@ export default function LightboxImageCarousel({
 }: ContextModalProps<Props>) {
   const { initialSlide, images = [] } = innerProps;
   const [embla, setEmbla] = useState<Embla | null>(null);
-  const [show, setShow] = useState(true);
+  const [show, setShow] = useState(false);
   const [index, setIndex] = useState(initialSlide ?? 0);
 
   const { classes, cx } = useStyles();
@@ -60,7 +61,7 @@ export default function LightboxImageCarousel({
   useEffect(() => console.log({ show }), [show]);
 
   return (
-    <>
+    <MantineProvider theme={{ colorScheme: 'dark' }}>
       <CloseButton
         style={{ position: 'absolute', top: 15, right: 15, zIndex: 100 }}
         size="lg"
@@ -155,8 +156,6 @@ export default function LightboxImageCarousel({
         {images[index]?.meta && (
           <Paper className={cx(classes.meta, { [classes.metaActive]: show })} p="md" withBorder>
             <Stack>
-              <Title order={4}>Metadata</Title>
-
               <ActionIcon
                 onClick={() => setShow((v) => !v)}
                 className={cx(classes.metaButton, { [classes.metaActive]: show })}
@@ -170,7 +169,7 @@ export default function LightboxImageCarousel({
           </Paper>
         )}
       </Box>
-    </>
+    </MantineProvider>
   );
 }
 
