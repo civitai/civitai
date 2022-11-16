@@ -7,14 +7,14 @@ export async function getMetadata(file: FileWithPath) {
     userComment: true,
   });
   let generationDetails = null;
-  if (exif.userComment) {
+  if (exif?.userComment) {
     const p = document.createElement('p');
     generationDetails = decoder.decode(exif.userComment);
     // Any annoying hack to deal with weirdness in the meta
     p.innerHTML = generationDetails;
     p.remove();
     generationDetails = p.innerHTML;
-  } else if (exif.parameters) {
+  } else if (exif?.parameters) {
     generationDetails = exif.parameters;
   }
 
@@ -80,7 +80,6 @@ const automaticSDParser = createMetadataParser(
       .map((x) => x.trim());
     metadata.prompt = prompt;
     metadata.negativePrompt = negativePrompt;
-    console.log(metadata);
     return metadata;
   }
 );
@@ -102,7 +101,6 @@ function automaticEncoder({ prompt, negativePrompt, ...other }: ImageMetaProps) 
   const lines = [prompt];
   if (negativePrompt) lines.push(`Negative prompt: ${negativePrompt}`);
   const fineDetails = [];
-  console.log({ automaticSDEncodeMap, automaticSDKeyMap });
   for (const [k, v] of Object.entries(other)) {
     const key = automaticSDEncodeMap.get(k) ?? k;
     fineDetails.push(`${key}: ${v}`);

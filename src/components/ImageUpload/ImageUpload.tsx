@@ -24,8 +24,6 @@ import {
   Popover,
   Textarea,
   NumberInput,
-  ScrollArea,
-  Divider,
   Grid,
   Select,
 } from '@mantine/core';
@@ -193,7 +191,9 @@ export function ImageUpload({
                               <ActionIcon
                                 variant="outline"
                                 color={
-                                  image.meta && Object.keys(image.meta).length ? 'green' : undefined
+                                  image.meta && Object.keys(image.meta).length
+                                    ? 'primary'
+                                    : undefined
                                 }
                               >
                                 <IconPencil />
@@ -302,70 +302,68 @@ function ImageMetaPopover({
     <Popover opened={opened} onClose={handleClose} withArrow withinPortal width={400}>
       <Popover.Target>{cloneElement(children, { onClick: handleClose })}</Popover.Target>
       <Popover.Dropdown>
-        <Stack spacing="sm">
-          <Title order={4}>Image Meta</Title>
-          <Grid>
-            <Grid.Col span={12}>
-              <Textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                label="Prompt"
-                autosize
-                maxRows={3}
-              />
-            </Grid.Col>
-            <Grid.Col span={12}>
-              <Textarea
-                value={negativePrompt}
-                onChange={(e) => setNegativePrompt(e.target.value)}
-                label="Negative prompt"
-                autosize
-                maxRows={3}
-              />
-            </Grid.Col>
-            <Grid.Col span={6}>
-              <NumberInput
-                value={cfgScale}
-                onChange={(number) => setCfgScale(number)}
-                label="Guidance scale"
-                min={0}
-                max={30}
-              />
-            </Grid.Col>
-            <Grid.Col span={6}>
-              <NumberInput value={steps} onChange={(value) => setSteps(value)} label="Steps" />
-            </Grid.Col>
-            <Grid.Col span={6}>
-              <Select
-                clearable
-                searchable
-                data={[
-                  'Euler a',
-                  'Euler',
-                  'LMS',
-                  'Heun',
-                  'DPM2',
-                  'DPM2 a',
-                  'DPM fast',
-                  'DPM adaptive',
-                  'LMS Karras',
-                  'DPM2 Karras',
-                  'DPM2 a Karras',
-                  'DDIM',
-                  'PLMS',
-                ]}
-                value={sampler}
-                onChange={(value) => setSampler(value ?? undefined)}
-                label="Sampler"
-              />
-            </Grid.Col>
-            <Grid.Col span={6}>
-              <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
-            </Grid.Col>
-          </Grid>
-        </Stack>
+        <Title order={4}>Generation details</Title>
+        <Grid gutter="xs">
+          <Grid.Col span={12}>
+            <Textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              label="Prompt"
+              autosize
+              maxRows={3}
+            />
+          </Grid.Col>
+          <Grid.Col span={12}>
+            <Textarea
+              value={negativePrompt}
+              onChange={(e) => setNegativePrompt(e.target.value)}
+              label="Negative prompt"
+              autosize
+              maxRows={3}
+            />
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <NumberInput
+              value={cfgScale}
+              onChange={(number) => setCfgScale(number)}
+              label="Guidance scale"
+              min={0}
+              max={30}
+            />
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <NumberInput value={steps} onChange={(value) => setSteps(value)} label="Steps" />
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <Select
+              clearable
+              searchable
+              data={[
+                'Euler a',
+                'Euler',
+                'LMS',
+                'Heun',
+                'DPM2',
+                'DPM2 a',
+                'DPM fast',
+                'DPM adaptive',
+                'LMS Karras',
+                'DPM2 Karras',
+                'DPM2 a Karras',
+                'DDIM',
+                'PLMS',
+              ]}
+              value={sampler}
+              onChange={(value) => setSampler(value ?? undefined)}
+              label="Sampler"
+            />
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
+          </Grid.Col>
+        </Grid>
         <Button mt="xs" fullWidth onClick={() => handleSubmit()}>
-          Submit
+          Save
         </Button>
       </Popover.Dropdown>
     </Popover>
@@ -401,6 +399,7 @@ const useStyles = createStyles((theme, _params, getRef) => ({
     ref: getRef('actionsGroup'),
     position: 'absolute',
     background: theme.fn.rgba(theme.colors.dark[9], 0.6),
+    borderBottomLeftRadius: theme.radius.sm,
     top: 0,
     right: 0,
   },

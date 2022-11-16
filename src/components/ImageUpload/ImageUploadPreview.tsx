@@ -16,8 +16,7 @@ type Props = {
 
 export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
   ({ image, children, isPrimary, disabled, id, ...props }, ref) => {
-    const url = image?.url.startsWith('http') ? `${image.url}/preview` : image?.url;
-    const { classes } = useStyles({ url, isPrimary });
+    const { classes } = useStyles({ isPrimary });
     const { classes: imageClasses } = useImageStyles();
 
     const sortable = useSortable({ id });
@@ -32,13 +31,19 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
 
     if (!image) return null;
     return (
-      <div
+      <Paper
         ref={setNodeRef}
         className={classes.root}
         {...props}
+        radius="sm"
         style={{ ...style, ...props.style }}
       >
-        <EdgeImage className={imageClasses.root} src={image?.url} height={isPrimary ? 410 : 200} />
+        <EdgeImage
+          className={imageClasses.root}
+          src={image?.url}
+          height={410}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: '50% 50%' }}
+        />
 
         <Center className={classes.draggable} {...listeners} {...attributes}>
           <Paper className={classes.draggableIcon} p="xl" radius={100}>
@@ -51,7 +56,7 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
           </Paper>
         </Center>
         {children}
-      </div>
+      </Paper>
     );
   }
 );
@@ -62,12 +67,10 @@ const useStyles = createStyles(
     theme,
     {
       // index,
-      url,
       faded,
       isPrimary,
     }: {
       // index: number;
-      url?: string;
       faded?: boolean;
       isPrimary?: boolean;
     }
@@ -79,7 +82,6 @@ const useStyles = createStyles(
       height: isPrimary ? 410 : 200,
       gridRowStart: isPrimary ? 'span 2' : undefined,
       gridColumnStart: isPrimary ? 'span 2' : undefined,
-      backgroundImage: `url("${url}")`,
       backgroundSize: 'cover',
       backgroundPosition: 'center',
       backgroundColor: 'grey',
