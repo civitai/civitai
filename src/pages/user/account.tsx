@@ -12,7 +12,7 @@ import {
 import { GetServerSideProps } from 'next';
 import { getProviders, signIn, useSession } from 'next-auth/react';
 import { BuiltInProviderType } from 'next-auth/providers';
-import React, { useEffect } from 'react';
+import React from 'react';
 
 import { SocialLabel } from '~/components/Social/SocialLabel';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';

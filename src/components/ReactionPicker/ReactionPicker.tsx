@@ -49,7 +49,13 @@ export function ReactionPicker({ reactions, disabled = false, onSelect }: Reacti
             </Button>
           </Popover.Target>
           <Popover.Dropdown p={4}>
-            <ReactionSelector />
+            {session ? (
+              <ReactionSelector />
+            ) : (
+              <Text color="dimmed" size="xs" px="xs">
+                You must be logged in to react
+              </Text>
+            )}
           </Popover.Dropdown>
         </Popover>
         {Object.entries(groupedReactions).map(([key, value], index) => (
@@ -74,6 +80,7 @@ function ReactionBadge({ reaction, reactions }: ReactionBadgeProps) {
     )
   );
   const reacted = reactions.findIndex((reaction) => reaction.user.name === user?.name) > -1;
+  const canClick = user && !disabled;
 
   return (
     <Tooltip label={tooltip} withArrow>
@@ -82,7 +89,7 @@ function ReactionBadge({ reaction, reactions }: ReactionBadgeProps) {
         radius="xl"
         variant="light"
         color={reacted ? 'blue' : 'gray'}
-        onClick={!disabled ? () => onEmojiClick(reaction) : undefined}
+        onClick={canClick ? () => onEmojiClick(reaction) : undefined}
         compact
       >
         <Group spacing={4} align="center">
@@ -100,7 +107,8 @@ type ReactionBadgeProps = {
 };
 
 function ReactionSelector() {
-  const { onEmojiClick, disabled } = useReactionPickerContext();
+  const { onEmojiClick, disabled, user } = useReactionPickerContext();
+  const canClick = user && !disabled;
 
   return (
     <Group spacing={4}>
@@ -110,7 +118,7 @@ function ReactionSelector() {
             size="xs"
             radius="sm"
             variant="subtle"
-            onClick={!disabled ? () => onEmojiClick(reaction as ReviewReactions) : undefined}
+            onClick={canClick ? () => onEmojiClick(reaction as ReviewReactions) : undefined}
           >
             {emoji}
           </Button>
