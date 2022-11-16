@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
-import { handleDbError } from '~/server/services/errorHandling';
+import { handleDbError } from '~/server/utils/errorHandling';
 import { protectedProcedure, router } from '~/server/trpc/trpc';
 
 export const accountRouter = router({

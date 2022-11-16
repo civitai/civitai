@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { getAllReviewsSelect } from '~/server/validators/reviews/getAllReviews';
 import { middleware, protectedProcedure, publicProcedure, router } from '../trpc';
-import { handleAuthorizationError, handleDbError } from '~/server/services/errorHandling';
+import { handleAuthorizationError, handleDbError } from '~/server/utils/errorHandling';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { reviewUpsertSchema } from '~/server/schema/review.schema';
 import { Prisma, ReportReason, ReviewReactions } from '@prisma/client';

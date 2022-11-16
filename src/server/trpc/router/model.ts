@@ -14,7 +14,7 @@ import {
   handleAuthorizationError,
   handleBadRequest,
   handleDbError,
-} from '~/server/services/errorHandling';
+} from '~/server/utils/errorHandling';
 import {
   getAllModelsSchema,
   getAllModelsSelect,

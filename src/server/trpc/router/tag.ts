@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { handleDbError } from '~/server/services/errorHandling';
+import { handleDbError } from '~/server/utils/errorHandling';
 import { publicProcedure, router } from '~/server/trpc/trpc';
 
 export const tagRouter = router({

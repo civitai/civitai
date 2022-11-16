@@ -1,7 +1,7 @@
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
-import { handleAuthorizationError, handleDbError } from '~/server/services/errorHandling';
+import { handleAuthorizationError, handleDbError } from '~/server/utils/errorHandling';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc/trpc';
 
 export const userRouter = router({
