@@ -4,8 +4,7 @@ import { GetByIdInput } from './../schema/base.schema';
 import { getModel, getModels } from './../services/model.service';
 import { Context } from '~/server/context';
 import { GetAllModelsInput } from './../schema/model.schema';
-import { getAllModelsSelect } from '~/server/validators/models/getAllModels';
-import { modelWithDetailsSelect } from '~/server/validators/models/getById';
+import { getAllModelsSelect, modelWithDetailsSelect } from '~/server/selectors/model.selector';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {

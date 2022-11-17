@@ -1,13 +1,13 @@
 import { z } from 'zod';
-import { getAllReviewsSelect } from '~/server/validators/reviews/getAllReviews';
+
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/router';
 import { handleAuthorizationError, handleDbError } from '~/server/utils/errorHandling';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { reviewUpsertSchema } from '~/server/schema/review.schema';
 import { Prisma, ReportReason, ReviewReactions } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { getReactionsSelect } from '~/server/validators/reviews/getReactions';
 import { prisma } from '~/server/db/client';
+import { getAllReviewsSelect, getReactionsSelect } from '~/server/selectors/review.selector';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
   if (!ctx?.user) throw new TRPCError({ code: 'UNAUTHORIZED' });

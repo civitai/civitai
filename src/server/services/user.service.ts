@@ -1,6 +1,6 @@
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from './../schema/base.schema';
-// TODO - discuss data requirements with Justin
+
 //https://github.com/civitai/civitai/discussions/8
 export const getUserModelStats = async ({ input: { id } }: { input: GetByIdInput }) => {
   const modelRanks = await prisma.modelRank.findMany({
