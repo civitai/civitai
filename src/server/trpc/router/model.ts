@@ -24,6 +24,7 @@ import {
 import { modelWithDetailsSelect } from '~/server/validators/models/getById';
 import { checkFileExists, getS3Client } from '~/utils/s3-utils';
 import { middleware, protectedProcedure, publicProcedure, router } from '../trpc';
+import { prisma } from '~/server/db/client';
 
 function prepareFiles(
   modelFile: z.infer<typeof modelVersionSchema>['modelFile'],
@@ -47,12 +48,12 @@ const unscannedFile = {
 };
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
-  if (!ctx.session || !ctx.session.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
 
   const { id } = input as { id: number };
-  const userId = ctx.session.user.id;
-  const isModerator = ctx.session?.user?.isModerator;
-  const ownerId = (await ctx.prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
+  const userId = ctx.user.id;
+  const isModerator = ctx.user?.isModerator;
+  const ownerId = (await prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
   if (!isModerator) {
     if (ownerId !== userId) throw handleAuthorizationError();
   }
@@ -60,7 +61,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   return next({
     ctx: {
       // infers the `session` as non-nullable
-      session: { ...ctx.session, user: ctx.session.user },
+      ...ctx,
       ownerId,
     },
   });
@@ -69,9 +70,8 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 export const modelRouter = router({
   getAll: publicProcedure.input(getAllModelsSchema).query(async ({ ctx, input = {} }) => {
     try {
-      const session = ctx.session;
       const { cursor, limit = 50 } = input;
-      input.showNsfw = session?.user?.showNsfw ?? true;
+      input.showNsfw = ctx?.user?.showNsfw ?? true;
 
       const orderBy: Prisma.Enumerable<Prisma.ModelOrderByWithRelationInput> = [
         { createdAt: 'desc' },
@@ -96,12 +96,12 @@ export const modelRouter = router({
       }
 
       const where: Prisma.ModelFindManyArgs['where'] = { ...getAllModelsWhere(input) };
-      if (!session?.user?.isModerator) {
+      if (!ctx?.user?.isModerator) {
         // Only show models that are ready to be used unless the user is the owner
-        where.OR = [{ status: ModelStatus.Published }, { user: { id: session?.user?.id } }];
+        where.OR = [{ status: ModelStatus.Published }, { user: { id: ctx?.user?.id } }];
       }
 
-      const items = await ctx.prisma.model.findMany({
+      const items = await prisma.model.findMany({
         take: limit + 1, // get an extra item at the end which we'll use as next cursor
         cursor: cursor ? { id: cursor } : undefined,
         where,
@@ -126,12 +126,13 @@ export const modelRouter = router({
       const { id } = input;
 
       const where: Prisma.ModelFindFirstArgs['where'] = { id };
-      if (!ctx.session?.user?.isModerator) {
+      if (!ctx?.user?.isModerator) {
         // Only show models that are ready to be used unless the user is the owner
-        where.OR = [{ status: ModelStatus.Published }, { user: { id: ctx.session?.user?.id } }];
+        //TODO - move this logic to the ssr portion of the page load
+        where.OR = [{ status: ModelStatus.Published }, { user: { id: ctx?.user?.id } }];
       }
 
-      const model = await ctx.prisma.model.findFirst({
+      const model = await prisma.model.findFirst({
         where,
         select: modelWithDetailsSelect,
       });
@@ -176,7 +177,7 @@ export const modelRouter = router({
   getVersions: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     try {
       const { id } = input;
-      const modelVersions = await ctx.prisma.modelVersion.findMany({
+      const modelVersions = await prisma.modelVersion.findMany({
         where: { modelId: id },
         select: { id: true, name: true },
       });
@@ -187,7 +188,7 @@ export const modelRouter = router({
     }
   }),
   add: protectedProcedure.input(modelSchema).mutation(async ({ ctx, input }) => {
-    const userId = ctx.session.user.id;
+    const userId = ctx.user.id;
     const { modelVersions, tagsOnModels, ...data } = input;
 
     // TODO DRY: This is used in add and update
@@ -217,7 +218,7 @@ export const modelRouter = router({
     //    All of the logic would be in the separate functions
 
     try {
-      const createdModels = await ctx.prisma.model.create({
+      const createdModels = await prisma.model.create({
         data: {
           ...data,
           userId,
@@ -301,7 +302,7 @@ export const modelRouter = router({
 
       try {
         // Get current versions for file and version comparison
-        const currentVersions = await ctx.prisma.modelVersion.findMany({
+        const currentVersions = await prisma.modelVersion.findMany({
           where: { modelId: id },
           select: { id: true, files: { select: { type: true, url: true } } },
         });
@@ -310,7 +311,7 @@ export const modelRouter = router({
           .filter((version) => !versionIds.includes(version.id))
           .map(({ id }) => id);
 
-        const model = await ctx.prisma.$transaction(async (tx) => {
+        const model = await prisma.$transaction(async (tx) => {
           const imagesToUpdate = modelVersions.flatMap((x) => x.images).filter((x) => !!x.id);
           await Promise.all(
             imagesToUpdate.map(async (image) =>
@@ -325,7 +326,7 @@ export const modelRouter = router({
           );
 
           // TODO Model Status: Allow them to save as draft and publish/unpublish
-          return await ctx.prisma.model.update({
+          return await prisma.model.update({
             where: { id },
             data: {
               ...data,
@@ -464,7 +465,7 @@ export const modelRouter = router({
     .mutation(async ({ ctx, input }) => {
       try {
         const { id } = input;
-        const model = await ctx.prisma.model.delete({ where: { id } });
+        const model = await prisma.model.delete({ where: { id } });
 
         if (!model) {
           return handleDbError({
@@ -485,16 +486,16 @@ export const modelRouter = router({
         reason === ReportReason.NSFW ? { nsfw: true } : { tosViolation: true };
 
       try {
-        await ctx.prisma.$transaction([
-          ctx.prisma.model.update({
+        await prisma.$transaction([
+          prisma.model.update({
             where: { id },
             data,
           }),
-          ctx.prisma.modelReport.create({
+          prisma.modelReport.create({
             data: {
               modelId: id,
               reason,
-              userId: ctx.session.user.id,
+              userId: ctx.user.id,
             },
           }),
         ]);
@@ -511,7 +512,7 @@ export const modelRouter = router({
     .mutation(async ({ ctx, input }) => {
       const { id } = input;
 
-      const model = await ctx.prisma.model.update({
+      const model = await prisma.model.update({
         where: { id },
         data: { status: ModelStatus.Unpublished },
       });

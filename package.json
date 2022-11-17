@@ -55,6 +55,7 @@
     "@trpc/server": "^10.0.0-rc.7",
     "@types/marked": "^4.0.7",
     "arraybuffer-to-buffer": "^0.0.7",
+    "babel-plugin-superjson-next": "^0.4.4",
     "blurhash": "^2.0.4",
     "cookies-next": "^2.1.1",
     "cron-parser": "^4.6.0",

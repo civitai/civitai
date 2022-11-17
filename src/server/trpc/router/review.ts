@@ -7,14 +7,15 @@ import { reviewUpsertSchema } from '~/server/schema/review.schema';
 import { Prisma, ReportReason, ReviewReactions } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { getReactionsSelect } from '~/server/validators/reviews/getReactions';
+import { prisma } from '~/server/db/client';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
-  if (!ctx.session || !ctx.session.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  if (!ctx?.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
 
   const { id } = input as { id: number };
-  const userId = ctx.session.user.id;
-  const isModerator = ctx.session?.user?.isModerator;
-  const ownerId = (await ctx.prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
+  const userId = ctx.user.id;
+  const isModerator = ctx.user?.isModerator;
+  const ownerId = (await prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
   if (!isModerator && ownerId) {
     if (ownerId !== userId) throw handleAuthorizationError();
   }
@@ -22,7 +23,8 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
   return next({
     ctx: {
       // infers the `session` as non-nullable
-      session: { ...ctx.session, user: ctx.session.user },
+      ...ctx,
+      user: ctx.user,
       ownerId,
     },
   });
@@ -46,7 +48,7 @@ export const reviewRouter = router({
     .query(async ({ ctx, input = {} }) => {
       const { cursor, limit = 20, modelId, modelVersionId, userId, sort, filterBy = [] } = input;
       const commonWhere = { modelId, modelVersionId, userId };
-      const showNsfw = ctx.session?.user?.showNsfw ?? true;
+      const showNsfw = ctx?.user?.showNsfw ?? true;
       let orderBy: Prisma.ReviewFindManyArgs['orderBy'] = { createdAt: 'desc' };
 
       switch (sort) {
@@ -59,7 +61,7 @@ export const reviewRouter = router({
           break;
       }
 
-      const reviews = await ctx.prisma.review.findMany({
+      const reviews = await prisma.review.findMany({
         take: limit + 1, // get an extra item at the end which we'll use as next cursor
         cursor: cursor ? { id: cursor } : undefined,
         where: {
@@ -91,7 +93,7 @@ export const reviewRouter = router({
     .input(z.object({ reviewId: z.number() }))
     .query(async ({ ctx, input }) => {
       const { reviewId } = input;
-      const reactions = await ctx.prisma.reviewReaction.findMany({
+      const reactions = await prisma.reviewReaction.findMany({
         where: { reviewId },
         select: getReactionsSelect,
       });
@@ -115,7 +117,7 @@ export const reviewRouter = router({
       const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
       const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
 
-      return await ctx.prisma.$transaction(async (tx) => {
+      return await prisma.$transaction(async (tx) => {
         await Promise.all(
           // extract index because index is not a part of the prisma schema for this model
           imagesToUpdate.map(async ({ index, ...image }) =>
@@ -129,7 +131,7 @@ export const reviewRouter = router({
           )
         );
 
-        return await ctx.prisma.review.upsert({
+        return await prisma.review.upsert({
           where: { id: id ?? -1 },
           create: {
             ...reviewInput,
@@ -175,8 +177,8 @@ export const reviewRouter = router({
     .mutation(async ({ ctx, input }) => {
       const { id } = input;
 
-      const deleted = await ctx.prisma.review.deleteMany({
-        where: { AND: { id, userId: ctx.session.user.id } },
+      const deleted = await prisma.review.deleteMany({
+        where: { AND: { id, userId: ctx.user.id } },
       });
 
       if (!deleted) {
@@ -195,16 +197,16 @@ export const reviewRouter = router({
         reason === ReportReason.NSFW ? { nsfw: true } : { tosViolation: true };
 
       try {
-        await ctx.prisma.$transaction([
-          ctx.prisma.review.update({
+        await prisma.$transaction([
+          prisma.review.update({
             where: { id },
             data,
           }),
-          ctx.prisma.reviewReport.create({
+          prisma.reviewReport.create({
             data: {
               reviewId: id,
               reason,
-              userId: ctx.session.user.id,
+              userId: ctx.user.id,
             },
           }),
         ]);
@@ -218,15 +220,15 @@ export const reviewRouter = router({
   toggleReaction: protectedProcedure
     .input(z.object({ id: z.number(), reaction: z.nativeEnum(ReviewReactions) }))
     .mutation(async ({ ctx, input }) => {
-      const { user } = ctx.session;
+      const { user } = ctx;
       const { id, reaction } = input;
 
-      const reviewReaction = await ctx.prisma.reviewReaction.findFirst({
+      const reviewReaction = await prisma.reviewReaction.findFirst({
         where: { reaction, userId: user.id, reviewId: id },
       });
 
       try {
-        const review = await ctx.prisma.review.update({
+        const review = await prisma.review.update({
           where: { id },
           data: {
             reactions: {

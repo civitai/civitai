@@ -13,7 +13,7 @@ export default createNextApiHandler({
   createContext,
   responseMeta: ({ ctx, type }) => {
     // only public GET requests are cacheable
-    const cacheable = !ctx?.session && type === 'query';
+    const cacheable = !ctx?.user && type === 'query';
     if (cacheable) {
       return {
         headers: {

@@ -1,12 +1,12 @@
 // src/server/router/context.ts
 import type { inferAsyncReturnType } from '@trpc/server';
 import type { CreateNextContextOptions } from '@trpc/server/adapters/next';
-import type { Session } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { getServerAuthSession } from '../common/get-server-auth-session';
-import { prisma } from '../db/client';
+import { prisma } from '~/server/db/client';
 
 type CreateContextOptions = {
-  session: Session | null;
+  user?: SessionUser;
 };
 
 /** Use this helper for:
@@ -14,7 +14,7 @@ type CreateContextOptions = {
  * - trpc's `createSSGHelpers` where we don't have req/res
  **/
 export const createContextInner = async (opts: CreateContextOptions) => ({
-  session: opts.session,
+  user: opts.user,
   prisma,
 });
 
@@ -28,9 +28,12 @@ export const createContext = async (opts: CreateNextContextOptions) => {
   // Get the session from the server using the unstable_getServerSession wrapper function
   const session = await getServerAuthSession({ req, res });
 
-  return createContextInner({
-    session,
-  });
+  // return createContextInner({
+  //   user: session?.user,
+  // });
+  return {
+    user: session?.user,
+  };
 };
 
 export type Context = inferAsyncReturnType<typeof createContext>;

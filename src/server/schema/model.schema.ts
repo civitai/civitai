@@ -13,8 +13,7 @@ export const getAllModelsSchema = z
     types: z.nativeEnum(ModelType).array(),
     sort: z.nativeEnum(ModelSort),
     period: z.nativeEnum(MetricTimeframe),
-    showNsfw: z.boolean(),
   })
   .partial();
 
-export type GetAllModelsArgs = z.infer<typeof getAllModelsSchema>;
+export type GetAllModelsInput = z.infer<typeof getAllModelsSchema>;

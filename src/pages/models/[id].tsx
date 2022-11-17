@@ -41,8 +41,8 @@ import {
 } from '@tabler/icons';
 import { createProxySSGHelpers } from '@trpc/react-query/ssg';
 import startCase from 'lodash/startCase';
-import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
-import { useSession } from 'next-auth/react';
+import { GetServerSideProps, InferGetServerSidePropsType, NextPage } from 'next';
+import { getSession, useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
@@ -78,11 +78,20 @@ import { isNumber } from '~/utils/type-guards';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getModelHandler } from '~/server/controllers/model.controller';
+import { getServerAuthSession } from '~/server/common/get-server-auth-session';
+import { prisma } from '~/server/db/client';
+import { unstable_getServerSession } from 'next-auth';
+
+type PageProps = {
+  id: number;
+};
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
+  const session = await getServerAuthSession(context);
   const ssg = createProxySSGHelpers({
     router: appRouter,
-    ctx: await createContextInner({ session: null }),
+    ctx: await createContextInner({ user: session?.user }),
     transformer: superjson,
   });
   const id = Number(context.params?.id as string);
@@ -110,7 +119,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export default function ModelDetail(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
+export default function ModelDetail(props: PageProps) {
   const theme = useMantineTheme();
   const router = useRouter();
   const { data: session } = useSession();

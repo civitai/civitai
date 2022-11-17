@@ -103,7 +103,7 @@ export function ModelForm({ model }: Props) {
 
   const handleSubmit = (values: z.infer<typeof schema>) => {
     const commonOptions = {
-      async onSuccess(results: void | Model) {
+      async onSuccess(results: void | Model, input: { id?: number }) {
         const response = results as Model;
 
         showNotification({
@@ -116,7 +116,8 @@ export function ModelForm({ model }: Props) {
         await queryUtils.tag.invalidate();
         router.push(
           { pathname: `/models/${response.id}`, query: { showNsfw: true } },
-          `/models/${response.id}`
+          `/models/${response.id}`,
+          { shallow: !!input.id }
         );
       },
       onError(error: TRPCClientErrorBase<DefaultErrorShape>) {
