@@ -1,6 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getGetUrl } from '~/utils/s3-utils';
-import { getServerAuthSession } from '~/server/common/get-server-auth-session';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 
 export default async function downloadTrainingData(req: NextApiRequest, res: NextApiResponse) {
   const keyParts = req.query.key as string[];

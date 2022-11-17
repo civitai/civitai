@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { getServerAuthSession } from '~/server/common/get-server-auth-session';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { prisma } from '~/server/db/client';
 import { z } from 'zod';
 import { processImport } from '~/server/importers/importRouter';

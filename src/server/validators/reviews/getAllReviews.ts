@@ -1,4 +1,4 @@
-import { imageSelect } from './../image/selectors';
+import { imageSelect } from '../../selectors/selectors';
 import { Prisma } from '@prisma/client';
 import { simpleUserSelect } from '~/server/validators/user/simpleUserSelect';
 

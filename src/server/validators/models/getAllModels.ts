@@ -1,6 +1,6 @@
 import { MetricTimeframe, ModelType, Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { imageSelect } from '../image/selectors';
+import { imageSelect } from '../../selectors/selectors';
 import { ModelSort } from '~/server/common/enums';
 
 // const timeframeDaysMap: Record<MetricTimeframe, number> = {

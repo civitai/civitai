@@ -202,6 +202,7 @@ export default function ModelDetail(props: PageProps) {
   );
   const isModerator = session?.user?.isModerator ?? false;
   const isOwner = model?.user.id === session?.user?.id || isModerator;
+  console.log(model?.user);
 
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {

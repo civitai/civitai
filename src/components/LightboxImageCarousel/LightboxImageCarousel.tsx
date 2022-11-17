@@ -15,7 +15,7 @@ import { useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { ImageModel } from '~/server/validators/image/selectors';
+import { ImageModel } from '~/server/selectors/selectors';
 
 type Props = {
   initialSlide?: number;

@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { ModelFileType } from '@prisma/client';
 import { GetByIdInput } from './../schema/base.schema';
 import { getModel, getModels } from './../services/model.service';
@@ -5,13 +6,12 @@ import { Context } from '~/server/context';
 import { GetAllModelsInput } from './../schema/model.schema';
 import { getAllModelsSelect } from '~/server/validators/models/getAllModels';
 import { modelWithDetailsSelect } from '~/server/validators/models/getById';
-import { handleDbError } from '~/server/utils/errorHandling';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   const model = await getModel({ input, user: ctx.user, select: modelWithDetailsSelect });
   if (!model) {
-    handleDbError({
+    throw new TRPCError({
       code: 'NOT_FOUND',
       message: `No model with id ${input.id}`,
     });
@@ -19,7 +19,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
 
   return {
     ...model,
-    modelVersions: model?.modelVersions.map(({ files, ...version }) => ({
+    modelVersions: model.modelVersions.map(({ files, ...version }) => ({
       ...version,
       trainingDataFile: files.find((file) => file.type === ModelFileType.TrainingData),
       modelFile: files.find((file) => file.type === ModelFileType.Model),

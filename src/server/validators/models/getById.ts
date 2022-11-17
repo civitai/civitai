@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { imageSelect } from '~/server/validators/image/selectors';
+import { imageSelect } from '~/server/selectors/selectors';
 
 export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
