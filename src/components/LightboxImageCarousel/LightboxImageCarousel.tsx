@@ -2,21 +2,16 @@ import { Carousel, Embla } from '@mantine/carousel';
 import {
   Box,
   CloseButton,
-  Text,
-  Code,
   Stack,
   Paper,
-  Title,
-  Group,
   ActionIcon,
   createStyles,
-  Popover,
   MantineProvider,
 } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { ContextModalProps } from '@mantine/modals';
-import { IconInfoCircle, IconMinus, IconPlus, IconX } from '@tabler/icons';
-import { useEffect, useState } from 'react';
+import { IconInfoCircle, IconMinus } from '@tabler/icons';
+import { useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
 import { ImageMetaProps } from '~/server/validators/image/schemas';
@@ -33,15 +28,16 @@ export default function LightboxImageCarousel({
   innerProps,
 }: ContextModalProps<Props>) {
   const { initialSlide, images = [] } = innerProps;
-  const [embla, setEmbla] = useState<Embla | null>(null);
   const [show, setShow] = useState(false);
   const [index, setIndex] = useState(initialSlide ?? 0);
+
+  const emblaRef = useRef<Embla | null>(null);
 
   const { classes, cx } = useStyles();
 
   useHotkeys([
-    ['ArrowLeft', () => embla?.scrollPrev()],
-    ['ArrowRight', () => embla?.scrollNext()],
+    ['ArrowLeft', () => emblaRef.current?.scrollPrev()],
+    ['ArrowRight', () => emblaRef.current?.scrollNext()],
   ]);
 
   return (
@@ -70,7 +66,10 @@ export default function LightboxImageCarousel({
           withIndicators
           loop
           onSlideChange={(index) => setIndex(index)}
-          getEmblaApi={setEmbla}
+          withKeyboardEvents={false}
+          getEmblaApi={(embla) => {
+            emblaRef.current = embla;
+          }}
           styles={{
             control: {
               zIndex: 100,
