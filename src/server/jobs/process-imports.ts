@@ -13,7 +13,7 @@ export const processImportsJob = createJob(
     const importJobs = await prisma.import.findMany({
       where: {
         status: ImportStatus.Pending,
-        createdAt: dayjs().add(-30, 'M').toDate(),
+        createdAt: dayjs().add(-30, 'minutes').toDate(),
       },
     });
 
