@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { middleware, protectedProcedure, publicProcedure, router } from '~/server/router';
+import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { handleAuthorizationError, handleDbError } from '~/server/utils/errorHandling';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { reviewUpsertSchema } from '~/server/schema/review.schema';

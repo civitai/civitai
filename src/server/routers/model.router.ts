@@ -15,7 +15,7 @@ import {
   handleDbError,
 } from '~/server/utils/errorHandling';
 import { checkFileExists, getS3Client } from '~/utils/s3-utils';
-import { middleware, protectedProcedure, publicProcedure, router } from '~/server/router';
+import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { prisma } from '~/server/db/client';
 import { getModelHandler } from '../controllers/model.controller';
 import { getAllModelsSchema } from '../schema/model.schema';
