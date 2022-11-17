@@ -1,7 +1,7 @@
 import { ModelFileType } from '@prisma/client';
 import { GetByIdInput } from './../schema/base.schema';
 import { getModel, getModels } from './../services/model.service';
-import { Context } from '~/server/createContext';
+import { Context } from '~/server/context';
 import { GetAllModelsInput } from './../schema/model.schema';
 import { getAllModelsSelect } from '~/server/validators/models/getAllModels';
 import { modelWithDetailsSelect } from '~/server/validators/models/getById';

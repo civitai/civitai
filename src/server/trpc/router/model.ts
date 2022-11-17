@@ -23,7 +23,7 @@ import {
 } from '~/server/validators/models/getAllModels';
 import { modelWithDetailsSelect } from '~/server/validators/models/getById';
 import { checkFileExists, getS3Client } from '~/utils/s3-utils';
-import { middleware, protectedProcedure, publicProcedure, router } from '../trpc';
+import { middleware, protectedProcedure, publicProcedure, router } from '~/server/router';
 import { prisma } from '~/server/db/client';
 
 function prepareFiles(

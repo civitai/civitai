@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { handleDbError } from '~/server/utils/errorHandling';
-import { publicProcedure, router } from '~/server/trpc/trpc';
+import { publicProcedure, router } from '~/server/router';
 import { prisma } from '~/server/db/client';
 
 export const tagRouter = router({

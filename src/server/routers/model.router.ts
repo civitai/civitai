@@ -1,6 +1,6 @@
 import { getModelHandler } from './../controllers/model.controller';
 import { getAllModelsSchema } from './../schema/model.schema';
-import { publicProcedure, router } from '~/server/createRouter';
+import { publicProcedure, router } from '~/server/router';
 import { getModelsHandler } from '~/server/controllers/model.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 

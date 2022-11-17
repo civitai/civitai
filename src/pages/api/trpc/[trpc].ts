@@ -1,7 +1,7 @@
 // src/pages/api/trpc/[trpc].ts
 import { createNextApiHandler } from '@trpc/server/adapters/next';
 import { env } from '~/env/server.mjs';
-import { createContext } from '~/server/trpc/context';
+import { createContext } from '~/server/context';
 import { appRouter } from '~/server/trpc/router';
 
 const PUBLIC_CACHE_MAX_AGE = 60;

@@ -10,8 +10,6 @@ export const createContext = async ({
 }) => {
   const session = await getServerAuthSession({ req, res });
   return {
-    req,
-    res,
     user: session?.user,
   };
 };
