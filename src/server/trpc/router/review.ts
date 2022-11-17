@@ -14,10 +14,13 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
 
   const { id } = input as { id: number };
   const userId = ctx.user.id;
-  const isModerator = ctx.user?.isModerator;
-  const ownerId = (await prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
-  if (!isModerator && ownerId) {
-    if (ownerId !== userId) throw handleAuthorizationError();
+  let ownerId: number = userId;
+  if (id) {
+    const isModerator = ctx?.user?.isModerator;
+    ownerId = (await prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
+    if (!isModerator && ownerId) {
+      if (ownerId !== userId) throw handleAuthorizationError();
+    }
   }
 
   return next({

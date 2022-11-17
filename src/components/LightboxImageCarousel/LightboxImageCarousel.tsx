@@ -2,22 +2,18 @@ import { Carousel, Embla } from '@mantine/carousel';
 import {
   Box,
   CloseButton,
-  Text,
-  Code,
   Stack,
   Paper,
-  Title,
-  Group,
   ActionIcon,
   createStyles,
-  Popover,
+  MantineProvider,
 } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { ContextModalProps } from '@mantine/modals';
-import { IconInfoCircle, IconMinus, IconPlus, IconX } from '@tabler/icons';
-import { useEffect, useState } from 'react';
+import { IconInfoCircle, IconMinus } from '@tabler/icons';
+import { useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { ImageMeta, ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageModel } from '~/server/validators/image/selectors';
 
@@ -32,35 +28,20 @@ export default function LightboxImageCarousel({
   innerProps,
 }: ContextModalProps<Props>) {
   const { initialSlide, images = [] } = innerProps;
-  const [embla, setEmbla] = useState<Embla | null>(null);
-  const [show, setShow] = useState(true);
+  const [show, setShow] = useState(false);
   const [index, setIndex] = useState(initialSlide ?? 0);
+
+  const emblaRef = useRef<Embla | null>(null);
 
   const { classes, cx } = useStyles();
 
-  const handlePrev = () => {
-    setIndex((prev) => {
-      const index = prev - 1;
-      return index === -1 ? images.length - 1 : index;
-    });
-  };
-
-  const handleNext = () => {
-    setIndex((prev) => {
-      const index = prev + 1;
-      return index === images.length ? 0 : index;
-    });
-  };
-
   useHotkeys([
-    ['ArrowLeft', () => embla?.scrollPrev()],
-    ['ArrowRight', () => embla?.scrollNext()],
+    ['ArrowLeft', () => emblaRef.current?.scrollPrev()],
+    ['ArrowRight', () => emblaRef.current?.scrollNext()],
   ]);
 
-  useEffect(() => console.log({ show }), [show]);
-
   return (
-    <>
+    <MantineProvider theme={{ colorScheme: 'dark' }}>
       <CloseButton
         style={{ position: 'absolute', top: 15, right: 15, zIndex: 100 }}
         size="lg"
@@ -84,9 +65,11 @@ export default function LightboxImageCarousel({
           initialSlide={initialSlide}
           withIndicators
           loop
-          onPreviousSlide={handlePrev}
-          onNextSlide={handleNext}
-          getEmblaApi={setEmbla}
+          onSlideChange={(index) => setIndex(index)}
+          withKeyboardEvents={false}
+          getEmblaApi={(embla) => {
+            emblaRef.current = embla;
+          }}
           styles={{
             control: {
               zIndex: 100,
@@ -118,45 +101,12 @@ export default function LightboxImageCarousel({
                   width={image.width ?? 1200}
                 />
               </div>
-              {/* {image.meta && (
-                <Box
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    top: 0,
-                    width: '350px',
-                    maxWidth: '100%',
-                  }}
-                  sx={(theme) => ({
-                    background: theme.fn.rgba(theme.black, 0.65),
-                  })}
-                  p="md"
-                >
-                  <Stack>
-                    <Title order={4}>Metadata</Title>
-                    <ImageMeta meta={image.meta as ImageMetaProps} />
-                  </Stack>
-                </Box>
-              )} */}
             </Carousel.Slide>
           ))}
         </Carousel>
-        {/* {images[index]?.meta && (
-          <ImageMetaPopover meta={images[index].meta as ImageMetaProps}>
-            <ActionIcon
-              style={{ position: 'absolute', top: 15, left: 15, zIndex: 100 }}
-              size="lg"
-              variant="default"
-            >
-              <IconInfoCircle />
-            </ActionIcon>
-          </ImageMetaPopover>
-        )} */}
         {images[index]?.meta && (
           <Paper className={cx(classes.meta, { [classes.metaActive]: show })} p="md" withBorder>
             <Stack>
-              <Title order={4}>Metadata</Title>
-
               <ActionIcon
                 onClick={() => setShow((v) => !v)}
                 className={cx(classes.metaButton, { [classes.metaActive]: show })}
@@ -170,7 +120,7 @@ export default function LightboxImageCarousel({
           </Paper>
         )}
       </Box>
-    </>
+    </MantineProvider>
   );
 }
 

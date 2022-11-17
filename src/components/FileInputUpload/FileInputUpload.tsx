@@ -3,23 +3,26 @@ import { IconUpload, IconCircleCheck, IconBan } from '@tabler/icons';
 import { useMemo, useState } from 'react';
 import { useS3Upload } from '~/hooks/useS3Upload';
 import useIsClient from '~/hooks/useIsClient';
-import { UploadType, UploadTypeUnion } from '~/server/common/enums';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { getFileExtension } from '~/utils/string-helpers';
 import { toStringList } from '~/utils/array-helpers';
 import { useDidUpdate } from '@mantine/hooks';
+import { FileProps } from '~/server/common/validation/model';
+import isEqual from 'lodash/isEqual';
+import { ModelFileType } from '@prisma/client';
+import { bytesToKB } from '~/utils/number-helpers';
 
-//TODO File Safety: Limit to the specific file extensions we want to allow
 export function FileInputUpload({
-  uploadType = 'default',
+  uploadType = 'Model',
   onChange,
   onLoading,
   value,
-  // fileName = decodeURIComponent(value?.split('/').pop() ?? ''),
+  error,
+  fileName = value?.name,
   ...props
 }: Props) {
   const isClient = useIsClient();
-  const [state, setState] = useState<string | null>(value ?? null);
+  const [state, setState] = useState<FileProps | undefined>(value);
   const { files, uploadToS3, resetFiles } = useS3Upload();
   const { file, progress, speed, timeRemaining, status, abort } = files[0] ?? {
     file: null,
@@ -31,10 +34,9 @@ export function FileInputUpload({
 
   const [fileTypeError, setFileTypeError] = useState('');
 
-  const fileName = decodeURIComponent(state?.split('/').pop() ?? '');
-
   useDidUpdate(() => {
-    if (value !== state) setState(value ?? null);
+    const shouldUpdate = !isEqual(value, state);
+    if (shouldUpdate) setState(value);
   }, [value]);
 
   const handleOnChange: FileInputProps['onChange'] = async (file) => {
@@ -51,18 +53,27 @@ export function FileInputUpload({
         acceptTypes.includes(fileExt) // Check with file extension
       ) {
         onLoading?.(true);
-        const uploaded = await uploadToS3(file, uploadType);
+        const uploaded = await uploadToS3(
+          file,
+          uploadType === 'Model' ? 'model' : 'training-images'
+        );
         url = uploaded.url;
         onLoading?.(false);
-        setState(url);
-        onChange?.(url, file);
+        const value: FileProps = {
+          sizeKB: file.size ? bytesToKB(file.size) : 0,
+          type: uploadType,
+          url,
+          name: file.name,
+        };
+        setState(value);
+        onChange?.(value);
       } else {
         setFileTypeError(`This input only accepts ${toStringList(acceptTypes)} files`);
-        setState(null);
+        setState(undefined);
       }
     } else {
       resetFiles();
-      setState(null);
+      setState(undefined);
     }
   };
 
@@ -75,8 +86,8 @@ export function FileInputUpload({
   return (
     <Stack>
       <FileInput
-        error={fileTypeError}
         {...props}
+        error={error ?? fileTypeError}
         icon={<IconUpload size={16} />}
         onChange={handleOnChange}
         value={file ?? localFile}
@@ -127,9 +138,9 @@ export function FileInputUpload({
 }
 
 type Props = Omit<FileInputProps, 'icon' | 'onChange' | 'value'> & {
-  value?: string;
-  onChange?: (url: string | null, file: File | null) => void;
+  value?: FileProps;
+  onChange?: (value?: FileProps) => void;
   onLoading?: (loading: boolean) => void;
-  uploadType?: UploadType | UploadTypeUnion;
+  uploadType?: ModelFileType;
   fileName?: string;
 };

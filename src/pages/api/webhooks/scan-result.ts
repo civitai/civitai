@@ -73,12 +73,14 @@ export default WebhookEndpoint(async (req, res) => {
 });
 
 enum ScanExitCode {
+  Pending = -1,
   Success = 0,
   Danger = 1,
   Error = 2,
 }
 
 const resultCodeMap = {
+  [ScanExitCode.Pending]: ScanResultCode.Pending,
   [ScanExitCode.Success]: ScanResultCode.Success,
   [ScanExitCode.Danger]: ScanResultCode.Danger,
   [ScanExitCode.Error]: ScanResultCode.Error,
@@ -88,9 +90,9 @@ type ScanResult = {
   url: string;
   fileExists: number;
   picklescanExitCode: ScanExitCode;
-  picklescanOutput: string;
-  picklescanGlobalImports: string[];
-  picklescanDangerousImports: string[];
+  picklescanOutput?: string;
+  picklescanGlobalImports?: string[];
+  picklescanDangerousImports?: string[];
   clamscanExitCode: ScanExitCode;
   clamscanOutput: string;
 };
@@ -109,11 +111,17 @@ function processImport(importStr: string) {
 const specialImports: string[] = ['pytorch_lightning.callbacks.model_checkpoint.ModelCheckpoint'];
 
 function examinePickleScanMessage({
+  picklescanExitCode,
   picklescanDangerousImports,
   picklescanGlobalImports,
 }: ScanResult) {
-  const importCount = picklescanDangerousImports.length + picklescanGlobalImports.length;
-  if (importCount === 0)
+  if (picklescanExitCode === ScanExitCode.Pending) return {};
+  picklescanDangerousImports ??= [];
+  picklescanGlobalImports ??= [];
+
+  const importCount =
+    (picklescanDangerousImports?.length ?? 0) + (picklescanGlobalImports?.length ?? 0);
+  if (importCount === 0 || (!picklescanDangerousImports && !picklescanGlobalImports))
     return {
       pickleScanMessage: 'No Pickle imports',
       hasDanger: false,

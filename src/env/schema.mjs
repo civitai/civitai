@@ -36,6 +36,7 @@ export const serverSchema = z.object({
   JOB_TOKEN: z.string(),
   WEBHOOK_TOKEN: z.string(),
   SCANNING_ENDPOINT: z.string(),
+  SCANNING_TOKEN: z.string(),
 });
 
 /**

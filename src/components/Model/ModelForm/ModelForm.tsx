@@ -34,7 +34,6 @@ import {
 import { modelSchema } from '~/server/common/validation/model';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ModelById } from '~/types/router';
-import { bytesToKB } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -76,7 +75,7 @@ export function ModelForm({ model }: Props) {
     modelVersions: model?.modelVersions.map(({ trainedWords, images, ...version }) => ({
       ...version,
       trainedWords: trainedWords ?? [],
-      // Casting image.meta to hotfix type issue with generated prisma schema
+      // HOTFIX: Casting image.meta type issue with generated prisma schema
       images: images.map(({ image }) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
     })) ?? [defaultModelVersion],
   };
@@ -132,12 +131,8 @@ export function ModelForm({ model }: Props) {
       },
     };
 
-    const data = {
+    const data: CreateModelProps | UpdateModelProps = {
       ...values,
-      modelVersions: values.modelVersions.map(({ trainingDataFile, ...version }) => ({
-        ...version,
-        trainingDataFile: trainingDataFile?.url ? null : trainingDataFile,
-      })),
       tagsOnModels: values.tagsOnModels?.map((name) => {
         const match = tags.find((x) => x.name === name);
         return match ?? { name };
@@ -254,54 +249,26 @@ export function ModelForm({ model }: Props) {
                             </Grid.Col>
                             <Grid.Col span={12}>
                               <InputFileUpload
-                                name={`modelVersions.${index}.modelFile.url`}
+                                name={`modelVersions.${index}.modelFile`}
                                 label="Model File"
                                 placeholder="Pick your model"
-                                uploadType="model"
+                                uploadType="Model"
                                 accept=".ckpt,.pt"
                                 onLoading={setUploading}
-                                onChange={(url, file) => {
-                                  if (file) {
-                                    form.setValue(
-                                      `modelVersions.${index}.modelFile.sizeKB`,
-                                      file.size ? bytesToKB(file.size) : 0
-                                    );
-                                    form.setValue(
-                                      `modelVersions.${index}.modelFile.name`,
-                                      file.name
-                                    );
-                                  }
-                                }}
                                 withAsterisk
                               />
                             </Grid.Col>
-                            {/* <Grid.Col span={12}>
+                            <Grid.Col span={12}>
                               <InputFileUpload
-                                name={`modelVersions.${index}.trainingDataFile.url`}
+                                name={`modelVersions.${index}.trainingDataFile`}
                                 label="Training Data"
                                 placeholder="Pick your training data"
                                 description="The data you used to train your model (as .zip archive)"
-                                uploadType="training-images"
+                                uploadType="TrainingData"
                                 accept=".zip"
                                 onLoading={setUploading}
-                                onChange={(url, file) => {
-                                  if (file) {
-                                    form.setValue(
-                                      `modelVersions.${index}.trainingDataFile.type`,
-                                      ModelFileType.TrainingData
-                                    );
-                                    form.setValue(
-                                      `modelVersions.${index}.trainingDataFile.sizeKB`,
-                                      file.size ? bytesToKB(file.size) : 0
-                                    );
-                                    form.setValue(
-                                      `modelVersions.${index}.trainingDataFile.name`,
-                                      file.name
-                                    );
-                                  }
-                                }}
                               />
-                            </Grid.Col> */}
+                            </Grid.Col>
                             <Grid.Col span={12}>
                               <InputImageUpload
                                 name={`modelVersions.${index}.images`}

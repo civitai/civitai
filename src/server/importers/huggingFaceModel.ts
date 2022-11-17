@@ -2,7 +2,6 @@ import { ImportStatus, ModelFileType, ModelType, Prisma } from '@prisma/client';
 import { createImporter } from '~/server/importers/importer';
 import { prisma } from '~/server/db/client';
 import { uploadViaUrl } from '~/utils/cf-images-utils';
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { markdownToHtml } from '~/utils/markdown-helpers';
 import { bytesToKB } from '~/utils/number-helpers';
 import { imageToBlurhash } from '~/utils/image-utils';
@@ -105,7 +104,7 @@ export async function importModelFromHuggingFace(
 
     // Upload images
     const imageFiles = files.filter((f) => isImage(f.name));
-    if (!imageFiles.length)
+    if (imageFiles.length === 0)
       // if no images, use the default
       imageFiles.push({
         name: 'default.png',
@@ -115,11 +114,11 @@ export async function importModelFromHuggingFace(
     // Process images
     for (const { name, url } of imageFiles) {
       try {
+        const { hash, height, width } = await imageToBlurhash(url);
         const { id } = await uploadViaUrl(url, {
           userId: 1,
           source: 'huggingface',
         });
-        const { hash, height, width } = await getImageProps(id);
         imagesToCreate.push({ name, url: id, userId: 1, hash, height, width });
       } catch (error) {
         console.error(error);
@@ -157,6 +156,7 @@ export async function importModelFromHuggingFace(
         data.images = {
           create: images.map((image, index) => ({ imageId: image.id, index })),
         };
+        console.log(data.images);
         await tx.modelVersion.create({ data });
       }
     },
@@ -196,11 +196,6 @@ function fileToModelType(filename: string, sizeKB: number) {
     // TODO ModelType Importing: determine some way of determining if something is a Aesthetic Gradient or TI
   }
   return ModelType.Checkpoint;
-}
-
-async function getImageProps(id: string) {
-  const url = getEdgeUrl(id, { width: 512 });
-  return await imageToBlurhash(url);
 }
 
 type HuggingFaceModel = {

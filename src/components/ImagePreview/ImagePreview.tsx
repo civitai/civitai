@@ -36,7 +36,7 @@ export function ImagePreview({
   };
 
   return (
-    <Paper style={{ overflow: 'hidden', position: 'relative', ...style }} {...props}>
+    <Paper radius={0} style={{ overflow: 'hidden', position: 'relative', ...style }} {...props}>
       <AspectRatio ratio={aspectRatio ?? (width ?? 16) / (height ?? 9)}>
         {nsfw ? (
           <MediaHash hash={hash} width={width} height={height} />
@@ -53,10 +53,11 @@ export function ImagePreview({
       {!nsfw && withMeta && meta && (
         <ImageMetaPopover meta={meta as ImageMetaProps}>
           <ActionIcon
-            style={{ position: 'absolute', top: '5px', left: '5px', zIndex: 100 }}
+            variant="transparent"
+            style={{ position: 'absolute', bottom: '5px', right: '5px', zIndex: 100 }}
             size="lg"
           >
-            <IconInfoCircle />
+            <IconInfoCircle color="white" />
           </ActionIcon>
         </ImageMetaPopover>
       )}

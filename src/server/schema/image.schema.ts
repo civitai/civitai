@@ -1,13 +1,15 @@
 import { z } from 'zod';
 
+const stringToNumber = z.preprocess((value) => Number(value), z.number());
+
 export const imageMetaSchema = z
   .object({
     prompt: z.string(),
     negativePrompt: z.string(),
-    cfgScale: z.preprocess((value) => Number(value), z.number()),
-    steps: z.preprocess((value) => Number(value), z.number()),
+    cfgScale: stringToNumber,
+    steps: stringToNumber,
     sampler: z.string(),
-    seed: z.preprocess((value) => Number(value), z.number()),
+    seed: stringToNumber,
   })
   .partial()
   .passthrough();

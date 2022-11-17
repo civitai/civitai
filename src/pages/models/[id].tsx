@@ -34,15 +34,14 @@ import {
   IconExclamationMark,
   IconFilter,
   IconFlag,
-  IconInfoCircle,
   IconLicense,
   IconPlus,
   IconTrash,
 } from '@tabler/icons';
 import { createProxySSGHelpers } from '@trpc/react-query/ssg';
 import startCase from 'lodash/startCase';
-import { GetServerSideProps, InferGetServerSidePropsType, NextPage } from 'next';
-import { getSession, useSession } from 'next-auth/react';
+import { GetServerSideProps } from 'next';
+import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
@@ -78,10 +77,7 @@ import { isNumber } from '~/utils/type-guards';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
-import { getModelHandler } from '~/server/controllers/model.controller';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
-import { prisma } from '~/server/db/client';
-import { unstable_getServerSession } from 'next-auth';
 
 type PageProps = {
   id: number;
@@ -428,7 +424,7 @@ export default function ModelDetail(props: PageProps) {
                     </Menu.Item>
                   </>
                 ) : null}
-                {session && published ? (
+                {session && isOwner && published ? (
                   <Menu.Item
                     icon={<IconBan size={14} stroke={1.5} />}
                     color="yellow"

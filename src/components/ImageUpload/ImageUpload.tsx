@@ -24,21 +24,19 @@ import {
   Popover,
   Textarea,
   NumberInput,
-  ScrollArea,
-  Divider,
   Grid,
   Select,
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
 import { IconPencil, IconTrash } from '@tabler/icons';
-import { cloneElement, useEffect, useState } from 'react';
+import { cloneElement, useState } from 'react';
 import { blurHashImage, loadImage } from '../../utils/blurhash';
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import useIsClient from '~/hooks/useIsClient';
-import { ImageMetaProps } from '~/server/validators/image/schemas';
-import isEqual from 'lodash/isEqual';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { getMetadata } from '~/utils/image-metadata';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -68,15 +66,12 @@ export function ImageUpload({
   const [files, filesHandlers] = useListState<CustomFile>(value);
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
 
-  useEffect(() => {
-    // clear any remaining urls when unmounting
-    return () => files.forEach((file) => URL.revokeObjectURL(file.url));
-  }, [files]);
-
-  useDidUpdate(() => {
-    const shouldReset = !isEqual(value, files);
-    if (shouldReset) filesHandlers.setState(value);
-  }, [value]);
+  // Disabled this because it seemed to cause state loop...
+  // useDidUpdate(() => {
+  //   const shouldReset = !isEqual(value, files);
+  //   console.log('did update');
+  //   if (shouldReset) filesHandlers.setState(value);
+  // }, [value]);
 
   useDidUpdate(() => {
     if (files) onChange?.(files);
@@ -87,12 +82,15 @@ export function ImageUpload({
     const toUpload = await Promise.all(
       droppedFiles.map(async (file) => {
         const src = URL.createObjectURL(file);
+        const meta = await getMetadata(file);
         const img = await loadImage(src);
         const hashResult = blurHashImage(img);
         return {
           name: file.name,
           url: src,
+          previewUrl: src,
           file,
+          meta,
           ...hashResult,
         };
       })
@@ -100,17 +98,23 @@ export function ImageUpload({
 
     filesHandlers.setState((current) => [...current, ...toUpload]);
 
-    await Promise.all(
-      toUpload.map(async (image) => {
-        const { id } = await uploadToCF(image.file);
-        filesHandlers.setState((state) => {
-          const index = state.findIndex((item) => item.file === image.file);
-          if (index === -1) return state;
-          const cloned = [...state];
-          cloned[index] = { ...cloned[index], url: id, file: undefined };
-          return cloned;
-        });
-        URL.revokeObjectURL(image.url);
+    const uploads = await Promise.all(
+      toUpload.map(async ({ url, file, previewUrl }) => {
+        const { id } = await uploadToCF(file);
+        return { url, file, id, previewUrl };
+      })
+    );
+
+    filesHandlers.setState((states) =>
+      states.map((state) => {
+        const matchingUpload = uploads.find((x) => x.file == state.file);
+        if (!matchingUpload) return state;
+        return {
+          ...state,
+          url: matchingUpload.id,
+          onLoad: () => URL.revokeObjectURL(matchingUpload.previewUrl),
+          file: null,
+        };
       })
     );
   };
@@ -190,7 +194,9 @@ export function ImageUpload({
                               <ActionIcon
                                 variant="outline"
                                 color={
-                                  image.meta && Object.keys(image.meta).length ? 'green' : undefined
+                                  image.meta && Object.keys(image.meta).length
+                                    ? 'primary'
+                                    : undefined
                                 }
                               >
                                 <IconPencil />
@@ -285,14 +291,13 @@ function ImageMetaPopover({
   };
 
   const handleSubmit = () => {
-    const meta: ImageMetaProps = {};
-    if (prompt) meta.prompt = prompt;
-    if (negativePrompt) meta.negativePrompt = negativePrompt;
-    if (cfgScale) meta.cfgScale = cfgScale;
-    if (steps) meta.steps = steps;
-    if (sampler) meta.sampler = sampler;
-    if (seed) meta.seed = seed;
-    onSubmit?.(Object.keys(meta).length ? meta : null);
+    const newMeta = { ...meta, prompt, negativePrompt, cfgScale, steps, sampler, seed };
+    const keys = Object.keys(newMeta) as Array<keyof typeof newMeta>;
+    const toSubmit = keys.reduce<ImageMetaProps>((acc, key) => {
+      if (newMeta[key]) return { ...acc, [key]: newMeta[key] };
+      return acc;
+    }, {});
+    onSubmit?.(Object.keys(toSubmit).length ? toSubmit : null);
     setOpened(false);
   };
 
@@ -300,71 +305,68 @@ function ImageMetaPopover({
     <Popover opened={opened} onClose={handleClose} withArrow withinPortal width={400}>
       <Popover.Target>{cloneElement(children, { onClick: handleClose })}</Popover.Target>
       <Popover.Dropdown>
-        <Stack spacing="sm">
-          <Title order={4}>Image Meta</Title>
-          <Grid>
-            <Grid.Col span={12}>
-              <Textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                label="Prompt"
-                autosize
-                maxRows={3}
-              />
-            </Grid.Col>
-            <Grid.Col span={12}>
-              <Textarea
-                value={negativePrompt}
-                onChange={(e) => setNegativePrompt(e.target.value)}
-                label="Negative prompt"
-                autosize
-                maxRows={3}
-              />
-            </Grid.Col>
-            <Grid.Col span={6}>
-              <NumberInput
-                value={cfgScale}
-                onChange={(number) => setCfgScale(number)}
-                label="Guidance scale"
-                min={0}
-                max={30}
-              />
-            </Grid.Col>
-            <Grid.Col span={6}>
-              <NumberInput value={steps} onChange={(value) => setSteps(value)} label="Steps" />
-            </Grid.Col>
-            <Grid.Col span={6}>
-              <Select
-                clearable
-                searchable
-                data={[
-                  'Euler a',
-                  'Euler',
-                  'LMS',
-                  'Heun',
-                  'DPM2',
-                  'DPM2 a',
-                  'DPM fast',
-                  'DPM adaptive',
-                  'LMS Karras',
-                  'DPM2 Karras',
-                  'DPM2 a Karras',
-                  'DDIM',
-                  'PLMS',
-                ]}
-                value={sampler}
-                onChange={(value) => setSampler(value ?? undefined)}
-                label="Sampler"
-              />
-            </Grid.Col>
-            <Grid.Col span={6}>
-              <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
-            </Grid.Col>
-          </Grid>
-        </Stack>
-        <Divider pb="sm" />
-        <Button fullWidth onClick={() => handleSubmit()}>
-          Submit
+        <Title order={4}>Generation details</Title>
+        <Grid gutter="xs">
+          <Grid.Col span={12}>
+            <Textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              label="Prompt"
+              autosize
+              maxRows={3}
+            />
+          </Grid.Col>
+          <Grid.Col span={12}>
+            <Textarea
+              value={negativePrompt}
+              onChange={(e) => setNegativePrompt(e.target.value)}
+              label="Negative prompt"
+              autosize
+              maxRows={3}
+            />
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <NumberInput
+              value={cfgScale}
+              onChange={(number) => setCfgScale(number)}
+              label="Guidance scale"
+              min={0}
+              max={30}
+            />
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <NumberInput value={steps} onChange={(value) => setSteps(value)} label="Steps" />
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <Select
+              clearable
+              searchable
+              data={[
+                'Euler a',
+                'Euler',
+                'LMS',
+                'Heun',
+                'DPM2',
+                'DPM2 a',
+                'DPM fast',
+                'DPM adaptive',
+                'LMS Karras',
+                'DPM2 Karras',
+                'DPM2 a Karras',
+                'DDIM',
+                'PLMS',
+              ]}
+              value={sampler}
+              onChange={(value) => setSampler(value ?? undefined)}
+              label="Sampler"
+            />
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
+          </Grid.Col>
+        </Grid>
+        <Button mt="xs" fullWidth onClick={() => handleSubmit()}>
+          Save
         </Button>
       </Popover.Dropdown>
     </Popover>
@@ -400,6 +402,7 @@ const useStyles = createStyles((theme, _params, getRef) => ({
     ref: getRef('actionsGroup'),
     position: 'absolute',
     background: theme.fn.rgba(theme.colors.dark[9], 0.6),
+    borderBottomLeftRadius: theme.radius.sm,
     top: 0,
     right: 0,
   },
