@@ -31,7 +31,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { modelSchema } from '~/server/common/validation/model';
+import { modelSchema } from '~/server/schema/model.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ModelById } from '~/types/router';
 import { splitUppercase } from '~/utils/string-helpers';

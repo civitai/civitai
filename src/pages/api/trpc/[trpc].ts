@@ -2,7 +2,7 @@
 import { createNextApiHandler } from '@trpc/server/adapters/next';
 import { env } from '~/env/server.mjs';
 import { createContext } from '~/server/context';
-import { appRouter } from '~/server/trpc/router';
+import { appRouter } from '~/server/routers';
 
 const PUBLIC_CACHE_MAX_AGE = 60;
 const PUBLIC_CACHE_STALE_WHILE_REVALIDATE = 30;

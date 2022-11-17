@@ -1,7 +1,7 @@
 import { GetServerSidePropsContext } from 'next';
 import { createProxySSGHelpers } from '@trpc/react-query/ssg';
 import { getServerAuthSession } from '~/server/common/get-server-auth-session';
-import { appRouter } from '~/server/trpc/router';
+import { appRouter } from '~/server/routers';
 import superjson from 'superjson';
 
 export const getServerProxySSGHelpers = async (ctx: GetServerSidePropsContext) => {

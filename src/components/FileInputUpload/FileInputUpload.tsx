@@ -7,10 +7,10 @@ import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { getFileExtension } from '~/utils/string-helpers';
 import { toStringList } from '~/utils/array-helpers';
 import { useDidUpdate } from '@mantine/hooks';
-import { FileProps } from '~/server/common/validation/model';
 import isEqual from 'lodash/isEqual';
 import { ModelFileType } from '@prisma/client';
 import { bytesToKB } from '~/utils/number-helpers';
+import { ModelFileProps } from '~/server/schema/model-file.schema';
 
 export function FileInputUpload({
   uploadType = 'Model',
@@ -22,7 +22,7 @@ export function FileInputUpload({
   ...props
 }: Props) {
   const isClient = useIsClient();
-  const [state, setState] = useState<FileProps | undefined>(value);
+  const [state, setState] = useState<ModelFileProps | undefined>(value);
   const { files, uploadToS3, resetFiles } = useS3Upload();
   const { file, progress, speed, timeRemaining, status, abort } = files[0] ?? {
     file: null,
@@ -59,7 +59,7 @@ export function FileInputUpload({
         );
         url = uploaded.url;
         onLoading?.(false);
-        const value: FileProps = {
+        const value: ModelFileProps = {
           sizeKB: file.size ? bytesToKB(file.size) : 0,
           type: uploadType,
           url,
@@ -138,8 +138,8 @@ export function FileInputUpload({
 }
 
 type Props = Omit<FileInputProps, 'icon' | 'onChange' | 'value'> & {
-  value?: FileProps;
-  onChange?: (value?: FileProps) => void;
+  value?: ModelFileProps;
+  onChange?: (value?: ModelFileProps) => void;
   onLoading?: (loading: boolean) => void;
   uploadType?: ModelFileType;
   fileName?: string;

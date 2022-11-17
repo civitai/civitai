@@ -1,11 +1,11 @@
 // src/server/trpc/router/index.ts
 import { router } from '~/server/router';
-import { accountRouter } from './accounts';
-import { authRouter } from './auth';
-import { modelRouter } from './model';
-import { reviewRouter } from './review';
-import { tagRouter } from './tag';
-import { userRouter } from './user';
+import { accountRouter } from './account.router';
+import { authRouter } from './auth.router';
+import { modelRouter } from './model.router';
+import { reviewRouter } from './review.router';
+import { tagRouter } from './tag.router';
+import { userRouter } from './user.router';
 
 export const appRouter = router({
   account: accountRouter,

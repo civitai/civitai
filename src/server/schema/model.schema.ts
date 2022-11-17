@@ -1,6 +1,9 @@
-import { ModelType, MetricTimeframe } from '@prisma/client';
+import { ModelType, ModelStatus, MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';
+import { tagSchema } from '~/server/schema/tag.schema';
+import { sanitizedStringSchema } from '~/server/schema/utils.schema';
+import { modelVersionSchema } from '~/server/schema/model-version.schema';
 
 export const getAllModelsSchema = z
   .object({
@@ -17,3 +20,14 @@ export const getAllModelsSchema = z
   .partial();
 
 export type GetAllModelsInput = z.infer<typeof getAllModelsSchema>;
+
+export const modelSchema = z.object({
+  id: z.number().optional(),
+  name: z.string().min(1, 'Name cannot be empty.'),
+  description: sanitizedStringSchema,
+  type: z.nativeEnum(ModelType),
+  status: z.nativeEnum(ModelStatus),
+  tagsOnModels: z.array(tagSchema).nullish(),
+  nsfw: z.boolean().optional(),
+  modelVersions: z.array(modelVersionSchema).min(1, 'At least one model version is required.'),
+});
