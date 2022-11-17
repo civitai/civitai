@@ -76,10 +76,10 @@ function ReactionBadge({ reaction, reactions }: ReactionBadgeProps) {
   const { onEmojiClick, user, disabled } = useReactionPickerContext();
   const tooltip = toStringList(
     reactions.map((reaction) =>
-      reaction.user.name === user?.name ? 'You' : reaction.user.name ?? '<deleted user>'
+      reaction.user.username === user?.username ? 'You' : reaction.user.username ?? '<deleted user>'
     )
   );
-  const reacted = reactions.findIndex((reaction) => reaction.user.name === user?.name) > -1;
+  const reacted = reactions.findIndex((reaction) => reaction.user.username === user?.username) > -1;
   const canClick = user && !disabled;
 
   return (
