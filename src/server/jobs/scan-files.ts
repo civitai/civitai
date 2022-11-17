@@ -50,6 +50,7 @@ async function requestFileScan(
     env.SCANNING_ENDPOINT +
     '?' +
     new URLSearchParams({
+      token: env.SCANNING_TOKEN,
       fileUrl,
       callbackUrl,
     });
