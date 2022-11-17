@@ -67,10 +67,12 @@ export function ImageUpload({
   const [files, filesHandlers] = useListState<CustomFile>(value);
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
 
-  useDidUpdate(() => {
-    const shouldReset = !isEqual(value, files);
-    if (shouldReset) filesHandlers.setState(value);
-  }, [value]);
+  // Disabled this because it seemed to cause state loop...
+  // useDidUpdate(() => {
+  //   const shouldReset = !isEqual(value, files);
+  //   console.log('did update');
+  //   if (shouldReset) filesHandlers.setState(value);
+  // }, [value]);
 
   useDidUpdate(() => {
     if (files) onChange?.(files);

@@ -51,10 +51,13 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 
   const { id } = input as { id: number };
   const userId = ctx.session.user.id;
-  const isModerator = ctx.session?.user?.isModerator;
-  const ownerId = (await ctx.prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
-  if (!isModerator) {
-    if (ownerId !== userId) throw handleAuthorizationError();
+  let ownerId = userId;
+  if (id) {
+    const isModerator = ctx.session?.user?.isModerator;
+    ownerId = (await ctx.prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
+    if (!isModerator) {
+      if (ownerId !== userId) throw handleAuthorizationError();
+    }
   }
 
   return next({

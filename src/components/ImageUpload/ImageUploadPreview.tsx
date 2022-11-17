@@ -1,11 +1,10 @@
 import { forwardRef, CSSProperties, useState } from 'react';
-import { ActionIcon, Center, createStyles, Paper } from '@mantine/core';
+import { Center, createStyles, Paper } from '@mantine/core';
 import { EdgeImage, EdgeImageProps } from '~/components/EdgeImage/EdgeImage';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { UniqueIdentifier } from '@dnd-kit/core';
 import { IconArrowsMaximize } from '@tabler/icons';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 type Props = {
   image?: CustomFile;
