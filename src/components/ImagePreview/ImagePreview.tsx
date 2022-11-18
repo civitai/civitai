@@ -54,7 +54,7 @@ export function ImagePreview({
         <ImageMetaPopover meta={meta as ImageMetaProps}>
           <ActionIcon
             variant="transparent"
-            style={{ position: 'absolute', bottom: '5px', right: '5px', zIndex: 100 }}
+            style={{ position: 'absolute', bottom: '5px', right: '5px' }}
             size="lg"
           >
             <IconInfoCircle color="white" />

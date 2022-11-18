@@ -1,3 +1,4 @@
+import { CSSProperties } from 'react';
 import { BlurhashCanvas } from 'react-blurhash';
 import { getClampedSize } from '~/utils/blurhash';
 
@@ -5,9 +6,10 @@ export type MediaHashProps = {
   hash?: string | null;
   width?: number | null;
   height?: number | null;
+  style?: CSSProperties | null;
 };
 
-export function MediaHash({ hash, height, width }: MediaHashProps) {
+export function MediaHash({ hash, height, width, style }: MediaHashProps) {
   if (!hash || !width || !height) return null;
 
   const size = getClampedSize(width, height, 32);
@@ -25,6 +27,7 @@ export function MediaHash({ hash, height, width }: MediaHashProps) {
         left: 0,
         objectFit: 'cover',
         objectPosition: 'center',
+        ...(style ?? {}),
       }}
     />
   );
