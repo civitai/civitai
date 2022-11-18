@@ -244,6 +244,7 @@ const useStyles = createStyles((theme) => {
       bottom: 0,
       right: 0,
       left: 0,
+      zIndex: 10,
     },
   };
 });
