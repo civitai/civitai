@@ -65,6 +65,7 @@ model User {
   modelReports    ModelReport[]
   reviewReports   ReviewReport[]
   Import          Import[]
+  keys            ApiKey[]
 }
 
 model VerificationToken {
@@ -378,6 +379,22 @@ model SavedModel {
 model KeyValue {
   key   String @id
   value Json
+}
+
+model ApiKey {
+  key       String     @unique
+  name      String
+  scope     KeyScope[]
+  userId    Int
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+
+  @@unique([key, userId])
+}
+
+enum KeyScope {
+  Read
+  Write
 }
 
 /// @view
