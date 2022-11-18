@@ -1,3 +1,5 @@
+import { getReviewsInfiniteHandler } from './../controllers/review.controller';
+import { getAllReviewSchema } from './../schema/review.schema';
 import { z } from 'zod';
 
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -35,63 +37,50 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
 
 export const reviewRouter = router({
   getAll: publicProcedure
-    .input(
-      z
-        .object({
-          limit: z.number().min(1).max(100),
-          cursor: z.number(),
-          modelId: z.number(),
-          modelVersionId: z.number(),
-          userId: z.number(),
-          filterBy: z.array(z.nativeEnum(ReviewFilter)),
-          sort: z.nativeEnum(ReviewSort).default(ReviewSort.Newest),
-        })
-        .partial()
-    )
-    .query(async ({ ctx, input = {} }) => {
-      const { cursor, limit = 20, modelId, modelVersionId, userId, sort, filterBy = [] } = input;
-      const commonWhere = { modelId, modelVersionId, userId };
-      const showNsfw = ctx?.user?.showNsfw ?? true;
-      let orderBy: Prisma.ReviewFindManyArgs['orderBy'] = { createdAt: 'desc' };
+    .input(getAllReviewSchema)
+    .query(({ ctx, input }) => getReviewsInfiniteHandler({ input, ctx })),
+  // .query(async ({ ctx, input }) => {
+  //   const { cursor, limit = 20, modelId, modelVersionId, userId, sort, filterBy = [] } = input;
+  //   const commonWhere = { modelId, modelVersionId, userId };
+  //   const showNsfw = ctx?.user?.showNsfw ?? true;
+  //   let orderBy: Prisma.ReviewFindManyArgs['orderBy'] = { createdAt: 'desc' };
 
-      switch (sort) {
-        // TODO: implement more order cases once reactions are live
-        case ReviewSort.Oldest:
-          orderBy = { createdAt: 'asc' };
-          break;
-        default:
-          orderBy = { createdAt: 'desc' };
-          break;
-      }
+  //   switch (sort) {
+  //     // TODO: implement more order cases once reactions are live
+  //     case ReviewSort.Oldest:
+  //       orderBy = { createdAt: 'asc' };
+  //       break;
+  //     default:
+  //       orderBy = { createdAt: 'desc' };
+  //       break;
+  //   }
 
-      const reviews = await prisma.review.findMany({
-        take: limit + 1, // get an extra item at the end which we'll use as next cursor
-        cursor: cursor ? { id: cursor } : undefined,
-        where: {
-          ...commonWhere,
-          nsfw: showNsfw ? (filterBy.includes(ReviewFilter.NSFW) ? true : undefined) : false,
-          imagesOnReviews: filterBy.includes(ReviewFilter.IncludesImages)
-            ? { some: {} }
-            : undefined,
-        },
-        select: getAllReviewsSelect,
-        orderBy,
-      });
+  //   const reviews = await prisma.review.findMany({
+  //     take: limit + 1, // get an extra item at the end which we'll use as next cursor
+  //     cursor: cursor ? { id: cursor } : undefined,
+  //     where: {
+  //       ...commonWhere,
+  //       nsfw: showNsfw ? (filterBy.includes(ReviewFilter.NSFW) ? true : undefined) : false,
+  //       imagesOnReviews: filterBy.includes(ReviewFilter.IncludesImages) ? { some: {} } : undefined,
+  //     },
+  //     select: getAllReviewsSelect,
+  //     orderBy,
+  //   });
 
-      let nextCursor: typeof cursor | undefined = undefined;
-      if (reviews.length > limit) {
-        const nextItem = reviews.pop();
-        nextCursor = nextItem?.id;
-      }
+  //   let nextCursor: typeof cursor | undefined = undefined;
+  //   if (reviews.length > limit) {
+  //     const nextItem = reviews.pop();
+  //     nextCursor = nextItem?.id;
+  //   }
 
-      return {
-        reviews: reviews.map(({ imagesOnReviews, ...review }) => ({
-          ...review,
-          images: imagesOnReviews.map(({ image }) => image),
-        })),
-        nextCursor,
-      };
-    }),
+  //   return {
+  //     reviews: reviews.map(({ imagesOnReviews, ...review }) => ({
+  //       ...review,
+  //       images: imagesOnReviews.map(({ image }) => image),
+  //     })),
+  //     nextCursor,
+  //   };
+  // }),
   getReactions: publicProcedure
     .input(z.object({ reviewId: z.number() }))
     .query(async ({ ctx, input }) => {

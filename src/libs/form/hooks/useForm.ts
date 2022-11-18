@@ -10,7 +10,7 @@ export const useForm = <TSchema extends z.AnyZodObject, TContext>(
   const { schema, ...props } = args ?? {};
   return useReactHookFrom<z.infer<TSchema>, TContext>({
     resolver: schema ? zodResolver(schema.passthrough()) : undefined,
-    shouldUnregister: true,
+    shouldUnregister: true, // TODO - do we need this?
     ...props,
   });
 };

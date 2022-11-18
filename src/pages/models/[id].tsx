@@ -75,6 +75,16 @@ import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 
+//TODO - Break model query into multiple queries
+/*
+  - model details
+  - model rank
+  - model reviews
+  - model-version (only fetch latest model version)
+  - model-version rank
+  - model-version reviews (for users who only want to see reviews for specific versions)
+*/
+
 type PageProps = {
   id: number;
 };
