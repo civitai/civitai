@@ -34,8 +34,13 @@ export const getModelsInfiniteHandler = async ({
   input: GetAllModelsInput;
   ctx: Context;
 }) => {
-  input.limit = (input.limit ?? 100) + 1;
-  const models = await getModels({ input, user: ctx.user, select: getAllModelsSelect });
+  input.limit = input.limit ?? 100;
+  const limit = input.limit + 1;
+  const models = await getModels({
+    input: { ...input, limit },
+    user: ctx.user,
+    select: getAllModelsSelect,
+  });
 
   let nextCursor: number | undefined;
   if (models.length > input.limit) {
