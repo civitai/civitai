@@ -124,7 +124,7 @@ export const reviewRouter = router({
         await Promise.all(
           // extract index because index is not a part of the prisma schema for this model
           imagesToUpdate.map(async ({ index, ...image }) =>
-            tx.image.update({
+            tx.image.updateMany({
               where: { id: image.id },
               data: {
                 ...image,
