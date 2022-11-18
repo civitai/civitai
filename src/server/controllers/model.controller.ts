@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { ModelFileType } from '@prisma/client';
 import { GetByIdInput } from './../schema/base.schema';
 import { getModel, getModels } from './../services/model.service';
-import { Context } from '~/server/context';
+import { Context } from '~/server/createContext';
 import { GetAllModelsInput } from './../schema/model.schema';
 import { getAllModelsSelect, modelWithDetailsSelect } from '~/server/selectors/model.selector';
 
