@@ -26,15 +26,15 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
   };
 };
 
-export type GetModelsReturnType = AsyncReturnType<typeof getModelsHandler>['items'];
-export const getModelsHandler = async ({
+export type GetModelsInfiniteReturnType = AsyncReturnType<typeof getModelsInfiniteHandler>['items'];
+export const getModelsInfiniteHandler = async ({
   input,
   ctx,
 }: {
   input: GetAllModelsInput;
   ctx: Context;
 }) => {
-  input.limit = input.limit ?? 100;
+  input.limit = (input.limit ?? 100) + 1;
   const models = await getModels({ input, user: ctx.user, select: getAllModelsSelect });
 
   let nextCursor: number | undefined;

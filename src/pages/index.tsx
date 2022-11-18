@@ -24,7 +24,7 @@ function Home() {
     hasNextPage,
     // hasPreviousPage,
   } = trpc.model.getAll.useInfiniteQuery(
-    { limit: 100, ...filters },
+    { limit: 10, ...filters },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),

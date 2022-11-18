@@ -39,7 +39,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   const canViewNsfw = sessionUser?.showNsfw ?? true;
 
   return await prisma.model.findMany({
-    take: take + 1,
+    take,
     skip,
     cursor: cursor ? { id: cursor } : undefined,
     where: {

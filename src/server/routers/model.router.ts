@@ -19,7 +19,7 @@ import { middleware, protectedProcedure, publicProcedure, router } from '~/serve
 import { prisma } from '~/server/db/client';
 import { getModelHandler } from '../controllers/model.controller';
 import { getAllModelsSchema } from '../schema/model.schema';
-import { getModelsHandler } from '~/server/controllers/model.controller';
+import { getModelsInfiniteHandler } from '~/server/controllers/model.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import { modelVersionSchema } from '~/server/schema/model-version.schema';
 import { env } from '~/env/server.mjs';
@@ -75,7 +75,7 @@ export const modelRouter = router({
     .query(({ ctx, input }) => getModelHandler({ ctx, input })),
   getAll: publicProcedure
     .input(getAllModelsSchema)
-    .query(({ ctx, input }) => getModelsHandler({ ctx, input })),
+    .query(({ ctx, input }) => getModelsInfiniteHandler({ ctx, input })),
   getVersions: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     try {
       const { id } = input;
