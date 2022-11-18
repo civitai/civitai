@@ -120,8 +120,9 @@ const MasonryItem = ({
     if (!image.width || !image.height) return 300;
     const width = itemWidth > 0 ? itemWidth : 300;
     const aspectRatio = image.width / image.height;
-    const heightT = width / aspectRatio;
-    return heightT + (rank?.ratingAllTime ? 66 : 33);
+    const imageHeight = Math.floor(width / aspectRatio);
+    const totalHeight = imageHeight + (rank?.ratingAllTime ? 66 : 33);
+    return totalHeight;
   }, [itemWidth, image.width, image.height, rank?.ratingAllTime]);
 
   const modelText = (
@@ -174,7 +175,7 @@ const MasonryItem = ({
       alt={image.name ?? undefined}
       width={450}
       placeholder="empty"
-      style={{ width: '100%' }}
+      style={{ width: '100%', zIndex: 2, position: 'relative' }}
     />
   );
 
@@ -202,6 +203,12 @@ const MasonryItem = ({
           <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
           {inView && (
             <>
+              <MediaHash
+                hash={image.hash}
+                width={image.width}
+                height={image.height}
+                style={{ bottom: rank?.ratingAllTime ? 66 : 33, height: 'auto' }}
+              />
               {nsfw ? (
                 <SensitiveContent placeholder={<MediaHash {...image} />} style={{ height: '100%' }}>
                   {PreviewImage}

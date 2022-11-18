@@ -48,9 +48,6 @@ function Home() {
       <Head>
         <meta name="description" content="Community driven AI model sharing tool" />
       </Head>
-      {/* <Box p="xl" mb="md">
-        <Center>test</Center>
-      </Box> */}
       <Container size="xl" p={0}>
         {filters.user && <Title>Models by {filters.user}</Title>}
         <Stack spacing="xs">
