@@ -1,4 +1,5 @@
 import NextAuth, { Session, type NextAuthOptions } from 'next-auth';
+import CredentialsProvider from 'next-auth/providers/credentials';
 import DiscordProvider from 'next-auth/providers/discord';
 import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
@@ -44,7 +45,7 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
     },
   },
   callbacks: {
-    jwt: async ({ token, user, account }) => {
+    jwt: async ({ token, user }) => {
       if (req.url === '/api/auth/session?update' && token.email) {
         const user = await prisma.user.findUnique({ where: { email: token.email } });
         token.user = user;
@@ -78,6 +79,20 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
     GoogleProvider({
       clientId: env.GOOGLE_CLIENT_ID,
       clientSecret: env.GOOGLE_CLIENT_SECRET,
+    }),
+    CredentialsProvider({
+      name: 'Credentials',
+      credentials: {
+        username: { label: 'Username', type: 'text' },
+        password: { label: 'Password', type: 'password' },
+      },
+      async authorize(_, req) {
+        const reqToken = (req.headers?.['x-civitai-api-key'] as string) ?? '';
+
+        // TODO: verify token here
+
+        return { id: reqToken };
+      },
     }),
   ],
   pages: {
