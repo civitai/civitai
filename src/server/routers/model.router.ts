@@ -22,6 +22,7 @@ import { getAllModelsSchema } from '../schema/model.schema';
 import { getModelsHandler } from '~/server/controllers/model.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import { modelVersionSchema } from '~/server/schema/model-version.schema';
+import { env } from '~/env/server.mjs';
 
 function prepareFiles(
   modelFile: z.infer<typeof modelVersionSchema>['modelFile'],
@@ -99,7 +100,7 @@ export const modelRouter = router({
     );
     const s3 = getS3Client();
     for (const file of files) {
-      if (!file.url) continue;
+      if (!file.url || !file.url.includes(env.S3_UPLOAD_BUCKET)) continue;
       const fileExists = await checkFileExists(file.url, s3);
       if (!fileExists)
         return handleBadRequest(`File ${file.name} could not be found. Please re-upload.`, {
@@ -193,7 +194,7 @@ export const modelRouter = router({
       );
       const s3 = getS3Client();
       for (const file of files) {
-        if (!file.url) continue;
+        if (!file.url || !file.url.includes(env.S3_UPLOAD_BUCKET)) continue;
         const fileExists = await checkFileExists(file.url, s3);
         if (!fileExists)
           return handleBadRequest(`File ${file.name} could not be found. Please re-upload.`, {
