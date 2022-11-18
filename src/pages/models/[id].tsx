@@ -206,18 +206,14 @@ export default function ModelDetail(props: PageProps) {
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
     router.beforePopState(({ as }) => {
-      if (as.startsWith('/?')) {
+      if (as === '/' || as.startsWith('/?')) {
         const [route, queryString] = as.split('?');
         const queryParams = QS.parse(queryString);
-        // const stringified = QS.stringify({ ...queryParams, model: id });
-        // const url = stringified ? `${route}?${stringified}` : route;
         setTimeout(() => {
           router.replace({ pathname: route, query: { ...queryParams, model: id } }, undefined, {
             shallow: true,
           });
         }, 0);
-        // Will run when leaving the current page; on back/forward actions
-        // Add your logic here, like toggling the modal state
       }
       return true;
     });
