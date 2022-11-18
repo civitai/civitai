@@ -1,7 +1,7 @@
 import { GetServerSideProps } from 'next';
 import { Session } from 'next-auth';
 import { ModelForm } from '~/components/Model/ModelForm/ModelForm';
-import { getServerAuthSession } from '~/server/common/get-server-auth-session';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 
 export default function Create() {
   return <ModelForm />;

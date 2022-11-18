@@ -2,7 +2,6 @@ import { Group, Loader, Stack, Container, Center, ThemeIcon, Text, Title } from 
 import Head from 'next/head';
 import { useEffect, useMemo } from 'react';
 import { trpc } from '~/utils/trpc';
-import { GetAllModelsReturnType } from '~/server/validators/models/getAllModels';
 import { useInView } from 'react-intersection-observer';
 import { MasonryList } from '~/components/MasonryList/MasonryList';
 import { ListSort } from '~/components/ListSort/ListSort';
@@ -38,10 +37,7 @@ function Home() {
     }
   }, [fetchNextPage, inView]);
 
-  const models = useMemo<GetAllModelsReturnType>(
-    () => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [],
-    [data]
-  );
+  const models = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
 
   return (
     <>

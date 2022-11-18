@@ -15,7 +15,7 @@ import { BuiltInProviderType } from 'next-auth/providers';
 import React from 'react';
 
 import { SocialLabel } from '~/components/Social/SocialLabel';
-import { getServerAuthSession } from '~/server/common/get-server-auth-session';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { prisma } from '~/server/db/client';
 import { reloadSession } from '~/utils/next-auth-helpers';
 import { showSuccessNotification } from '~/utils/notifications';

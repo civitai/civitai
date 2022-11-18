@@ -14,8 +14,8 @@ import { IconInfoCircle, IconMinus } from '@tabler/icons';
 import { useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
-import { ImageMetaProps } from '~/server/validators/image/schemas';
-import { ImageModel } from '~/server/validators/image/selectors';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageModel } from '~/server/selectors/image.selector';
 
 type Props = {
   initialSlide?: number;

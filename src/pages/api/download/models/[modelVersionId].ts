@@ -1,7 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getGetUrl } from '~/utils/s3-utils';
 import { ModelFileType, ModelType, UserActivityType } from '@prisma/client';
-import { getServerAuthSession } from '~/server/common/get-server-auth-session';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { prisma } from '~/server/db/client';
 import { filenamize } from '~/utils/string-helpers';
 

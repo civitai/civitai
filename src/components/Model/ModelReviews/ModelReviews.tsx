@@ -28,9 +28,8 @@ import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ReviewFilter } from '~/server/common/enums';
-import { ImageModel } from '~/server/validators/image/selectors';
-import { ReviewDetails } from '~/server/validators/reviews/getAllReviews';
-import { ReactionDetails } from '~/server/validators/reviews/getReactions';
+import { ImageModel } from '~/server/selectors/image.selector';
+import { ReviewDetails, ReactionDetails } from '~/server/selectors/review.selector';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

@@ -1,4 +1,4 @@
-import { WebhookEndpoint } from '~/server/common/endpoint-helpers';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { scanFilesJob } from '~/server/jobs/scan-files';
 import { updateMetricsJob } from '~/server/jobs/update-metrics';
 import { processImportsJob } from '~/server/jobs/process-imports';

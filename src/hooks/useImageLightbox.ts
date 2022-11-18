@@ -1,4 +1,4 @@
-import { ImageModel } from './../server/validators/image/selectors';
+import { ImageModel } from '../server/selectors/image.selector';
 import { useMantineTheme } from '@mantine/core';
 import { openContextModal } from '@mantine/modals';
 import { useCallback } from 'react';

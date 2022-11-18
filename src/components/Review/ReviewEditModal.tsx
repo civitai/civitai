@@ -5,7 +5,7 @@ import { showNotification } from '@mantine/notifications';
 import { IconX } from '@tabler/icons';
 
 import { ImageUpload } from '~/components/ImageUpload/ImageUpload';
-import { ReviewUpsertProps, reviewUpsertSchema } from '~/server/validators/reviews/schemas';
+import { ReviewUpsertProps, reviewUpsertSchema } from '~/server/schema/review.schema';
 import { trpc } from '~/utils/trpc';
 
 type ReviewModelProps = {

@@ -18,7 +18,11 @@ export const imageSchema = z.object({
   id: z.number().optional(),
   name: z.string().nullish(),
   url: z.string(),
-  meta: imageMetaSchema.nullish(),
+  meta: z.preprocess((value) => {
+    if (typeof value !== 'object') return null;
+    if (value && !Object.keys(value).length) return null;
+    return value;
+  }, imageMetaSchema.nullish()),
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),

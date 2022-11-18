@@ -1,21 +1,8 @@
-import {
-  Stack,
-  Text,
-  Code,
-  Popover,
-  PopoverProps,
-  Title,
-  Group,
-  BoxProps,
-  SimpleGrid,
-  CopyButton,
-  Button,
-} from '@mantine/core';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { Stack, Text, Code, Popover, PopoverProps, Group, SimpleGrid, Button } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { showNotification } from '@mantine/notifications';
 import { IconCheck, IconCopy } from '@tabler/icons';
 import { useMemo } from 'react';
-import { ImageMetaProps } from '~/server/validators/image/schemas';
 import { encodeMetadata } from '~/utils/image-metadata';
 
 type Props = {

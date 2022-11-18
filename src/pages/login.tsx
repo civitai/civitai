@@ -8,7 +8,7 @@ import React from 'react';
 import { SignInError } from '~/components/SignInError/SignInError';
 import { SocialButton } from '~/components/Social/SocialButton';
 
-import { getServerAuthSession } from '~/server/common/get-server-auth-session';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { loginRedirectReasons, LoginRedirectReason } from '~/utils/login-helpers';
 
 export default function Login({
