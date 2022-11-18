@@ -15,8 +15,6 @@ declare module 'next-auth' {
     email?: string | null;
     image?: string | null;
   }
-
-  interface SessionUser extends ExtendedUser, DefaultSession['user'] {}
   /**
    * Returned by `useSession`, `getSession` and received as a prop on the `SessionProvider` React Context
    */

@@ -1,40 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { imageSelect } from '~/server/selectors/image.selector';
-
-export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
-  id: true,
-  name: true,
-  type: true,
-  nsfw: true,
-  status: true,
-  modelVersions: {
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    take: 1,
-    select: {
-      images: {
-        orderBy: {
-          index: 'asc',
-        },
-        take: 1,
-        select: {
-          image: {
-            select: imageSelect,
-          },
-        },
-      },
-    },
-  },
-  rank: {
-    select: {
-      downloadCountAllTime: true,
-      ratingCountAllTime: true,
-      ratingAllTime: true,
-      downloadCountAllTimeRank: true,
-      ratingCountAllTimeRank: true,
-      ratingAllTimeRank: true,
-    },
-  },
-});
+import { imageSelect } from '~/server/validators/image/selectors';
 
 export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
@@ -107,3 +72,9 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   },
   tagsOnModels: { select: { tag: true } },
 });
+
+const modelWithDetails = Prisma.validator<Prisma.ModelArgs>()({
+  select: modelWithDetailsSelect,
+});
+
+export type ModelWithDetails = Prisma.ModelGetPayload<typeof modelWithDetails>;

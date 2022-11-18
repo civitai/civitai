@@ -38,13 +38,15 @@ import {
   IconPlus,
   IconTrash,
 } from '@tabler/icons';
+import { createProxySSGHelpers } from '@trpc/react-query/ssg';
 import startCase from 'lodash/startCase';
-import { GetServerSideProps } from 'next';
+import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
 import { InView } from 'react-intersection-observer';
+import superjson from 'superjson';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -61,6 +63,8 @@ import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
+import { createContextInner } from '~/server/trpc/context';
+import { appRouter } from '~/server/trpc/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
@@ -73,14 +77,13 @@ import { isNumber } from '~/utils/type-guards';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
-import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
-
-type PageProps = {
-  id: number;
-};
 
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
-  const ssg = await getServerProxySSGHelpers(context);
+  const ssg = createProxySSGHelpers({
+    router: appRouter,
+    ctx: await createContextInner({ session: null }),
+    transformer: superjson,
+  });
   const id = Number(context.params?.id as string);
   if (isNumber(id)) await ssg.model.getById.prefetch({ id });
 
@@ -106,7 +109,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export default function ModelDetail(props: PageProps) {
+export default function ModelDetail(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
   const router = useRouter();
   const { data: session } = useSession();

@@ -1,6 +1,6 @@
 import { FileWithPath } from '@mantine/dropzone';
 import exifr from 'exifr';
-import { ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
+import { ImageMetaProps, imageMetaSchema } from '~/server/validators/image/schemas';
 
 export async function getMetadata(file: FileWithPath) {
   let exif: any;
