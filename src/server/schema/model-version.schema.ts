@@ -3,7 +3,7 @@ import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import { sanitizedStringSchema } from '~/server/schema/utils.schema';
 
-export const modelVersionSchema = z.object({
+export const modelVersionUpsertSchema = z.object({
   id: z.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
   description: sanitizedStringSchema,

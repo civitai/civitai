@@ -21,12 +21,12 @@ import { getModelHandler } from '../controllers/model.controller';
 import { getAllModelsSchema } from '../schema/model.schema';
 import { getModelsInfiniteHandler } from '~/server/controllers/model.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
-import { modelVersionSchema } from '~/server/schema/model-version.schema';
+import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { env } from '~/env/server.mjs';
 
 function prepareFiles(
-  modelFile: z.infer<typeof modelVersionSchema>['modelFile'],
-  trainingDataFile: z.infer<typeof modelVersionSchema>['trainingDataFile']
+  modelFile: z.infer<typeof modelVersionUpsertSchema>['modelFile'],
+  trainingDataFile: z.infer<typeof modelVersionUpsertSchema>['trainingDataFile']
 ) {
   const files: Partial<ModelFile>[] = [{ ...modelFile, type: ModelFileType.Model }];
   if (trainingDataFile != null)

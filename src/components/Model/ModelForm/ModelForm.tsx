@@ -37,7 +37,7 @@ import { ModelById } from '~/types/router';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { modelVersionSchema } from '~/server/schema/model-version.schema';
+import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 
 const schema = modelSchema.extend({ tagsOnModels: z.string().array() });
 
@@ -59,7 +59,7 @@ export function ModelForm({ model }: Props) {
 
   const defaultModelFile = { name: '', url: '', sizeKB: 0, type: ModelFileType.Model };
 
-  const defaultModelVersion: z.infer<typeof modelVersionSchema> = {
+  const defaultModelVersion: z.infer<typeof modelVersionUpsertSchema> = {
     name: '',
     description: '',
     epochs: null,

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { sanitizedStringSchema } from '~/server/schema/utils.schema';
-import { modelVersionSchema } from '~/server/schema/model-version.schema';
+import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 
 export const getAllModelsSchema = z
   .object({
@@ -29,5 +29,5 @@ export const modelSchema = z.object({
   status: z.nativeEnum(ModelStatus),
   tagsOnModels: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
-  modelVersions: z.array(modelVersionSchema).min(1, 'At least one model version is required.'),
+  modelVersions: z.array(modelVersionUpsertSchema).min(1, 'At least one model version is required.'),
 });
