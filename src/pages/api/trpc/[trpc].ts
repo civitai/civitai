@@ -1,8 +1,8 @@
 // src/pages/api/trpc/[trpc].ts
 import { createNextApiHandler } from '@trpc/server/adapters/next';
 import { env } from '~/env/server.mjs';
-import { createContext } from '~/server/trpc/context';
-import { appRouter } from '~/server/trpc/router';
+import { createContext } from '~/server/createContext';
+import { appRouter } from '~/server/routers';
 
 const PUBLIC_CACHE_MAX_AGE = 60;
 const PUBLIC_CACHE_STALE_WHILE_REVALIDATE = 30;
@@ -13,7 +13,7 @@ export default createNextApiHandler({
   createContext,
   responseMeta: ({ ctx, type }) => {
     // only public GET requests are cacheable
-    const cacheable = !ctx?.session && type === 'query';
+    const cacheable = !ctx?.user && type === 'query';
     if (cacheable) {
       return {
         headers: {

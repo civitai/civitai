@@ -1,8 +1,9 @@
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
-import { handleAuthorizationError, handleDbError } from '~/server/services/errorHandling';
-import { protectedProcedure, publicProcedure, router } from '~/server/trpc/trpc';
+import { handleAuthorizationError, handleDbError } from '~/server/utils/errorHandling';
+import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { prisma } from '~/server/db/client';
 
 export const userRouter = router({
   getAll: publicProcedure
@@ -15,7 +16,7 @@ export const userRouter = router({
     )
     .query(async ({ input, ctx }) => {
       try {
-        return await ctx.prisma.user.findMany({
+        return await prisma.user.findMany({
           take: input.limit,
           select: {
             username: true,
@@ -38,7 +39,7 @@ export const userRouter = router({
   getById: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     try {
       const { id } = input;
-      const user = await ctx.prisma.user.findUnique({ where: { id } });
+      const user = await prisma.user.findUnique({ where: { id } });
 
       if (!user) {
         throw new TRPCError({
@@ -67,11 +68,11 @@ export const userRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const { id, ...data } = input;
-      const currentUser = ctx.session.user;
+      const currentUser = ctx.user;
       if (id !== currentUser.id) return handleAuthorizationError();
 
       try {
-        const updatedUser = await ctx.prisma.user.update({ where: { id }, data });
+        const updatedUser = await prisma.user.update({ where: { id }, data });
         if (!updatedUser) {
           throw new TRPCError({
             code: 'INTERNAL_SERVER_ERROR',
@@ -99,11 +100,11 @@ export const userRouter = router({
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
       const { id } = input;
-      const currentUser = ctx.session.user;
+      const currentUser = ctx.user;
       if (id !== currentUser.id) return handleAuthorizationError();
 
       try {
-        const user = await ctx.prisma.user.delete({ where: { id } });
+        const user = await prisma.user.delete({ where: { id } });
 
         if (!user) {
           throw new TRPCError({

@@ -25,7 +25,6 @@ import React, { useEffect, useRef, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { useModelFilters } from '~/hooks/useModelFilters';
-import { GetAllModelsReturnType } from '~/server/validators/models/getAllModels';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useRouter } from 'next/router';
@@ -34,10 +33,11 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useSession } from 'next-auth/react';
 import { ModelStatus } from '@prisma/client';
+import { GetModelsReturnType } from '~/server/controllers/model.controller';
 
 type MasonryListProps = {
   columnWidth: number;
-  data: GetAllModelsReturnType;
+  data: GetModelsReturnType;
 };
 
 // https://github.com/jaredLunde/masonic
@@ -103,7 +103,7 @@ const MasonryItem = ({
   width: itemWidth,
 }: {
   index: number;
-  data: GetAllModelsReturnType[0];
+  data: GetModelsReturnType[0];
   width: number;
 }) => {
   const { data: session } = useSession();

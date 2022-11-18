@@ -1,9 +1,9 @@
 import { ActionIcon, AspectRatio, Paper, PaperProps } from '@mantine/core';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImageModel } from '~/server/validators/image/selectors';
+import { ImageModel } from '~/server/selectors/image.selector';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { EdgeImage, EdgeImageProps } from '~/components/EdgeImage/EdgeImage';
-import { ImageMetaProps } from '~/server/validators/image/schemas';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { IconInfoCircle } from '@tabler/icons';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 

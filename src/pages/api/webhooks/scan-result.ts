@@ -1,7 +1,7 @@
 import { ModelFileType, ModelStatus, Prisma, ScanResultCode } from '@prisma/client';
 import { z } from 'zod';
 import { env } from '~/env/server.mjs';
-import { WebhookEndpoint } from '~/server/common/endpoint-helpers';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { prisma } from '~/server/db/client';
 
 export default WebhookEndpoint(async (req, res) => {
