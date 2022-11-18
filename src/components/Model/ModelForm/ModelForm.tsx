@@ -37,6 +37,7 @@ import { ModelById } from '~/types/router';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { modelVersionSchema } from '~/server/schema/model-version.schema';
 
 const schema = modelSchema.extend({ tagsOnModels: z.string().array() });
 
@@ -56,14 +57,16 @@ export function ModelForm({ model }: Props) {
   const [uploading, setUploading] = useState(false);
   const [hasTrainingWords, setHasTrainingWords] = useState(true);
 
-  const defaultModelVersion = {
+  const defaultModelFile = { name: '', url: '', sizeKB: 0, type: ModelFileType.Model };
+
+  const defaultModelVersion: z.infer<typeof modelVersionSchema> = {
     name: '',
     description: '',
     epochs: null,
     steps: null,
     trainedWords: [],
     images: [],
-    modelFile: { name: '', url: '', sizeKB: 0, type: ModelFileType.Model },
+    modelFile: defaultModelFile,
   };
 
   const defaultValues: z.infer<typeof schema> = {
@@ -72,8 +75,9 @@ export function ModelForm({ model }: Props) {
     type: model?.type ?? ModelType.Checkpoint,
     status: model?.status ?? ModelStatus.Published,
     tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
-    modelVersions: model?.modelVersions.map(({ trainedWords, images, ...version }) => ({
+    modelVersions: model?.modelVersions.map(({ trainedWords, images, modelFile, ...version }) => ({
       ...version,
+      modelFile: modelFile ?? defaultModelFile,
       trainedWords: trainedWords ?? [],
       // HOTFIX: Casting image.meta type issue with generated prisma schema
       images: images.map(({ image }) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
