@@ -30,12 +30,13 @@ import {
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
 import { IconPencil, IconTrash } from '@tabler/icons';
-import { cloneElement, useState } from 'react';
+import { cloneElement, useEffect, useState } from 'react';
 import { blurHashImage, loadImage } from '../../utils/blurhash';
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import useIsClient from '~/hooks/useIsClient';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageMetaProps } from '~/server/validators/image/schemas';
+import isEqual from 'lodash/isEqual';
 import { getMetadata } from '~/utils/image-metadata';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {

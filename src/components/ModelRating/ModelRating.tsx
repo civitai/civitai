@@ -1,5 +1,5 @@
 import { Group, Rating, RatingProps, Text } from '@mantine/core';
-import { GetModelReturnType } from '~/server/controllers/model.controller';
+import { ModelWithDetails } from '~/server/validators/models/getById';
 
 export function ModelRating({ rank, ...props }: Props) {
   return (
@@ -11,5 +11,5 @@ export function ModelRating({ rank, ...props }: Props) {
 }
 
 type Props = RatingProps & {
-  rank: GetModelReturnType['rank'];
+  rank: ModelWithDetails['rank'];
 };

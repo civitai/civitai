@@ -1,23 +1,22 @@
 import { z } from 'zod';
-
-import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
-import { handleAuthorizationError, handleDbError } from '~/server/utils/errorHandling';
+import { getAllReviewsSelect } from '~/server/validators/reviews/getAllReviews';
+import { middleware, protectedProcedure, publicProcedure, router } from '../trpc';
+import { handleAuthorizationError, handleDbError } from '~/server/services/errorHandling';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
-import { reviewUpsertSchema } from '~/server/schema/review.schema';
+import { reviewUpsertSchema } from '~/server/validators/reviews/schemas';
 import { Prisma, ReportReason, ReviewReactions } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { prisma } from '~/server/db/client';
-import { getAllReviewsSelect, getReactionsSelect } from '~/server/selectors/review.selector';
+import { getReactionsSelect } from '~/server/validators/reviews/getReactions';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
-  if (!ctx?.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  if (!ctx.session || !ctx.session.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
 
   const { id } = input as { id: number };
-  const userId = ctx.user.id;
+  const userId = ctx.session.user.id;
   let ownerId: number = userId;
   if (id) {
-    const isModerator = ctx?.user?.isModerator;
-    ownerId = (await prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
+    const isModerator = ctx.session?.user?.isModerator;
+    ownerId = (await ctx.prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator && ownerId) {
       if (ownerId !== userId) throw handleAuthorizationError();
     }
@@ -26,8 +25,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
   return next({
     ctx: {
       // infers the `session` as non-nullable
-      ...ctx,
-      user: ctx.user,
+      session: { ...ctx.session, user: ctx.session.user },
       ownerId,
     },
   });
@@ -51,7 +49,7 @@ export const reviewRouter = router({
     .query(async ({ ctx, input = {} }) => {
       const { cursor, limit = 20, modelId, modelVersionId, userId, sort, filterBy = [] } = input;
       const commonWhere = { modelId, modelVersionId, userId };
-      const showNsfw = ctx?.user?.showNsfw ?? true;
+      const showNsfw = ctx.session?.user?.showNsfw ?? true;
       let orderBy: Prisma.ReviewFindManyArgs['orderBy'] = { createdAt: 'desc' };
 
       switch (sort) {
@@ -64,7 +62,7 @@ export const reviewRouter = router({
           break;
       }
 
-      const reviews = await prisma.review.findMany({
+      const reviews = await ctx.prisma.review.findMany({
         take: limit + 1, // get an extra item at the end which we'll use as next cursor
         cursor: cursor ? { id: cursor } : undefined,
         where: {
@@ -96,7 +94,7 @@ export const reviewRouter = router({
     .input(z.object({ reviewId: z.number() }))
     .query(async ({ ctx, input }) => {
       const { reviewId } = input;
-      const reactions = await prisma.reviewReaction.findMany({
+      const reactions = await ctx.prisma.reviewReaction.findMany({
         where: { reviewId },
         select: getReactionsSelect,
       });
@@ -120,11 +118,11 @@ export const reviewRouter = router({
       const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
       const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
 
-      return await prisma.$transaction(async (tx) => {
+      return await ctx.prisma.$transaction(async (tx) => {
         await Promise.all(
           // extract index because index is not a part of the prisma schema for this model
           imagesToUpdate.map(async ({ index, ...image }) =>
-            tx.image.updateMany({
+            tx.image.update({
               where: { id: image.id },
               data: {
                 ...image,
@@ -134,7 +132,7 @@ export const reviewRouter = router({
           )
         );
 
-        return await prisma.review.upsert({
+        return await ctx.prisma.review.upsert({
           where: { id: id ?? -1 },
           create: {
             ...reviewInput,
@@ -180,8 +178,8 @@ export const reviewRouter = router({
     .mutation(async ({ ctx, input }) => {
       const { id } = input;
 
-      const deleted = await prisma.review.deleteMany({
-        where: { AND: { id, userId: ctx.user.id } },
+      const deleted = await ctx.prisma.review.deleteMany({
+        where: { AND: { id, userId: ctx.session.user.id } },
       });
 
       if (!deleted) {
@@ -200,16 +198,16 @@ export const reviewRouter = router({
         reason === ReportReason.NSFW ? { nsfw: true } : { tosViolation: true };
 
       try {
-        await prisma.$transaction([
-          prisma.review.update({
+        await ctx.prisma.$transaction([
+          ctx.prisma.review.update({
             where: { id },
             data,
           }),
-          prisma.reviewReport.create({
+          ctx.prisma.reviewReport.create({
             data: {
               reviewId: id,
               reason,
-              userId: ctx.user.id,
+              userId: ctx.session.user.id,
             },
           }),
         ]);
@@ -223,15 +221,15 @@ export const reviewRouter = router({
   toggleReaction: protectedProcedure
     .input(z.object({ id: z.number(), reaction: z.nativeEnum(ReviewReactions) }))
     .mutation(async ({ ctx, input }) => {
-      const { user } = ctx;
+      const { user } = ctx.session;
       const { id, reaction } = input;
 
-      const reviewReaction = await prisma.reviewReaction.findFirst({
+      const reviewReaction = await ctx.prisma.reviewReaction.findFirst({
         where: { reaction, userId: user.id, reviewId: id },
       });
 
       try {
-        const review = await prisma.review.update({
+        const review = await ctx.prisma.review.update({
           where: { id },
           data: {
             reactions: {

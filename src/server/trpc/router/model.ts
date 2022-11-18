@@ -8,20 +8,22 @@ import {
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
-import { modelSchema } from '~/server/schema/model.schema';
+import { ModelSort } from '~/server/common/enums';
+import { modelSchema, modelVersionSchema } from '~/server/common/validation/model';
 import {
   handleAuthorizationError,
   handleBadRequest,
   handleDbError,
-} from '~/server/utils/errorHandling';
+} from '~/server/services/errorHandling';
+import {
+  getAllModelsSchema,
+  getAllModelsSelect,
+  getAllModelsTransform,
+  getAllModelsWhere,
+} from '~/server/validators/models/getAllModels';
+import { modelWithDetailsSelect } from '~/server/validators/models/getById';
 import { checkFileExists, getS3Client } from '~/utils/s3-utils';
-import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
-import { prisma } from '~/server/db/client';
-import { getModelHandler } from '../controllers/model.controller';
-import { getAllModelsSchema } from '../schema/model.schema';
-import { getModelsHandler } from '~/server/controllers/model.controller';
-import { getByIdSchema } from '~/server/schema/base.schema';
-import { modelVersionSchema } from '~/server/schema/model-version.schema';
+import { middleware, protectedProcedure, publicProcedure, router } from '../trpc';
 
 function prepareFiles(
   modelFile: z.infer<typeof modelVersionSchema>['modelFile'],
@@ -45,15 +47,14 @@ const unscannedFile = {
 };
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
-  if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  if (!ctx.session || !ctx.session.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
 
   const { id } = input as { id: number };
-
-  const userId = ctx.user.id;
+  const userId = ctx.session.user.id;
   let ownerId = userId;
   if (id) {
-    const isModerator = ctx?.user?.isModerator;
-    ownerId = (await prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
+    const isModerator = ctx.session?.user?.isModerator;
+    ownerId = (await ctx.prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator) {
       if (ownerId !== userId) throw handleAuthorizationError();
     }
@@ -61,24 +62,124 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 
   return next({
     ctx: {
-      // infers the `user` as non-nullable
-      user: ctx.user,
+      // infers the `session` as non-nullable
+      session: { ...ctx.session, user: ctx.session.user },
       ownerId,
     },
   });
 });
 
 export const modelRouter = router({
-  getById: publicProcedure
-    .input(getByIdSchema)
-    .query(({ ctx, input }) => getModelHandler({ ctx, input })),
-  getAll: publicProcedure
-    .input(getAllModelsSchema)
-    .query(({ ctx, input }) => getModelsHandler({ ctx, input })),
+  getAll: publicProcedure.input(getAllModelsSchema).query(async ({ ctx, input = {} }) => {
+    try {
+      const session = ctx.session;
+      const { cursor, limit = 50 } = input;
+      input.showNsfw = session?.user?.showNsfw ?? true;
+
+      const orderBy: Prisma.Enumerable<Prisma.ModelOrderByWithRelationInput> = [
+        { createdAt: 'desc' },
+      ];
+      switch (input.sort) {
+        case ModelSort.HighestRated: {
+          orderBy.unshift({
+            rank: {
+              [`rating${input.period}Rank`]: 'asc',
+            },
+          });
+          break;
+        }
+        case ModelSort.MostDownloaded: {
+          orderBy.unshift({
+            rank: {
+              [`downloadCount${input.period}Rank`]: 'asc',
+            },
+          });
+          break;
+        }
+      }
+
+      const where: Prisma.ModelFindManyArgs['where'] = { ...getAllModelsWhere(input) };
+      if (!session?.user?.isModerator) {
+        // Only show models that are ready to be used unless the user is the owner
+        where.OR = [{ status: ModelStatus.Published }, { user: { id: session?.user?.id } }];
+      }
+
+      const items = await ctx.prisma.model.findMany({
+        take: limit + 1, // get an extra item at the end which we'll use as next cursor
+        cursor: cursor ? { id: cursor } : undefined,
+        where,
+        orderBy: orderBy,
+        select: getAllModelsSelect,
+      });
+
+      let nextCursor: typeof cursor | undefined = undefined;
+      if (items.length > limit) {
+        const nextItem = items.pop();
+        nextCursor = nextItem?.id;
+      }
+
+      const models = getAllModelsTransform(items);
+      return { items: models, nextCursor };
+    } catch (error) {
+      return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    }
+  }),
+  getById: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
+    try {
+      const { id } = input;
+
+      const where: Prisma.ModelFindFirstArgs['where'] = { id };
+      if (!ctx.session?.user?.isModerator) {
+        // Only show models that are ready to be used unless the user is the owner
+        where.OR = [{ status: ModelStatus.Published }, { user: { id: ctx.session?.user?.id } }];
+      }
+
+      const model = await ctx.prisma.model.findFirst({
+        where,
+        select: modelWithDetailsSelect,
+      });
+
+      if (!model) {
+        handleDbError({
+          code: 'NOT_FOUND',
+          message: `No model with id ${id}`,
+        });
+        return null;
+      }
+
+      const { modelVersions } = model;
+      const transformedModel = {
+        ...model,
+        modelVersions: modelVersions.map(({ files, ...version }) => ({
+          ...version,
+          trainingDataFile: files.find((file) => file.type === ModelFileType.TrainingData),
+          modelFile:
+            files.find((file) => file.type === ModelFileType.Model) ??
+            ({
+              name: '',
+              type: ModelFileType.Model,
+              url: '',
+              sizeKB: 0,
+              virusScanResult: ScanResultCode.Pending,
+              virusScanMessage: null,
+              pickleScanResult: ScanResultCode.Pending,
+              pickleScanMessage: null,
+              scannedAt: null,
+              rawScanResult: null,
+            } as ModelFile),
+        })),
+      };
+
+      return transformedModel;
+    } catch (error) {
+      handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+      return null;
+    }
+  }),
   getVersions: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     try {
       const { id } = input;
-      const modelVersions = await prisma.modelVersion.findMany({
+      const modelVersions = await ctx.prisma.modelVersion.findMany({
         where: { modelId: id },
         select: { id: true, name: true },
       });
@@ -89,7 +190,7 @@ export const modelRouter = router({
     }
   }),
   add: protectedProcedure.input(modelSchema).mutation(async ({ ctx, input }) => {
-    const userId = ctx.user.id;
+    const userId = ctx.session.user.id;
     const { modelVersions, tagsOnModels, ...data } = input;
 
     // TODO DRY: This is used in add and update
@@ -119,7 +220,7 @@ export const modelRouter = router({
     //    All of the logic would be in the separate functions
 
     try {
-      const createdModels = await prisma.model.create({
+      const createdModels = await ctx.prisma.model.create({
         data: {
           ...data,
           userId,
@@ -203,7 +304,7 @@ export const modelRouter = router({
 
       try {
         // Get current versions for file and version comparison
-        const currentVersions = await prisma.modelVersion.findMany({
+        const currentVersions = await ctx.prisma.modelVersion.findMany({
           where: { modelId: id },
           select: { id: true, files: { select: { type: true, url: true } } },
         });
@@ -212,14 +313,12 @@ export const modelRouter = router({
           .filter((version) => !versionIds.includes(version.id))
           .map(({ id }) => id);
 
-        console.log('_____START_____');
-
-        const model = await prisma.$transaction(
+        const model = await ctx.prisma.$transaction(
           async (tx) => {
             const imagesToUpdate = modelVersions.flatMap((x) => x.images).filter((x) => !!x.id);
             await Promise.all(
               imagesToUpdate.map(async (image) =>
-                tx.image.updateMany({
+                tx.image.update({
                   where: { id: image.id },
                   data: {
                     ...image,
@@ -230,7 +329,7 @@ export const modelRouter = router({
             );
 
             // TODO Model Status: Allow them to save as draft and publish/unpublish
-            return await tx.model.update({
+            return await ctx.prisma.model.update({
               where: { id },
               data: {
                 ...data,
@@ -356,8 +455,6 @@ export const modelRouter = router({
           }
         );
 
-        console.log('_____FINISH_____');
-
         if (!model) {
           return handleDbError({
             code: 'NOT_FOUND',
@@ -376,7 +473,7 @@ export const modelRouter = router({
     .mutation(async ({ ctx, input }) => {
       try {
         const { id } = input;
-        const model = await prisma.model.delete({ where: { id } });
+        const model = await ctx.prisma.model.delete({ where: { id } });
 
         if (!model) {
           return handleDbError({
@@ -397,16 +494,16 @@ export const modelRouter = router({
         reason === ReportReason.NSFW ? { nsfw: true } : { tosViolation: true };
 
       try {
-        await prisma.$transaction([
-          prisma.model.update({
+        await ctx.prisma.$transaction([
+          ctx.prisma.model.update({
             where: { id },
             data,
           }),
-          prisma.modelReport.create({
+          ctx.prisma.modelReport.create({
             data: {
               modelId: id,
               reason,
-              userId: ctx.user.id,
+              userId: ctx.session.user.id,
             },
           }),
         ]);
@@ -423,7 +520,7 @@ export const modelRouter = router({
     .mutation(async ({ ctx, input }) => {
       const { id } = input;
 
-      const model = await prisma.model.update({
+      const model = await ctx.prisma.model.update({
         where: { id },
         data: { status: ModelStatus.Unpublished },
       });

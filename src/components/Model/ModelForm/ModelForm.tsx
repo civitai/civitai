@@ -31,8 +31,8 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { modelSchema } from '~/server/schema/model.schema';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import { modelSchema } from '~/server/common/validation/model';
+import { ImageMetaProps } from '~/server/validators/image/schemas';
 import { ModelById } from '~/types/router';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -102,7 +102,7 @@ export function ModelForm({ model }: Props) {
 
   const handleSubmit = (values: z.infer<typeof schema>) => {
     const commonOptions = {
-      async onSuccess(results: void | Model, input: { id?: number }) {
+      async onSuccess(results: void | Model) {
         const response = results as Model;
 
         showNotification({
@@ -115,8 +115,7 @@ export function ModelForm({ model }: Props) {
         await queryUtils.tag.invalidate();
         router.push(
           { pathname: `/models/${response.id}`, query: { showNsfw: true } },
-          `/models/${response.id}`,
-          { shallow: !!input.id }
+          `/models/${response.id}`
         );
       },
       onError(error: TRPCClientErrorBase<DefaultErrorShape>) {

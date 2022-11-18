@@ -1,16 +1,15 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
-import { handleDbError } from '~/server/utils/errorHandling';
-import { protectedProcedure, router } from '~/server/trpc';
-import { prisma } from '~/server/db/client';
+import { handleDbError } from '~/server/services/errorHandling';
+import { protectedProcedure, router } from '~/server/trpc/trpc';
 
 export const accountRouter = router({
   getAll: protectedProcedure.input(z.object({}).optional()).query(async ({ ctx }) => {
-    const user = ctx.user;
+    const user = ctx.session.user;
     if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
 
     try {
-      return await prisma.account.findMany({
+      return await ctx.prisma.account.findMany({
         where: { userId: user.id },
         select: {
           id: true,
@@ -24,11 +23,11 @@ export const accountRouter = router({
   delete: protectedProcedure
     .input(z.object({ accountId: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      const user = ctx.user;
+      const user = ctx.session.user;
       if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
 
       try {
-        await prisma.account.deleteMany({
+        await ctx.prisma.account.deleteMany({
           where: {
             userId: user.id,
             id: input.accountId,

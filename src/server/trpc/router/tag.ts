@@ -1,7 +1,6 @@
 import { z } from 'zod';
-import { handleDbError } from '~/server/utils/errorHandling';
-import { publicProcedure, router } from '~/server/trpc';
-import { prisma } from '~/server/db/client';
+import { handleDbError } from '~/server/services/errorHandling';
+import { publicProcedure, router } from '~/server/trpc/trpc';
 
 export const tagRouter = router({
   getAll: publicProcedure
@@ -15,7 +14,7 @@ export const tagRouter = router({
     )
     .query(async ({ input, ctx }) => {
       try {
-        return await prisma.tag.findMany({
+        return await ctx.prisma.tag.findMany({
           take: input?.limit,
           select: {
             id: true,
