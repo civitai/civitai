@@ -3,9 +3,14 @@ import exifr from 'exifr';
 import { ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
 
 export async function getMetadata(file: FileWithPath) {
-  const exif = await exifr.parse(file, {
-    userComment: true,
-  });
+  let exif: any;
+  try {
+    exif = await exifr.parse(file, {
+      userComment: true,
+    });
+  } catch (e: any) {
+    return {};
+  }
   let generationDetails = null;
   if (exif?.userComment) {
     const p = document.createElement('p');
