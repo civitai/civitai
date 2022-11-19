@@ -475,19 +475,17 @@ export default function ModelDetail(props: PageProps) {
             <Stack>
               {latestVersion && (
                 <Group spacing="xs">
-                  <LoginRedirect reason="download-auth">
-                    <Button
-                      component="a"
-                      href={`/api/download/models/${latestVersion?.id}`}
-                      fullWidth={mobile}
-                      sx={{ flex: 1 }}
-                      download
-                    >
-                      <Text align="center">
-                        {`Download Latest (${formatKBytes(latestVersion?.modelFile?.sizeKB ?? 0)})`}
-                      </Text>
-                    </Button>
-                  </LoginRedirect>
+                  <Button
+                    component="a"
+                    href={`/api/download/models/${latestVersion?.id}`}
+                    fullWidth={mobile}
+                    sx={{ flex: 1 }}
+                    download
+                  >
+                    <Text align="center">
+                      {`Download Latest (${formatKBytes(latestVersion?.modelFile?.sizeKB ?? 0)})`}
+                    </Text>
+                  </Button>
                   <VerifiedShield file={latestVersion.modelFile} />
                 </Group>
               )}

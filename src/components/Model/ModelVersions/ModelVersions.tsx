@@ -142,18 +142,16 @@ function TabContent({ version, nsfw }: TabContentProps) {
       <Grid.Col xs={12} md={4} orderMd={2}>
         <Stack spacing="xs">
           <Group noWrap spacing="xs">
-            <LoginRedirect reason="download-auth">
-              <Button
-                component="a"
-                href={`/api/download/models/${version.id}`}
-                leftIcon={<IconDownload size={16} />}
-                download
-                style={{ flex: 1 }}
-                variant="light"
-              >
-                {`Download (${formatKBytes(version.modelFile?.sizeKB ?? 0)})`}
-              </Button>
-            </LoginRedirect>
+            <Button
+              component="a"
+              href={`/api/download/models/${version.id}`}
+              leftIcon={<IconDownload size={16} />}
+              download
+              style={{ flex: 1 }}
+              variant="light"
+            >
+              {`Download (${formatKBytes(version.modelFile?.sizeKB ?? 0)})`}
+            </Button>
             <VerifiedShield file={version.modelFile} variant="light" />
           </Group>
 
