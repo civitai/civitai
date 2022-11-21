@@ -5,11 +5,11 @@ import { showNotification } from '@mantine/notifications';
 import { IconX } from '@tabler/icons';
 
 import { ImageUpload } from '~/components/ImageUpload/ImageUpload';
-import { ReviewUpsertProps, reviewUpsertSchema } from '~/server/schema/review.schema';
+import { ReviewUpsertInput, reviewUpsertSchema } from '~/server/schema/review.schema';
 import { trpc } from '~/utils/trpc';
 
 type ReviewModelProps = {
-  review: ReviewUpsertProps;
+  review: ReviewUpsertInput;
 };
 
 export default function ReviewEditModal({
@@ -21,7 +21,7 @@ export default function ReviewEditModal({
   const { review } = innerProps;
   const { mutate, isLoading } = trpc.review.upsert.useMutation();
 
-  const form = useForm<ReviewUpsertProps>({
+  const form = useForm<ReviewUpsertInput>({
     validate: zodResolver(reviewUpsertSchema),
     initialValues: review,
   });
@@ -30,7 +30,7 @@ export default function ReviewEditModal({
     id: review.modelId,
   });
 
-  const handleSubmit = (data: ReviewUpsertProps) => {
+  const handleSubmit = (data: ReviewUpsertInput) => {
     mutate(data, {
       onSuccess: async (_, { modelId }) => {
         context.closeModal(id);

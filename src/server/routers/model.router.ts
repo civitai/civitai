@@ -8,16 +8,12 @@ import {
   getModelHandler,
   getModelsInfiniteHandler,
   getModelVersionsHandler,
-  reportModelHanlder,
+  reportModelHandler,
   unpublishModelHandler,
 } from '~/server/controllers/model.controller';
 import { prisma } from '~/server/db/client';
-import { getByIdSchema } from '~/server/schema/base.schema';
-import {
-  getAllModelsSchema,
-  modelSchema,
-  reportModelInputSchema,
-} from '~/server/schema/model.schema';
+import { getByIdSchema, reportInputSchema } from '~/server/schema/base.schema';
+import { getAllModelsSchema, modelSchema } from '~/server/schema/model.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import {
@@ -362,7 +358,7 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteModelHandler),
-  report: protectedProcedure.input(reportModelInputSchema).mutation(reportModelHanlder),
+  report: protectedProcedure.input(reportInputSchema).mutation(reportModelHandler),
   unpublish: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)

@@ -5,8 +5,8 @@ import { Context } from '~/server/createContext';
 import { getAllModelsSelect, modelWithDetailsSelect } from '~/server/selectors/model.selector';
 import { handleDbError } from '~/server/utils/errorHandling';
 
-import { GetByIdInput } from '../schema/base.schema';
-import { GetAllModelsInput, ReportModelInput } from '../schema/model.schema';
+import { GetByIdInput, ReportInput } from '../schema/base.schema';
+import { GetAllModelsInput } from '../schema/model.schema';
 import {
   deleteModelById,
   getModel,
@@ -77,30 +77,31 @@ export const getModelVersionsHandler = async ({ input }: { input: GetByIdInput }
 };
 
 export const unpublishModelHandler = async ({ input }: { input: GetByIdInput }) => {
-  const { id } = input;
-  const model = await updateModelById({ id, data: { status: ModelStatus.Unpublished } });
+  try {
+    const model = await updateModelById({ ...input, data: { status: ModelStatus.Unpublished } });
 
-  if (!model) {
-    return handleDbError({
-      code: 'NOT_FOUND',
-      message: `No model with id ${id}`,
-    });
+    if (!model) {
+      throw handleDbError({
+        code: 'NOT_FOUND',
+        message: `No model with id ${input.id}`,
+      });
+    }
+
+    return model;
+  } catch (error) {
+    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
   }
-
-  return model;
 };
 
-export const reportModelHanlder = async ({
+export const reportModelHandler = async ({
   input,
   ctx,
 }: {
-  input: ReportModelInput;
+  input: ReportInput;
   ctx: DeepNonNullable<Context>;
 }) => {
-  const { id, reason } = input;
-
   try {
-    await reportModelById({ id, reason, userId: ctx.user.id });
+    await reportModelById({ ...input, userId: ctx.user.id });
   } catch (error) {
     handleDbError({
       code: 'INTERNAL_SERVER_ERROR',

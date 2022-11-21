@@ -3,9 +3,9 @@ import { SessionUser } from 'next-auth';
 
 import { ModelSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
 
-import { GetAllModelsInput, ReportModelInput } from '../schema/model.schema';
+import { GetAllModelsInput } from '../schema/model.schema';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   input: { id },
@@ -95,7 +95,7 @@ export const updateModelById = ({ id, data }: { id: number; data: Prisma.ModelUp
   });
 };
 
-export const reportModelById = ({ id, reason, userId }: ReportModelInput & { userId: number }) => {
+export const reportModelById = ({ id, reason, userId }: ReportInput & { userId: number }) => {
   const data: Prisma.ModelUpdateInput =
     reason === ReportReason.NSFW ? { nsfw: true } : { tosViolation: true };
 

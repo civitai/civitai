@@ -1,4 +1,4 @@
-import { ModelType, ModelStatus, MetricTimeframe, ReportReason } from '@prisma/client';
+import { ModelType, ModelStatus, MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';
 import { tagSchema } from '~/server/schema/tag.schema';
@@ -38,9 +38,3 @@ export const modelSchema = z.object({
     .array(modelVersionUpsertSchema)
     .min(1, 'At least one model version is required.'),
 });
-
-export const reportModelInputSchema = z.object({
-  id: z.number(),
-  reason: z.nativeEnum(ReportReason),
-});
-export type ReportModelInput = z.infer<typeof reportModelInputSchema>;
