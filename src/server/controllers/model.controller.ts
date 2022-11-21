@@ -1,10 +1,20 @@
 import { TRPCError } from '@trpc/server';
-import { ModelFileType } from '@prisma/client';
-import { GetByIdInput } from './../schema/base.schema';
-import { getModel, getModels } from './../services/model.service';
+import { ModelFileType, ModelStatus } from '@prisma/client';
+
 import { Context } from '~/server/createContext';
-import { GetAllModelsInput } from './../schema/model.schema';
 import { getAllModelsSelect, modelWithDetailsSelect } from '~/server/selectors/model.selector';
+import { handleDbError } from '~/server/utils/errorHandling';
+
+import { GetByIdInput } from '../schema/base.schema';
+import { GetAllModelsInput, ReportModelInput } from '../schema/model.schema';
+import {
+  deleteModelById,
+  getModel,
+  getModels,
+  getModelVersionsMicro,
+  reportModelById,
+  updateModelById,
+} from '../services/model.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -55,4 +65,64 @@ export const getModelsInfiniteHandler = async ({
       image: modelVersions[0]?.images[0]?.image ?? {},
     })),
   };
+};
+
+export const getModelVersionsHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const modelVersions = await getModelVersionsMicro(input);
+    return modelVersions;
+  } catch (error) {
+    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+  }
+};
+
+export const unpublishModelHandler = async ({ input }: { input: GetByIdInput }) => {
+  const { id } = input;
+  const model = await updateModelById({ id, data: { status: ModelStatus.Unpublished } });
+
+  if (!model) {
+    return handleDbError({
+      code: 'NOT_FOUND',
+      message: `No model with id ${id}`,
+    });
+  }
+
+  return model;
+};
+
+export const reportModelHanlder = async ({
+  input,
+  ctx,
+}: {
+  input: ReportModelInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { id, reason } = input;
+
+  try {
+    await reportModelById({ id, reason, userId: ctx.user.id });
+  } catch (error) {
+    handleDbError({
+      code: 'INTERNAL_SERVER_ERROR',
+      error,
+    });
+  }
+};
+
+export const deleteModelHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const { id } = input;
+    const model = await deleteModelById({ id });
+
+    if (!model) {
+      throw handleDbError({
+        code: 'NOT_FOUND',
+        message: `No model with id ${id}`,
+      });
+    }
+
+    return model;
+  } catch (error) {
+    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+  }
 };

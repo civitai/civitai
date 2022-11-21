@@ -1,9 +1,11 @@
+import { MetricTimeframe, ModelStatus, Prisma, ReportReason } from '@prisma/client';
 import { SessionUser } from 'next-auth';
-import { GetAllModelsInput } from './../schema/model.schema';
-import { prisma } from '~/server/db/client';
-import { MetricTimeframe, ModelStatus, Prisma } from '@prisma/client';
+
 import { ModelSort } from '~/server/common/enums';
+import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
+
+import { GetAllModelsInput, ReportModelInput } from '../schema/model.schema';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   input: { id },
@@ -77,4 +79,38 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     ],
     select,
   });
+};
+
+export const getModelVersionsMicro = ({ id }: { id: number }) => {
+  return prisma.modelVersion.findMany({
+    where: { modelId: id },
+    select: { id: true, name: true },
+  });
+};
+
+export const updateModelById = ({ id, data }: { id: number; data: Prisma.ModelUpdateInput }) => {
+  return prisma.model.update({
+    where: { id },
+    data,
+  });
+};
+
+export const reportModelById = ({ id, reason, userId }: ReportModelInput & { userId: number }) => {
+  const data: Prisma.ModelUpdateInput =
+    reason === ReportReason.NSFW ? { nsfw: true } : { tosViolation: true };
+
+  return prisma.$transaction([
+    updateModelById({ id, data }),
+    prisma.modelReport.create({
+      data: {
+        modelId: id,
+        reason,
+        userId,
+      },
+    }),
+  ]);
+};
+
+export const deleteModelById = ({ id }: GetByIdInput) => {
+  return prisma.model.delete({ where: { id } });
 };

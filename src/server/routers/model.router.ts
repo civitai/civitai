@@ -1,28 +1,31 @@
-import {
-  ModelFile,
-  ModelFileType,
-  ModelStatus,
-  Prisma,
-  ReportReason,
-  ScanResultCode,
-} from '@prisma/client';
+import { ModelFile, ModelFileType, Prisma, ScanResultCode } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
-import { modelSchema } from '~/server/schema/model.schema';
+
+import { env } from '~/env/server.mjs';
+import {
+  deleteModelHandler,
+  getModelHandler,
+  getModelsInfiniteHandler,
+  getModelVersionsHandler,
+  reportModelHanlder,
+  unpublishModelHandler,
+} from '~/server/controllers/model.controller';
+import { prisma } from '~/server/db/client';
+import { getByIdSchema } from '~/server/schema/base.schema';
+import {
+  getAllModelsSchema,
+  modelSchema,
+  reportModelInputSchema,
+} from '~/server/schema/model.schema';
+import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
+import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import {
   handleAuthorizationError,
   handleBadRequest,
   handleDbError,
 } from '~/server/utils/errorHandling';
 import { checkFileExists, getS3Client } from '~/utils/s3-utils';
-import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
-import { prisma } from '~/server/db/client';
-import { getModelHandler } from '../controllers/model.controller';
-import { getAllModelsSchema } from '../schema/model.schema';
-import { getModelsInfiniteHandler } from '~/server/controllers/model.controller';
-import { getByIdSchema } from '~/server/schema/base.schema';
-import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
-import { env } from '~/env/server.mjs';
 
 function prepareFiles(
   modelFile: z.infer<typeof modelVersionUpsertSchema>['modelFile'],
@@ -70,25 +73,9 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 });
 
 export const modelRouter = router({
-  getById: publicProcedure
-    .input(getByIdSchema)
-    .query(({ ctx, input }) => getModelHandler({ ctx, input })),
-  getAll: publicProcedure
-    .input(getAllModelsSchema)
-    .query(({ ctx, input }) => getModelsInfiniteHandler({ ctx, input })),
-  getVersions: publicProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
-    try {
-      const { id } = input;
-      const modelVersions = await prisma.modelVersion.findMany({
-        where: { modelId: id },
-        select: { id: true, name: true },
-      });
-
-      return modelVersions;
-    } catch (error) {
-      return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
-    }
-  }),
+  getById: publicProcedure.input(getByIdSchema).query(getModelHandler),
+  getAll: publicProcedure.input(getAllModelsSchema).query(getModelsInfiniteHandler),
+  getVersions: publicProcedure.input(getByIdSchema).query(getModelVersionsHandler),
   add: protectedProcedure.input(modelSchema).mutation(async ({ ctx, input }) => {
     const userId = ctx.user.id;
     const { modelVersions, tagsOnModels, ...data } = input;
@@ -372,70 +359,12 @@ export const modelRouter = router({
       }
     }),
   delete: protectedProcedure
-    .input(z.object({ id: z.number() }))
+    .input(getByIdSchema)
     .use(isOwnerOrModerator)
-    .mutation(async ({ ctx, input }) => {
-      try {
-        const { id } = input;
-        const model = await prisma.model.delete({ where: { id } });
-
-        if (!model) {
-          return handleDbError({
-            code: 'NOT_FOUND',
-            message: `No model with id ${id}`,
-          });
-        }
-
-        return model;
-      } catch (error) {
-        return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
-      }
-    }),
-  report: protectedProcedure
-    .input(z.object({ id: z.number(), reason: z.nativeEnum(ReportReason) }))
-    .mutation(async ({ ctx, input: { id, reason } }) => {
-      const data: Prisma.ModelUpdateInput =
-        reason === ReportReason.NSFW ? { nsfw: true } : { tosViolation: true };
-
-      try {
-        await prisma.$transaction([
-          prisma.model.update({
-            where: { id },
-            data,
-          }),
-          prisma.modelReport.create({
-            data: {
-              modelId: id,
-              reason,
-              userId: ctx.user.id,
-            },
-          }),
-        ]);
-      } catch (error) {
-        return handleDbError({
-          code: 'INTERNAL_SERVER_ERROR',
-          error,
-        });
-      }
-    }),
+    .mutation(deleteModelHandler),
+  report: protectedProcedure.input(reportModelInputSchema).mutation(reportModelHanlder),
   unpublish: protectedProcedure
-    .input(z.object({ id: z.number() }))
+    .input(getByIdSchema)
     .use(isOwnerOrModerator)
-    .mutation(async ({ ctx, input }) => {
-      const { id } = input;
-
-      const model = await prisma.model.update({
-        where: { id },
-        data: { status: ModelStatus.Unpublished },
-      });
-
-      if (!model) {
-        return handleDbError({
-          code: 'NOT_FOUND',
-          message: `No model with id ${id}`,
-        });
-      }
-
-      return model;
-    }),
+    .mutation(unpublishModelHandler),
 });
