@@ -1,7 +1,7 @@
 import { SessionUser } from 'next-auth';
 import { GetAllModelsInput } from './../schema/model.schema';
 import { prisma } from '~/server/db/client';
-import { ModelStatus, Prisma } from '@prisma/client';
+import { MetricTimeframe, ModelStatus, Prisma } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 import { GetByIdInput } from '~/server/schema/base.schema';
 
@@ -26,7 +26,18 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
 };
 
 export const getModels = async <TSelect extends Prisma.ModelSelect>({
-  input: { limit, page, cursor, query, tag, user, types, sort, period },
+  input: {
+    limit,
+    page,
+    cursor,
+    query,
+    tag,
+    user,
+    types,
+    sort,
+    period = MetricTimeframe.AllTime,
+    rating,
+  },
   user: sessionUser,
   select,
 }: {
@@ -48,6 +59,11 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       user: user ? { username: user } : undefined,
       type: types ? { in: types } : undefined,
       nsfw: !canViewNsfw ? { equals: false } : undefined,
+      rank: rating
+        ? {
+            AND: [{ ratingAllTime: { gte: rating } }, { ratingAllTime: { lt: rating + 1 } }],
+          }
+        : undefined,
       OR: !sessionUser?.isModerator
         ? [{ status: ModelStatus.Published }, { user: { id: sessionUser?.id } }]
         : undefined,

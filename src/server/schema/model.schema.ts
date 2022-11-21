@@ -4,6 +4,7 @@ import { ModelSort } from '~/server/common/enums';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { sanitizedStringSchema } from '~/server/schema/utils.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
+import { isNumber } from '~/utils/type-guards';
 
 export const getAllModelsSchema = z
   .object({
@@ -16,6 +17,10 @@ export const getAllModelsSchema = z
     types: z.nativeEnum(ModelType).array(),
     sort: z.nativeEnum(ModelSort),
     period: z.nativeEnum(MetricTimeframe),
+    rating: z.preprocess((val) => {
+      const value = Number(val);
+      return isNumber(value) ? Math.floor(value) : null;
+    }, z.number()),
   })
   .partial();
 
@@ -29,5 +34,7 @@ export const modelSchema = z.object({
   status: z.nativeEnum(ModelStatus),
   tagsOnModels: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
-  modelVersions: z.array(modelVersionUpsertSchema).min(1, 'At least one model version is required.'),
+  modelVersions: z
+    .array(modelVersionUpsertSchema)
+    .min(1, 'At least one model version is required.'),
 });
