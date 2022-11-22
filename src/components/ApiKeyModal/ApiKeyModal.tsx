@@ -2,11 +2,11 @@ import { Button, Group, Modal, ModalProps, Stack } from '@mantine/core';
 import { KeyScope } from '@prisma/client';
 import { TypeOf, z } from 'zod';
 import { Form, InputCheckbox, InputText, useForm } from '~/libs/form';
-import { addApikeyInputSchema } from '~/server/schema/api-key.schema';
+import { addApiKeyInputSchema } from '~/server/schema/api-key.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-const schema = addApikeyInputSchema.extend({ writable: z.boolean() });
+const schema = addApiKeyInputSchema.extend({ writable: z.boolean() });
 
 export function ApiKeyModal({ ...props }: Props) {
   const form = useForm({

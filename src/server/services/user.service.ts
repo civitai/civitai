@@ -1,5 +1,7 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '~/server/db/client';
-import { GetByIdInput } from './../schema/base.schema';
+import { GetByIdInput } from '~/server/schema/base.schema';
+import { GetAllUsersInput } from '~/server/schema/user.schema';
 
 //https://github.com/civitai/civitai/discussions/8
 export const getUserModelStats = async ({ input: { id } }: { input: GetByIdInput }) => {
@@ -23,4 +25,43 @@ export const getUserModelStats = async ({ input: { id } }: { input: GetByIdInput
     avgRating,
     totalDownloads,
   };
+};
+
+export const getUsers = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>({
+  limit,
+  query,
+  email,
+  select,
+}: GetAllUsersInput & { select: TSelect }) => {
+  return prisma.user.findMany({
+    take: limit,
+    select,
+    where: {
+      username: query
+        ? {
+            contains: query,
+            mode: 'insensitive',
+          }
+        : undefined,
+      email: email,
+    },
+  });
+};
+
+export const getUserById = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>({
+  id,
+  select,
+}: GetByIdInput & { select: TSelect }) => {
+  return prisma.model.findUnique({
+    where: { id },
+    select,
+  });
+};
+
+export const updateUserById = ({ id, data }: { id: number; data: Prisma.UserUpdateInput }) => {
+  return prisma.user.update({ where: { id }, data });
+};
+
+export const deleteUser = ({ id }: GetByIdInput) => {
+  return prisma.user.delete({ where: { id } });
 };

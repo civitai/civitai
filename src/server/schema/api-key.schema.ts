@@ -10,11 +10,11 @@ export const getUserApiKeysInputSchema = z.object({
 });
 export type GetUserAPIKeysInput = TypeOf<typeof getUserApiKeysInputSchema>;
 
-export const addApikeyInputSchema = z.object({
+export const addApiKeyInputSchema = z.object({
   scope: z.array(z.nativeEnum(KeyScope)),
   name: z.string(),
 });
-export type AddAPIKeyInput = TypeOf<typeof addApikeyInputSchema>;
+export type AddAPIKeyInput = z.input<typeof addApiKeyInputSchema>;
 
 export const deleteApiKeyInputSchema = z.object({ key: z.string() });
 export type DeleteAPIKeyInput = TypeOf<typeof deleteApiKeyInputSchema>;
