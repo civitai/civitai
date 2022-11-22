@@ -2,16 +2,19 @@ import {
   Badge,
   Box,
   Card,
+  Center,
   createStyles,
   DefaultMantineColor,
   Group,
+  Loader,
   LoadingOverlay,
   Rating,
   Stack,
   Text,
+  ThemeIcon,
 } from '@mantine/core';
 import { useWindowSize } from '@react-hook/window-size';
-import { IconDownload } from '@tabler/icons';
+import { IconCloudOff, IconDownload } from '@tabler/icons';
 import {
   useContainerPosition,
   useMasonry,
@@ -34,6 +37,70 @@ import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useSession } from 'next-auth/react';
 import { ModelStatus } from '@prisma/client';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
+import { trpc } from '~/utils/trpc';
+import { QS } from '~/utils/qs';
+
+type InfiniteModelsProps = {
+  columnWidth?: number;
+};
+
+export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
+  const router = useRouter();
+  const queryParams = QS.parse(QS.stringify(router.query));
+  const { ref, inView } = useInView();
+  const {
+    data,
+    isLoading,
+    // isFetching,
+    fetchNextPage,
+    // fetchPreviousPage,
+    hasNextPage,
+    // hasPreviousPage,
+  } = trpc.model.getAll.useInfiniteQuery(
+    { limit: 100, ...queryParams },
+    {
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+    }
+  );
+
+  useEffect(() => {
+    if (inView) {
+      fetchNextPage();
+    }
+  }, [fetchNextPage, inView]);
+
+  const models = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
+
+  return (
+    <>
+      {isLoading ? (
+        <Center>
+          <Loader size="xl" />
+        </Center>
+      ) : !!models.length ? (
+        <MasonryList columnWidth={300} data={models} />
+      ) : (
+        <Stack align="center">
+          <ThemeIcon size={128} radius={100}>
+            <IconCloudOff size={80} />
+          </ThemeIcon>
+          <Text size={32} align="center">
+            No results found
+          </Text>
+          <Text align="center">
+            {"Try adjusting your search or filters to find what you're looking for"}
+          </Text>
+        </Stack>
+      )}
+      {!isLoading && hasNextPage && (
+        <Group position="center" ref={ref}>
+          <Loader />
+        </Group>
+      )}
+    </>
+  );
+}
 
 type MasonryListProps = {
   columnWidth: number;
@@ -42,10 +109,10 @@ type MasonryListProps = {
 
 // https://github.com/jaredLunde/masonic
 export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
+  const router = useRouter();
   // use stringified filters as key for positioner dependency array
   const { filters } = useModelFilters();
   const stringified = JSON.stringify(filters);
-  const router = useRouter();
   const modelId = Number(([] as string[]).concat(router.query.model ?? [])[0]);
 
   const containerRef = useRef(null);
@@ -182,10 +249,10 @@ const MasonryItem = ({
   return (
     <Link
       href={{
-        pathname: `models/${id}`,
+        pathname: `/models/${id}`,
         query: nsfw && blurNsfw ? { showNsfw: true } : undefined,
       }}
-      as={`models/${id}`}
+      as={`/models/${id}`}
       legacyBehavior
     >
       <a>

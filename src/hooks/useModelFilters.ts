@@ -17,7 +17,7 @@ const filterSchema = z.object({
   sort: z.nativeEnum(ModelSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
   query: z.string().optional(),
-  user: z.string().optional(),
+  username: z.string().optional(),
   tag: z.string().optional(),
 });
 
@@ -26,15 +26,10 @@ type FilterState = z.infer<typeof filterSchema>;
 export function useModelFilters() {
   const router = useRouter();
 
-  const queryParams = useMemo(
-    () => QS.parse(router.asPath.substring(router.asPath.indexOf('?') + 1)),
-    [router.asPath]
-  );
-
   const filters = useMemo(() => {
-    return Object.keys(queryParams)
+    return Object.keys(router.query)
       .map((key) => {
-        const result = filterSchema.safeParse({ [key]: queryParams[key] });
+        const result = filterSchema.safeParse({ [key]: router.query[key] });
         if (!result.success) console.error('error parsing filters');
         return result.success ? result.data : undefined;
       })
@@ -43,11 +38,11 @@ export function useModelFilters() {
         period: MetricTimeframe.AllTime,
         sort: ModelSort.HighestRated,
       });
-  }, [queryParams]);
+  }, [router.query]);
 
   const setFilters = useCallback(
     (value: SetStateAction<FilterState>) => {
-      const newParams = typeof value === 'function' ? value(queryParams) : value;
+      const newParams = typeof value === 'function' ? value(router.query) : value;
       const result = filterSchema.safeParse(newParams);
       if (!result.success) throw new Error('Invalid filter value');
       const stringified = QS.stringify(result.data);
@@ -55,7 +50,7 @@ export function useModelFilters() {
       if (router.route !== '/') router.push(url);
       else router.replace(url, undefined, { shallow: true });
     },
-    [queryParams, router]
+    [router]
   );
 
   return { filters, setFilters };

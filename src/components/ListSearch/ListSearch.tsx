@@ -13,7 +13,7 @@ const limit = 3;
 export function ListSearch({ onSearch }: Props) {
   const router = useRouter();
   const {
-    filters: { tag, query, user },
+    filters: { tag, query, username },
     setFilters,
   } = useModelFilters();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -28,7 +28,8 @@ export function ListSearch({ onSearch }: Props) {
 
   useEffect(() => {
     form.setValues({
-      query: router.route === '/' ? query ?? (tag ? `#${tag}` : user ? `@${user}` : '') : '',
+      query:
+        router.route === '/' ? query ?? (tag ? `#${tag}` : username ? `@${username}` : '') : '',
     });
   }, [router.route, query, tag]); //eslint-disable-line
 
@@ -65,16 +66,16 @@ export function ListSearch({ onSearch }: Props) {
       ...state,
       tag: undefined,
       query: undefined,
-      user: user.username || undefined,
+      username: user.username || undefined,
     }));
   };
 
   const handleSetQuery = (query: string) => {
-    setFilters((state) => ({ ...state, tag: undefined, query, user: undefined }));
+    setFilters((state) => ({ ...state, tag: undefined, query, username: undefined }));
   };
 
   const handleClear = () => {
-    setFilters((state) => ({ ...state, tag: undefined, query: undefined, user: undefined }));
+    setFilters((state) => ({ ...state, tag: undefined, query: undefined, username: undefined }));
   };
 
   const hasQueriedTags = tags?.some((x) => {

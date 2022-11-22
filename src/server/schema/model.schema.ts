@@ -12,7 +12,7 @@ export const getAllModelsSchema = z
     page: z.number(),
     query: z.string(),
     tag: z.string(),
-    user: z.string(),
+    username: z.string(),
     types: z
       .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
       .optional()

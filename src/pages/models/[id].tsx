@@ -92,7 +92,7 @@ type PageProps = {
 export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
   const ssg = await getServerProxySSGHelpers(context);
   const id = Number(context.params?.id as string);
-  if (isNumber(id)) await ssg.model.getById.prefetch({ id });
+  // if (isNumber(id)) await ssg.model.getById.prefetch({ id });
 
   return {
     props: {
@@ -216,7 +216,7 @@ export default function ModelDetail(props: PageProps) {
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
     router.beforePopState(({ as }) => {
-      if (as === '/' || as.startsWith('/?')) {
+      if (as === '/' || as.startsWith('/?') || as.startsWith('/user/')) {
         const [route, queryString] = as.split('?');
         const queryParams = QS.parse(queryString);
         setTimeout(() => {

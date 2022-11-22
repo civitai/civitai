@@ -1,12 +1,26 @@
-import { Group, Stack, Container, Title } from '@mantine/core';
+import { Container, Title, Stack, Group } from '@mantine/core';
 import Head from 'next/head';
-import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
-import { ListSort } from '~/components/ListSort/ListSort';
-import { ListPeriod } from '~/components/ListPeriod/ListPeriod';
-import { ListFilter } from '~/components/ListFilter/ListFilter';
 import { useRouter } from 'next/router';
+import { GetServerSideProps } from 'next/types';
+import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
+import { ListFilter } from '~/components/ListFilter/ListFilter';
+import { ListPeriod } from '~/components/ListPeriod/ListPeriod';
+import { ListSort } from '~/components/ListSort/ListSort';
+import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 
-function Home() {
+export const getServerSideProps: GetServerSideProps = async (ctx) => {
+  const ssg = await getServerProxySSGHelpers(ctx);
+  const username = ctx.query.username;
+  // if (isNumber(id)) await ssg.model.getById.prefetch({ id });
+
+  return {
+    props: {
+      trpcState: ssg.dehydrate(),
+    },
+  };
+};
+
+export default function UserPage() {
   const router = useRouter();
 
   return (
@@ -30,6 +44,3 @@ function Home() {
     </>
   );
 }
-
-// Home.getLayout = (page: React.ReactElement) => <>{page}</>;
-export default Home;

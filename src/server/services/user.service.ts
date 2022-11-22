@@ -1,10 +1,14 @@
 import { prisma } from '~/server/db/client';
-import { GetByIdInput } from './../schema/base.schema';
+import { GetUserByUsernameSchema } from '~/server/schema/user.schema';
 
 //https://github.com/civitai/civitai/discussions/8
-export const getUserModelStats = async ({ input: { id } }: { input: GetByIdInput }) => {
+export const getUserModelStats = async ({
+  input: { username },
+}: {
+  input: GetUserByUsernameSchema;
+}) => {
   const modelRanks = await prisma.modelRank.findMany({
-    where: { model: { userId: id } },
+    where: { model: { user: { username } } },
     select: {
       ratingAllTime: true,
       ratingCountAllTime: true,

@@ -34,7 +34,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     cursor,
     query,
     tag,
-    user,
+    username,
     types,
     sort,
     period = MetricTimeframe.AllTime,
@@ -58,7 +58,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     where: {
       name: query ? { contains: query, mode: 'insensitive' } : undefined,
       tagsOnModels: tag ? { some: { tag: { name: tag } } } : undefined,
-      user: user ? { username: user } : undefined,
+      user: username ? { username } : undefined,
       type: types ? { in: types } : undefined,
       nsfw: !canViewNsfw ? { equals: false } : undefined,
       rank: rating
