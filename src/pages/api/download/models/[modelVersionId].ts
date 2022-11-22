@@ -4,16 +4,24 @@ import { ModelFileType, ModelType, UserActivityType } from '@prisma/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { prisma } from '~/server/db/client';
 import { filenamize } from '~/utils/string-helpers';
+import { z } from 'zod';
+
+const schema = z.object({ modelVersionId: z.preprocess((val) => Number(val), z.number()) });
 
 export default async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
-  const modelVersionId = req.query.modelVersionId as string;
-  if (!modelVersionId) {
+  const results = schema.safeParse(req.query);
+  if (!results.success)
+    return res
+      .status(400)
+      .json({ error: `Invalid id: ${results.error.flatten().fieldErrors.modelVersionId}` });
+
+  if (!results.data.modelVersionId)
     return res.status(400).json({ error: 'Missing modelVersionId' });
-  }
 
   const modelVersion = await prisma.modelVersion.findFirst({
-    where: { id: parseInt(modelVersionId) },
+    where: { id: results.data.modelVersionId },
     select: {
+      id: true,
       model: { select: { id: true, name: true, type: true } },
       name: true,
       trainedWords: true,
@@ -40,7 +48,7 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
       data: {
         userId,
         activity: UserActivityType.ModelDownload,
-        details: { modelId: modelVersion.model.id, modelVersionId },
+        details: { modelId: modelVersion.model.id, modelVersionId: modelVersion.id },
       },
     });
   } catch (error) {

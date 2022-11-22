@@ -20,7 +20,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         ? ['ModelMetric', 'modelId', 'affected_models', 'model_id']
         : ['ModelVersionMetric', 'modelVersionId', 'affected_versions', 'model_version_id'];
 
-    await prisma?.$queryRawUnsafe(`
+    await prisma.$queryRawUnsafe(`
         -- Get all user activities that have happened since then that affect metrics
         WITH recent_activities AS
         (
