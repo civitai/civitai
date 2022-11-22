@@ -9,3 +9,8 @@ export const reportInputSchema = z.object({
   reason: z.nativeEnum(ReportReason),
 });
 export type ReportInput = z.infer<typeof reportInputSchema>;
+
+export const getAllQuerySchema = z.object({
+  limit: z.number(),
+  query: z.string(),
+});

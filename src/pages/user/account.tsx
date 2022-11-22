@@ -196,7 +196,7 @@ export default function Account({ providers, accounts: initialAccounts, isDev = 
                                       variant="link"
                                       color="red"
                                       style={{ cursor: 'pointer' }}
-                                      onClick={() => deleteAccount({ accountId: account.id })}
+                                      onClick={() => deleteAccount({ id: account.id })}
                                     >
                                       Remove
                                     </Text>
