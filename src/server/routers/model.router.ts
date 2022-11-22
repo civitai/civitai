@@ -7,6 +7,7 @@ import {
   deleteModelHandler,
   getModelHandler,
   getModelsInfiniteHandler,
+  getModelsWithVersionsHandler,
   getModelVersionsHandler,
   reportModelHandler,
   unpublishModelHandler,
@@ -363,4 +364,5 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(unpublishModelHandler),
+  getAllWithVersions: publicProcedure.input(getAllModelsSchema).query(getModelsWithVersionsHandler),
 });

@@ -2,7 +2,11 @@ import { TRPCError } from '@trpc/server';
 import { ModelFileType, ModelStatus } from '@prisma/client';
 
 import { Context } from '~/server/createContext';
-import { getAllModelsSelect, modelWithDetailsSelect } from '~/server/selectors/model.selector';
+import {
+  getAllModelsSelect,
+  getAllModelsWithVersionsSelect,
+  modelWithDetailsSelect,
+} from '~/server/selectors/model.selector';
 import { handleDbError } from '~/server/utils/errorHandling';
 
 import { GetByIdInput, ReportInput } from '../schema/base.schema';
@@ -126,4 +130,29 @@ export const deleteModelHandler = async ({ input }: { input: GetByIdInput }) => 
   } catch (error) {
     handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
   }
+};
+
+/** WEBHOOKS CONTROLLERS */
+export const getModelsWithVersionsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetAllModelsInput;
+  ctx: Context;
+}) => {
+  input.limit = input.limit ?? 100;
+  const limit = input.limit + 1;
+  const models = await getModels({
+    input: { ...input, limit },
+    user: ctx.user,
+    select: getAllModelsWithVersionsSelect,
+  });
+
+  let nextCursor: number | undefined;
+  if (models.length > input.limit) {
+    const nextItem = models.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  return { nextCursor, items: models };
 };

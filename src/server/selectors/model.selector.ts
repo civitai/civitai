@@ -36,6 +36,20 @@ export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
   },
 });
 
+export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelect>()({
+  id: true,
+  name: true,
+  type: true,
+  nsfw: true,
+  modelVersions: {
+    select: {
+      id: true,
+      name: true,
+      createdAt: true,
+    },
+  },
+});
+
 export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
   name: true,

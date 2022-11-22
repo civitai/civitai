@@ -4,7 +4,6 @@ import { ModelSort } from '~/server/common/enums';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { sanitizedStringSchema } from '~/server/schema/utils.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
-import { isNumber } from '~/utils/type-guards';
 
 export const getAllModelsSchema = z
   .object({
@@ -17,10 +16,7 @@ export const getAllModelsSchema = z
     types: z.nativeEnum(ModelType).array(),
     sort: z.nativeEnum(ModelSort),
     period: z.nativeEnum(MetricTimeframe),
-    rating: z.preprocess((val) => {
-      const value = Number(val);
-      return isNumber(value) ? Math.floor(value) : null;
-    }, z.number()),
+    rating: z.preprocess((val) => Number(val), z.number()).transform((val) => Math.floor(val)),
   })
   .partial();
 

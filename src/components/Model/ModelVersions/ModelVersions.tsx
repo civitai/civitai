@@ -19,7 +19,6 @@ import {
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
