@@ -5,7 +5,7 @@ import { ModelSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
 
-import { GetAllModelsInput } from '../schema/model.schema';
+import { GetAllModelsOutput } from '../schema/model.schema';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   input: { id },
@@ -43,7 +43,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   user: sessionUser,
   select,
 }: {
-  input: GetAllModelsInput;
+  input: GetAllModelsOutput;
   user?: SessionUser;
   select: TSelect;
 }) => {

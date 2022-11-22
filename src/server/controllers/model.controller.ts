@@ -10,7 +10,7 @@ import {
 import { handleDbError } from '~/server/utils/errorHandling';
 
 import { GetByIdInput, ReportInput } from '../schema/base.schema';
-import { GetAllModelsInput } from '../schema/model.schema';
+import { GetAllModelsOutput } from '../schema/model.schema';
 import {
   deleteModelById,
   getModel,
@@ -45,7 +45,7 @@ export const getModelsInfiniteHandler = async ({
   input,
   ctx,
 }: {
-  input: GetAllModelsInput;
+  input: GetAllModelsOutput;
   ctx: Context;
 }) => {
   input.limit = input.limit ?? 100;
@@ -137,7 +137,7 @@ export const getModelsWithVersionsHandler = async ({
   input,
   ctx,
 }: {
-  input: GetAllModelsInput;
+  input: GetAllModelsOutput;
   ctx: Context;
 }) => {
   input.limit = input.limit ?? 100;

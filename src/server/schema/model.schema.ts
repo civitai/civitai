@@ -13,14 +13,18 @@ export const getAllModelsSchema = z
     query: z.string(),
     tag: z.string(),
     user: z.string(),
-    types: z.nativeEnum(ModelType).array(),
+    types: z
+      .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
+      .optional()
+      .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel])),
     sort: z.nativeEnum(ModelSort),
     period: z.nativeEnum(MetricTimeframe),
     rating: z.preprocess((val) => Number(val), z.number()).transform((val) => Math.floor(val)),
   })
   .partial();
 
-export type GetAllModelsInput = z.infer<typeof getAllModelsSchema>;
+export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
+export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;
 
 export const modelSchema = z.object({
   id: z.number().optional(),
