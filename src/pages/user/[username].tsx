@@ -7,11 +7,12 @@ import { ListFilter } from '~/components/ListFilter/ListFilter';
 import { ListPeriod } from '~/components/ListPeriod/ListPeriod';
 import { ListSort } from '~/components/ListSort/ListSort';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
+import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {
   const ssg = await getServerProxySSGHelpers(ctx);
-  const username = ctx.query.username;
-  // if (isNumber(id)) await ssg.model.getById.prefetch({ id });
+  const username = ctx.query.username as string;
+  if (username) await ssg.user.getStats.prefetch({ username });
 
   return {
     props: {
@@ -22,6 +23,9 @@ export const getServerSideProps: GetServerSideProps = async (ctx) => {
 
 export default function UserPage() {
   const router = useRouter();
+  const username = router.query.username as string;
+
+  const { data, isLoading } = trpc.user.getStats.useQuery({ username }, { enabled: !!username });
 
   return (
     <>
