@@ -1,6 +1,5 @@
 import { Context } from '~/server/createContext';
 import { getUserModelStats } from '~/server/services/user.service';
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime';
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -10,15 +9,13 @@ import {
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
-import { handleAuthorizationError, handleDbError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 
-export const getUserStatsHandler = async ({
-  input,
-  ctx,
-}: {
-  input: GetUserByUsernameSchema;
-  ctx: Context;
-}) => {
+export const getUserStatsHandler = async ({ input }: { input: GetUserByUsernameSchema }) => {
   const rankStats = await getUserModelStats({ input });
 
   return { rank: rankStats };
@@ -34,7 +31,7 @@ export const getAllUsersHandler = async ({ input }: { input: GetAllUsersInput })
       },
     });
   } catch (error) {
-    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    throwDbError(error);
   }
 };
 
@@ -43,12 +40,13 @@ export const getUserByIdHandler = async ({ input }: { input: GetByIdInput }) => 
     const user = await getUserById({ ...input, select: simpleUserSelect });
 
     if (!user) {
-      throw handleDbError({ code: 'NOT_FOUND', message: `No user with id ${input.id}` });
+      throw throwNotFoundError(`No user with id ${input.id}`);
     }
 
     return user;
   } catch (error) {
-    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
   }
 };
 
@@ -61,33 +59,19 @@ export const updateUserHandler = async ({
 }) => {
   const { id, ...data } = input;
   const currentUser = ctx.user;
-  if (id !== currentUser.id) return handleAuthorizationError();
+  if (id !== currentUser.id) throw throwAuthorizationError();
 
   try {
     const updatedUser = await updateUserById({ id, data });
 
     if (!updatedUser) {
-      throw new TRPCError({
-        code: 'NOT_FOUND',
-        message: `No user with id ${id}`,
-      });
+      throw throwNotFoundError(`No user with id ${id}`);
     }
 
     return updatedUser;
   } catch (error) {
-    if (error instanceof PrismaClientKnownRequestError) {
-      // TODO Error Handling: Add more robust TRPC<->prisma error handling
-      // console.log('___ERROR___');
-      // console.log(error.code);
-      // console.log(error.meta?.target); // target is the field(s) that had a problem
-      if (error.code === 'P2002')
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: 'This username is not available.',
-        });
-    }
-
-    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    if (error instanceof TRPCError) throw error; // Rethrow the error if it's already a TRCPError
+    else throwDbError(error); // Otherwise, generate a db error
   }
 };
 
@@ -100,20 +84,18 @@ export const deleteUserHandler = async ({
 }) => {
   const { id } = input;
   const currentUser = ctx.user;
-  if (id !== currentUser.id) return handleAuthorizationError();
+  if (id !== currentUser.id) throw throwAuthorizationError();
 
   try {
     const user = await deleteUser({ id });
 
     if (!user) {
-      throw new TRPCError({
-        code: 'NOT_FOUND',
-        message: `No user with id ${id}`,
-      });
+      throw throwNotFoundError(`No user with id ${id}`);
     }
 
     return user;
   } catch (error) {
-    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
   }
 };

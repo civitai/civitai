@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
 import {
@@ -16,7 +17,7 @@ import {
   getUserReactionByReviewId,
   updateReviewById,
 } from '~/server/services/review.service';
-import { handleDbError } from '~/server/utils/errorHandling';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export const getReviewsInfiniteHandler = async ({
   input,
@@ -55,7 +56,7 @@ export const getReviewReactionsHandler = async ({ input }: { input: GetReviewRea
 
     return reactions;
   } catch (error) {
-    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error: error });
+    throwDbError(error);
   }
 };
 
@@ -72,7 +73,7 @@ export const upsertReviewHandler = async ({
 
     return review;
   } catch (error) {
-    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    throwDbError(error);
   }
 };
 
@@ -86,10 +87,7 @@ export const reportReviewHandler = async ({
   try {
     await reportReviewById({ ...input, userId: ctx.user.id });
   } catch (error) {
-    handleDbError({
-      code: 'INTERNAL_SERVER_ERROR',
-      error,
-    });
+    throwDbError(error);
   }
 };
 
@@ -104,15 +102,13 @@ export const deleteUserReviewHandler = async ({
     const deleted = await deleteUserReviewById({ ...input, userId: ctx.user.id });
 
     if (!deleted) {
-      throw handleDbError({
-        code: 'NOT_FOUND',
-        message: `No review with id ${input.id}`,
-      });
+      throw throwNotFoundError(`No review with id ${input.id}`);
     }
 
     return deleted;
   } catch (error) {
-    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
   }
 };
 
@@ -144,11 +140,12 @@ export const toggleReactionHandler = async ({
     });
 
     if (!review) {
-      throw handleDbError({ code: 'NOT_FOUND', message: `No review with id ${id}` });
+      throw throwNotFoundError(`No review with id ${id}`);
     }
 
     return review;
   } catch (error) {
-    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
   }
 };
