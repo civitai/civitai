@@ -7,7 +7,7 @@ import { bytesToKB } from '~/utils/number-helpers';
 import { imageToBlurhash } from '~/utils/image-utils';
 
 // Find match for URL like: https://huggingface.co/nitrosocke/Arcane-Diffusion
-const hfModelRegex = /^https:\/\/huggingface\.co\/([\w\-]+)\/([\w\-]+)/;
+const hfModelRegex = /^https:\/\/huggingface\.co\/([\w\-\.]+)\/([\w\-\.]+)/;
 export const hfModelImporter = createImporter(
   (source) => {
     return hfModelRegex.test(source);
@@ -34,7 +34,6 @@ export const hfModelImporter = createImporter(
   }
 );
 
-const modelFileRegex = /\.(ckpt|pt|bin)$/;
 export async function importModelFromHuggingFace(
   { id, siblings, author }: HuggingFaceModel,
   { id: importId, source }: { id?: number; source?: string } = {}
@@ -60,7 +59,7 @@ export async function importModelFromHuggingFace(
   for (const { name, url } of files) {
     // TODO Import: Improve this to handle models that aren't saved as `.ckpt`
     // Example: https://huggingface.co/sd-dreambooth-library/the-witcher-game-ciri/tree/main
-    if (!modelFileRegex.test(name)) continue;
+    if (!isModelFile(name)) continue;
 
     const existingVersion = model?.modelVersions.find((v) => v.files.some((f) => f.name === name));
     if (existingVersion) continue;
@@ -187,6 +186,11 @@ function filenameToVersionName(filename: string, hfModelId: string) {
 
 function isImage(filename: string) {
   return /\.(png|gif|jpg|jpeg)$/.test(filename);
+}
+
+const modelFileRegex = /\.(ckpt|pt|bin)$/;
+function isModelFile(filename: string) {
+  return !filename.includes('/') && modelFileRegex.test(filename);
 }
 
 function fileToModelType(filename: string, sizeKB: number) {
