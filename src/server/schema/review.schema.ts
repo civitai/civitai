@@ -9,7 +9,7 @@ export const reviewUpsertSchema = z.object({
   modelId: z.number(),
   modelVersionId: z.number(),
   rating: z.number(),
-  text: z.string().optional(),
+  text: z.string().nullish(),
   nsfw: z.boolean().optional(),
   images: z.array(imageSchema).optional(),
 });

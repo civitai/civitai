@@ -17,6 +17,9 @@ export const getAllReviewsSelect = Prisma.validator<Prisma.ReviewSelect>()({
     select: simpleUserSelect,
   },
   imagesOnReviews: {
+    orderBy: {
+      index: 'asc',
+    },
     select: {
       index: true,
       image: {
