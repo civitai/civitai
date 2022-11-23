@@ -5,7 +5,6 @@ import {
   Button,
   Center,
   Container,
-  CopyButton,
   createStyles,
   Grid,
   Group,
@@ -28,7 +27,6 @@ import { ModelStatus, ReportReason } from '@prisma/client';
 import {
   IconArrowsSort,
   IconBan,
-  IconCopy,
   IconDotsVertical,
   IconEdit,
   IconExclamationMark,
@@ -58,6 +56,7 @@ import { ModelReviews } from '~/components/Model/ModelReviews/ModelReviews';
 import { ModelVersions } from '~/components/Model/ModelVersions/ModelVersions';
 import { ModelRating } from '~/components/ModelRating/ModelRating';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
+import { TrainingWordBadge } from '~/components/TrainingWordBadge/TrainingWordBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
@@ -69,7 +68,6 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { QS } from '~/utils/qs';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { isNumber } from '~/utils/type-guards';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
@@ -320,39 +318,29 @@ export default function ModelDetail(props: PageProps) {
       value: (
         <Group spacing={4}>
           {model.tagsOnModels.map(({ tag }) => (
-            <Badge key={tag.id} color={tag.color ?? 'blue'} size="sm" radius="sm">
-              {tag.name}
-            </Badge>
+            <Link key={tag.id} href={`/?tag=${tag.name}`} passHref>
+              <Badge
+                key={tag.id}
+                color={tag.color ?? 'blue'}
+                component="a"
+                size="sm"
+                radius="sm"
+                sx={{ cursor: 'pointer' }}
+              >
+                {tag.name}
+              </Badge>
+            </Link>
           ))}
         </Group>
       ),
     },
     {
-      // TODO DRY: We're doing this same thing here and in the modelversions
       label: 'Trained Words',
       visible: !!latestVersion?.trainedWords?.length,
       value: (
         <Group spacing={4}>
           {latestVersion?.trainedWords.map((word, index) => (
-            <CopyButton key={index} value={word}>
-              {({ copy }) => (
-                <Badge
-                  radius="sm"
-                  size="sm"
-                  color="violet"
-                  sx={{ cursor: 'pointer', height: 'auto' }}
-                  onClick={() => {
-                    copy();
-                    showNotification({ message: 'Copied trained word!', color: 'teal' });
-                  }}
-                  rightSection={<IconCopy stroke={1.5} size={12} />}
-                >
-                  <Group spacing={4} align="center" noWrap sx={{ whiteSpace: 'normal' }}>
-                    {word}
-                  </Group>
-                </Badge>
-              )}
-            </CopyButton>
+            <TrainingWordBadge key={index} word={word} />
           ))}
         </Group>
       ),
