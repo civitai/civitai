@@ -22,11 +22,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     case 'GET': {
       const queryParams = getModelsInputSchema.safeParse(req.query);
       if (!queryParams.success)
-        return res.status(400).send(`Bad data! ${queryParams.error.message}`);
+        return res.status(400).json({
+          message: 'Invalid query parameters',
+          error: queryParams.error.flatten().fieldErrors,
+        });
 
+      console.log({ parsed: queryParams.data, query: req.query });
       const apiCaller = appRouter.createCaller({ user: undefined });
-
       const { nextCursor, items } = await apiCaller.model.getAllWithVersions(queryParams.data);
+
       const baseUrl = new URL(
         req.url ?? '/',
         env.NODE_ENV === 'production' ? `https://${req.headers.host}` : 'http://localhost:3000'

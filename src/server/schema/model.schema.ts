@@ -1,9 +1,10 @@
 import { ModelType, ModelStatus, MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
+
 import { ModelSort } from '~/server/common/enums';
+import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { sanitizedStringSchema } from '~/server/schema/utils.schema';
-import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 
 export const getAllModelsSchema = z
   .object({
@@ -17,8 +18,8 @@ export const getAllModelsSchema = z
       .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
       .optional()
       .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel])),
-    sort: z.nativeEnum(ModelSort),
-    period: z.nativeEnum(MetricTimeframe),
+    sort: z.nativeEnum(ModelSort).default(ModelSort.HighestRated),
+    period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
     rating: z.preprocess((val) => Number(val), z.number()).transform((val) => Math.floor(val)),
   })
   .partial();
