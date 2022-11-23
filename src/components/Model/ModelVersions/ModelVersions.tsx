@@ -1,17 +1,5 @@
-import {
-  Button,
-  Grid,
-  Rating,
-  SimpleGrid,
-  Stack,
-  Tabs,
-  Text,
-  Group,
-  CopyButton,
-  Badge,
-} from '@mantine/core';
-import { showNotification } from '@mantine/notifications';
-import { IconCopy, IconDownload } from '@tabler/icons';
+import { Button, Grid, Rating, SimpleGrid, Stack, Tabs, Text, Group } from '@mantine/core';
+import { IconDownload } from '@tabler/icons';
 import React from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import {
@@ -20,6 +8,7 @@ import {
 } from '~/components/DescriptionTable/DescriptionTable';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { TrainingWordBadge } from '~/components/TrainingWordBadge/TrainingWordBadge';
 import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -93,25 +82,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
       value: (
         <Group spacing={4}>
           {version?.trainedWords.map((word, index) => (
-            <CopyButton key={index} value={word}>
-              {({ copy }) => (
-                <Badge
-                  size="sm"
-                  radius="sm"
-                  color="violet"
-                  sx={{ cursor: 'pointer', height: 'auto' }}
-                  onClick={() => {
-                    copy();
-                    showNotification({ message: 'Copied trained word!', color: 'teal' });
-                  }}
-                  rightSection={<IconCopy stroke={1.5} size={12} />}
-                >
-                  <Group spacing={4} align="center" noWrap sx={{ whiteSpace: 'normal' }}>
-                    {word}
-                  </Group>
-                </Badge>
-              )}
-            </CopyButton>
+            <TrainingWordBadge key={index} word={word} />
           ))}
         </Group>
       ),
