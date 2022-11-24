@@ -1,5 +1,5 @@
 import { Button, ButtonProps } from '@mantine/core';
-import { TablerIconProps, IconBrandDiscord, IconBrandGithub, IconBrandGoogle } from '@tabler/icons';
+import { TablerIconProps, IconBrandDiscord, IconBrandGithub, IconBrandGoogle, IconBrandReddit } from '@tabler/icons';
 import { BuiltInProviderType } from 'next-auth/providers';
 
 type SocialProps = Partial<
@@ -29,10 +29,16 @@ export const socialItems: SocialProps = {
     Icon: IconBrandGoogle,
     Button: GoogleButton,
   },
+  reddit: {
+    label: 'Reddit',
+    Icon: IconBrandReddit,
+    Button: RedditButton,
+  },
 };
 
 const discordColor = '#5865F2';
 const googleColor = '#4285F4';
+const redditColor = '#FF5700';
 
 export function DiscordButton(props: ButtonProps) {
   return (
@@ -84,6 +90,23 @@ export function GoogleButton(props: ButtonProps) {
             theme.colorScheme === 'dark'
               ? theme.fn.lighten(googleColor, 0.05)
               : theme.fn.darken(googleColor, 0.05),
+        },
+      })}
+    />
+  );
+}
+
+export function RedditButton(props: ButtonProps) {
+  return (
+    <Button
+      {...props}
+      sx={(theme) => ({
+        backgroundColor: redditColor,
+        '&:hover': {
+          backgroundColor:
+            theme.colorScheme === 'dark'
+              ? theme.fn.lighten(redditColor, 0.05)
+              : theme.fn.darken(redditColor, 0.05),
         },
       })}
     />

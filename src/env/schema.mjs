@@ -22,6 +22,8 @@ export const serverSchema = z.object({
   GITHUB_CLIENT_SECRET: z.string(),
   GOOGLE_CLIENT_ID: z.string(),
   GOOGLE_CLIENT_SECRET: z.string(),
+  REDDIT_CLIENT_ID: z.string(),
+  REDDIT_CLIENT_SECRET: z.string(),
   S3_UPLOAD_KEY: z.string(),
   S3_ORIGINS: z.preprocess((value) => {
     const str = String(value);
