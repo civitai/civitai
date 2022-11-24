@@ -42,8 +42,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       res.status(200).json({
-        items: items.map(({ modelVersions, ...model }) => ({
+        items: items.map(({ modelVersions, tagsOnModels, ...model }) => ({
           ...model,
+          tags: tagsOnModels.map(({ tag }) => tag.name),
           modelVersions: modelVersions.map((version) => ({
             ...version,
             downloadUrl: `${baseUrl.origin}/api/download/models/${version.id}`,

@@ -46,6 +46,14 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
       id: true,
       name: true,
       createdAt: true,
+      trainedWords: true,
+    },
+  },
+  tagsOnModels: {
+    select: {
+      tag: {
+        select: { name: true },
+      },
     },
   },
 });
