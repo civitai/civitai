@@ -105,7 +105,7 @@ export function RedditButton(props: ButtonProps) {
         '&:hover': {
           backgroundColor:
             theme.colorScheme === 'dark'
-              ? theme.fn.lighten(redditColor, 0.05)
+              ? theme.fn.lighten(redditColor, 0.1)
               : theme.fn.darken(redditColor, 0.05),
         },
       })}

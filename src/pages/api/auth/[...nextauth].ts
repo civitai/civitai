@@ -1,3 +1,5 @@
+import { PrismaAdapter } from '@next-auth/prisma-adapter';
+import { NextApiRequest, NextApiResponse } from 'next';
 import NextAuth, { Session, type NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import DiscordProvider from 'next-auth/providers/discord';
@@ -6,11 +8,9 @@ import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
 
 // Prisma adapter for NextAuth, optional and can be removed
-import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import { env } from '~/env/server.mjs';
 import { prisma } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
-import { NextApiRequest, NextApiResponse } from 'next';
 
 const setUserName = async (email: string) => {
   try {
@@ -47,8 +47,8 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   },
   callbacks: {
     jwt: async ({ token, user }) => {
-      if (req.url === '/api/auth/session?update' && token.email) {
-        const user = await prisma.user.findUnique({ where: { email: token.email } });
+      if (req.url === '/api/auth/session?update') {
+        const user = await prisma.user.findUnique({ where: { id: Number(token.sub) } });
         token.user = user;
       } else {
         // have to do this to be able to connect to other providers
@@ -69,13 +69,13 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   },
   // Configure one or more authentication providers
   providers: [
-    GithubProvider({
-      clientId: env.GITHUB_CLIENT_ID,
-      clientSecret: env.GITHUB_CLIENT_SECRET,
-    }),
     DiscordProvider({
       clientId: env.DISCORD_CLIENT_ID,
       clientSecret: env.DISCORD_CLIENT_SECRET,
+    }),
+    GithubProvider({
+      clientId: env.GITHUB_CLIENT_ID,
+      clientSecret: env.GITHUB_CLIENT_SECRET,
     }),
     GoogleProvider({
       clientId: env.GOOGLE_CLIENT_ID,

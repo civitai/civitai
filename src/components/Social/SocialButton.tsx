@@ -13,7 +13,7 @@ export function SocialButton({ provider, ...buttonProps }: Props) {
   if (!Button) return null;
 
   return (
-    <Button leftIcon={Icon && <Icon size={16} />} {...buttonProps}>
+    <Button leftIcon={Icon && <Icon size={20} />} {...buttonProps}>
       {label}
     </Button>
   );
