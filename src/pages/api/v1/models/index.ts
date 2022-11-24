@@ -27,7 +27,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           error: queryParams.error.flatten().fieldErrors,
         });
 
-      console.log({ parsed: queryParams.data, query: req.query });
       const apiCaller = appRouter.createCaller({ user: undefined });
       const { nextCursor, items } = await apiCaller.model.getAllWithVersions(queryParams.data);
 

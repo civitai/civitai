@@ -155,7 +155,6 @@ export async function importModelFromHuggingFace(
         data.images = {
           create: images.map((image, index) => ({ imageId: image.id, index })),
         };
-        console.log(data.images);
         await tx.modelVersion.create({ data });
       }
     },

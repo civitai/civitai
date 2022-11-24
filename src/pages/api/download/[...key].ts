@@ -5,7 +5,6 @@ import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 export default async function downloadTrainingData(req: NextApiRequest, res: NextApiResponse) {
   const keyParts = req.query.key as string[];
   const key = keyParts.join('/');
-  console.log({ key });
   if (!key) return res.status(400).json({ error: 'Missing key' });
 
   const session = await getServerAuthSession({ req, res });
