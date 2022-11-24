@@ -3,6 +3,7 @@ import CredentialsProvider from 'next-auth/providers/credentials';
 import DiscordProvider from 'next-auth/providers/discord';
 import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
+import RedditProvider from 'next-auth/providers/reddit';
 
 // Prisma adapter for NextAuth, optional and can be removed
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
@@ -79,6 +80,15 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
     GoogleProvider({
       clientId: env.GOOGLE_CLIENT_ID,
       clientSecret: env.GOOGLE_CLIENT_SECRET,
+    }),
+    RedditProvider({
+      clientId: env.REDDIT_CLIENT_ID,
+      clientSecret: env.REDDIT_CLIENT_SECRET,
+      authorization: {
+        params: {
+          duration: 'permanent',
+        },
+      },
     }),
     CredentialsProvider({
       name: 'Credentials',
