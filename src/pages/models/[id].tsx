@@ -348,7 +348,7 @@ export default function ModelDetail(props: PageProps) {
     {
       label: 'Uploaded By',
       value: model.user && (
-        <Link href={`/?user=${model.user.username}`} passHref>
+        <Link href={`/?username=${model.user.username}`} passHref>
           <Text size="sm" variant="link" component="a" style={{ cursor: 'pointer' }}>
             <Group align="center" spacing={4}>
               <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
