@@ -14,6 +14,6 @@ export const modelVersionUpsertSchema = z.object({
   images: z
     .array(imageSchema)
     .min(1, 'At least one example image must be uploaded')
-    .max(10, 'You can only upload up to 10 images'),
+    .max(20, 'You can only upload up to 20 images'),
   trainedWords: z.array(z.string()),
 });
