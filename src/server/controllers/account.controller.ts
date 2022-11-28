@@ -1,7 +1,8 @@
+import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { deleteAccount, getUserAccounts } from '~/server/services/account.service';
-import { throwDbError } from '~/server/utils/errorHandling';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export const getUserAccountsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   const { user } = ctx;
@@ -15,7 +16,7 @@ export const getUserAccountsHandler = async ({ ctx }: { ctx: DeepNonNullable<Con
       },
     });
   } catch (error) {
-    throw throwDbError(error);
+    throwDbError(error);
   }
 };
 
@@ -28,10 +29,11 @@ export const deleteAccountHandler = async ({
   try {
     const deleted = await deleteAccount(input);
 
-    if (!deleted) throw throwDbError();
+    if (!deleted) throw throwNotFoundError(`No account with id ${input.id}`);
 
     return deleted;
   } catch (error) {
-    throw throwDbError(error);
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
   }
 };
