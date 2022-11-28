@@ -43,6 +43,9 @@ export function slugit(value: string) {
   return slugify(value, { lower: true, strict: true });
 }
 
+/**
+ * @see https://stackoverflow.com/a/47140708
+ */
 export function stripHtmlTags(value: string) {
   const doc = new DOMParser().parseFromString(value, 'text/html');
   return doc.body.textContent?.trim() ?? '';
