@@ -12,9 +12,10 @@ const importSchema = z.object({
 
 export default async function importSource(req: NextApiRequest, res: NextApiResponse) {
   const session = await getServerAuthSession({ req, res });
-  const { id: userId, isModerator } = session?.user ?? {};
+  const { isModerator } = session?.user ?? {};
   if (!isModerator) return res.status(401).json({ error: 'Unauthorized' });
   const { source, wait, data } = importSchema.parse(req.query);
+  const userId = -1; //Default civitai user id
 
   const { id } = await prisma.import.create({
     data: {
