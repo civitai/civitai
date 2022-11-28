@@ -66,6 +66,7 @@ model User {
   reviewReports   ReviewReport[]
   Import          Import[]
   keys            ApiKey[]
+  favoriteModels  FavoriteModel[]
 }
 
 model VerificationToken {
@@ -130,13 +131,23 @@ model Model {
   fromImport   Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId Int?        @unique
 
-  modelVersions ModelVersion[]
-  reviews       Review[]
-  tagsOnModels  TagsOnModels[]
-  metrics       ModelMetric[]
-  saves         SavedModel[]
-  rank          ModelRank?
-  reports       ModelReport[]
+  modelVersions  ModelVersion[]
+  reviews        Review[]
+  tagsOnModels   TagsOnModels[]
+  metrics        ModelMetric[]
+  saves          SavedModel[]
+  rank           ModelRank?
+  reports        ModelReport[]
+  favoriteModels FavoriteModel[]
+}
+
+model FavoriteModel {
+  userId  Int
+  user    User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelId Int
+  model   Model @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@id([userId, modelId])
 }
 
 model ModelVersion {

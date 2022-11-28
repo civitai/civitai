@@ -1,11 +1,16 @@
 import { Context } from '~/server/createContext';
-import { getUserModelStats } from '~/server/services/user.service';
+import {
+  getUserFavoriteModelByModelId,
+  getUserFavoriteModels,
+  getUserModelStats,
+} from '~/server/services/user.service';
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllUsersInput,
   UserUpsertInput,
   GetUserByUsernameSchema,
+  ToggleFavoriteModelInput,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
@@ -96,6 +101,47 @@ export const deleteUserHandler = async ({
     return user;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+};
+
+export const getUserFavoriteModelsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  const { id } = ctx.user;
+
+  try {
+    const models = await getUserFavoriteModels({ id });
+    return models;
+  } catch (error) {
+    throwDbError(error);
+  }
+};
+
+export const toggleFavoriteModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleFavoriteModelInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { id: userId } = ctx.user;
+  const favoriteModel = await getUserFavoriteModelByModelId({ ...input, userId });
+
+  try {
+    const user = await updateUserById({
+      id: userId,
+      data: {
+        favoriteModels: {
+          create: favoriteModel ? undefined : { ...input },
+          deleteMany: favoriteModel ? { ...input, userId } : undefined,
+        },
+      },
+    });
+
+    if (!user) throw throwNotFoundError(`No user with id ${userId}`);
+
+    return user;
+  } catch (error) {
+  if (error instanceof TRPCError) throw error;
     else throwDbError(error);
   }
 };

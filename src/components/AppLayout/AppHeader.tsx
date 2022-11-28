@@ -19,6 +19,7 @@ import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import {
   IconFile,
+  IconHeart,
   IconLogout,
   IconPalette,
   IconPlus,
@@ -337,13 +338,22 @@ export function AppHeader({ links }: Props) {
               </Menu.Target>
               <Menu.Dropdown>
                 {session?.user ? (
-                  <Menu.Item
-                    icon={<IconFile size={14} color={theme.colors.blue[6]} stroke={1.5} />}
-                    component={NextLink}
-                    href={`/?username=${session.user.username}`}
-                  >
-                    Your models
-                  </Menu.Item>
+                  <>
+                    <Menu.Item
+                      icon={<IconFile size={14} color={theme.colors.blue[6]} stroke={1.5} />}
+                      component={NextLink}
+                      href={`/?username=${session.user.username}`}
+                    >
+                      Your models
+                    </Menu.Item>
+                    <Menu.Item
+                      icon={<IconHeart size={14} color={theme.colors.pink[6]} stroke={1.5} />}
+                      component={NextLink}
+                      href={`/?favorites=true`}
+                    >
+                      Liked models
+                    </Menu.Item>
+                  </>
                 ) : (
                   <Menu.Item component={NextLink} href={`/login?returnUrl=${router.asPath}`}>
                     Sign in/Sign up
