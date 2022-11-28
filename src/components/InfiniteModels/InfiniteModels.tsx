@@ -13,6 +13,7 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
+import { ModelStatus } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
 import { IconCloudOff, IconDownload } from '@tabler/icons';
 import {
@@ -23,22 +24,22 @@ import {
   useScroller,
   useScrollToIndex,
 } from 'masonic';
+import { useSession } from 'next-auth/react';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 
+import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { useModelFilters } from '~/hooks/useModelFilters';
+import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { useRouter } from 'next/router';
-import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { useSession } from 'next-auth/react';
-import { ModelStatus } from '@prisma/client';
-import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
-import { trpc } from '~/utils/trpc';
 import { QS } from '~/utils/qs';
+import { slugit } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 
 type InfiniteModelsProps = {
   columnWidth?: number;
@@ -246,13 +247,15 @@ const MasonryItem = ({
     />
   );
 
+  const modelLink = `/models/${id}/${slugit(name)}`;
+
   return (
     <Link
       href={{
-        pathname: `/models/${id}`,
+        pathname: modelLink,
         query: nsfw && blurNsfw ? { showNsfw: true } : undefined,
       }}
-      as={`/models/${id}`}
+      as={modelLink}
       legacyBehavior
     >
       <a>

@@ -79,6 +79,7 @@
     "remark-parse": "^10.0.1",
     "sanitize-html": "^2.7.3",
     "sharp": "^0.31.2",
+    "slugify": "^1.6.5",
     "superjson": "1.9.1",
     "unified": "^10.1.2",
     "zod": "^3.19.1",

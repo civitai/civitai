@@ -1,5 +1,6 @@
 import camelCase from 'lodash/camelCase';
 import truncate from 'lodash/truncate';
+import slugify from 'slugify';
 
 export function splitUppercase(value: string) {
   return value
@@ -36,4 +37,16 @@ export function filenamize(value: string, length = 20) {
  */
 export function getFileExtension(value: string) {
   return value.slice(((value.lastIndexOf('.') - 1) >>> 0) + 2);
+}
+
+export function slugit(value: string) {
+  return slugify(value, { lower: true, strict: true });
+}
+
+/**
+ * @see https://stackoverflow.com/a/47140708
+ */
+export function stripHtmlTags(value: string) {
+  const doc = new DOMParser().parseFromString(value, 'text/html');
+  return doc.body.textContent?.trim() ?? '';
 }
