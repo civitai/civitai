@@ -5,6 +5,7 @@ import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { prisma } from '~/server/db/client';
 import { filenamize } from '~/utils/string-helpers';
 import { z } from 'zod';
+import { env } from '~/env/server.mjs';
 
 const schema = z.object({ modelVersionId: z.preprocess((val) => Number(val), z.number()) });
 
@@ -56,14 +57,18 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
   }
 
   const [modelFile] = modelVersion.files;
-  const ext = modelFile.name.split('.').pop();
-  let fileName = modelFile.name;
-  if (modelVersion.model.type === ModelType.TextualInversion) {
-    const trainedWord = modelVersion.trainedWords[0] ?? modelVersion.model.name;
-    fileName = `${trainedWord}.pt`;
-  } else
-    fileName = `${filenamize(modelVersion.model.name)}_${filenamize(modelVersion.name)}.${ext}`;
-  const { url } = await getGetUrl(modelFile.url, { fileName });
-
-  res.redirect(url);
+  // Handle files that are still on other services
+  if (!modelFile.url.includes(env.S3_UPLOAD_BUCKET)) {
+    res.redirect(modelFile.url);
+  } else {
+    const ext = modelFile.name.split('.').pop();
+    let fileName = modelFile.name;
+    if (modelVersion.model.type === ModelType.TextualInversion) {
+      const trainedWord = modelVersion.trainedWords[0] ?? modelVersion.model.name;
+      fileName = `${trainedWord}.pt`;
+    } else
+      fileName = `${filenamize(modelVersion.model.name)}_${filenamize(modelVersion.name)}.${ext}`;
+    const { url } = await getGetUrl(modelFile.url, { fileName });
+    res.redirect(url);
+  }
 }
