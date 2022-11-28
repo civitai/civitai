@@ -185,10 +185,10 @@ export function AppHeader({ links }: Props) {
     </LoginRedirect>,
     session?.user
       ? [
-          <Link key="your-models-menu-item" href={`/?user=${session.user.username}`} passHref>
+          <Link key="your-models-menu-item" href={`/?username=${session.user.username}`} passHref>
             <Anchor
               className={cx(classes.link, {
-                [classes.linkActive]: router.asPath.includes(`user=${session.user.username}`),
+                [classes.linkActive]: router.asPath.includes(`username=${session.user.username}`),
               })}
               variant="text"
               onClick={() => closeBurger()}
@@ -340,7 +340,7 @@ export function AppHeader({ links }: Props) {
                   <Menu.Item
                     icon={<IconFile size={14} color={theme.colors.blue[6]} stroke={1.5} />}
                     component={NextLink}
-                    href={`/?user=${session.user.username}`}
+                    href={`/?username=${session.user.username}`}
                   >
                     Your models
                   </Menu.Item>
