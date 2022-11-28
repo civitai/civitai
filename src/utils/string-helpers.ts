@@ -44,9 +44,13 @@ export function slugit(value: string) {
 }
 
 /**
- * @see https://stackoverflow.com/a/47140708
+ * @see https://www.geeksforgeeks.org/how-to-strip-out-html-tags-from-a-string-using-javascript/
  */
-export function stripHtmlTags(value: string) {
-  const doc = new DOMParser().parseFromString(value, 'text/html');
-  return doc.body.textContent?.trim() ?? '';
+export function removeTags(str: string) {
+  if (!str) return '';
+
+  // Regular expression to identify HTML tags in
+  // the input string. Replacing the identified
+  // HTML tag with a null string.
+  return str.replace(/(<([^>]+)>)/gi, '');
 }
