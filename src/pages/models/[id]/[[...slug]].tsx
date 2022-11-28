@@ -70,8 +70,9 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { QS } from '~/utils/qs';
-import { splitUppercase, stripHtmlTags } from '~/utils/string-helpers';
+import { splitUppercase, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { isNumber } from '~/utils/type-guards';
 
 //TODO - Break model query into multiple queries
 /*
@@ -83,18 +84,25 @@ import { trpc } from '~/utils/trpc';
   - model-version reviews (for users who only want to see reviews for specific versions)
 */
 
-export const getServerSideProps: GetServerSideProps<{ id: number; slug: string }> = async (
-  context
-) => {
+export const getServerSideProps: GetServerSideProps<{
+  id: number;
+  slug: string | string[] | null;
+}> = async (context) => {
+  const params = (context.params ?? {}) as { id: string; slug: string[] };
+  const id = Number(params.id);
+  if (!isNumber(id))
+    return {
+      notFound: true,
+    };
+
   const ssg = await getServerProxySSGHelpers(context);
-  const id = Number(context.params?.id as string);
-  // if (isNumber(id)) await ssg.model.getById.prefetch({ id });
+  await ssg.model.getById.prefetch({ id });
 
   return {
     props: {
       trpcState: ssg.dehydrate(),
       id,
-      slug: context.params?.slug as string,
+      slug: params.slug?.[0] ?? '',
     },
   };
 };
@@ -364,7 +372,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     <>
       <Meta
         title={`Civitai - ${model.name}`}
-        description={stripHtmlTags(model.description ?? '')}
+        description={removeTags(model.description ?? '')}
         image={
           model.nsfw || latestVersion?.images[0]?.image.url == null
             ? undefined
