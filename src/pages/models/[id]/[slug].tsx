@@ -37,7 +37,7 @@ import {
   IconTrash,
 } from '@tabler/icons';
 import startCase from 'lodash/startCase';
-import { GetServerSideProps } from 'next';
+import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -50,28 +50,28 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
+import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { ModelForm } from '~/components/Model/ModelForm/ModelForm';
+import { ModelRating } from '~/components/ModelRating/ModelRating';
 import { ModelReviews } from '~/components/Model/ModelReviews/ModelReviews';
 import { ModelVersions } from '~/components/Model/ModelVersions/ModelVersions';
-import { ModelRating } from '~/components/ModelRating/ModelRating';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { TrainingWordBadge } from '~/components/TrainingWordBadge/TrainingWordBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
-import { formatDate } from '~/utils/date-helpers';
-import { formatKBytes } from '~/utils/number-helpers';
-import { splitUppercase } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { QS } from '~/utils/qs';
-import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
+import { formatDate } from '~/utils/date-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { formatKBytes } from '~/utils/number-helpers';
+import { QS } from '~/utils/qs';
+import { splitUppercase, stripHtmlTags } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 
 //TODO - Break model query into multiple queries
 /*
@@ -83,11 +83,9 @@ import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelper
   - model-version reviews (for users who only want to see reviews for specific versions)
 */
 
-type PageProps = {
-  id: number;
-};
-
-export const getServerSideProps: GetServerSideProps<{ id: number }> = async (context) => {
+export const getServerSideProps: GetServerSideProps<{ id: number; slug: string }> = async (
+  context
+) => {
   const ssg = await getServerProxySSGHelpers(context);
   const id = Number(context.params?.id as string);
   // if (isNumber(id)) await ssg.model.getById.prefetch({ id });
@@ -96,6 +94,7 @@ export const getServerSideProps: GetServerSideProps<{ id: number }> = async (con
     props: {
       trpcState: ssg.dehydrate(),
       id,
+      slug: context.params?.slug as string,
     },
   };
 };
@@ -114,7 +113,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export default function ModelDetail(props: PageProps) {
+export default function ModelDetail(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
   const router = useRouter();
   const { data: session } = useSession();
@@ -122,7 +121,7 @@ export default function ModelDetail(props: PageProps) {
   const mobile = useIsMobile();
   const queryUtils = trpc.useContext();
 
-  const { id } = props;
+  const { id, slug } = props;
   const { edit } = router.query;
 
   const [reviewFilters, setReviewFilters] = useState<{
@@ -365,7 +364,7 @@ export default function ModelDetail(props: PageProps) {
     <>
       <Meta
         title={`Civitai - ${model.name}`}
-        description={model.description ?? ''}
+        description={stripHtmlTags(model.description ?? '')}
         image={
           model.nsfw || latestVersion?.images[0]?.image.url == null
             ? undefined
@@ -401,7 +400,7 @@ export default function ModelDetail(props: PageProps) {
                     </Menu.Item>
                     <Menu.Item
                       component={NextLink}
-                      href={`/models/${id}?edit=true`}
+                      href={`/models/${id}/${slug}?edit=true`}
                       icon={<IconEdit size={14} stroke={1.5} />}
                       shallow
                     >

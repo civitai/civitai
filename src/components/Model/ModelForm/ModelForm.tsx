@@ -19,6 +19,7 @@ import { useRouter } from 'next/router';
 import React, { useMemo, useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
+
 import {
   Form,
   InputCheckbox,
@@ -32,12 +33,12 @@ import {
   useForm,
 } from '~/libs/form';
 import { modelSchema } from '~/server/schema/model.schema';
+import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ModelById } from '~/types/router';
-import { splitUppercase } from '~/utils/string-helpers';
+import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 
 const schema = modelSchema.extend({ tagsOnModels: z.string().array() });
 
@@ -108,6 +109,7 @@ export function ModelForm({ model }: Props) {
     const commonOptions = {
       async onSuccess(results: void | Model, input: { id?: number }) {
         const response = results as Model;
+        const modelLink = `/models/${response.id}/${slugit(response.name)}`;
 
         showNotification({
           title: 'Your model was saved',
@@ -117,11 +119,9 @@ export function ModelForm({ model }: Props) {
         });
         await queryUtils.model.invalidate();
         await queryUtils.tag.invalidate();
-        router.push(
-          { pathname: `/models/${response.id}`, query: { showNsfw: true } },
-          `/models/${response.id}`,
-          { shallow: !!input.id }
-        );
+        router.push({ pathname: modelLink, query: { showNsfw: true } }, modelLink, {
+          shallow: !!input.id,
+        });
       },
       onError(error: TRPCClientErrorBase<DefaultErrorShape>) {
         const message = error.message;
