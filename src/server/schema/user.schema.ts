@@ -19,3 +19,6 @@ export const userUpsertSchema = z.object({
   image: z.string().nullable(),
 });
 export type UserUpsertInput = z.input<typeof userUpsertSchema>;
+
+export const toggleFavoriteModelInput = z.object({ modelId: z.number() });
+export type ToggleFavoriteModelInput = z.infer<typeof toggleFavoriteModelInput>;

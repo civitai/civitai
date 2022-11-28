@@ -32,6 +32,7 @@ import {
   IconExclamationMark,
   IconFilter,
   IconFlag,
+  IconHeart,
   IconLicense,
   IconPlus,
   IconTrash,
@@ -203,8 +204,17 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
   });
   const unpublishModelMutation = trpc.model.unpublish.useMutation({
-    onSuccess() {
-      queryUtils.model.getById.invalidate({ id });
+    async onSuccess() {
+      await queryUtils.model.getById.invalidate({ id });
+    },
+    onError(error) {
+      showErrorNotification({ error: new Error(error.message) });
+    },
+  });
+  const toggleFavoriteModelMutation = trpc.user.toggleFavorite.useMutation({
+    async onSuccess() {
+      await queryUtils.user.getFavoriteModels.invalidate();
+      await queryUtils.model.getById.invalidate({ id });
     },
     onError(error) {
       showErrorNotification({ error: new Error(error.message) });
@@ -292,6 +302,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   const handleUnpublishModel = () => {
     unpublishModelMutation.mutate({ id });
+  };
+
+  const handleToggleFavorite = () => {
+    toggleFavoriteModelMutation.mutate({ modelId: id });
   };
 
   const modelDetails: DescriptionTableProps['items'] = [
@@ -388,6 +402,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 {model?.name}
               </Title>
               <ModelRating rank={model.rank} size="lg" />
+              <ActionIcon variant="light" onClick={() => handleToggleFavorite()}>
+                <IconHeart stroke={1.5} size={16} />
+              </ActionIcon>
             </Group>
             <Menu position="bottom-end" transition="pop-top-right">
               <Menu.Target>

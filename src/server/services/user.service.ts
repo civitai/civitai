@@ -1,8 +1,8 @@
 import { Prisma } from '@prisma/client';
+
 import { prisma } from '~/server/db/client';
-import { GetUserByUsernameSchema } from '~/server/schema/user.schema';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetAllUsersInput } from '~/server/schema/user.schema';
+import { GetAllUsersInput, GetUserByUsernameSchema } from '~/server/schema/user.schema';
 
 //https://github.com/civitai/civitai/discussions/8
 export const getUserModelStats = async ({
@@ -69,4 +69,21 @@ export const updateUserById = ({ id, data }: { id: number; data: Prisma.UserUpda
 
 export const deleteUser = ({ id }: GetByIdInput) => {
   return prisma.user.delete({ where: { id } });
+};
+
+export const getUserFavoriteModels = ({ id }: { id: number }) => {
+  return prisma.user.findUnique({
+    where: { id },
+    select: { favoriteModels: { select: { modelId: true } } },
+  });
+};
+
+export const getUserFavoriteModelByModelId = ({
+  userId,
+  modelId,
+}: {
+  userId: number;
+  modelId: number;
+}) => {
+  return prisma.favoriteModel.findUnique({ where: { userId_modelId: { userId, modelId } } });
 };
