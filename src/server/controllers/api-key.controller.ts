@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import {
   AddAPIKeyInput,
@@ -11,21 +12,19 @@ import {
   getApiKey,
   getUserApiKeys,
 } from '~/server/services/api-key.service';
-import { handleDbError } from '~/server/utils/errorHandling';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export async function getApiKeyHandler({ input }: { input: GetAPIKeyInput }) {
   const { key } = input;
 
   try {
     const apiKey = await getApiKey({ key });
-
-    if (!apiKey) {
-      throw handleDbError({ code: 'NOT_FOUND' });
-    }
+    if (!apiKey) throw throwNotFoundError(`No api key with key ${key}`);
 
     return { success: !!apiKey, data: apiKey };
   } catch (error) {
-    throw handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
   }
 }
 
@@ -68,13 +67,11 @@ export async function deleteApiKeyHandler({
     const deleted = await deleteApiKey({ ...input, userId: user.id });
 
     if (!deleted)
-      throw handleDbError({
-        code: 'NOT_FOUND',
-        message: `No api key with ${input.key} associated with your user account`,
-      });
+      throw throwNotFoundError(`No api key with ${input.key} associated with your user account`);
 
     return deleted;
   } catch (error) {
-    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
   }
 }

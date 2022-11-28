@@ -18,9 +18,10 @@ import { getAllModelsSchema, modelSchema } from '~/server/schema/model.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import {
-  handleAuthorizationError,
-  handleBadRequest,
-  handleDbError,
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { checkFileExists, getS3Client } from '~/utils/s3-utils';
 
@@ -46,7 +47,7 @@ const unscannedFile = {
 };
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
-  if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  if (!ctx.user) throw throwAuthorizationError();
 
   const { id } = input as { id: number };
 
@@ -56,7 +57,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
     const isModerator = ctx?.user?.isModerator;
     ownerId = (await prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator) {
-      if (ownerId !== userId) throw handleAuthorizationError();
+      if (ownerId !== userId) throw throwAuthorizationError();
     }
   }
 
@@ -87,7 +88,7 @@ export const modelRouter = router({
       if (!file.url || !file.url.includes(env.S3_UPLOAD_BUCKET)) continue;
       const fileExists = await checkFileExists(file.url, s3);
       if (!fileExists)
-        return handleBadRequest(`File ${file.name} could not be found. Please re-upload.`, {
+        throw throwBadRequestError(`File ${file.name} could not be found. Please re-upload.`, {
           file,
         });
     }
@@ -149,7 +150,8 @@ export const modelRouter = router({
 
       return createdModels;
     } catch (error) {
-      return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+      if (error instanceof TRPCError) throw error;
+      else throwDbError(error);
     }
   }),
   update: protectedProcedure
@@ -181,7 +183,7 @@ export const modelRouter = router({
         if (!file.url || !file.url.includes(env.S3_UPLOAD_BUCKET)) continue;
         const fileExists = await checkFileExists(file.url, s3);
         if (!fileExists)
-          return handleBadRequest(`File ${file.name} could not be found. Please re-upload.`, {
+          throw throwBadRequestError(`File ${file.name} could not be found. Please re-upload.`, {
             file,
           });
       }
@@ -344,15 +346,13 @@ export const modelRouter = router({
         console.log('_____FINISH_____');
 
         if (!model) {
-          return handleDbError({
-            code: 'NOT_FOUND',
-            message: `No model with id ${id}`,
-          });
+          throw throwNotFoundError(`No model with id ${id}`);
         }
 
         return model;
       } catch (error) {
-        return handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+        if (error instanceof TRPCError) throw error;
+        else throwDbError(error);
       }
     }),
   delete: protectedProcedure
