@@ -19,6 +19,7 @@ import {
   Modal,
   Alert,
   ThemeIcon,
+  Paper,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
@@ -34,6 +35,7 @@ import {
   IconFlag,
   IconHeart,
   IconLicense,
+  IconMessage,
   IconPlus,
   IconTrash,
 } from '@tabler/icons';
@@ -42,7 +44,7 @@ import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { InView } from 'react-intersection-observer';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -69,7 +71,7 @@ import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { formatKBytes } from '~/utils/number-helpers';
+import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { QS } from '~/utils/qs';
 import { splitUppercase, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -120,6 +122,12 @@ const useStyles = createStyles((theme) => ({
       fontSize: theme.fontSizes.xs * 2.4, // 24px
     },
   },
+
+  engagementBar: {
+    [theme.fn.smallerThan('sm')]: {
+      display: 'none',
+    },
+  },
 }));
 
 export default function ModelDetail(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
@@ -133,6 +141,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const { id, slug } = props;
   const { edit } = router.query;
 
+  const reviewSectionRef = useRef<HTMLDivElement | null>(null);
   const [reviewFilters, setReviewFilters] = useState<{
     filterBy: ReviewFilter[];
     sort: ReviewSort;
@@ -142,6 +151,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   });
 
   const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({ id });
+  const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery();
   const {
     data: reviewsData,
     isLoading: loadingReviews,
@@ -157,6 +167,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     }
   );
   const nsfw = router.query.showNsfw !== 'true' && !!model?.nsfw;
+  const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
   const deleteMutation = trpc.model.delete.useMutation({
     onSuccess() {
@@ -212,12 +223,24 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
   });
   const toggleFavoriteModelMutation = trpc.user.toggleFavorite.useMutation({
-    async onSuccess() {
-      await queryUtils.user.getFavoriteModels.invalidate();
-      await queryUtils.model.getById.invalidate({ id });
+    async onMutate({ modelId }) {
+      await queryUtils.user.getFavoriteModels.cancel();
+
+      const previousFavorites = queryUtils.user.getFavoriteModels.getData() ?? [];
+      const shouldRemove = previousFavorites.find((favorite) => favorite.modelId === modelId);
+      queryUtils.user.getFavoriteModels.setData(undefined, (old = []) =>
+        shouldRemove
+          ? old.filter((favorite) => favorite.modelId !== modelId)
+          : [...old, { modelId }]
+      );
+
+      return { previousFavorites };
     },
-    onError(error) {
-      showErrorNotification({ error: new Error(error.message) });
+    async onSuccess() {
+      await queryUtils.model.getAll.invalidate();
+    },
+    onError(_error, _variables, context) {
+      queryUtils.user.getFavoriteModels.setData(undefined, context?.previousFavorites);
     },
   });
 
@@ -402,9 +425,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 {model?.name}
               </Title>
               <ModelRating rank={model.rank} size="lg" />
-              <ActionIcon variant="light" onClick={() => handleToggleFavorite()}>
-                <IconHeart stroke={1.5} size={16} />
-              </ActionIcon>
             </Group>
             <Menu position="bottom-end" transition="pop-top-right">
               <Menu.Target>
@@ -482,207 +502,247 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             </Alert>
           )}
         </Stack>
-        <Grid gutter="xl">
-          <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
-            <Stack>
-              {latestVersion && (
-                <Group spacing="xs">
-                  <Button
-                    component="a"
-                    href={`/api/download/models/${latestVersion?.id}`}
-                    fullWidth={mobile}
-                    sx={{ flex: 1 }}
-                    download
-                  >
-                    <Text align="center">
-                      {`Download Latest (${formatKBytes(latestVersion?.modelFile?.sizeKB ?? 0)})`}
+        <Grid gutter="xl" columns={18}>
+          <Grid.Col className={classes.engagementBar} span={1}>
+            <Paper
+              py="md"
+              sx={{
+                position: 'sticky',
+                top: 100,
+              }}
+              withBorder
+            >
+              <Stack align="center">
+                <ActionIcon onClick={() => handleToggleFavorite()}>
+                  <IconHeart
+                    stroke={1.5}
+                    size={20}
+                    style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                    color={isFavorite ? theme.colors.red[6] : undefined}
+                  />
+                </ActionIcon>
+                <ActionIcon
+                  onClick={() =>
+                    reviewSectionRef.current?.scrollIntoView({
+                      behavior: 'smooth',
+                      block: 'center',
+                    })
+                  }
+                >
+                  <Stack spacing={0} align="center">
+                    <IconMessage stroke={1.5} size={20} />
+                    <Text size="xs" color="dimmed">
+                      {abbreviateNumber(model.rank?.ratingCountAllTime ?? 0)}
                     </Text>
-                  </Button>
-                  <VerifiedShield file={latestVersion.modelFile} />
-                </Group>
-              )}
-
-              <DescriptionTable items={modelDetails} labelWidth="30%" />
-              {model?.type === 'Checkpoint' && (
-                <Group position="right" spacing="xs">
-                  <IconLicense size={16} />
-                  <Text size="xs" color="dimmed">
-                    License:{' '}
-                    <Text
-                      component="a"
-                      href="https://huggingface.co/spaces/CompVis/stable-diffusion-license"
-                      rel="nofollow"
-                      td="underline"
-                      target="_blank"
-                    >
-                      creativeml-openrail-m
-                    </Text>
-                  </Text>
-                </Group>
-              )}
-            </Stack>
+                  </Stack>
+                </ActionIcon>
+              </Stack>
+            </Paper>
           </Grid.Col>
-          <Grid.Col
-            xs={12}
-            sm={7}
-            md={8}
-            orderSm={1}
-            sx={(theme) => ({
-              [theme.fn.largerThan('xs')]: {
-                padding: `0 ${theme.spacing.sm}px`,
-                margin: `${theme.spacing.sm}px 0`,
-              },
-            })}
-          >
-            <Stack>
-              <Carousel
-                slideSize="50%"
-                breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
-                slideGap="xl"
-                align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
-                slidesToScroll={mobile ? 1 : 2}
-                withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
-                loop
-              >
-                {latestVersion?.images.map(({ image }) => (
-                  <Carousel.Slide key={image.id}>
-                    <Center style={{ height: '100%' }}>
-                      <ImagePreview
-                        image={image}
-                        edgeImageProps={{ width: 400 }}
-                        // aspectRatio={1}
-                        nsfw={nsfw}
-                        radius="md"
-                        lightboxImages={latestVersion.images.map((x) => x.image)}
-                        style={{ width: '100%' }}
-                        withMeta
-                      />
-                    </Center>
-                  </Carousel.Slide>
-                ))}
-              </Carousel>
-              {model.description ? (
-                <ContentClamp maxHeight={300}>
-                  <RenderHtml html={model.description} />
-                </ContentClamp>
-              ) : null}
-            </Stack>
-          </Grid.Col>
-          <Grid.Col span={12} orderSm={3} my="xl">
-            <Stack spacing="xl">
-              <Title className={classes.title} order={2}>
-                Versions
-              </Title>
-              <ModelVersions
-                items={model.modelVersions}
-                initialTab={latestVersion?.id.toString()}
-                nsfw={nsfw}
-              />
-            </Stack>
-          </Grid.Col>
-          <Grid.Col span={12} orderSm={4} my="xl">
-            <Stack spacing="xl">
-              <Group sx={{ justifyContent: 'space-between' }}>
-                <Stack spacing={4}>
-                  <Group spacing={4}>
-                    <Title order={3}>Reviews</Title>
-                    <ModelRating rank={model.rank} />
-                  </Group>
-                  <Text
-                    size="md"
-                    color="dimmed"
-                  >{`${model.rank?.ratingCountAllTime.toLocaleString()} total reviews`}</Text>
+          <Grid.Col xs={18} md={17}>
+            <Grid gutter="xl">
+              <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
+                <Stack>
+                  {latestVersion && (
+                    <Group spacing="xs">
+                      <Button
+                        component="a"
+                        href={`/api/download/models/${latestVersion?.id}`}
+                        fullWidth={mobile}
+                        sx={{ flex: 1 }}
+                        download
+                      >
+                        <Text align="center">
+                          {`Download Latest (${formatKBytes(
+                            latestVersion?.modelFile?.sizeKB ?? 0
+                          )})`}
+                        </Text>
+                      </Button>
+                      <VerifiedShield file={latestVersion.modelFile} />
+                    </Group>
+                  )}
+                  <DescriptionTable items={modelDetails} labelWidth="30%" />
+                  {model?.type === 'Checkpoint' && (
+                    <Group position="right" spacing="xs">
+                      <IconLicense size={16} />
+                      <Text size="xs" color="dimmed">
+                        License:{' '}
+                        <Text
+                          component="a"
+                          href="https://huggingface.co/spaces/CompVis/stable-diffusion-license"
+                          rel="nofollow"
+                          td="underline"
+                          target="_blank"
+                        >
+                          creativeml-openrail-m
+                        </Text>
+                      </Text>
+                    </Group>
+                  )}
                 </Stack>
-                <Stack align="flex-end" spacing="xs">
-                  <LoginRedirect reason="create-review">
-                    <Button
-                      leftIcon={<IconPlus size={16} />}
-                      variant="outline"
-                      fullWidth={mobile}
-                      size="xs"
-                      onClick={() => {
-                        return openContextModal({
-                          modal: 'reviewEdit',
-                          title: `Reviewing ${model.name}`,
-                          closeOnClickOutside: false,
-                          innerProps: {
-                            review: {
-                              modelId: model.id,
-                              modelVersionId:
-                                model.modelVersions.length === 1
-                                  ? model.modelVersions[0].id
-                                  : undefined,
-                            },
-                          },
-                        });
+              </Grid.Col>
+              <Grid.Col
+                xs={12}
+                sm={7}
+                md={8}
+                orderSm={1}
+                sx={(theme) => ({
+                  [theme.fn.largerThan('xs')]: {
+                    padding: `0 ${theme.spacing.sm}px`,
+                    margin: `${theme.spacing.sm}px 0`,
+                  },
+                })}
+              >
+                <Stack>
+                  <Carousel
+                    slideSize="50%"
+                    breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
+                    slideGap="xl"
+                    align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
+                    slidesToScroll={mobile ? 1 : 2}
+                    withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+                    loop
+                  >
+                    {latestVersion?.images.map(({ image }) => (
+                      <Carousel.Slide key={image.id}>
+                        <Center style={{ height: '100%' }}>
+                          <ImagePreview
+                            image={image}
+                            edgeImageProps={{ width: 400 }}
+                            nsfw={nsfw}
+                            radius="md"
+                            lightboxImages={latestVersion.images.map((x) => x.image)}
+                            style={{ width: '100%' }}
+                            withMeta
+                          />
+                        </Center>
+                      </Carousel.Slide>
+                    ))}
+                  </Carousel>
+                  {model.description ? (
+                    <ContentClamp maxHeight={300}>
+                      <RenderHtml html={model.description} />
+                    </ContentClamp>
+                  ) : null}
+                </Stack>
+              </Grid.Col>
+              <Grid.Col span={12} orderSm={3} my="xl">
+                <Stack spacing="xl">
+                  <Title className={classes.title} order={2}>
+                    Versions
+                  </Title>
+                  <ModelVersions
+                    items={model.modelVersions}
+                    initialTab={latestVersion?.id.toString()}
+                    nsfw={nsfw}
+                  />
+                </Stack>
+              </Grid.Col>
+              <Grid.Col span={12} orderSm={4} my="xl">
+                <Stack spacing="xl">
+                  <Group sx={{ justifyContent: 'space-between' }}>
+                    <Stack ref={reviewSectionRef} spacing={4}>
+                      <Group spacing={4}>
+                        <Title order={3}>Reviews</Title>
+                        <ModelRating rank={model.rank} />
+                      </Group>
+                      <Text
+                        size="md"
+                        color="dimmed"
+                      >{`${model.rank?.ratingCountAllTime.toLocaleString()} total reviews`}</Text>
+                    </Stack>
+                    <Stack align="flex-end" spacing="xs">
+                      <LoginRedirect reason="create-review">
+                        <Button
+                          leftIcon={<IconPlus size={16} />}
+                          variant="outline"
+                          fullWidth={mobile}
+                          size="xs"
+                          onClick={() => {
+                            return openContextModal({
+                              modal: 'reviewEdit',
+                              title: `Reviewing ${model.name}`,
+                              closeOnClickOutside: false,
+                              innerProps: {
+                                review: {
+                                  modelId: model.id,
+                                  modelVersionId:
+                                    model.modelVersions.length === 1
+                                      ? model.modelVersions[0].id
+                                      : undefined,
+                                },
+                              },
+                            });
+                          }}
+                        >
+                          Add Review
+                        </Button>
+                      </LoginRedirect>
+                      <Group spacing="xs" noWrap grow>
+                        <Select
+                          defaultValue={ReviewSort.Newest}
+                          icon={<IconArrowsSort size={14} />}
+                          data={Object.values(ReviewSort)
+                            // Only include Newest and Oldest until reactions are implemented
+                            .filter((sort) => [ReviewSort.Newest, ReviewSort.Oldest].includes(sort))
+                            .map((sort) => ({
+                              label: startCase(sort),
+                              value: sort,
+                            }))}
+                          onChange={handleReviewSortChange}
+                          size="xs"
+                        />
+                        <MultiSelect
+                          placeholder="Filters"
+                          icon={<IconFilter size={14} />}
+                          data={Object.values(ReviewFilter).map((sort) => ({
+                            label: startCase(sort),
+                            value: sort,
+                          }))}
+                          onChange={handleReviewFilterChange}
+                          size="xs"
+                          zIndex={500}
+                          clearButtonLabel="Clear review filters"
+                          clearable
+                        />
+                      </Group>
+                    </Stack>
+                  </Group>
+                  <ModelReviews
+                    items={reviews}
+                    onFilterChange={handleReviewFilterChange}
+                    loading={loadingReviews}
+                  />
+                  {/* At the bottom to detect infinite scroll */}
+                  {reviews.length > 0 ? (
+                    <InView
+                      fallbackInView
+                      threshold={1}
+                      onChange={(inView) => {
+                        if (inView && !isFetchingNextPage && hasNextPage) {
+                          fetchNextPage();
+                        }
                       }}
                     >
-                      Add Review
-                    </Button>
-                  </LoginRedirect>
-                  <Group spacing="xs" noWrap grow>
-                    <Select
-                      defaultValue={ReviewSort.Newest}
-                      icon={<IconArrowsSort size={14} />}
-                      data={Object.values(ReviewSort)
-                        // Only include Newest and Oldest until reactions are implemented
-                        .filter((sort) => [ReviewSort.Newest, ReviewSort.Oldest].includes(sort))
-                        .map((sort) => ({
-                          label: startCase(sort),
-                          value: sort,
-                        }))}
-                      onChange={handleReviewSortChange}
-                      size="xs"
-                    />
-                    <MultiSelect
-                      placeholder="Filters"
-                      icon={<IconFilter size={14} />}
-                      data={Object.values(ReviewFilter).map((sort) => ({
-                        label: startCase(sort),
-                        value: sort,
-                      }))}
-                      onChange={handleReviewFilterChange}
-                      size="xs"
-                      zIndex={500}
-                      clearButtonLabel="Clear review filters"
-                      clearable
-                    />
-                  </Group>
+                      {({ ref }) => (
+                        <Button
+                          ref={ref}
+                          variant="subtle"
+                          onClick={() => fetchNextPage()}
+                          disabled={!hasNextPage || isFetchingNextPage}
+                        >
+                          {isFetchingNextPage
+                            ? 'Loading more...'
+                            : hasNextPage
+                            ? 'Load More'
+                            : 'Nothing more to load'}
+                        </Button>
+                      )}
+                    </InView>
+                  ) : null}
                 </Stack>
-              </Group>
-              <ModelReviews
-                items={reviews}
-                onFilterChange={handleReviewFilterChange}
-                loading={loadingReviews}
-              />
-              {/* At the bottom to detect infinite scroll */}
-              {reviews.length > 0 ? (
-                <InView
-                  fallbackInView
-                  threshold={1}
-                  onChange={(inView) => {
-                    if (inView && !isFetchingNextPage && hasNextPage) {
-                      fetchNextPage();
-                    }
-                  }}
-                >
-                  {({ ref }) => (
-                    <Button
-                      ref={ref}
-                      variant="subtle"
-                      onClick={() => fetchNextPage()}
-                      disabled={!hasNextPage || isFetchingNextPage}
-                    >
-                      {isFetchingNextPage
-                        ? 'Loading more...'
-                        : hasNextPage
-                        ? 'Load More'
-                        : 'Nothing more to load'}
-                    </Button>
-                  )}
-                </InView>
-              ) : null}
-            </Stack>
+              </Grid.Col>
+            </Grid>
           </Grid.Col>
         </Grid>
       </Container>

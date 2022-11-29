@@ -12,10 +12,11 @@ import {
   Stack,
   Text,
   ThemeIcon,
+  useMantineTheme,
 } from '@mantine/core';
 import { ModelStatus } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
-import { IconCloudOff, IconDownload } from '@tabler/icons';
+import { IconCloudOff, IconDownload, IconHeart } from '@tabler/icons';
 import {
   useContainerPosition,
   useMasonry,
@@ -175,14 +176,17 @@ const MasonryItem = ({
   width: number;
 }) => {
   const { data: session } = useSession();
+  const { classes } = useStyles();
+  const theme = useMantineTheme();
+
   const { id, image, name, rank, nsfw } = data ?? {};
   const blurNsfw = session?.user?.blurNsfw ?? true;
-  const { classes } = useStyles();
+
   const [loading, setLoading] = useState(false);
-
-  // const hasDimensions = image.width && image.height;
-
   const { ref, inView } = useInView();
+
+  const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery();
+  const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
@@ -220,12 +224,27 @@ const MasonryItem = ({
     </Group>
   );
 
+  const modelLikes = (
+    <Group spacing={5}>
+      {/* TODO: Update with like count when metric is available */}
+      <Text size="xs">0</Text>
+      <IconHeart
+        size={16}
+        style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+        color={isFavorite ? theme.colors.red[6] : undefined}
+      />
+    </Group>
+  );
+
   const withRating = (
     <Stack spacing={6}>
       {modelText}
       <Group position="apart">
         {modelRating}
-        {modelDownloads}
+        <Group spacing={4} align="center">
+          {modelLikes}
+          {modelDownloads}
+        </Group>
       </Group>
     </Stack>
   );
@@ -233,7 +252,10 @@ const MasonryItem = ({
   const withoutRating = (
     <Group position="apart" align="flex-end">
       {modelText}
-      {modelDownloads}
+      <Group spacing={4} align="center">
+        {modelLikes}
+        {modelDownloads}
+      </Group>
     </Group>
   );
 
