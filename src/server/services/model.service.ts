@@ -70,7 +70,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       OR: !sessionUser?.isModerator
         ? [{ status: ModelStatus.Published }, { user: { id: sessionUser?.id } }]
         : undefined,
-      favoriteModels: favorites ? { some: {} } : undefined,
+      favoriteModels: favorites ? { some: { userId: sessionUser?.id } } : undefined,
     },
     orderBy: [
       ...(sort === ModelSort.HighestRated ? [{ rank: { [`rating${period}Rank`]: 'asc' } }] : []),
