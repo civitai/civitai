@@ -8,7 +8,6 @@ import {
   Group,
   Loader,
   LoadingOverlay,
-  Rating,
   Stack,
   Text,
   ThemeIcon,
@@ -33,6 +32,7 @@ import { useInView } from 'react-intersection-observer';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ModelRating } from '~/components/ModelRating/ModelRating';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { useModelFilters } from '~/hooks/useModelFilters';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
@@ -211,29 +211,24 @@ const MasonryItem = ({
     </Group>
   );
 
-  const modelRating = (
-    <Group spacing={5}>
-      <Rating value={rank?.ratingAllTime ?? 0} fractions={2} readOnly size="xs" />
-      <Text size="xs">({(rank?.ratingCountAllTime ?? 0).toString()})</Text>
-    </Group>
-  );
+  const modelRating = <ModelRating rank={rank} size="xs" />;
 
   const modelDownloads = (
     <Group spacing={5} align="bottom">
-      <Text size="xs">{abbreviateNumber(rank?.downloadCountAllTime ?? 0).toString()}</Text>
       <IconDownload size={16} />
+      <Text size="xs">{abbreviateNumber(rank?.downloadCountAllTime ?? 0)}</Text>
     </Group>
   );
 
   const modelLikes = (
     <Group spacing={5}>
-      {/* TODO: Update with like count when metric is available */}
-      <Text size="xs">0</Text>
       <IconHeart
         size={16}
         style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
         color={isFavorite ? theme.colors.red[6] : undefined}
       />
+      {/* TODO: Update with like count when metric is available */}
+      <Text size="xs">0</Text>
     </Group>
   );
 

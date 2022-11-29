@@ -351,7 +351,7 @@ export function AppHeader({ links }: Props) {
                       component={NextLink}
                       href={`/?favorites=true`}
                     >
-                      Favorite models
+                      Liked models
                     </Menu.Item>
                   </>
                 ) : (
