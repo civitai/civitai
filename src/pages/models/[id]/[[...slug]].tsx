@@ -418,97 +418,13 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       />
 
       <Container size="xl" pt={0} pb="xl" px={0}>
-        <Stack spacing="xs" mb="xl">
-          <Group align="center" sx={{ justifyContent: 'space-between' }} noWrap>
-            <Group align="center" spacing={mobile ? 0 : 'xs'}>
-              <Title className={classes.title} order={1} sx={{ paddingBottom: mobile ? 0 : 8 }}>
-                {model?.name}
-              </Title>
-              <ModelRating rank={model.rank} size={mobile ? 'sm' : 'lg'} />
-            </Group>
-            <Menu position="bottom-end" transition="pop-top-right">
-              <Menu.Target>
-                <ActionIcon variant="outline">
-                  <IconDotsVertical size={16} />
-                </ActionIcon>
-              </Menu.Target>
-
-              <Menu.Dropdown>
-                {session && isOwner ? (
-                  <>
-                    <Menu.Item
-                      color={theme.colors.red[6]}
-                      icon={<IconTrash size={14} stroke={1.5} />}
-                      onClick={handleDeleteModel}
-                    >
-                      Delete Model
-                    </Menu.Item>
-                    <Menu.Item
-                      component={NextLink}
-                      href={`/models/${id}/${slug}?edit=true`}
-                      icon={<IconEdit size={14} stroke={1.5} />}
-                      shallow
-                    >
-                      Edit Model
-                    </Menu.Item>
-                  </>
-                ) : null}
-                {session && isOwner && published ? (
-                  <Menu.Item
-                    icon={<IconBan size={14} stroke={1.5} />}
-                    color="yellow"
-                    onClick={handleUnpublishModel}
-                    disabled={unpublishModelMutation.isLoading}
-                  >
-                    Unpublish
-                  </Menu.Item>
-                ) : null}
-                {!session || !isOwner || isModerator ? (
-                  <>
-                    <LoginRedirect reason="report-model">
-                      <Menu.Item
-                        icon={<IconFlag size={14} stroke={1.5} />}
-                        onClick={() => handleReportModel(ReportReason.NSFW)}
-                        disabled={reportModelMutation.isLoading}
-                      >
-                        Report as NSFW
-                      </Menu.Item>
-                    </LoginRedirect>
-                    <LoginRedirect reason="report-model">
-                      <Menu.Item
-                        icon={<IconFlag size={14} stroke={1.5} />}
-                        onClick={() => handleReportModel(ReportReason.TOSViolation)}
-                        disabled={reportModelMutation.isLoading}
-                      >
-                        Report as Terms Violation
-                      </Menu.Item>
-                    </LoginRedirect>
-                  </>
-                ) : null}
-              </Menu.Dropdown>
-            </Menu>
-          </Group>
-          {model.status === ModelStatus.Unpublished && (
-            <Alert color="red">
-              <Group spacing="xs" noWrap align="flex-start">
-                <ThemeIcon color="red">
-                  <IconExclamationMark />
-                </ThemeIcon>
-                <Text size="md">
-                  This model has been unpublished because it looks like the model file failed to
-                  upload. Please re-upload the file.
-                </Text>
-              </Group>
-            </Alert>
-          )}
-        </Stack>
         <Grid gutter="xl" columns={18}>
-          <Grid.Col className={classes.engagementBar} span={1}>
+          <Grid.Col className={classes.engagementBar} sm={2} lg={1}>
             <Paper
               py="md"
               sx={{
                 position: 'sticky',
-                top: 100,
+                top: 162,
               }}
               withBorder
             >
@@ -531,24 +447,120 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 >
                   <Stack spacing={0} align="center">
                     <IconMessage stroke={1.5} size={20} />
-                    <Text size="xs" color="dimmed">
-                      {abbreviateNumber(model.rank?.ratingCountAllTime ?? 0)}
-                    </Text>
+                    {model.rank?.ratingCountAllTime ? (
+                      <Text size="xs" color="dimmed">
+                        {abbreviateNumber(model.rank.ratingCountAllTime)}
+                      </Text>
+                    ) : null}
                   </Stack>
                 </ActionIcon>
               </Stack>
             </Paper>
           </Grid.Col>
-          <Grid.Col xs={18} md={17}>
+          <Grid.Col xs={18} sm={16} lg={17}>
+            <Stack spacing="xs" mb="xl">
+              <Group align="center" sx={{ justifyContent: 'space-between' }} noWrap>
+                <Group align="center" spacing={mobile ? 0 : 'xs'}>
+                  <Title className={classes.title} order={1} sx={{ paddingBottom: mobile ? 0 : 8 }}>
+                    {model?.name}
+                  </Title>
+                  <ModelRating rank={model.rank} size={mobile ? 'sm' : 'lg'} />
+                </Group>
+                <Menu position="bottom-end" transition="pop-top-right">
+                  <Menu.Target>
+                    <ActionIcon variant="outline">
+                      <IconDotsVertical size={16} />
+                    </ActionIcon>
+                  </Menu.Target>
+
+                  <Menu.Dropdown>
+                    {session && isOwner ? (
+                      <>
+                        <Menu.Item
+                          color={theme.colors.red[6]}
+                          icon={<IconTrash size={14} stroke={1.5} />}
+                          onClick={handleDeleteModel}
+                        >
+                          Delete Model
+                        </Menu.Item>
+                        <Menu.Item
+                          component={NextLink}
+                          href={`/models/${id}/${slug}?edit=true`}
+                          icon={<IconEdit size={14} stroke={1.5} />}
+                          shallow
+                        >
+                          Edit Model
+                        </Menu.Item>
+                      </>
+                    ) : null}
+                    {session && isOwner && published ? (
+                      <Menu.Item
+                        icon={<IconBan size={14} stroke={1.5} />}
+                        color="yellow"
+                        onClick={handleUnpublishModel}
+                        disabled={unpublishModelMutation.isLoading}
+                      >
+                        Unpublish
+                      </Menu.Item>
+                    ) : null}
+                    {!session || !isOwner || isModerator ? (
+                      <>
+                        <LoginRedirect reason="report-model">
+                          <Menu.Item
+                            icon={<IconFlag size={14} stroke={1.5} />}
+                            onClick={() => handleReportModel(ReportReason.NSFW)}
+                            disabled={reportModelMutation.isLoading}
+                          >
+                            Report as NSFW
+                          </Menu.Item>
+                        </LoginRedirect>
+                        <LoginRedirect reason="report-model">
+                          <Menu.Item
+                            icon={<IconFlag size={14} stroke={1.5} />}
+                            onClick={() => handleReportModel(ReportReason.TOSViolation)}
+                            disabled={reportModelMutation.isLoading}
+                          >
+                            Report as Terms Violation
+                          </Menu.Item>
+                        </LoginRedirect>
+                      </>
+                    ) : null}
+                  </Menu.Dropdown>
+                </Menu>
+              </Group>
+              {model.status === ModelStatus.Unpublished && (
+                <Alert color="red">
+                  <Group spacing="xs" noWrap align="flex-start">
+                    <ThemeIcon color="red">
+                      <IconExclamationMark />
+                    </ThemeIcon>
+                    <Text size="md">
+                      This model has been unpublished because it looks like the model file failed to
+                      upload. Please re-upload the file.
+                    </Text>
+                  </Group>
+                </Alert>
+              )}
+            </Stack>
             <Grid gutter="xl">
               <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
                 <Stack>
                   {latestVersion && (
                     <Group spacing="xs">
                       <Button
+                        variant="default"
+                        onClick={() => handleToggleFavorite()}
+                        hidden={!mobile}
+                      >
+                        <IconHeart
+                          size={20}
+                          style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                          color={isFavorite ? theme.colors.red[6] : undefined}
+                        />
+                      </Button>
+                      <Button
                         component="a"
                         href={`/api/download/models/${latestVersion?.id}`}
-                        fullWidth={mobile}
                         sx={{ flex: 1 }}
                         download
                       >

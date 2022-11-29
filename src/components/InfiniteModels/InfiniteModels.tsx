@@ -228,7 +228,7 @@ const MasonryItem = ({
         color={isFavorite ? theme.colors.red[6] : undefined}
       />
       {/* TODO: Update with like count when metric is available */}
-      <Text size="xs">0</Text>
+      {/* <Text size="xs">0</Text> */}
     </Group>
   );
 
