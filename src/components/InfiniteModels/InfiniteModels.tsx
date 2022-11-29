@@ -31,6 +31,7 @@ import React, { useEffect, useRef, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ModelRating } from '~/components/ModelRating/ModelRating';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
@@ -39,7 +40,7 @@ import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controll
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { QS } from '~/utils/qs';
-import { slugit } from '~/utils/string-helpers';
+import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 type InfiniteModelsProps = {
@@ -204,7 +205,7 @@ const MasonryItem = ({
   }, [itemWidth, image.width, image.height, rank?.ratingAllTime]);
 
   const modelText = (
-    <Group position="left">
+    <Group position="left" spacing={4}>
       <Text size={14} weight={500} lineClamp={2} style={{ flex: 1 }}>
         {name}
       </Text>
@@ -213,27 +214,35 @@ const MasonryItem = ({
           {data.status}
         </Badge>
       )}
+      <Badge radius="sm">{splitUppercase(data.type)}</Badge>
     </Group>
   );
 
   const modelRating = <ModelRating rank={rank} size="xs" />;
 
   const modelDownloads = (
-    <Group spacing={5} align="bottom">
-      <IconDownload size={16} />
+    <IconBadge
+      icon={<IconDownload size={16} />}
+      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+    >
       <Text size="xs">{abbreviateNumber(rank?.downloadCountAllTime ?? 0)}</Text>
-    </Group>
+    </IconBadge>
   );
 
   const modelLikes = (
-    <Group spacing={5}>
-      <IconHeart
-        size={16}
-        style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-        color={isFavorite ? theme.colors.red[6] : undefined}
-      />
+    <IconBadge
+      icon={
+        <IconHeart
+          size={16}
+          style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+          color={isFavorite ? theme.colors.red[6] : undefined}
+        />
+      }
+      color={isFavorite ? 'red' : 'gray'}
+      variant={theme.colorScheme === 'dark' && !isFavorite ? 'filled' : 'light'}
+    >
       <Text size="xs">{abbreviateNumber(rank?.favoriteCountAllTime ?? 0)}</Text>
-    </Group>
+    </IconBadge>
   );
 
   const withRating = (
@@ -325,7 +334,7 @@ const MasonryItem = ({
 
 const useStyles = createStyles((theme) => {
   const base = theme.colors[getRandom(mantineColors)];
-  const background = theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0];
+  const background = theme.colorScheme === 'dark' ? theme.colors.dark[6] : '#fff';
 
   return {
     card: {
