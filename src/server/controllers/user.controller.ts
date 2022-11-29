@@ -109,8 +109,8 @@ export const getUserFavoriteModelsHandler = async ({ ctx }: { ctx: DeepNonNullab
   const { id } = ctx.user;
 
   try {
-    const models = await getUserFavoriteModels({ id });
-    return models;
+    const user = await getUserFavoriteModels({ id });
+    return user?.favoriteModels ?? [];
   } catch (error) {
     throwDbError(error);
   }
