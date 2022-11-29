@@ -419,12 +419,12 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
       <Container size="xl" pt={0} pb="xl" px={0}>
         <Stack spacing="xs" mb="xl">
-          <Group align="center" sx={{ justifyContent: 'space-between' }}>
-            <Group align="center">
+          <Group align="center" sx={{ justifyContent: 'space-between' }} noWrap>
+            <Group align="center" spacing={mobile ? 0 : 'xs'}>
               <Title className={classes.title} order={1} sx={{ paddingBottom: mobile ? 0 : 8 }}>
                 {model?.name}
               </Title>
-              <ModelRating rank={model.rank} size="lg" />
+              <ModelRating rank={model.rank} size={mobile ? 'sm' : 'lg'} />
             </Group>
             <Menu position="bottom-end" transition="pop-top-right">
               <Menu.Target>
@@ -641,17 +641,37 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               <Grid.Col span={12} orderSm={4} my="xl">
                 <Stack spacing="xl">
                   <Group sx={{ justifyContent: 'space-between' }}>
-                    <Stack ref={reviewSectionRef} spacing={4}>
-                      <Group spacing={4}>
-                        <Title order={3}>Reviews</Title>
-                        <ModelRating rank={model.rank} />
-                      </Group>
-                      <Text
-                        size="md"
-                        color="dimmed"
-                      >{`${model.rank?.ratingCountAllTime.toLocaleString()} total reviews`}</Text>
-                    </Stack>
-                    <Stack align="flex-end" spacing="xs">
+                    <Group spacing={4}>
+                      <Title order={3}>Reviews</Title>
+                      <ModelRating rank={model.rank} />
+                    </Group>
+                    <Group spacing="xs" noWrap grow>
+                      <Select
+                        defaultValue={ReviewSort.Newest}
+                        icon={<IconArrowsSort size={14} />}
+                        data={Object.values(ReviewSort)
+                          // Only include Newest and Oldest until reactions are implemented
+                          .filter((sort) => [ReviewSort.Newest, ReviewSort.Oldest].includes(sort))
+                          .map((sort) => ({
+                            label: startCase(sort),
+                            value: sort,
+                          }))}
+                        onChange={handleReviewSortChange}
+                        size="xs"
+                      />
+                      <MultiSelect
+                        placeholder="Filters"
+                        icon={<IconFilter size={14} />}
+                        data={Object.values(ReviewFilter).map((sort) => ({
+                          label: startCase(sort),
+                          value: sort,
+                        }))}
+                        onChange={handleReviewFilterChange}
+                        size="xs"
+                        zIndex={500}
+                        clearButtonLabel="Clear review filters"
+                        clearable
+                      />
                       <LoginRedirect reason="create-review">
                         <Button
                           leftIcon={<IconPlus size={16} />}
@@ -678,35 +698,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                           Add Review
                         </Button>
                       </LoginRedirect>
-                      <Group spacing="xs" noWrap grow>
-                        <Select
-                          defaultValue={ReviewSort.Newest}
-                          icon={<IconArrowsSort size={14} />}
-                          data={Object.values(ReviewSort)
-                            // Only include Newest and Oldest until reactions are implemented
-                            .filter((sort) => [ReviewSort.Newest, ReviewSort.Oldest].includes(sort))
-                            .map((sort) => ({
-                              label: startCase(sort),
-                              value: sort,
-                            }))}
-                          onChange={handleReviewSortChange}
-                          size="xs"
-                        />
-                        <MultiSelect
-                          placeholder="Filters"
-                          icon={<IconFilter size={14} />}
-                          data={Object.values(ReviewFilter).map((sort) => ({
-                            label: startCase(sort),
-                            value: sort,
-                          }))}
-                          onChange={handleReviewFilterChange}
-                          size="xs"
-                          zIndex={500}
-                          clearButtonLabel="Clear review filters"
-                          clearable
-                        />
-                      </Group>
-                    </Stack>
+                    </Group>
                   </Group>
                   <ModelReviews
                     items={reviews}
