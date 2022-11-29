@@ -64,6 +64,14 @@ export function AppFooter() {
           >
             Twitter
           </Button>
+          <Button
+            component="a"
+            href="https://github.com/civitai/civitai/wiki/REST-API-Reference"
+            {...buttonProps}
+            target="_blank"
+          >
+            API
+          </Button>
         </Group>
         <Button
           component="a"
