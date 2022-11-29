@@ -141,7 +141,7 @@ export const toggleFavoriteModelHandler = async ({
 
     return user;
   } catch (error) {
-  if (error instanceof TRPCError) throw error;
+    if (error instanceof TRPCError) throw error;
     else throwDbError(error);
   }
 };
