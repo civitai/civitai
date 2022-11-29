@@ -151,7 +151,11 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   });
 
   const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({ id });
-  const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery();
+  const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery(undefined, {
+    enabled: !!session,
+    cacheTime: Infinity,
+    staleTime: Infinity,
+  });
   const {
     data: reviewsData,
     isLoading: loadingReviews,
@@ -652,7 +656,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Grid.Col>
               <Grid.Col span={12} orderSm={4} my="xl">
                 <Stack spacing="xl">
-                  <Group sx={{ justifyContent: 'space-between' }}>
+                  <Group ref={reviewSectionRef} sx={{ justifyContent: 'space-between' }}>
                     <Group spacing={4}>
                       <Title order={3}>Reviews</Title>
                       <ModelRating rank={model.rank} />

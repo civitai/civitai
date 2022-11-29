@@ -183,10 +183,15 @@ const MasonryItem = ({
   const { id, image, name, rank, nsfw } = data ?? {};
   const blurNsfw = session?.user?.blurNsfw ?? true;
 
+  const [showingNsfw, setShowingNsfw] = useState(!blurNsfw);
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
 
-  const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery();
+  const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery(undefined, {
+    enabled: !!session,
+    cacheTime: Infinity,
+    staleTime: Infinity,
+  });
   const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
   const height = useMemo(() => {
@@ -227,8 +232,7 @@ const MasonryItem = ({
         style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
         color={isFavorite ? theme.colors.red[6] : undefined}
       />
-      {/* TODO: Update with like count when metric is available */}
-      {/* <Text size="xs">0</Text> */}
+      <Text size="xs">{abbreviateNumber(rank?.favoriteCountAllTime ?? 0)}</Text>
     </Group>
   );
 
@@ -271,10 +275,10 @@ const MasonryItem = ({
     <Link
       href={{
         pathname: modelLink,
-        query: nsfw && blurNsfw ? { showNsfw: true } : undefined,
+        query: showingNsfw ? { showNsfw: true } : undefined,
       }}
       as={modelLink}
-      legacyBehavior
+      passHref
     >
       <a>
         <Card
@@ -298,7 +302,11 @@ const MasonryItem = ({
                 style={{ bottom: rank?.ratingAllTime ? 66 : 33, height: 'auto' }}
               />
               {nsfw ? (
-                <SensitiveContent placeholder={<MediaHash {...image} />} style={{ height: '100%' }}>
+                <SensitiveContent
+                  placeholder={<MediaHash {...image} />}
+                  style={{ height: '100%' }}
+                  onToggleClick={(value) => setShowingNsfw(value)}
+                >
                   {PreviewImage}
                 </SensitiveContent>
               ) : (

@@ -7,11 +7,13 @@ import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
 import { ListFilter } from '~/components/ListFilter/ListFilter';
 import { ListPeriod } from '~/components/ListPeriod/ListPeriod';
 import { ListSort } from '~/components/ListSort/ListSort';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
+  const session = await getServerAuthSession(context);
   const ssg = await getServerProxySSGHelpers(context);
-  await ssg.user.getFavoriteModels.prefetch();
+  if (session) await ssg.user.getFavoriteModels.prefetch(undefined);
 
   return {
     props: {

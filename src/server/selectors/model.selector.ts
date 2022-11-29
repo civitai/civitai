@@ -27,10 +27,12 @@ export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
   rank: {
     select: {
       downloadCountAllTime: true,
-      ratingCountAllTime: true,
-      ratingAllTime: true,
       downloadCountAllTimeRank: true,
+      favoriteCountAllTime: true,
+      favoriteCountAllTimeRank: true,
+      ratingCountAllTime: true,
       ratingCountAllTimeRank: true,
+      ratingAllTime: true,
       ratingAllTimeRank: true,
     },
   },
