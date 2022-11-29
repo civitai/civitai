@@ -289,7 +289,7 @@ const MasonryItem = ({
           style={{ height: `${height}px` }}
           p={0}
           onClick={(e: React.MouseEvent<HTMLDivElement>) => {
-            if (!(e.ctrlKey || e.metaKey) || e.button === 0) setLoading(true);
+            if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
           }}
         >
           <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
