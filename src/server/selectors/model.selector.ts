@@ -127,6 +127,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       downloadCountAllTime: true,
       ratingCountAllTime: true,
       ratingAllTime: true,
+      favoriteCountAllTime: true,
     },
   },
   tagsOnModels: { select: { tag: true } },

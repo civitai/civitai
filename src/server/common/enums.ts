@@ -10,6 +10,7 @@ export type UploadTypeUnion = `${UploadType}`;
 export enum ModelSort {
   HighestRated = 'Highest Rated',
   MostDownloaded = 'Most Downloaded',
+  MostLiked = 'Most Liked',
   Newest = 'Newest',
 }
 

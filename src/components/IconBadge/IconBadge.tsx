@@ -19,5 +19,5 @@ export function IconBadge({ icon, children, ...props }: IconBadgeProps) {
 
 type IconBadgeProps = {
   icon: React.ReactNode;
-  children: React.ReactNode;
-} & BadgeProps;
+  onClick?: React.MouseEventHandler<any> | undefined;
+} & Omit<BadgeProps, 'leftSection'>;

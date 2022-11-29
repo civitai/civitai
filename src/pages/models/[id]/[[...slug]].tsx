@@ -21,6 +21,7 @@ import {
   ThemeIcon,
   Paper,
   Tooltip,
+  Rating,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
@@ -36,7 +37,6 @@ import {
   IconFlag,
   IconHeart,
   IconLicense,
-  IconMessageCircle2,
   IconPlus,
   IconTrash,
 } from '@tabler/icons';
@@ -77,6 +77,7 @@ import { QS } from '~/utils/qs';
 import { splitUppercase, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 
 //TODO - Break model query into multiple queries
 /*
@@ -232,20 +233,32 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       await queryUtils.user.getFavoriteModels.cancel();
 
       const previousFavorites = queryUtils.user.getFavoriteModels.getData() ?? [];
+      const previousModel = queryUtils.model.getById.getData({ id: modelId });
       const shouldRemove = previousFavorites.find((favorite) => favorite.modelId === modelId);
+      // Update the favorite count
+      queryUtils.model.getById.setData({ id: modelId }, (model) => {
+        if (model?.rank) model.rank.favoriteCountAllTime += shouldRemove ? -1 : 1;
+        return model;
+      });
+      // Remove from favorites list
       queryUtils.user.getFavoriteModels.setData(undefined, (old = []) =>
         shouldRemove
           ? old.filter((favorite) => favorite.modelId !== modelId)
           : [...old, { modelId }]
       );
 
-      return { previousFavorites };
+      return { previousFavorites, previousModel };
     },
     async onSuccess() {
       await queryUtils.model.getAll.invalidate();
     },
     onError(_error, _variables, context) {
       queryUtils.user.getFavoriteModels.setData(undefined, context?.previousFavorites);
+      if (context?.previousModel?.id)
+        queryUtils.model.getById.setData(
+          { id: context?.previousModel?.id },
+          context?.previousModel
+        );
     },
   });
 
@@ -423,334 +436,332 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       />
 
       <Container size="xl" pt={0} pb="xl" px={0}>
-        <Grid gutter="xl" columns={18}>
-          <Grid.Col className={classes.engagementBar} sm={2} lg={1}>
-            <Paper
-              py="md"
-              sx={{
-                position: 'sticky',
-                top: 162,
-              }}
-              withBorder
-            >
-              <Stack align="center">
-                <ActionIcon onClick={() => handleToggleFavorite()}>
+        <Stack spacing="xs" mb="xl">
+          <Group align="center" sx={{ justifyContent: 'space-between' }} noWrap>
+            <Group align="center" spacing={mobile ? 4 : 'xs'}>
+              <Title
+                className={classes.title}
+                order={1}
+                sx={{ paddingBottom: mobile ? 0 : 8, width: mobile ? '100%' : undefined }}
+              >
+                {model?.name}
+              </Title>
+              <IconBadge
+                radius="sm"
+                color={isFavorite ? 'red' : 'gray'}
+                size="lg"
+                icon={
                   <IconHeart
-                    stroke={1.5}
-                    size={20}
-                    style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                    size={18}
                     color={isFavorite ? theme.colors.red[6] : undefined}
+                    style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
                   />
+                }
+                sx={{ cursor: 'pointer' }}
+                onClick={() => handleToggleFavorite()}
+              >
+                <Text size={mobile ? 'sm' : 'md'}>
+                  {abbreviateNumber(model.rank?.favoriteCountAllTime ?? 0)}
+                </Text>
+              </IconBadge>
+              <IconBadge
+                radius="sm"
+                color="gray"
+                size="lg"
+                icon={<Rating value={model.rank?.ratingAllTime ?? 0} readOnly />}
+                sx={{ cursor: 'pointer' }}
+                onClick={() => {
+                  if (!reviewSectionRef.current) return;
+                  const top =
+                    reviewSectionRef.current.getBoundingClientRect().top -
+                    document.body.getBoundingClientRect().top -
+                    100;
+                  window.scrollTo({
+                    behavior: 'smooth',
+                    top,
+                  });
+                }}
+              >
+                <Text size={mobile ? 'sm' : 'md'}>
+                  {abbreviateNumber(model.rank?.ratingCountAllTime ?? 0)}
+                </Text>
+              </IconBadge>
+            </Group>
+            <Menu position="bottom-end" transition="pop-top-right">
+              <Menu.Target>
+                <ActionIcon variant="outline">
+                  <IconDotsVertical size={16} />
                 </ActionIcon>
-                <ActionIcon
-                  onClick={() =>
-                    reviewSectionRef.current?.scrollIntoView({
-                      behavior: 'smooth',
-                      block: 'center',
-                    })
-                  }
-                >
-                  <Stack spacing={0} align="center">
-                    <IconMessageCircle2 stroke={1.5} size={20} />
-                    {model.rank?.ratingCountAllTime ? (
-                      <Text size="xs" color="dimmed">
-                        {abbreviateNumber(model.rank.ratingCountAllTime)}
-                      </Text>
-                    ) : null}
-                  </Stack>
-                </ActionIcon>
-              </Stack>
-            </Paper>
-          </Grid.Col>
-          <Grid.Col xs={18} sm={16} lg={17}>
-            <Stack spacing="xs" mb="xl">
-              <Group align="center" sx={{ justifyContent: 'space-between' }} noWrap>
-                <Group align="center" spacing={mobile ? 0 : 'xs'}>
-                  <Title className={classes.title} order={1} sx={{ paddingBottom: mobile ? 0 : 8 }}>
-                    {model?.name}
-                  </Title>
-                  <ModelRating rank={model.rank} size={mobile ? 'sm' : 'lg'} />
-                </Group>
-                <Menu position="bottom-end" transition="pop-top-right">
-                  <Menu.Target>
-                    <ActionIcon variant="outline">
-                      <IconDotsVertical size={16} />
-                    </ActionIcon>
-                  </Menu.Target>
+              </Menu.Target>
 
-                  <Menu.Dropdown>
-                    {session && isOwner ? (
-                      <>
-                        <Menu.Item
-                          color={theme.colors.red[6]}
-                          icon={<IconTrash size={14} stroke={1.5} />}
-                          onClick={handleDeleteModel}
-                        >
-                          Delete Model
-                        </Menu.Item>
-                        <Menu.Item
-                          component={NextLink}
-                          href={`/models/${id}/${slug}?edit=true`}
-                          icon={<IconEdit size={14} stroke={1.5} />}
-                          shallow
-                        >
-                          Edit Model
-                        </Menu.Item>
-                      </>
-                    ) : null}
-                    {session && isOwner && published ? (
+              <Menu.Dropdown>
+                {session && isOwner ? (
+                  <>
+                    <Menu.Item
+                      color={theme.colors.red[6]}
+                      icon={<IconTrash size={14} stroke={1.5} />}
+                      onClick={handleDeleteModel}
+                    >
+                      Delete Model
+                    </Menu.Item>
+                    <Menu.Item
+                      component={NextLink}
+                      href={`/models/${id}/${slug}?edit=true`}
+                      icon={<IconEdit size={14} stroke={1.5} />}
+                      shallow
+                    >
+                      Edit Model
+                    </Menu.Item>
+                  </>
+                ) : null}
+                {session && isOwner && published ? (
+                  <Menu.Item
+                    icon={<IconBan size={14} stroke={1.5} />}
+                    color="yellow"
+                    onClick={handleUnpublishModel}
+                    disabled={unpublishModelMutation.isLoading}
+                  >
+                    Unpublish
+                  </Menu.Item>
+                ) : null}
+                {!session || !isOwner || isModerator ? (
+                  <>
+                    <LoginRedirect reason="report-model">
                       <Menu.Item
-                        icon={<IconBan size={14} stroke={1.5} />}
-                        color="yellow"
-                        onClick={handleUnpublishModel}
-                        disabled={unpublishModelMutation.isLoading}
+                        icon={<IconFlag size={14} stroke={1.5} />}
+                        onClick={() => handleReportModel(ReportReason.NSFW)}
+                        disabled={reportModelMutation.isLoading}
                       >
-                        Unpublish
+                        Report as NSFW
                       </Menu.Item>
-                    ) : null}
-                    {!session || !isOwner || isModerator ? (
-                      <>
-                        <LoginRedirect reason="report-model">
-                          <Menu.Item
-                            icon={<IconFlag size={14} stroke={1.5} />}
-                            onClick={() => handleReportModel(ReportReason.NSFW)}
-                            disabled={reportModelMutation.isLoading}
-                          >
-                            Report as NSFW
-                          </Menu.Item>
-                        </LoginRedirect>
-                        <LoginRedirect reason="report-model">
-                          <Menu.Item
-                            icon={<IconFlag size={14} stroke={1.5} />}
-                            onClick={() => handleReportModel(ReportReason.TOSViolation)}
-                            disabled={reportModelMutation.isLoading}
-                          >
-                            Report as Terms Violation
-                          </Menu.Item>
-                        </LoginRedirect>
-                      </>
-                    ) : null}
-                  </Menu.Dropdown>
-                </Menu>
+                    </LoginRedirect>
+                    <LoginRedirect reason="report-model">
+                      <Menu.Item
+                        icon={<IconFlag size={14} stroke={1.5} />}
+                        onClick={() => handleReportModel(ReportReason.TOSViolation)}
+                        disabled={reportModelMutation.isLoading}
+                      >
+                        Report as Terms Violation
+                      </Menu.Item>
+                    </LoginRedirect>
+                  </>
+                ) : null}
+              </Menu.Dropdown>
+            </Menu>
+          </Group>
+          {model.status === ModelStatus.Unpublished && (
+            <Alert color="red">
+              <Group spacing="xs" noWrap align="flex-start">
+                <ThemeIcon color="red">
+                  <IconExclamationMark />
+                </ThemeIcon>
+                <Text size="md">
+                  This model has been unpublished because it looks like the model file failed to
+                  upload. Please re-upload the file.
+                </Text>
               </Group>
-              {model.status === ModelStatus.Unpublished && (
-                <Alert color="red">
-                  <Group spacing="xs" noWrap align="flex-start">
-                    <ThemeIcon color="red">
-                      <IconExclamationMark />
-                    </ThemeIcon>
-                    <Text size="md">
-                      This model has been unpublished because it looks like the model file failed to
-                      upload. Please re-upload the file.
+            </Alert>
+          )}
+        </Stack>
+        <Grid gutter="xl">
+          <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
+            <Stack>
+              {latestVersion && (
+                <Group spacing="xs">
+                  <Button
+                    component="a"
+                    href={`/api/download/models/${latestVersion?.id}`}
+                    sx={{ flex: 1 }}
+                    download
+                  >
+                    <Text align="center">
+                      {`Download Latest (${formatKBytes(latestVersion?.modelFile?.sizeKB ?? 0)})`}
                     </Text>
-                  </Group>
-                </Alert>
+                  </Button>
+
+                  <VerifiedShield file={latestVersion.modelFile} />
+                  <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="bottom" withArrow>
+                    <Button
+                      onClick={() => handleToggleFavorite()}
+                      color={isFavorite ? 'red' : 'gray'}
+                      sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                    >
+                      <IconHeart color="#fff" />
+                    </Button>
+                  </Tooltip>
+                </Group>
+              )}
+              <DescriptionTable items={modelDetails} labelWidth="30%" />
+              {model?.type === 'Checkpoint' && (
+                <Group position="right" spacing="xs">
+                  <IconLicense size={16} />
+                  <Text size="xs" color="dimmed">
+                    License:{' '}
+                    <Text
+                      component="a"
+                      href="https://huggingface.co/spaces/CompVis/stable-diffusion-license"
+                      rel="nofollow"
+                      td="underline"
+                      target="_blank"
+                    >
+                      creativeml-openrail-m
+                    </Text>
+                  </Text>
+                </Group>
               )}
             </Stack>
-            <Grid gutter="xl">
-              <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
-                <Stack>
-                  {latestVersion && (
-                    <Group spacing="xs">
-                      <Tooltip label="Mark as favorite" withArrow>
-                        <Button
-                          onClick={() => handleToggleFavorite()}
-                          hidden={!mobile}
-                          color={isFavorite ? 'red' : 'gray'}
-                          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                        >
-                          <IconHeart color="#fff" />
-                        </Button>
-                      </Tooltip>
-                      <Button
-                        component="a"
-                        href={`/api/download/models/${latestVersion?.id}`}
-                        sx={{ flex: 1 }}
-                        download
-                      >
-                        <Text align="center">
-                          {`Download Latest (${formatKBytes(
-                            latestVersion?.modelFile?.sizeKB ?? 0
-                          )})`}
-                        </Text>
-                      </Button>
-                      <VerifiedShield file={latestVersion.modelFile} />
-                    </Group>
-                  )}
-                  <DescriptionTable items={modelDetails} labelWidth="30%" />
-                  {model?.type === 'Checkpoint' && (
-                    <Group position="right" spacing="xs">
-                      <IconLicense size={16} />
-                      <Text size="xs" color="dimmed">
-                        License:{' '}
-                        <Text
-                          component="a"
-                          href="https://huggingface.co/spaces/CompVis/stable-diffusion-license"
-                          rel="nofollow"
-                          td="underline"
-                          target="_blank"
-                        >
-                          creativeml-openrail-m
-                        </Text>
-                      </Text>
-                    </Group>
-                  )}
-                </Stack>
-              </Grid.Col>
-              <Grid.Col
-                xs={12}
-                sm={7}
-                md={8}
-                orderSm={1}
-                sx={(theme) => ({
-                  [theme.fn.largerThan('xs')]: {
-                    padding: `0 ${theme.spacing.sm}px`,
-                    margin: `${theme.spacing.sm}px 0`,
-                  },
-                })}
+          </Grid.Col>
+          <Grid.Col
+            xs={12}
+            sm={7}
+            md={8}
+            orderSm={1}
+            sx={(theme) => ({
+              [theme.fn.largerThan('xs')]: {
+                padding: `0 ${theme.spacing.sm}px`,
+                margin: `${theme.spacing.sm}px 0`,
+              },
+            })}
+          >
+            <Stack>
+              <Carousel
+                slideSize="50%"
+                breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
+                slideGap="xl"
+                align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
+                slidesToScroll={mobile ? 1 : 2}
+                withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+                loop
               >
-                <Stack>
-                  <Carousel
-                    slideSize="50%"
-                    breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
-                    slideGap="xl"
-                    align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
-                    slidesToScroll={mobile ? 1 : 2}
-                    withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
-                    loop
-                  >
-                    {latestVersion?.images.map(({ image }) => (
-                      <Carousel.Slide key={image.id}>
-                        <Center style={{ height: '100%' }}>
-                          <ImagePreview
-                            image={image}
-                            edgeImageProps={{ width: 400 }}
-                            nsfw={nsfw}
-                            radius="md"
-                            lightboxImages={latestVersion.images.map((x) => x.image)}
-                            style={{ width: '100%' }}
-                            withMeta
-                          />
-                        </Center>
-                      </Carousel.Slide>
-                    ))}
-                  </Carousel>
-                  {model.description ? (
-                    <ContentClamp maxHeight={300}>
-                      <RenderHtml html={model.description} />
-                    </ContentClamp>
-                  ) : null}
-                </Stack>
-              </Grid.Col>
-              <Grid.Col span={12} orderSm={3} my="xl">
-                <Stack spacing="xl">
-                  <Title className={classes.title} order={2}>
-                    Versions
-                  </Title>
-                  <ModelVersions
-                    items={model.modelVersions}
-                    initialTab={latestVersion?.id.toString()}
-                    nsfw={nsfw}
-                  />
-                </Stack>
-              </Grid.Col>
-              <Grid.Col span={12} orderSm={4} my="xl">
-                <Stack spacing="xl">
-                  <Group ref={reviewSectionRef} sx={{ justifyContent: 'space-between' }}>
-                    <Group spacing={4}>
-                      <Title order={3}>Reviews</Title>
-                      <ModelRating rank={model.rank} />
-                    </Group>
-                    <Group spacing="xs" noWrap grow>
-                      <Select
-                        defaultValue={ReviewSort.Newest}
-                        icon={<IconArrowsSort size={14} />}
-                        data={Object.values(ReviewSort)
-                          // Only include Newest and Oldest until reactions are implemented
-                          .filter((sort) => [ReviewSort.Newest, ReviewSort.Oldest].includes(sort))
-                          .map((sort) => ({
-                            label: startCase(sort),
-                            value: sort,
-                          }))}
-                        onChange={handleReviewSortChange}
-                        size="xs"
+                {latestVersion?.images.map(({ image }) => (
+                  <Carousel.Slide key={image.id}>
+                    <Center style={{ height: '100%' }}>
+                      <ImagePreview
+                        image={image}
+                        edgeImageProps={{ width: 400 }}
+                        nsfw={nsfw}
+                        radius="md"
+                        lightboxImages={latestVersion.images.map((x) => x.image)}
+                        style={{ width: '100%' }}
+                        withMeta
                       />
-                      <MultiSelect
-                        placeholder="Filters"
-                        icon={<IconFilter size={14} />}
-                        data={Object.values(ReviewFilter).map((sort) => ({
-                          label: startCase(sort),
-                          value: sort,
-                        }))}
-                        onChange={handleReviewFilterChange}
-                        size="xs"
-                        zIndex={500}
-                        clearButtonLabel="Clear review filters"
-                        clearable
-                      />
-                      <LoginRedirect reason="create-review">
-                        <Button
-                          leftIcon={<IconPlus size={16} />}
-                          variant="outline"
-                          fullWidth={mobile}
-                          size="xs"
-                          onClick={() => {
-                            return openContextModal({
-                              modal: 'reviewEdit',
-                              title: `Reviewing ${model.name}`,
-                              closeOnClickOutside: false,
-                              innerProps: {
-                                review: {
-                                  modelId: model.id,
-                                  modelVersionId:
-                                    model.modelVersions.length === 1
-                                      ? model.modelVersions[0].id
-                                      : undefined,
-                                },
-                              },
-                            });
-                          }}
-                        >
-                          Add Review
-                        </Button>
-                      </LoginRedirect>
-                    </Group>
-                  </Group>
-                  <ModelReviews
-                    items={reviews}
-                    onFilterChange={handleReviewFilterChange}
-                    loading={loadingReviews}
+                    </Center>
+                  </Carousel.Slide>
+                ))}
+              </Carousel>
+              {model.description ? (
+                <ContentClamp maxHeight={300}>
+                  <RenderHtml html={model.description} />
+                </ContentClamp>
+              ) : null}
+            </Stack>
+          </Grid.Col>
+          <Grid.Col span={12} orderSm={3} my="xl">
+            <Stack spacing="xl">
+              <Title className={classes.title} order={2}>
+                Versions
+              </Title>
+              <ModelVersions
+                items={model.modelVersions}
+                initialTab={latestVersion?.id.toString()}
+                nsfw={nsfw}
+              />
+            </Stack>
+          </Grid.Col>
+          <Grid.Col span={12} orderSm={4} my="xl">
+            <Stack spacing="xl">
+              <Group ref={reviewSectionRef} sx={{ justifyContent: 'space-between' }}>
+                <Group spacing={4}>
+                  <Title order={3}>Reviews</Title>
+                </Group>
+                <Group spacing="xs" noWrap grow>
+                  <Select
+                    defaultValue={ReviewSort.Newest}
+                    icon={<IconArrowsSort size={14} />}
+                    data={Object.values(ReviewSort)
+                      // Only include Newest and Oldest until reactions are implemented
+                      .filter((sort) => [ReviewSort.Newest, ReviewSort.Oldest].includes(sort))
+                      .map((sort) => ({
+                        label: startCase(sort),
+                        value: sort,
+                      }))}
+                    onChange={handleReviewSortChange}
+                    size="xs"
                   />
-                  {/* At the bottom to detect infinite scroll */}
-                  {reviews.length > 0 ? (
-                    <InView
-                      fallbackInView
-                      threshold={1}
-                      onChange={(inView) => {
-                        if (inView && !isFetchingNextPage && hasNextPage) {
-                          fetchNextPage();
-                        }
+                  <MultiSelect
+                    placeholder="Filters"
+                    icon={<IconFilter size={14} />}
+                    data={Object.values(ReviewFilter).map((sort) => ({
+                      label: startCase(sort),
+                      value: sort,
+                    }))}
+                    onChange={handleReviewFilterChange}
+                    size="xs"
+                    zIndex={500}
+                    clearButtonLabel="Clear review filters"
+                    clearable
+                  />
+                  <LoginRedirect reason="create-review">
+                    <Button
+                      leftIcon={<IconPlus size={16} />}
+                      variant="outline"
+                      fullWidth={mobile}
+                      size="xs"
+                      onClick={() => {
+                        return openContextModal({
+                          modal: 'reviewEdit',
+                          title: `Reviewing ${model.name}`,
+                          closeOnClickOutside: false,
+                          innerProps: {
+                            review: {
+                              modelId: model.id,
+                              modelVersionId:
+                                model.modelVersions.length === 1
+                                  ? model.modelVersions[0].id
+                                  : undefined,
+                            },
+                          },
+                        });
                       }}
                     >
-                      {({ ref }) => (
-                        <Button
-                          ref={ref}
-                          variant="subtle"
-                          onClick={() => fetchNextPage()}
-                          disabled={!hasNextPage || isFetchingNextPage}
-                        >
-                          {isFetchingNextPage
-                            ? 'Loading more...'
-                            : hasNextPage
-                            ? 'Load More'
-                            : 'Nothing more to load'}
-                        </Button>
-                      )}
-                    </InView>
-                  ) : null}
-                </Stack>
-              </Grid.Col>
-            </Grid>
+                      Add Review
+                    </Button>
+                  </LoginRedirect>
+                </Group>
+              </Group>
+              <ModelReviews
+                items={reviews}
+                onFilterChange={handleReviewFilterChange}
+                loading={loadingReviews}
+              />
+              {/* At the bottom to detect infinite scroll */}
+              {reviews.length > 0 ? (
+                <InView
+                  fallbackInView
+                  threshold={1}
+                  onChange={(inView) => {
+                    if (inView && !isFetchingNextPage && hasNextPage) {
+                      fetchNextPage();
+                    }
+                  }}
+                >
+                  {({ ref }) => (
+                    <Button
+                      ref={ref}
+                      variant="subtle"
+                      onClick={() => fetchNextPage()}
+                      disabled={!hasNextPage || isFetchingNextPage}
+                    >
+                      {isFetchingNextPage
+                        ? 'Loading more...'
+                        : hasNextPage
+                        ? 'Load More'
+                        : 'Nothing more to load'}
+                    </Button>
+                  )}
+                </InView>
+              ) : null}
+            </Stack>
           </Grid.Col>
         </Grid>
       </Container>
