@@ -205,17 +205,20 @@ const MasonryItem = ({
   }, [itemWidth, image.width, image.height, rank?.ratingAllTime]);
 
   const modelText = (
-    <Group position="left" spacing={4}>
-      <Text size={14} weight={500} lineClamp={2} style={{ flex: 1 }}>
-        {name}
-      </Text>
+    <Text size={14} weight={500} lineClamp={2} style={{ flex: 1 }}>
+      {name}
+    </Text>
+  );
+
+  const modelBadges = (
+    <>
       {data.status !== ModelStatus.Published && (
         <Badge color="yellow" radius="sm">
           {data.status}
         </Badge>
       )}
       <Badge radius="sm">{splitUppercase(data.type)}</Badge>
-    </Group>
+    </>
   );
 
   const modelRating = <ModelRating rank={rank} size="xs" />;
@@ -229,7 +232,7 @@ const MasonryItem = ({
     </IconBadge>
   );
 
-  const modelLikes = (
+  const modelLikes = rank?.favoriteCountAllTime ? (
     <IconBadge
       icon={
         <IconHeart
@@ -243,11 +246,14 @@ const MasonryItem = ({
     >
       <Text size="xs">{abbreviateNumber(rank?.favoriteCountAllTime ?? 0)}</Text>
     </IconBadge>
-  );
+  ) : null;
 
   const withRating = (
     <Stack spacing={6}>
-      {modelText}
+      <Group position="left" spacing={4}>
+        {modelText}
+        {modelBadges}
+      </Group>
       <Group position="apart">
         {modelRating}
         <Group spacing={4} align="center">
@@ -259,9 +265,10 @@ const MasonryItem = ({
   );
 
   const withoutRating = (
-    <Group position="apart" align="flex-end">
+    <Group position="apart" align="flex-start">
       {modelText}
       <Group spacing={4} align="center">
+        {modelBadges}
         {modelLikes}
         {modelDownloads}
       </Group>

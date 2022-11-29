@@ -20,6 +20,7 @@ import {
   Alert,
   ThemeIcon,
   Paper,
+  Tooltip,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
@@ -35,7 +36,7 @@ import {
   IconFlag,
   IconHeart,
   IconLicense,
-  IconMessage,
+  IconMessageCircle2,
   IconPlus,
   IconTrash,
 } from '@tabler/icons';
@@ -450,7 +451,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   }
                 >
                   <Stack spacing={0} align="center">
-                    <IconMessage stroke={1.5} size={20} />
+                    <IconMessageCircle2 stroke={1.5} size={20} />
                     {model.rank?.ratingCountAllTime ? (
                       <Text size="xs" color="dimmed">
                         {abbreviateNumber(model.rank.ratingCountAllTime)}
@@ -551,17 +552,16 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 <Stack>
                   {latestVersion && (
                     <Group spacing="xs">
-                      <Button
-                        variant="default"
-                        onClick={() => handleToggleFavorite()}
-                        hidden={!mobile}
-                      >
-                        <IconHeart
-                          size={20}
-                          style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                          color={isFavorite ? theme.colors.red[6] : undefined}
-                        />
-                      </Button>
+                      <Tooltip label="Mark as favorite" withArrow>
+                        <Button
+                          onClick={() => handleToggleFavorite()}
+                          hidden={!mobile}
+                          color={isFavorite ? 'red' : 'gray'}
+                          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                        >
+                          <IconHeart color="#fff" />
+                        </Button>
+                      </Tooltip>
                       <Button
                         component="a"
                         href={`/api/download/models/${latestVersion?.id}`}
