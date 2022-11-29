@@ -1,5 +1,5 @@
-import { TRPCError } from '@trpc/server';
 import { ModelFileType, ModelStatus } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
 import {
@@ -7,7 +7,7 @@ import {
   getAllModelsWithVersionsSelect,
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
-import { handleDbError } from '~/server/utils/errorHandling';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 import { GetByIdInput, ReportInput } from '../schema/base.schema';
 import { GetAllModelsOutput } from '../schema/model.schema';
@@ -24,10 +24,7 @@ export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   const model = await getModel({ input, user: ctx.user, select: modelWithDetailsSelect });
   if (!model) {
-    throw new TRPCError({
-      code: 'NOT_FOUND',
-      message: `No model with id ${input.id}`,
-    });
+    throw throwNotFoundError(`No model with id ${input.id}`);
   }
 
   return {
@@ -76,7 +73,7 @@ export const getModelVersionsHandler = async ({ input }: { input: GetByIdInput }
     const modelVersions = await getModelVersionsMicro(input);
     return modelVersions;
   } catch (error) {
-    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    throwDbError(error);
   }
 };
 
@@ -85,15 +82,13 @@ export const unpublishModelHandler = async ({ input }: { input: GetByIdInput }) 
     const model = await updateModelById({ ...input, data: { status: ModelStatus.Unpublished } });
 
     if (!model) {
-      throw handleDbError({
-        code: 'NOT_FOUND',
-        message: `No model with id ${input.id}`,
-      });
+      throw throwNotFoundError(`No model with id ${input.id}`);
     }
 
     return model;
   } catch (error) {
-    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
   }
 };
 
@@ -107,10 +102,7 @@ export const reportModelHandler = async ({
   try {
     await reportModelById({ ...input, userId: ctx.user.id });
   } catch (error) {
-    handleDbError({
-      code: 'INTERNAL_SERVER_ERROR',
-      error,
-    });
+    throwDbError(error);
   }
 };
 
@@ -120,15 +112,13 @@ export const deleteModelHandler = async ({ input }: { input: GetByIdInput }) => 
     const model = await deleteModelById({ id });
 
     if (!model) {
-      throw handleDbError({
-        code: 'NOT_FOUND',
-        message: `No model with id ${id}`,
-      });
+      throw throwNotFoundError(`No model with id ${id}`);
     }
 
     return model;
   } catch (error) {
-    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
   }
 };
 

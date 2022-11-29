@@ -1,6 +1,6 @@
 import { GetTagsInput } from '~/server/schema/tag.schema';
 import { getTags } from '~/server/services/tag.service';
-import { handleDbError } from '~/server/utils/errorHandling';
+import { throwDbError } from '~/server/utils/errorHandling';
 
 export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => {
   try {
@@ -12,6 +12,6 @@ export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => 
       },
     });
   } catch (error) {
-    handleDbError({ code: 'INTERNAL_SERVER_ERROR', error });
+    throwDbError(error);
   }
 };

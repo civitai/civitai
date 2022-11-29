@@ -14,7 +14,7 @@ import {
 } from './../schema/review.schema';
 
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
-import { handleAuthorizationError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { reviewUpsertSchema } from '~/server/schema/review.schema';
 import { prisma } from '~/server/db/client';
 import { getByIdSchema, reportInputSchema } from '~/server/schema/base.schema';
@@ -29,7 +29,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
     const isModerator = ctx?.user?.isModerator;
     ownerId = (await prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator && ownerId) {
-      if (ownerId !== userId) throw handleAuthorizationError();
+      if (ownerId !== userId) throw throwAuthorizationError();
     }
   }
 
