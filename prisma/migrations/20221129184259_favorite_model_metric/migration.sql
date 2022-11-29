@@ -1,0 +1,14 @@
+-- AlterTable
+ALTER TABLE "FavoriteModel" ADD COLUMN     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
+-- AlterTable
+ALTER TABLE "ModelMetric" ADD COLUMN     "favoriteCount" INTEGER NOT NULL DEFAULT 0,
+ALTER COLUMN "rating" SET DEFAULT 0,
+ALTER COLUMN "ratingCount" SET DEFAULT 0,
+ALTER COLUMN "downloadCount" SET DEFAULT 0;
+
+-- AlterTable
+ALTER TABLE "ModelVersionMetric" ADD COLUMN     "favoriteCount" INTEGER NOT NULL DEFAULT 0,
+ALTER COLUMN "rating" SET DEFAULT 0,
+ALTER COLUMN "ratingCount" SET DEFAULT 0,
+ALTER COLUMN "downloadCount" SET DEFAULT 0;

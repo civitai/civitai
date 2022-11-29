@@ -7,26 +7,25 @@ import {
   Popover,
   Button,
   ThemeIcon,
-  Center,
   Group,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import { IconEyeOff, IconKey, IconLock } from '@tabler/icons';
+import { IconEyeOff, IconLock } from '@tabler/icons';
 import { useSession } from 'next-auth/react';
-import React, { useMemo } from 'react';
-import { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
 const SensitiveContentContext = React.createContext<{
   show: boolean;
-  setShow: React.Dispatch<React.SetStateAction<boolean>>;
-}>({ show: false, setShow: () => undefined });
+  toggleShow: () => void;
+}>({ show: false, toggleShow: () => undefined });
 const useSensitiveContentContext = () => React.useContext(SensitiveContentContext);
 
 type SensitiveContentProps = {
   controls?: React.ReactNode;
   children: React.ReactNode;
   placeholder?: React.ReactNode;
+  onToggleClick?: (value: boolean) => void;
 } & Omit<React.ComponentPropsWithoutRef<'div'>, 'placeholder'>;
 
 export const SensitiveContent = ({
@@ -34,6 +33,7 @@ export const SensitiveContent = ({
   controls,
   className,
   placeholder,
+  onToggleClick,
   ...rootProps
 }: SensitiveContentProps) => {
   const { classes, cx } = useStyles();
@@ -42,12 +42,17 @@ export const SensitiveContent = ({
   const shouldBlur = session?.user?.blurNsfw ?? true;
   if (!shouldBlur) return <>{children}</>;
 
+  const handleToggle = () => {
+    onToggleClick?.(!show);
+    setShow((old) => !old);
+  };
+
   return (
-    <SensitiveContentContext.Provider value={{ show, setShow }}>
+    <SensitiveContentContext.Provider value={{ show, toggleShow: handleToggle }}>
       <div
         className={cx(classes.root, className)}
         {...rootProps}
-        onClick={(e) => e.stopPropagation()}
+        // onClick={(e) => e.stopPropagation()}
       >
         <div className={classes.controls}>{controls ?? <SensitiveContentToggle m="md" />}</div>
         {!show ? (
@@ -71,7 +76,7 @@ export const SensitiveContent = ({
 
 type SensitiveContentToggleProps = BadgeProps;
 const SensitiveContentToggle = ({ ...props }: SensitiveContentToggleProps) => {
-  const { show, setShow } = useSensitiveContentContext();
+  const { show, toggleShow } = useSensitiveContentContext();
   const { data: session } = useSession();
   const [opened, { close, open }] = useDisclosure(false);
   const isAuthenticated = !!session?.user;
@@ -87,7 +92,7 @@ const SensitiveContentToggle = ({ ...props }: SensitiveContentToggleProps) => {
         e.stopPropagation();
         e.preventDefault();
         e.nativeEvent.stopImmediatePropagation();
-        if (isAuthenticated) setShow((value) => !value);
+        if (isAuthenticated) toggleShow();
         else opened ? close() : open();
       }}
       {...props}
@@ -103,6 +108,7 @@ const SensitiveContentToggle = ({ ...props }: SensitiveContentToggleProps) => {
     const { pathname, search } = window.location;
     return pathname + search;
   }, []);
+
   return (
     <Popover
       width={300}

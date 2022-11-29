@@ -1,10 +1,26 @@
 import { Group, Stack, Container, Title } from '@mantine/core';
+import { GetServerSideProps } from 'next';
 import Head from 'next/head';
-import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
-import { ListSort } from '~/components/ListSort/ListSort';
-import { ListPeriod } from '~/components/ListPeriod/ListPeriod';
-import { ListFilter } from '~/components/ListFilter/ListFilter';
 import { useRouter } from 'next/router';
+
+import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
+import { ListFilter } from '~/components/ListFilter/ListFilter';
+import { ListPeriod } from '~/components/ListPeriod/ListPeriod';
+import { ListSort } from '~/components/ListSort/ListSort';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
+
+export const getServerSideProps: GetServerSideProps = async (context) => {
+  const session = await getServerAuthSession(context);
+  const ssg = await getServerProxySSGHelpers(context);
+  if (session) await ssg.user.getFavoriteModels.prefetch(undefined);
+
+  return {
+    props: {
+      trpcState: ssg.dehydrate(),
+    },
+  };
+};
 
 function Home() {
   const router = useRouter();

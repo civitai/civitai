@@ -19,6 +19,9 @@ import {
   Modal,
   Alert,
   ThemeIcon,
+  Paper,
+  Tooltip,
+  Rating,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
@@ -32,6 +35,7 @@ import {
   IconExclamationMark,
   IconFilter,
   IconFlag,
+  IconHeart,
   IconLicense,
   IconPlus,
   IconTrash,
@@ -41,7 +45,7 @@ import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { InView } from 'react-intersection-observer';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -68,11 +72,12 @@ import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { formatKBytes } from '~/utils/number-helpers';
+import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { QS } from '~/utils/qs';
 import { splitUppercase, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 
 //TODO - Break model query into multiple queries
 /*
@@ -119,6 +124,12 @@ const useStyles = createStyles((theme) => ({
       fontSize: theme.fontSizes.xs * 2.4, // 24px
     },
   },
+
+  engagementBar: {
+    [theme.fn.smallerThan('sm')]: {
+      display: 'none',
+    },
+  },
 }));
 
 export default function ModelDetail(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
@@ -132,6 +143,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const { id, slug } = props;
   const { edit } = router.query;
 
+  const reviewSectionRef = useRef<HTMLDivElement | null>(null);
   const [reviewFilters, setReviewFilters] = useState<{
     filterBy: ReviewFilter[];
     sort: ReviewSort;
@@ -141,6 +153,11 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   });
 
   const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({ id });
+  const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery(undefined, {
+    enabled: !!session,
+    cacheTime: Infinity,
+    staleTime: Infinity,
+  });
   const {
     data: reviewsData,
     isLoading: loadingReviews,
@@ -156,6 +173,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     }
   );
   const nsfw = router.query.showNsfw !== 'true' && !!model?.nsfw;
+  const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
   const deleteMutation = trpc.model.delete.useMutation({
     onSuccess() {
@@ -203,11 +221,44 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
   });
   const unpublishModelMutation = trpc.model.unpublish.useMutation({
-    onSuccess() {
-      queryUtils.model.getById.invalidate({ id });
+    async onSuccess() {
+      await queryUtils.model.getById.invalidate({ id });
     },
     onError(error) {
       showErrorNotification({ error: new Error(error.message) });
+    },
+  });
+  const toggleFavoriteModelMutation = trpc.user.toggleFavorite.useMutation({
+    async onMutate({ modelId }) {
+      await queryUtils.user.getFavoriteModels.cancel();
+
+      const previousFavorites = queryUtils.user.getFavoriteModels.getData() ?? [];
+      const previousModel = queryUtils.model.getById.getData({ id: modelId });
+      const shouldRemove = previousFavorites.find((favorite) => favorite.modelId === modelId);
+      // Update the favorite count
+      queryUtils.model.getById.setData({ id: modelId }, (model) => {
+        if (model?.rank) model.rank.favoriteCountAllTime += shouldRemove ? -1 : 1;
+        return model;
+      });
+      // Remove from favorites list
+      queryUtils.user.getFavoriteModels.setData(undefined, (old = []) =>
+        shouldRemove
+          ? old.filter((favorite) => favorite.modelId !== modelId)
+          : [...old, { modelId }]
+      );
+
+      return { previousFavorites, previousModel };
+    },
+    async onSuccess() {
+      await queryUtils.model.getAll.invalidate();
+    },
+    onError(_error, _variables, context) {
+      queryUtils.user.getFavoriteModels.setData(undefined, context?.previousFavorites);
+      if (context?.previousModel?.id)
+        queryUtils.model.getById.setData(
+          { id: context?.previousModel?.id },
+          context?.previousModel
+        );
     },
   });
 
@@ -292,6 +343,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   const handleUnpublishModel = () => {
     unpublishModelMutation.mutate({ id });
+  };
+
+  const handleToggleFavorite = () => {
+    toggleFavoriteModelMutation.mutate({ modelId: id });
   };
 
   const modelDetails: DescriptionTableProps['items'] = [
@@ -382,12 +437,55 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
       <Container size="xl" pt={0} pb="xl" px={0}>
         <Stack spacing="xs" mb="xl">
-          <Group align="center" sx={{ justifyContent: 'space-between' }}>
-            <Group align="center">
-              <Title className={classes.title} order={1} sx={{ paddingBottom: mobile ? 0 : 8 }}>
+          <Group align="center" sx={{ justifyContent: 'space-between' }} noWrap>
+            <Group align="center" spacing={mobile ? 4 : 'xs'}>
+              <Title
+                className={classes.title}
+                order={1}
+                sx={{ paddingBottom: mobile ? 0 : 8, width: mobile ? '100%' : undefined }}
+              >
                 {model?.name}
               </Title>
-              <ModelRating rank={model.rank} size="lg" />
+              <IconBadge
+                radius="sm"
+                color={isFavorite ? 'red' : 'gray'}
+                size="lg"
+                icon={
+                  <IconHeart
+                    size={18}
+                    color={isFavorite ? theme.colors.red[6] : undefined}
+                    style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                  />
+                }
+                sx={{ cursor: 'pointer' }}
+                onClick={() => handleToggleFavorite()}
+              >
+                <Text size={mobile ? 'sm' : 'md'}>
+                  {abbreviateNumber(model.rank?.favoriteCountAllTime ?? 0)}
+                </Text>
+              </IconBadge>
+              <IconBadge
+                radius="sm"
+                color="gray"
+                size="lg"
+                icon={<Rating value={model.rank?.ratingAllTime ?? 0} readOnly />}
+                sx={{ cursor: 'pointer' }}
+                onClick={() => {
+                  if (!reviewSectionRef.current) return;
+                  const top =
+                    reviewSectionRef.current.getBoundingClientRect().top -
+                    document.body.getBoundingClientRect().top -
+                    100;
+                  window.scrollTo({
+                    behavior: 'smooth',
+                    top,
+                  });
+                }}
+              >
+                <Text size={mobile ? 'sm' : 'md'}>
+                  {abbreviateNumber(model.rank?.ratingCountAllTime ?? 0)}
+                </Text>
+              </IconBadge>
             </Group>
             <Menu position="bottom-end" transition="pop-top-right">
               <Menu.Target>
@@ -473,7 +571,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   <Button
                     component="a"
                     href={`/api/download/models/${latestVersion?.id}`}
-                    fullWidth={mobile}
                     sx={{ flex: 1 }}
                     download
                   >
@@ -481,10 +578,19 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       {`Download Latest (${formatKBytes(latestVersion?.modelFile?.sizeKB ?? 0)})`}
                     </Text>
                   </Button>
+
                   <VerifiedShield file={latestVersion.modelFile} />
+                  <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="bottom" withArrow>
+                    <Button
+                      onClick={() => handleToggleFavorite()}
+                      color={isFavorite ? 'red' : 'gray'}
+                      sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                    >
+                      <IconHeart color="#fff" />
+                    </Button>
+                  </Tooltip>
                 </Group>
               )}
-
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
                 <Group position="right" spacing="xs">
@@ -533,7 +639,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       <ImagePreview
                         image={image}
                         edgeImageProps={{ width: 400 }}
-                        // aspectRatio={1}
                         nsfw={nsfw}
                         radius="md"
                         lightboxImages={latestVersion.images.map((x) => x.image)}
@@ -565,18 +670,37 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
           </Grid.Col>
           <Grid.Col span={12} orderSm={4} my="xl">
             <Stack spacing="xl">
-              <Group sx={{ justifyContent: 'space-between' }}>
-                <Stack spacing={4}>
-                  <Group spacing={4}>
-                    <Title order={3}>Reviews</Title>
-                    <ModelRating rank={model.rank} />
-                  </Group>
-                  <Text
-                    size="md"
-                    color="dimmed"
-                  >{`${model.rank?.ratingCountAllTime.toLocaleString()} total reviews`}</Text>
-                </Stack>
-                <Stack align="flex-end" spacing="xs">
+              <Group ref={reviewSectionRef} sx={{ justifyContent: 'space-between' }}>
+                <Group spacing={4}>
+                  <Title order={3}>Reviews</Title>
+                </Group>
+                <Group spacing="xs" noWrap grow>
+                  <Select
+                    defaultValue={ReviewSort.Newest}
+                    icon={<IconArrowsSort size={14} />}
+                    data={Object.values(ReviewSort)
+                      // Only include Newest and Oldest until reactions are implemented
+                      .filter((sort) => [ReviewSort.Newest, ReviewSort.Oldest].includes(sort))
+                      .map((sort) => ({
+                        label: startCase(sort),
+                        value: sort,
+                      }))}
+                    onChange={handleReviewSortChange}
+                    size="xs"
+                  />
+                  <MultiSelect
+                    placeholder="Filters"
+                    icon={<IconFilter size={14} />}
+                    data={Object.values(ReviewFilter).map((sort) => ({
+                      label: startCase(sort),
+                      value: sort,
+                    }))}
+                    onChange={handleReviewFilterChange}
+                    size="xs"
+                    zIndex={500}
+                    clearButtonLabel="Clear review filters"
+                    clearable
+                  />
                   <LoginRedirect reason="create-review">
                     <Button
                       leftIcon={<IconPlus size={16} />}
@@ -603,35 +727,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       Add Review
                     </Button>
                   </LoginRedirect>
-                  <Group spacing="xs" noWrap grow>
-                    <Select
-                      defaultValue={ReviewSort.Newest}
-                      icon={<IconArrowsSort size={14} />}
-                      data={Object.values(ReviewSort)
-                        // Only include Newest and Oldest until reactions are implemented
-                        .filter((sort) => [ReviewSort.Newest, ReviewSort.Oldest].includes(sort))
-                        .map((sort) => ({
-                          label: startCase(sort),
-                          value: sort,
-                        }))}
-                      onChange={handleReviewSortChange}
-                      size="xs"
-                    />
-                    <MultiSelect
-                      placeholder="Filters"
-                      icon={<IconFilter size={14} />}
-                      data={Object.values(ReviewFilter).map((sort) => ({
-                        label: startCase(sort),
-                        value: sort,
-                      }))}
-                      onChange={handleReviewFilterChange}
-                      size="xs"
-                      zIndex={500}
-                      clearButtonLabel="Clear review filters"
-                      clearable
-                    />
-                  </Group>
-                </Stack>
+                </Group>
               </Group>
               <ModelReviews
                 items={reviews}

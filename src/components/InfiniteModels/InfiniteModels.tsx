@@ -8,14 +8,14 @@ import {
   Group,
   Loader,
   LoadingOverlay,
-  Rating,
   Stack,
   Text,
   ThemeIcon,
+  useMantineTheme,
 } from '@mantine/core';
 import { ModelStatus } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
-import { IconCloudOff, IconDownload } from '@tabler/icons';
+import { IconCloudOff, IconDownload, IconHeart } from '@tabler/icons';
 import {
   useContainerPosition,
   useMasonry,
@@ -31,14 +31,16 @@ import React, { useEffect, useRef, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ModelRating } from '~/components/ModelRating/ModelRating';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { useModelFilters } from '~/hooks/useModelFilters';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { QS } from '~/utils/qs';
-import { slugit } from '~/utils/string-helpers';
+import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 type InfiniteModelsProps = {
@@ -52,7 +54,7 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
   const {
     data,
     isLoading,
-    // isFetching,
+    isFetching,
     fetchNextPage,
     // fetchPreviousPage,
     hasNextPage,
@@ -72,10 +74,11 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
   }, [fetchNextPage, inView]);
 
   const models = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
+  const loading = isLoading || isFetching;
 
   return (
     <>
-      {isLoading ? (
+      {loading ? (
         <Center>
           <Loader size="xl" />
         </Center>
@@ -94,7 +97,7 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
           </Text>
         </Stack>
       )}
-      {!isLoading && hasNextPage && (
+      {!loading && hasNextPage && (
         <Group position="center" ref={ref}>
           <Loader />
         </Group>
@@ -175,14 +178,22 @@ const MasonryItem = ({
   width: number;
 }) => {
   const { data: session } = useSession();
+  const { classes } = useStyles();
+  const theme = useMantineTheme();
+
   const { id, image, name, rank, nsfw } = data ?? {};
   const blurNsfw = session?.user?.blurNsfw ?? true;
-  const { classes } = useStyles();
+
+  const [showingNsfw, setShowingNsfw] = useState(!blurNsfw);
   const [loading, setLoading] = useState(false);
-
-  // const hasDimensions = image.width && image.height;
-
   const { ref, inView } = useInView();
+
+  const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery(undefined, {
+    enabled: !!session,
+    cacheTime: Infinity,
+    staleTime: Infinity,
+  });
+  const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
@@ -194,46 +205,73 @@ const MasonryItem = ({
   }, [itemWidth, image.width, image.height, rank?.ratingAllTime]);
 
   const modelText = (
-    <Group position="left">
-      <Text size={14} weight={500} lineClamp={2} style={{ flex: 1 }}>
-        {name}
-      </Text>
+    <Text size={14} weight={500} lineClamp={2} style={{ flex: 1 }}>
+      {name}
+    </Text>
+  );
+
+  const modelBadges = (
+    <>
       {data.status !== ModelStatus.Published && (
         <Badge color="yellow" radius="sm">
           {data.status}
         </Badge>
       )}
-    </Group>
+      <Badge radius="sm">{splitUppercase(data.type)}</Badge>
+    </>
   );
 
-  const modelRating = (
-    <Group spacing={5}>
-      <Rating value={rank?.ratingAllTime ?? 0} fractions={2} readOnly size="xs" />
-      <Text size="xs">({(rank?.ratingCountAllTime ?? 0).toString()})</Text>
-    </Group>
-  );
+  const modelRating = <ModelRating rank={rank} size="xs" />;
 
   const modelDownloads = (
-    <Group spacing={5} align="bottom">
-      <Text size="xs">{abbreviateNumber(rank?.downloadCountAllTime ?? 0).toString()}</Text>
-      <IconDownload size={16} />
-    </Group>
+    <IconBadge
+      icon={<IconDownload size={16} />}
+      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+    >
+      <Text size="xs">{abbreviateNumber(rank?.downloadCountAllTime ?? 0)}</Text>
+    </IconBadge>
   );
+
+  const modelLikes = rank?.favoriteCountAllTime ? (
+    <IconBadge
+      icon={
+        <IconHeart
+          size={16}
+          style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+          color={isFavorite ? theme.colors.red[6] : undefined}
+        />
+      }
+      color={isFavorite ? 'red' : 'gray'}
+      variant={theme.colorScheme === 'dark' && !isFavorite ? 'filled' : 'light'}
+    >
+      <Text size="xs">{abbreviateNumber(rank?.favoriteCountAllTime ?? 0)}</Text>
+    </IconBadge>
+  ) : null;
 
   const withRating = (
     <Stack spacing={6}>
-      {modelText}
+      <Group position="left" spacing={4}>
+        {modelText}
+        {modelBadges}
+      </Group>
       <Group position="apart">
         {modelRating}
-        {modelDownloads}
+        <Group spacing={4} align="center">
+          {modelLikes}
+          {modelDownloads}
+        </Group>
       </Group>
     </Stack>
   );
 
   const withoutRating = (
-    <Group position="apart" align="flex-end">
+    <Group position="apart" align="flex-start">
       {modelText}
-      {modelDownloads}
+      <Group spacing={4} align="center">
+        {modelBadges}
+        {modelLikes}
+        {modelDownloads}
+      </Group>
     </Group>
   );
 
@@ -253,10 +291,10 @@ const MasonryItem = ({
     <Link
       href={{
         pathname: modelLink,
-        query: nsfw && blurNsfw ? { showNsfw: true } : undefined,
+        query: showingNsfw ? { showNsfw: true } : undefined,
       }}
       as={modelLink}
-      legacyBehavior
+      passHref
     >
       <a>
         <Card
@@ -267,7 +305,7 @@ const MasonryItem = ({
           style={{ height: `${height}px` }}
           p={0}
           onClick={(e: React.MouseEvent<HTMLDivElement>) => {
-            if (!(e.ctrlKey || e.metaKey) || e.button === 0) setLoading(true);
+            if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
           }}
         >
           <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
@@ -280,7 +318,11 @@ const MasonryItem = ({
                 style={{ bottom: rank?.ratingAllTime ? 66 : 33, height: 'auto' }}
               />
               {nsfw ? (
-                <SensitiveContent placeholder={<MediaHash {...image} />} style={{ height: '100%' }}>
+                <SensitiveContent
+                  placeholder={<MediaHash {...image} />}
+                  style={{ height: '100%' }}
+                  onToggleClick={(value) => setShowingNsfw(value)}
+                >
                   {PreviewImage}
                 </SensitiveContent>
               ) : (
@@ -299,7 +341,7 @@ const MasonryItem = ({
 
 const useStyles = createStyles((theme) => {
   const base = theme.colors[getRandom(mantineColors)];
-  const background = theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0];
+  const background = theme.colorScheme === 'dark' ? theme.colors.dark[6] : '#fff';
 
   return {
     card: {

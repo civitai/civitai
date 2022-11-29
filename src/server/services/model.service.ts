@@ -39,6 +39,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     sort,
     period = MetricTimeframe.AllTime,
     rating,
+    favorites,
   },
   user: sessionUser,
   select,
@@ -69,9 +70,13 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       OR: !sessionUser?.isModerator
         ? [{ status: ModelStatus.Published }, { user: { id: sessionUser?.id } }]
         : undefined,
+      favoriteModels: favorites ? { some: { userId: sessionUser?.id } } : undefined,
     },
     orderBy: [
       ...(sort === ModelSort.HighestRated ? [{ rank: { [`rating${period}Rank`]: 'asc' } }] : []),
+      ...(sort === ModelSort.MostLiked
+        ? [{ rank: { [`favoriteCount${period}Rank`]: 'asc' } }]
+        : []),
       ...(sort === ModelSort.MostDownloaded
         ? [{ rank: { [`downloadCount${period}Rank`]: 'asc' } }]
         : []),

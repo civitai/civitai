@@ -73,6 +73,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 export const modelRouter = router({
   getById: publicProcedure.input(getByIdSchema).query(getModelHandler),
   getAll: publicProcedure.input(getAllModelsSchema).query(getModelsInfiniteHandler),
+  getAllWithVersions: publicProcedure.input(getAllModelsSchema).query(getModelsWithVersionsHandler),
   getVersions: publicProcedure.input(getByIdSchema).query(getModelVersionsHandler),
   add: protectedProcedure.input(modelSchema).mutation(async ({ ctx, input }) => {
     const userId = ctx.user.id;
@@ -364,5 +365,4 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(unpublishModelHandler),
-  getAllWithVersions: publicProcedure.input(getAllModelsSchema).query(getModelsWithVersionsHandler),
 });

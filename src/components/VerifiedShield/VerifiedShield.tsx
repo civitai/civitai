@@ -33,7 +33,7 @@ const statusMessage: Record<ScanResultCode, string> = {
 
 const StatusCodeOrder = ['Pending', 'Danger', 'Error', 'Success'] as const;
 
-export function VerifiedShield({ file, style, ...props }: Props) {
+export function VerifiedShield({ file, ...props }: Props) {
   if (!file) return null;
 
   const { virusScanResult, virusScanMessage, pickleScanResult, pickleScanMessage, scannedAt } =
@@ -53,7 +53,7 @@ export function VerifiedShield({ file, style, ...props }: Props) {
       <Popover.Target>
         <Button
           color={color}
-          style={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px', ...style }}
+          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
           {...props}
         >
           {icon}
