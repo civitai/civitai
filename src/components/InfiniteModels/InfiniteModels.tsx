@@ -53,7 +53,7 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
   const {
     data,
     isLoading,
-    // isFetching,
+    isFetching,
     fetchNextPage,
     // fetchPreviousPage,
     hasNextPage,
@@ -73,10 +73,11 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
   }, [fetchNextPage, inView]);
 
   const models = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
+  const loading = isLoading || isFetching;
 
   return (
     <>
-      {isLoading ? (
+      {loading ? (
         <Center>
           <Loader size="xl" />
         </Center>
@@ -95,7 +96,7 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
           </Text>
         </Stack>
       )}
-      {!isLoading && hasNextPage && (
+      {!loading && hasNextPage && (
         <Group position="center" ref={ref}>
           <Loader />
         </Group>
