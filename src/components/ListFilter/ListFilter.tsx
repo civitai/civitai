@@ -10,8 +10,8 @@ export function ListFilter() {
   return (
     <Popover withArrow>
       <Popover.Target>
-        <ActionIcon>
-          <IconFilter size={18} />
+        <ActionIcon color="dark" variant="transparent">
+          <IconFilter size={24} />
         </ActionIcon>
       </Popover.Target>
       <Popover.Dropdown>

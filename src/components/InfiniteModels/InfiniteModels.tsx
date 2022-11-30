@@ -209,7 +209,7 @@ const MasonryItem = ({
   });
   const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
-  const hasRating = rank?.[`rating${period}`] != null;
+  const hasRating = rank?.[`rating${period}`] != null && rank[`rating${period}`] > 0;
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
     const width = itemWidth > 0 ? itemWidth : 300;
@@ -237,7 +237,10 @@ const MasonryItem = ({
   );
 
   const modelRating = (
-    <IconBadge icon={<Rating size="sm" value={rank?.[`rating${period}`] ?? 0} readOnly />}>
+    <IconBadge
+      sx={{ userSelect: 'none' }}
+      icon={<Rating size="sm" value={rank?.[`rating${period}`] ?? 0} readOnly />}
+    >
       <Text size="xs">{abbreviateNumber(rank?.[`ratingCount${period}`] ?? 0)}</Text>
     </IconBadge>
   );
@@ -334,7 +337,7 @@ const MasonryItem = ({
                 hash={image.hash}
                 width={image.width}
                 height={image.height}
-                style={{ bottom: rank?.ratingAllTime ? 66 : 33, height: 'auto' }}
+                style={{ bottom: hasRating ? 66 : 33, height: 'auto' }}
               />
               {nsfw ? (
                 <SensitiveContent
@@ -348,7 +351,7 @@ const MasonryItem = ({
                 PreviewImage
               )}
               <Box p="xs" className={classes.content}>
-                {!!rank?.ratingAllTime ? withRating : withoutRating}
+                {hasRating ? withRating : withoutRating}
               </Box>
             </>
           )}

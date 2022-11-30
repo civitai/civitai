@@ -62,7 +62,10 @@ function MyApp(props: CustomAppProps<{ session: Session | null; colorScheme: Col
           <MantineProvider
             theme={{
               colorScheme,
-              components: { Popover: { styles: { dropdown: { maxWidth: '100vw' } } } },
+              components: {
+                Popover: { styles: { dropdown: { maxWidth: '100vw' } } },
+                Rating: { styles: { symbolBody: { cursor: 'pointer' } } },
+              },
             }}
             withGlobalStyles
             withNormalizeCSS
