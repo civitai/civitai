@@ -446,24 +446,26 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               >
                 {model?.name}
               </Title>
-              <IconBadge
-                radius="sm"
-                color={isFavorite ? 'red' : 'gray'}
-                size="lg"
-                icon={
-                  <IconHeart
-                    size={18}
-                    color={isFavorite ? theme.colors.red[6] : undefined}
-                    style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                  />
-                }
-                sx={{ cursor: 'pointer' }}
-                onClick={() => handleToggleFavorite()}
-              >
-                <Text size={mobile ? 'sm' : 'md'}>
-                  {abbreviateNumber(model.rank?.favoriteCountAllTime ?? 0)}
-                </Text>
-              </IconBadge>
+              <LoginRedirect reason="favorite-model">
+                <IconBadge
+                  radius="sm"
+                  color={isFavorite ? 'red' : 'gray'}
+                  size="lg"
+                  icon={
+                    <IconHeart
+                      size={18}
+                      color={isFavorite ? theme.colors.red[6] : undefined}
+                      style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                    />
+                  }
+                  sx={{ cursor: 'pointer' }}
+                  onClick={() => handleToggleFavorite()}
+                >
+                  <Text size={mobile ? 'sm' : 'md'}>
+                    {abbreviateNumber(model.rank?.favoriteCountAllTime ?? 0)}
+                  </Text>
+                </IconBadge>
+              </LoginRedirect>
               <IconBadge
                 radius="sm"
                 color="gray"
@@ -581,13 +583,15 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
                   <VerifiedShield file={latestVersion.modelFile} />
                   <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="bottom" withArrow>
-                    <Button
-                      onClick={() => handleToggleFavorite()}
-                      color={isFavorite ? 'red' : 'gray'}
-                      sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                    >
-                      <IconHeart color="#fff" />
-                    </Button>
+                    <LoginRedirect reason="favorite-model">
+                      <Button
+                        onClick={() => handleToggleFavorite()}
+                        color={isFavorite ? 'red' : 'gray'}
+                        sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                      >
+                        <IconHeart color="#fff" />
+                      </Button>
+                    </LoginRedirect>
                   </Tooltip>
                 </Group>
               )}
