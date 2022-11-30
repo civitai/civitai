@@ -50,9 +50,11 @@ type InfiniteModelsProps = {
 export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
   const router = useRouter();
   // TODO Briant: Shouldn't this just use the filters?
-  let stringified = QS.stringify(router.query);
-  if (!stringified) stringified = localStorage.getItem('defaultModelFilter') ?? '';
-  const queryParams = QS.parse(stringified);
+  // TODO Briant: Make filters persist
+  // let stringified = QS.stringify(router.query);
+  // if (!stringified) stringified = localStorage.getItem('defaultModelFilter') ?? '';
+  // const queryParams = QS.parse(stringified);
+  const queryParams = QS.parse(QS.stringify(router.query));
 
   const { ref, inView } = useInView();
   const {

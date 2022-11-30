@@ -28,9 +28,10 @@ export function useModelFilters() {
   const router = useRouter();
 
   const filters = useMemo(() => {
-    let queryProps = Object.entries(router.query) as [string, any][];
-    if (queryProps.length === 0)
-      queryProps = Object.entries(QS.parse(localStorage.getItem('defaultModelFilter') ?? ''));
+    const queryProps = Object.entries(router.query) as [string, any][];
+    // TODO Briant: Make filters persist
+    // if (queryProps.length === 0)
+    //   queryProps = Object.entries(QS.parse(localStorage.getItem('defaultModelFilter') ?? ''));
     return queryProps
       .map(([key, value]) => {
         const result = filterSchema.safeParse({ [key]: value });
