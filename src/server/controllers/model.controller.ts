@@ -2,6 +2,7 @@ import { ModelFileType, ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
+import { imageSelect } from '~/server/selectors/image.selector';
 import {
   getAllModelsSelect,
   getAllModelsWithVersionsSelect,
@@ -50,7 +51,38 @@ export const getModelsInfiniteHandler = async ({
   const models = await getModels({
     input: { ...input, limit },
     user: ctx.user,
-    select: getAllModelsSelect,
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      nsfw: true,
+      status: true,
+      modelVersions: {
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 1,
+        select: {
+          images: {
+            orderBy: {
+              index: 'asc',
+            },
+            take: 1,
+            select: {
+              image: {
+                select: imageSelect,
+              },
+            },
+          },
+        },
+      },
+      rank: {
+        select: {
+          [`downloadCount${input.period}`]: true,
+          [`favoriteCount${input.period}`]: true,
+          [`ratingCount${input.period}`]: true,
+          [`rating${input.period}`]: true,
+        },
+      },
+    },
   });
 
   let nextCursor: number | undefined;
@@ -61,10 +93,19 @@ export const getModelsInfiniteHandler = async ({
 
   return {
     nextCursor,
-    items: models.map(({ modelVersions, ...model }) => ({
-      ...model,
-      image: modelVersions[0]?.images[0]?.image ?? {},
-    })),
+    items: models.map(({ modelVersions, ...model }) => {
+      const rank = model.rank as Record<string, number>;
+      return {
+        ...model,
+        rank: {
+          downloadCount: rank[`downloadCount${input.period}`],
+          favoriteCount: rank[`favoriteCount${input.period}`],
+          ratingCount: rank[`ratingCount${input.period}`],
+          rating: rank[`rating${input.period}`],
+        },
+        image: modelVersions[0]?.images[0]?.image ?? {},
+      };
+    }),
   };
 };
 
