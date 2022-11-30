@@ -12,7 +12,8 @@ export const hfModelImporter = createImporter(
   (source) => {
     return hfModelRegex.test(source);
   },
-  async ({ id, source, data }) => {
+  async ({ id, source, data, userId }) => {
+    userId ??= -1;
     // Get the author and model name from the URL
     const [, author, modelName] = hfModelRegex.exec(source) ?? [];
 
@@ -26,7 +27,7 @@ export const hfModelImporter = createImporter(
       }
     }
 
-    await importModelFromHuggingFace(hfModel, { id, source });
+    await importModelFromHuggingFace(hfModel, { id, source, userId });
 
     return {
       status: ImportStatus.Completed,
@@ -36,7 +37,7 @@ export const hfModelImporter = createImporter(
 
 export async function importModelFromHuggingFace(
   { id, siblings, author }: HuggingFaceModel,
-  { id: importId, source }: { id?: number; source?: string } = {}
+  { id: importId, source, userId }: { id?: number; source?: string; userId: number }
 ) {
   const hfRootUrl = `https://huggingface.co/${id}/resolve/main/`;
   const files = siblings.map((x) => ({
@@ -115,10 +116,10 @@ export async function importModelFromHuggingFace(
       try {
         const { hash, height, width } = await imageToBlurhash(url);
         const { id } = await uploadViaUrl(url, {
-          userId: 1,
+          userId,
           source: 'huggingface',
         });
-        imagesToCreate.push({ name, url: id, userId: 1, hash, height, width });
+        imagesToCreate.push({ name, url: id, userId, hash, height, width });
       } catch (error) {
         console.error(error);
       }
@@ -136,7 +137,7 @@ export async function importModelFromHuggingFace(
             description,
             fromImportId: importId,
             type,
-            userId: 1,
+            userId,
           },
           select: { id: true, modelVersions: { select: { files: true, images: true } } },
         });
