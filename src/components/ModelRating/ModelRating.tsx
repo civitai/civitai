@@ -1,6 +1,4 @@
 import { Group, Rating, RatingProps, Text } from '@mantine/core';
-
-import { GetModelReturnType } from '~/server/controllers/model.controller';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 export function ModelRating({ rank, ...props }: Props) {
@@ -13,5 +11,8 @@ export function ModelRating({ rank, ...props }: Props) {
 }
 
 type Props = RatingProps & {
-  rank: GetModelReturnType['rank'];
+  rank: {
+    ratingAllTime: number;
+    ratingCountAllTime: number;
+  } | null;
 };

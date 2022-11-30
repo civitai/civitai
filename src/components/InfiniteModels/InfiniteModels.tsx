@@ -8,12 +8,13 @@ import {
   Group,
   Loader,
   LoadingOverlay,
+  Rating,
   Stack,
   Text,
   ThemeIcon,
   useMantineTheme,
 } from '@mantine/core';
-import { ModelStatus } from '@prisma/client';
+import { MetricTimeframe, ModelStatus } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
 import { IconCloudOff, IconDownload, IconHeart } from '@tabler/icons';
 import {
@@ -33,7 +34,6 @@ import { useInView } from 'react-intersection-observer';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ModelRating } from '~/components/ModelRating/ModelRating';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { useModelFilters } from '~/hooks/useModelFilters';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
@@ -140,6 +140,11 @@ export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
     scrollToIndex(index);
   }, [stringified]); //eslint-disable-line
 
+  const items = useMemo(
+    () => data.map((x) => ({ ...x, period: filters.period ?? 'AllTime' } as ModelWithPeriod)),
+    [data, filters.period]
+  );
+
   return useMasonry({
     resizeObserver,
     positioner,
@@ -147,7 +152,7 @@ export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
     isScrolling,
     height,
     containerRef,
-    items: data,
+    items,
     overscanBy: 10,
     render: MasonryItem,
   });
@@ -168,19 +173,23 @@ const mantineColors: DefaultMantineColor[] = [
   'yellow',
 ];
 
+type ModelWithPeriod = {
+  period: keyof typeof MetricTimeframe;
+} & GetModelsInfiniteReturnType[0];
+
 const MasonryItem = ({
   data,
   width: itemWidth,
 }: {
   index: number;
-  data: GetModelsInfiniteReturnType[0];
+  data: ModelWithPeriod;
   width: number;
 }) => {
   const { data: session } = useSession();
   const { classes } = useStyles();
   const theme = useMantineTheme();
 
-  const { id, image, name, rank, nsfw } = data ?? {};
+  const { id, image, name, rank, nsfw, period } = data ?? {};
   const blurNsfw = session?.user?.blurNsfw ?? true;
 
   const [showingNsfw, setShowingNsfw] = useState(!blurNsfw);
@@ -194,14 +203,15 @@ const MasonryItem = ({
   });
   const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
+  const hasRating = rank?.[`rating${period}`] != null;
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
     const width = itemWidth > 0 ? itemWidth : 300;
     const aspectRatio = image.width / image.height;
     const imageHeight = Math.floor(width / aspectRatio);
-    const totalHeight = imageHeight + (rank?.ratingAllTime ? 66 : 33);
+    const totalHeight = imageHeight + (hasRating ? 66 : 33);
     return totalHeight;
-  }, [itemWidth, image.width, image.height, rank?.ratingAllTime]);
+  }, [itemWidth, image.width, image.height, hasRating]);
 
   const modelText = (
     <Text size={14} weight={500} lineClamp={2} style={{ flex: 1 }}>
@@ -220,18 +230,22 @@ const MasonryItem = ({
     </>
   );
 
-  const modelRating = <ModelRating rank={rank} size="xs" />;
+  const modelRating = (
+    <IconBadge icon={<Rating size="sm" value={rank?.[`rating${period}`] ?? 0} readOnly />}>
+      <Text size="xs">{abbreviateNumber(rank?.[`ratingCount${period}`] ?? 0)}</Text>
+    </IconBadge>
+  );
 
   const modelDownloads = (
     <IconBadge
       icon={<IconDownload size={16} />}
       variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
     >
-      <Text size="xs">{abbreviateNumber(rank?.downloadCountAllTime ?? 0)}</Text>
+      <Text size="xs">{abbreviateNumber(rank?.[`downloadCount${period}`] ?? 0)}</Text>
     </IconBadge>
   );
 
-  const modelLikes = rank?.favoriteCountAllTime ? (
+  const modelLikes = rank?.[`favoriteCount${period}`] && (
     <IconBadge
       icon={
         <IconHeart
@@ -243,9 +257,9 @@ const MasonryItem = ({
       color={isFavorite ? 'red' : 'gray'}
       variant={theme.colorScheme === 'dark' && !isFavorite ? 'filled' : 'light'}
     >
-      <Text size="xs">{abbreviateNumber(rank?.favoriteCountAllTime ?? 0)}</Text>
+      <Text size="xs">{abbreviateNumber(rank[`favoriteCount${period}`] ?? 0)}</Text>
     </IconBadge>
-  ) : null;
+  );
 
   const withRating = (
     <Stack spacing={6}>
