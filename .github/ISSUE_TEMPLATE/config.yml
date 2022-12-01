@@ -1,4 +1,4 @@
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
   - name: Feature Requests and Ideas
     url: https://github.com/civitai/civitai/discussions/categories/ideas
