@@ -88,7 +88,7 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
           <Loader size="xl" />
         </Center>
       ) : !!models.length ? (
-        <MasonryList columnWidth={columnWidth} data={models} />
+        <MasonryList columnWidth={300} data={models} />
       ) : (
         <Stack align="center">
           <ThemeIcon size={128} radius={100}>
@@ -121,7 +121,7 @@ export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
   const router = useRouter();
   // use stringified filters as key for positioner dependency array
   const { filters } = useModelFilters();
-  const stringified = JSON.stringify({ filters, data });
+  const stringified = JSON.stringify(filters);
   const modelId = Number(([] as string[]).concat(router.query.model ?? [])[0]);
 
   const containerRef = useRef(null);
@@ -144,7 +144,7 @@ export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
     if (index === -1 || data.length < index) return;
 
     scrollToIndex(index);
-  }, [filters]); //eslint-disable-line
+  }, [stringified]); //eslint-disable-line
 
   return useMasonry({
     resizeObserver,
