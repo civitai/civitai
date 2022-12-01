@@ -87,3 +87,40 @@ export const getUserFavoriteModelByModelId = ({
 }) => {
   return prisma.favoriteModel.findUnique({ where: { userId_modelId: { userId, modelId } } });
 };
+
+export const getCreators = async <TSelect extends Prisma.UserSelect>({
+  query,
+  take,
+  skip,
+  select,
+  count = false,
+}: {
+  select: TSelect;
+  query?: string;
+  take?: number;
+  skip?: number;
+  count?: boolean;
+}) => {
+  const where: Prisma.UserWhereInput = {
+    username: query
+      ? {
+          contains: query,
+          mode: 'insensitive',
+        }
+      : undefined,
+    models: { some: {} },
+  };
+  const items = await prisma.user.findMany({
+    take,
+    skip,
+    select,
+    where,
+  });
+
+  if (count) {
+    const count = await prisma.user.count({ where });
+    return { items, count };
+  }
+
+  return { items };
+};

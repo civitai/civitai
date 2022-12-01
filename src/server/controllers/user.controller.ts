@@ -1,11 +1,12 @@
 import { Context } from '~/server/createContext';
 import {
+  getCreators,
   getUserFavoriteModelByModelId,
   getUserFavoriteModels,
   getUserModelStats,
 } from '~/server/services/user.service';
 import { TRPCError } from '@trpc/server';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllUsersInput,
   UserUpsertInput,
@@ -19,6 +20,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export const getUserStatsHandler = async ({ input }: { input: GetUserByUsernameSchema }) => {
   const rankStats = await getUserModelStats({ input });
@@ -143,5 +145,24 @@ export const toggleFavoriteModelHandler = async ({
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
+  }
+};
+
+export const getCreatorsHandler = async ({ input }: { input: Partial<GetAllSchema> }) => {
+  const { limit = DEFAULT_PAGE_SIZE, page, query } = input;
+  const { take, skip } = getPagination(limit, page);
+
+  try {
+    const results = await getCreators({
+      query,
+      take,
+      skip,
+      count: true,
+      select: { username: true, models: { select: { id: true } } },
+    });
+
+    return getPagingData(results, take, page);
+  } catch (error) {
+    throw throwDbError(error);
   }
 };

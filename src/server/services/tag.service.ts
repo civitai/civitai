@@ -1,24 +1,29 @@
 import { Prisma } from '@prisma/client';
-import { prisma } from '~/server/db/client';
-import { GetTagsInput } from '~/server/schema/tag.schema';
 
-export const getTags = <TSelect extends Prisma.TagSelect = Prisma.TagSelect>({
-  limit,
-  query,
-  page,
+import { prisma } from '~/server/db/client';
+
+export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelect>({
   select,
-}: GetTagsInput & { select: TSelect }) => {
-  return prisma.tag.findMany({
-    take: limit,
-    skip: page ? (page - 1) * (limit ?? 0) : undefined,
+  take,
+  skip,
+  query,
+}: {
+  select: TSelect;
+  take?: number;
+  skip?: number;
+  query?: string;
+}) => {
+  const where: Prisma.TagWhereInput = {
+    name: query ? { contains: query, mode: 'insensitive' } : undefined,
+  };
+
+  const items = await prisma.tag.findMany({
+    take,
+    skip,
     select,
-    where: {
-      name: query
-        ? {
-            contains: query,
-            mode: 'insensitive',
-          }
-        : undefined,
-    },
+    where,
   });
+  const count = await prisma.tag.count({ where });
+
+  return { items, count };
 };
