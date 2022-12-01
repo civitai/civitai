@@ -9,7 +9,6 @@ export const tagSchema = z.object({
 
 export const getTagsInput = getAllQuerySchema
   .extend({
-    page: z.preprocess((val) => Number(val), z.number().min(1)),
     withModels: z.preprocess((val) => {
       return val === 'true' || val === true;
     }, z.boolean().default(false)),

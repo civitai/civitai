@@ -16,9 +16,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const { nextPage, prevPage, baseUrl } = getPaginationLinks({ ...metadata, req });
 
         return res.status(200).json({
-          items: items.map(({ models, username }) => ({
+          items: items.map(({ models = [], username }) => ({
             username,
-            modelCount: models.length,
+            modelCount: models.length ? models.length : undefined,
             link: `${baseUrl.origin}/api/v1/models?username=${username}`,
           })),
           metadata: {

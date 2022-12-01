@@ -17,16 +17,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           ...req.query,
           withModels: true,
         });
-        const { nextPage, prevPage } = getPaginationLinks({
+        const { nextPage, prevPage, baseUrl } = getPaginationLinks({
           ...metadata,
           req,
         });
 
         res.status(200).json({
           items:
-            items?.map(({ tagsOnModels = [], ...tag }) => ({
-              ...tag,
+            items?.map(({ tagsOnModels = [], name }) => ({
+              name,
               modelCount: tagsOnModels.length ? tagsOnModels.length : undefined,
+              link: `${baseUrl.origin}/api/v1/models?tag=${name}`,
             })) ?? [],
           metadata: {
             ...metadata,

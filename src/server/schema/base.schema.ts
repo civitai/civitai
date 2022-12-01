@@ -11,7 +11,7 @@ export const reportInputSchema = z.object({
 export type ReportInput = z.infer<typeof reportInputSchema>;
 
 export const getAllQuerySchema = z.object({
-  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100).default(20)),
+  limit: z.preprocess((val) => Number(val), z.number().min(0).max(200).default(20)),
   page: z.preprocess((val) => Number(val), z.number().min(1)),
   query: z.string(),
 });

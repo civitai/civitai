@@ -4,7 +4,6 @@ import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
-  getAllModelsSelect,
   getAllModelsWithVersionsSelect,
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
@@ -94,7 +93,7 @@ export const getModelsInfiniteHandler = async ({
 
   return {
     nextCursor,
-    items: models.map(({ modelVersions, ...model }) => {
+    items: items.map(({ modelVersions, ...model }) => {
       const rank = model.rank as Record<string, number>;
       return {
         ...model,
