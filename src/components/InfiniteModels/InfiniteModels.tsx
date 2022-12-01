@@ -146,11 +146,6 @@ export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
     scrollToIndex(index);
   }, [filters]); //eslint-disable-line
 
-  const items = useMemo(
-    () => data.map((x) => ({ ...x, period: filters.period ?? 'AllTime' } as ModelWithPeriod)),
-    [data, filters.period]
-  );
-
   return useMasonry({
     resizeObserver,
     positioner,
@@ -158,7 +153,7 @@ export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
     isScrolling,
     height,
     containerRef,
-    items,
+    items: data,
     overscanBy: 10,
     render: MasonryItem,
   });
@@ -179,23 +174,19 @@ const mantineColors: DefaultMantineColor[] = [
   'yellow',
 ];
 
-type ModelWithPeriod = {
-  period: keyof typeof MetricTimeframe;
-} & GetModelsInfiniteReturnType[0];
-
 const MasonryItem = ({
   data,
   width: itemWidth,
 }: {
   index: number;
-  data: ModelWithPeriod;
+  data: GetModelsInfiniteReturnType[0];
   width: number;
 }) => {
   const { data: session } = useSession();
   const { classes } = useStyles();
   const theme = useMantineTheme();
 
-  const { id, image, name, rank, nsfw, period } = data ?? {};
+  const { id, image, name, rank, nsfw } = data ?? {};
   const blurNsfw = session?.user?.blurNsfw ?? true;
 
   const [showingNsfw, setShowingNsfw] = useState(!blurNsfw);
@@ -209,7 +200,7 @@ const MasonryItem = ({
   });
   const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
-  const hasRating = rank?.[`rating${period}`] != null && rank[`rating${period}`] > 0;
+  const hasRating = rank.rating != null && rank.rating > 0;
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
     const width = itemWidth > 0 ? itemWidth : 300;
@@ -237,11 +228,8 @@ const MasonryItem = ({
   );
 
   const modelRating = (
-    <IconBadge
-      sx={{ userSelect: 'none' }}
-      icon={<Rating size="sm" value={rank?.[`rating${period}`] ?? 0} readOnly />}
-    >
-      <Text size="xs">{abbreviateNumber(rank?.[`ratingCount${period}`] ?? 0)}</Text>
+    <IconBadge sx={{ userSelect: 'none' }} icon={<Rating size="sm" value={rank.rating} readOnly />}>
+      <Text size="xs">{abbreviateNumber(rank.ratingCount)}</Text>
     </IconBadge>
   );
 
@@ -250,11 +238,11 @@ const MasonryItem = ({
       icon={<IconDownload size={16} />}
       variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
     >
-      <Text size="xs">{abbreviateNumber(rank?.[`downloadCount${period}`] ?? 0)}</Text>
+      <Text size="xs">{abbreviateNumber(rank.downloadCount)}</Text>
     </IconBadge>
   );
 
-  const modelLikes = rank?.[`favoriteCount${period}`] && (
+  const modelLikes = !!rank.favoriteCount && (
     <IconBadge
       icon={
         <IconHeart
@@ -266,7 +254,7 @@ const MasonryItem = ({
       color={isFavorite ? 'red' : 'gray'}
       variant={theme.colorScheme === 'dark' && !isFavorite ? 'filled' : 'light'}
     >
-      <Text size="xs">{abbreviateNumber(rank[`favoriteCount${period}`] ?? 0)}</Text>
+      <Text size="xs">{abbreviateNumber(rank.favoriteCount)}</Text>
     </IconBadge>
   );
 
