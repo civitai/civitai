@@ -88,7 +88,7 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
           <Loader size="xl" />
         </Center>
       ) : !!models.length ? (
-        <MasonryList columnWidth={300} data={models} />
+        <MasonryList columnWidth={columnWidth} data={models} />
       ) : (
         <Stack align="center">
           <ThemeIcon size={128} radius={100}>
@@ -121,7 +121,7 @@ export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
   const router = useRouter();
   // use stringified filters as key for positioner dependency array
   const { filters } = useModelFilters();
-  const stringified = JSON.stringify(filters);
+  const stringified = JSON.stringify({ filters, data });
   const modelId = Number(([] as string[]).concat(router.query.model ?? [])[0]);
 
   const containerRef = useRef(null);
@@ -144,7 +144,7 @@ export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
     if (index === -1 || data.length < index) return;
 
     scrollToIndex(index);
-  }, [stringified]); //eslint-disable-line
+  }, [filters]); //eslint-disable-line
 
   const items = useMemo(
     () => data.map((x) => ({ ...x, period: filters.period ?? 'AllTime' } as ModelWithPeriod)),

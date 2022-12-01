@@ -8,6 +8,7 @@ import {
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 import { GetByIdInput, ReportInput } from '../schema/base.schema';
 import { GetAllModelsOutput } from '../schema/model.schema';
@@ -46,22 +47,22 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   input.limit = input.limit ?? 100;
-  const limit = input.limit + 1;
-  const models = await getModels({
-    input: { ...input, limit },
+  const take = input.limit + 1;
+  const { items } = await getModels({
+    input: { ...input, take },
     user: ctx.user,
     select: getAllModelsSelect,
   });
 
   let nextCursor: number | undefined;
-  if (models.length > input.limit) {
-    const nextItem = models.pop();
+  if (items.length > input.limit) {
+    const nextItem = items.pop();
     nextCursor = nextItem?.id;
   }
 
   return {
     nextCursor,
-    items: models.map(({ modelVersions, ...model }) => ({
+    items: items.map(({ modelVersions, ...model }) => ({
       ...model,
       image: modelVersions[0]?.images[0]?.image ?? {},
     })),
@@ -130,19 +131,18 @@ export const getModelsWithVersionsHandler = async ({
   input: GetAllModelsOutput;
   ctx: Context;
 }) => {
-  input.limit = input.limit ?? 100;
-  const limit = input.limit + 1;
-  const models = await getModels({
-    input: { ...input, limit },
-    user: ctx.user,
-    select: getAllModelsWithVersionsSelect,
-  });
+  const { limit = DEFAULT_PAGE_SIZE, page, ...queryInput } = input;
+  const { take, skip } = getPagination(limit, page);
+  try {
+    const results = await getModels({
+      input: { ...queryInput, take, skip },
+      user: ctx.user,
+      select: getAllModelsWithVersionsSelect,
+      count: true,
+    });
 
-  let nextCursor: number | undefined;
-  if (models.length > input.limit) {
-    const nextItem = models.pop();
-    nextCursor = nextItem?.id;
+    return getPagingData(results, take, page);
+  } catch (error) {
+    throw throwDbError(error);
   }
-
-  return { nextCursor, items: models };
 };

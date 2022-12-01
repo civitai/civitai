@@ -11,26 +11,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   switch (method) {
     case 'GET': {
       const apiCaller = appRouter.createCaller({ user: undefined });
+
       try {
-        const { items, ...metadata } = await apiCaller.model.getAllWithVersions(req.query);
-        const { nextPage, prevPage, baseUrl } = getPaginationLinks({ ...metadata, req });
+        const { items, ...metadata } = await apiCaller.tag.getAll({
+          ...req.query,
+          withModels: true,
+        });
+        const { nextPage, prevPage } = getPaginationLinks({
+          ...metadata,
+          req,
+        });
 
         res.status(200).json({
-          items: items.map(({ modelVersions, tagsOnModels, ...model }) => ({
-            ...model,
-            tags: tagsOnModels.map(({ tag }) => tag.name),
-            modelVersions: modelVersions.map((version) => ({
-              ...version,
-              downloadUrl: `${baseUrl.origin}/api/download/models/${version.id}`,
-            })),
-          })),
-          metadata: { ...metadata, nextPage, prevPage },
+          items:
+            items?.map(({ tagsOnModels = [], ...tag }) => ({
+              ...tag,
+              modelCount: tagsOnModels.length ? tagsOnModels.length : undefined,
+            })) ?? [],
+          metadata: {
+            ...metadata,
+            nextPage,
+            prevPage,
+          },
         });
       } catch (error) {
         if (error instanceof TRPCError) {
-          const apiError = error as TRPCError;
-          const status = getHTTPStatusCodeFromError(apiError);
-          const parsedError = JSON.parse(apiError.message);
+          const status = getHTTPStatusCodeFromError(error);
+          const parsedError = JSON.parse(error.message);
 
           res.status(status).json(parsedError);
         } else {
@@ -40,7 +47,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       break;
     }
-
     default: {
       res.setHeader('Allow', ['GET']);
       res.status(405).end(`Method ${method} not allowed`);

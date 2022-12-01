@@ -29,8 +29,8 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
 
 export const getModels = async <TSelect extends Prisma.ModelSelect>({
   input: {
-    limit,
-    page,
+    take,
+    skip,
     cursor,
     query,
     tag,
@@ -41,37 +41,38 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     rating,
     favorites,
   },
-  user: sessionUser,
   select,
+  user: sessionUser,
+  count = false,
 }: {
-  input: GetAllModelsOutput;
-  user?: SessionUser;
+  input: Omit<GetAllModelsOutput, 'limit' | 'page'> & { take?: number; skip?: number };
   select: TSelect;
+  user?: SessionUser;
+  count?: boolean;
 }) => {
-  const take = limit ?? 10;
-  const skip = page ? (page - 1) * take : undefined;
   const canViewNsfw = sessionUser?.showNsfw ?? true;
+  const where: Prisma.ModelWhereInput = {
+    name: query ? { contains: query, mode: 'insensitive' } : undefined,
+    tagsOnModels: tag ? { some: { tag: { name: tag } } } : undefined,
+    user: username ? { username } : undefined,
+    type: types ? { in: types } : undefined,
+    nsfw: !canViewNsfw ? { equals: false } : undefined,
+    rank: rating
+      ? {
+          AND: [{ ratingAllTime: { gte: rating } }, { ratingAllTime: { lt: rating + 1 } }],
+        }
+      : undefined,
+    OR: !sessionUser?.isModerator
+      ? [{ status: ModelStatus.Published }, { user: { id: sessionUser?.id } }]
+      : undefined,
+    favoriteModels: favorites ? { some: { userId: sessionUser?.id } } : undefined,
+  };
 
-  return await prisma.model.findMany({
+  const items = await prisma.model.findMany({
     take,
     skip,
+    where,
     cursor: cursor ? { id: cursor } : undefined,
-    where: {
-      name: query ? { contains: query, mode: 'insensitive' } : undefined,
-      tagsOnModels: tag ? { some: { tag: { name: tag } } } : undefined,
-      user: username ? { username } : undefined,
-      type: types ? { in: types } : undefined,
-      nsfw: !canViewNsfw ? { equals: false } : undefined,
-      rank: rating
-        ? {
-            AND: [{ ratingAllTime: { gte: rating } }, { ratingAllTime: { lt: rating + 1 } }],
-          }
-        : undefined,
-      OR: !sessionUser?.isModerator
-        ? [{ status: ModelStatus.Published }, { user: { id: sessionUser?.id } }]
-        : undefined,
-      favoriteModels: favorites ? { some: { userId: sessionUser?.id } } : undefined,
-    },
     orderBy: [
       ...(sort === ModelSort.HighestRated ? [{ rank: { [`rating${period}Rank`]: 'asc' } }] : []),
       ...(sort === ModelSort.MostLiked
@@ -84,6 +85,13 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     ],
     select,
   });
+
+  if (count) {
+    const count = await prisma.model.count({ where });
+    return { items, count };
+  }
+
+  return { items };
 };
 
 export const getModelVersionsMicro = ({ id }: { id: number }) => {

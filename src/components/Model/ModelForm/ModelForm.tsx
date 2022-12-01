@@ -52,7 +52,10 @@ export function ModelForm({ model }: Props) {
   const queryUtils = trpc.useContext();
   const editing = !!model;
 
-  const { data: tags = [] } = trpc.tag.getAll.useQuery({}, { cacheTime: Infinity });
+  const { data: { items: tags } = { items: [] } } = trpc.tag.getAll.useQuery(
+    { limit: 0 },
+    { cacheTime: Infinity, staleTime: Infinity }
+  );
   const addMutation = trpc.model.add.useMutation();
   const updateMutation = trpc.model.update.useMutation();
   const [uploading, setUploading] = useState(false);

@@ -7,9 +7,9 @@ import { tagSchema } from '~/server/schema/tag.schema';
 import { sanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export const getAllModelsSchema = z.object({
-  limit: z.number().min(1).max(200).optional(),
-  cursor: z.number().optional(),
-  page: z.number().optional(),
+  limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).optional(),
+  page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
+  cursor: z.preprocess((val) => Number(val), z.number()).optional(),
   query: z.string().optional(),
   tag: z.string().optional(),
   username: z.string().optional(),

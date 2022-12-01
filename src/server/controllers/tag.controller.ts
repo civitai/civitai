@@ -1,17 +1,28 @@
 import { GetTagsInput } from '~/server/schema/tag.schema';
 import { getTags } from '~/server/services/tag.service';
 import { throwDbError } from '~/server/utils/errorHandling';
+import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => {
   try {
-    return await getTags({
-      ...input,
-      select: {
-        id: true,
-        name: true,
-      },
+    const { withModels = false, limit = DEFAULT_PAGE_SIZE, page, query } = input || {};
+    const { take, skip } = getPagination(limit, page);
+
+    const results = await getTags({
+      take,
+      skip,
+      query,
+      select: withModels
+        ? {
+            id: true,
+            name: true,
+            tagsOnModels: { select: { modelId: true } },
+          }
+        : { id: true, name: true },
     });
+
+    return getPagingData(results, take, page);
   } catch (error) {
-    throwDbError(error);
+    throw throwDbError(error);
   }
 };

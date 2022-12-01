@@ -1,13 +1,14 @@
 import {
   deleteUserHandler,
   getAllUsersHandler,
+  getCreatorsHandler,
   getUserByIdHandler,
   getUserFavoriteModelsHandler,
   getUserStatsHandler,
   toggleFavoriteModelHandler,
   updateUserHandler,
 } from '~/server/controllers/user.controller';
-import { getByIdSchema } from '~/server/schema/base.schema';
+import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   getAllUsersInput,
   getUserByUsernameSchema,
@@ -21,6 +22,7 @@ export const userRouter = router({
   getAll: publicProcedure.input(getAllUsersInput).query(getAllUsersHandler),
   getById: publicProcedure.input(getByIdSchema).query(getUserByIdHandler),
   getFavoriteModels: protectedProcedure.query(getUserFavoriteModelsHandler),
+  getCreators: publicProcedure.input(getAllQuerySchema.partial()).query(getCreatorsHandler),
   update: protectedProcedure.input(userUpsertSchema.partial()).mutation(updateUserHandler),
   delete: protectedProcedure.input(getByIdSchema).mutation(deleteUserHandler),
   toggleFavorite: protectedProcedure
