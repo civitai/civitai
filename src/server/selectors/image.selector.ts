@@ -11,6 +11,10 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   meta: true,
 });
 
+const { id, ...imageWithoutId } = imageSelect;
+
+export { imageWithoutId };
+
 const image = Prisma.validator<Prisma.ImageArgs>()({ select: imageSelect });
 
 export type ImageModel = Prisma.ImageGetPayload<typeof image>;

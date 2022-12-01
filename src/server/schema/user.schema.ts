@@ -17,6 +17,7 @@ export const userUpsertSchema = z.object({
   blurNsfw: z.boolean(),
   tos: z.boolean(),
   image: z.string().nullable(),
+  email: z.string().email().nullable(),
 });
 export type UserUpsertInput = z.input<typeof userUpsertSchema>;
 
