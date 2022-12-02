@@ -3,9 +3,11 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { GetServerSideProps } from 'next/types';
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
-import { ListFilter } from '~/components/ListFilter/ListFilter';
-import { ListPeriod } from '~/components/ListPeriod/ListPeriod';
-import { ListSort } from '~/components/ListSort/ListSort';
+import {
+  InfiniteModelsSort,
+  InfiniteModelsPeriod,
+  InfiniteModelsFilter,
+} from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { trpc } from '~/utils/trpc';
 
@@ -36,10 +38,10 @@ export default function UserPage() {
         {router.query.username && <Title>Models by {router.query.username}</Title>}
         <Stack spacing="xs">
           <Group position="apart">
-            <ListSort />
+            <InfiniteModelsSort />
             <Group spacing="xs">
-              <ListPeriod />
-              <ListFilter />
+              <InfiniteModelsPeriod />
+              <InfiniteModelsFilter />
             </Group>
           </Group>
           <InfiniteModels />
