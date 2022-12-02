@@ -12,7 +12,15 @@ import {
 } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import { Model, ModelFileType, ModelStatus, ModelType } from '@prisma/client';
-import { IconArrowLeft, IconCheck, IconPlus, IconTrash, IconX } from '@tabler/icons';
+import {
+  IconArrowDown,
+  IconArrowLeft,
+  IconArrowUp,
+  IconCheck,
+  IconPlus,
+  IconTrash,
+  IconX,
+} from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { useRouter } from 'next/router';
@@ -95,7 +103,7 @@ export function ModelForm({ model }: Props) {
     defaultValues,
   });
 
-  const { fields, prepend, remove } = useFieldArray({
+  const { fields, prepend, remove, swap } = useFieldArray({
     control: form.control,
     name: 'modelVersions',
   });
@@ -193,13 +201,34 @@ export function ModelForm({ model }: Props) {
                       return (
                         <Stack key={version.id ?? index} style={{ position: 'relative' }}>
                           {fields.length > 1 && (
-                            <ActionIcon
-                              color="red"
-                              sx={{ position: 'absolute', top: 0, right: 0 }}
-                              onClick={() => remove(index)}
-                            >
-                              <IconTrash size={16} stroke={1.5} />
-                            </ActionIcon>
+                            <Group position="apart">
+                              <Group spacing={4}>
+                                {index < fields.length - 1 && (
+                                  <ActionIcon
+                                    variant="default"
+                                    onClick={() => swap(index, index + 1)}
+                                  >
+                                    <IconArrowDown size={16} />
+                                  </ActionIcon>
+                                )}
+                                {index > 0 && (
+                                  <ActionIcon
+                                    variant="default"
+                                    onClick={() => swap(index, index - 1)}
+                                  >
+                                    <IconArrowUp size={16} />
+                                  </ActionIcon>
+                                )}
+                              </Group>
+                              <ActionIcon
+                                color="red"
+                                sx={{ position: 'absolute', top: 0, right: 0 }}
+                                onClick={() => remove(index)}
+                                variant="outline"
+                              >
+                                <IconTrash size={16} stroke={1.5} />
+                              </ActionIcon>
+                            </Group>
                           )}
                           <Grid gutter="md">
                             <Grid.Col span={12}>
