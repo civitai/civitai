@@ -182,10 +182,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
             FROM
             (
               SELECT
+                r."userId",
                 r."${tableId}" AS ${viewId},
-                r.rating,
-                r."createdAt" AS created_at
+                MAX(r.rating) rating,
+                MAX(r."createdAt") AS created_at
               FROM "Review" r
+              GROUP BY r."userId", r."${tableId}"
             ) r
             GROUP BY r.${viewId}
           ) rs ON m.${viewId} = rs.${viewId}
