@@ -1,5 +1,5 @@
 import { isDefined } from '~/utils/type-guards';
-import { UserLinkParams } from './../schema/user-link.schema';
+import { UpsertManyUserLinkParams } from './../schema/user-link.schema';
 
 import { prisma } from '~/server/db/client';
 import { SessionUser } from 'next-auth';
@@ -19,7 +19,7 @@ export const upsertManyUserLinks = async ({
   data,
   user,
 }: {
-  data: UserLinkParams[];
+  data: UpsertManyUserLinkParams;
   user?: SessionUser;
 }) => {
   if (!user) return;

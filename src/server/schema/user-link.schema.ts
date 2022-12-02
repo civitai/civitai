@@ -12,3 +12,4 @@ export const userLinkSchema = z.object({
   type: z.nativeEnum(LinkType),
 });
 export const upsertManyUserLinkSchema = z.array(userLinkSchema);
+export type UpsertManyUserLinkParams = z.infer<typeof upsertManyUserLinkSchema>;
