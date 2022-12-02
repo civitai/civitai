@@ -14,7 +14,7 @@ import {
   ThemeIcon,
   useMantineTheme,
 } from '@mantine/core';
-import { ModelStatus } from '@prisma/client';
+import { ModelStatus, ModelType } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
 import { IconCloudOff, IconDownload, IconHeart } from '@tabler/icons';
 import {
@@ -177,6 +177,13 @@ const mantineColors: DefaultMantineColor[] = [
   'yellow',
 ];
 
+const maxNameLengthByType: Record<ModelType, number> = {
+  [ModelType.Checkpoint]: 30,
+  [ModelType.Hypernetwork]: 30,
+  [ModelType.AestheticGradient]: 25,
+  [ModelType.TextualInversion]: 24,
+};
+
 const MasonryItem = ({
   data,
   width: itemWidth,
@@ -203,15 +210,18 @@ const MasonryItem = ({
   });
   const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
-  const hasRating = rank.rating != null && rank.rating > 0;
+  const maxNameLength =
+    maxNameLengthByType[data.type] - (rank.favoriteCount > 0 ? 5 : 0) - (itemWidth < 350 ? 10 : 0);
+  const hasLongName = name.length > maxNameLength;
+  const onTwoLines = rank.rating != null && rank.rating > 0;
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
     const width = itemWidth > 0 ? itemWidth : 300;
     const aspectRatio = image.width / image.height;
     const imageHeight = Math.floor(width / aspectRatio);
-    const totalHeight = imageHeight + (hasRating ? 66 : 33);
+    const totalHeight = imageHeight + (onTwoLines ? 66 : 33);
     return totalHeight;
-  }, [itemWidth, image.width, image.height, hasRating]);
+  }, [itemWidth, image.width, image.height, onTwoLines]);
 
   const modelText = (
     <Text size={14} weight={500} lineClamp={2} style={{ flex: 1 }}>
@@ -230,7 +240,7 @@ const MasonryItem = ({
     </>
   );
 
-  const modelRating = (
+  const modelRating = rank.ratingCount > 0 && (
     <IconBadge sx={{ userSelect: 'none' }} icon={<Rating size="sm" value={rank.rating} readOnly />}>
       <Text size="xs">{abbreviateNumber(rank.ratingCount)}</Text>
     </IconBadge>
@@ -261,7 +271,7 @@ const MasonryItem = ({
     </IconBadge>
   );
 
-  const withRating = (
+  const twoLine = (
     <Stack spacing={6}>
       <Group position="left" spacing={4}>
         {modelText}
@@ -269,7 +279,7 @@ const MasonryItem = ({
       </Group>
       <Group position="apart">
         {modelRating}
-        <Group spacing={4} align="center">
+        <Group spacing={4} align="center" ml="auto">
           {modelLikes}
           {modelDownloads}
         </Group>
@@ -277,10 +287,15 @@ const MasonryItem = ({
     </Stack>
   );
 
-  const withoutRating = (
-    <Group position="apart" align="flex-start">
+  const oneLine = (
+    <Group position="apart" align="flex-start" noWrap>
       {modelText}
-      <Group spacing={4} align="center">
+      <Group
+        spacing={4}
+        align="center"
+        position="right"
+        sx={{ maxWidth: hasLongName ? 140 : undefined }}
+      >
         {modelBadges}
         {modelLikes}
         {modelDownloads}
@@ -328,7 +343,7 @@ const MasonryItem = ({
                 hash={image.hash}
                 width={image.width}
                 height={image.height}
-                style={{ bottom: hasRating ? 66 : 33, height: 'auto' }}
+                style={{ bottom: onTwoLines ? 66 : 33, height: 'auto' }}
               />
               {nsfw ? (
                 <SensitiveContent
@@ -342,7 +357,7 @@ const MasonryItem = ({
                 PreviewImage
               )}
               <Box p="xs" className={classes.content}>
-                {hasRating ? withRating : withoutRating}
+                {onTwoLines ? twoLine : oneLine}
               </Box>
             </>
           )}
