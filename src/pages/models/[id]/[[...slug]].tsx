@@ -38,6 +38,7 @@ import {
   IconHeart,
   IconLicense,
   IconPlus,
+  IconShield,
   IconTrash,
 } from '@tabler/icons';
 import startCase from 'lodash/startCase';
@@ -79,6 +80,7 @@ import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
+import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 
 //TODO - Break model query into multiple queries
 /*
@@ -574,19 +576,27 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
             <Stack>
               {latestVersion && (
-                <Group spacing="xs">
-                  <Button
-                    component="a"
-                    href={`/api/download/models/${latestVersion?.id}`}
-                    sx={{ flex: 1 }}
-                    download
-                  >
-                    <Text align="center">
-                      {`Download Latest (${formatKBytes(latestVersion?.modelFile?.sizeKB ?? 0)})`}
-                    </Text>
-                  </Button>
+                <Group spacing="xs" style={{ alignItems: 'flex-start' }}>
+                  <Stack sx={{ flex: 1 }} spacing={4}>
+                    <Button
+                      component="a"
+                      href={`/api/download/models/${latestVersion?.id}`}
+                      download
+                    >
+                      <Text align="center">
+                        {`Download Latest (${formatKBytes(latestVersion?.modelFile?.sizeKB ?? 0)})`}
+                      </Text>
+                    </Button>
+                    {latestVersion.modelFile && (
+                      <Group position="apart">
+                        <VerifiedText file={latestVersion.modelFile} />
+                        <Text size="xs" color="dimmed">
+                          {latestVersion.modelFile.format}
+                        </Text>
+                      </Group>
+                    )}
+                  </Stack>
 
-                  <VerifiedShield file={latestVersion.modelFile} />
                   <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="bottom" withArrow>
                     <div>
                       <LoginRedirect reason="favorite-model">

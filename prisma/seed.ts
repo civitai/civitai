@@ -1,7 +1,9 @@
 import { ModelType, ReviewReactions, PrismaClient, ScanResultCode, ModelFileType, ModelStatus } from '@prisma/client';
 import { getRandomInt } from '../src/utils/number-helpers';
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  log: ['warn','error']
+});
 
 const getRandomItem = <T>(array: T[]) => array[Math.floor(Math.random() * array.length)];
 const getRandomItems = <T>(array: T[], quantity: number) => {

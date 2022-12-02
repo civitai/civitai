@@ -159,6 +159,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           sizeKB: true,
           name: true,
           type: true,
+          format: true,
           pickleScanResult: true,
           pickleScanMessage: true,
           virusScanResult: true,

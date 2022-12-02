@@ -10,6 +10,7 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { TrainingWordBadge } from '~/components/TrainingWordBadge/TrainingWordBadge';
 import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
+import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ModelById } from '~/types/router';
@@ -111,19 +112,25 @@ function TabContent({ version, nsfw }: TabContentProps) {
     <Grid gutter="xl">
       <Grid.Col xs={12} md={4} orderMd={2}>
         <Stack spacing="xs">
-          <Group noWrap spacing="xs">
+          <Stack spacing={4}>
             <Button
               component="a"
               href={`/api/download/models/${version.id}`}
               leftIcon={<IconDownload size={16} />}
               download
-              style={{ flex: 1 }}
               variant="light"
             >
               {`Download (${formatKBytes(version.modelFile?.sizeKB ?? 0)})`}
             </Button>
-            <VerifiedShield file={version.modelFile} variant="light" />
-          </Group>
+            {version.modelFile && (
+              <Group position="apart">
+                <VerifiedText file={version.modelFile} />
+                <Text size="xs" color="dimmed">
+                  {version.modelFile.format}
+                </Text>
+              </Group>
+            )}
+          </Stack>
 
           <DescriptionTable items={versionDetails} labelWidth="30%" />
           <Text size={16} weight={500}>
