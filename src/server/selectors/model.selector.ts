@@ -8,7 +8,7 @@ export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
   nsfw: true,
   status: true,
   modelVersions: {
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    orderBy: { index: 'asc' },
     take: 1,
     select: {
       images: {
@@ -96,7 +96,7 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
         where: { type: ModelFileType.Model },
       },
     },
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    orderBy: { index: 'asc' },
   },
   tagsOnModels: {
     select: {
@@ -125,7 +125,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
     },
   },
   modelVersions: {
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    orderBy: { index: 'asc' },
     select: {
       id: true,
       name: true,

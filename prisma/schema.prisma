@@ -153,6 +153,7 @@ model FavoriteModel {
 
 model ModelVersion {
   id           Int         @id @default(autoincrement())
+  index        Int?
   name         String
   description  String?
   modelId      Int

@@ -118,30 +118,33 @@ export const modelRouter = router({
           ...data,
           userId,
           modelVersions: {
-            create: modelVersions.map(({ images, modelFile, trainingDataFile, ...version }) => ({
-              ...version,
-              status: data.status,
-              files: {
-                create: (prepareFiles(modelFile, trainingDataFile) as typeof modelFile[]).map(
-                  (file) => ({
-                    ...file,
-                    ...unscannedFile,
-                  })
-                ),
-              },
-              images: {
-                create: images.map((image, index) => ({
-                  index,
-                  image: {
-                    create: {
-                      ...image,
-                      userId,
-                      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+            create: modelVersions.map(
+              ({ images, modelFile, trainingDataFile, ...version }, versionIndex) => ({
+                ...version,
+                index: versionIndex,
+                status: data.status,
+                files: {
+                  create: (prepareFiles(modelFile, trainingDataFile) as typeof modelFile[]).map(
+                    (file) => ({
+                      ...file,
+                      ...unscannedFile,
+                    })
+                  ),
+                },
+                images: {
+                  create: images.map((image, index) => ({
+                    index,
+                    image: {
+                      create: {
+                        ...image,
+                        userId,
+                        meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                      },
                     },
-                  },
-                })),
-              },
-            })),
+                  })),
+                },
+              })
+            ),
           },
           tagsOnModels: {
             create: tagsOnModels?.map(({ name }) => ({
@@ -234,7 +237,10 @@ export const modelRouter = router({
                   deleteMany:
                     versionsToDelete.length > 0 ? { id: { in: versionsToDelete } } : undefined,
                   upsert: modelVersions.map(
-                    ({ id = -1, images, modelFile, trainingDataFile, ...version }) => {
+                    (
+                      { id = -1, images, modelFile, trainingDataFile, ...version },
+                      versionIndex
+                    ) => {
                       const imagesWithIndex = images.map((image, index) => ({
                         index,
                         userId: ownerId,
@@ -267,6 +273,7 @@ export const modelRouter = router({
                         where: { id },
                         create: {
                           ...version,
+                          index: versionIndex,
                           status: data.status,
                           files: {
                             create: filesToCreate.map(({ name, type, url, sizeKB }) => ({
@@ -287,6 +294,7 @@ export const modelRouter = router({
                         },
                         update: {
                           ...version,
+                          index: versionIndex,
                           epochs: version.epochs ?? null,
                           steps: version.steps ?? null,
                           status: data.status,
