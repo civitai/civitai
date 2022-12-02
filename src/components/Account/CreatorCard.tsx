@@ -1,5 +1,8 @@
-import { Card, Stack } from '@mantine/core';
+import { Card, Stack, Title } from '@mantine/core';
+import { z } from 'zod';
 import { Form, useForm } from '~/libs/form';
+
+const schema = z.object({});
 
 export function CreatorCard() {
   const form = useForm();
@@ -7,7 +10,9 @@ export function CreatorCard() {
   return (
     <Card>
       <Form form={form}>
-        <Stack></Stack>
+        <Stack>
+          <Title order={2}>Creator Profile</Title>
+        </Stack>
       </Form>
     </Card>
   );

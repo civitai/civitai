@@ -13,6 +13,7 @@ import { SettingsCard } from '~/components/Account/SettingsCard';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { AccountsCard } from '~/components/Account/AccountsCard';
 import { ApiKeysCard } from '~/components/Account/ApiKeysCard';
+import { CreatorCard } from '~/components/Account/CreatorCard';
 
 export default function Account({ providers, isDev = false }: Props) {
   return (
@@ -30,6 +31,7 @@ export default function Account({ providers, isDev = false }: Props) {
           </Stack>
           <ProfileCard />
           <SettingsCard />
+          {/* <CreatorCard /> */}
           <AccountsCard providers={providers} />
           {isDev && <ApiKeysCard />}
         </Stack>

@@ -1,6 +1,6 @@
 import { upsertManyUserLinks } from './../services/user-link.service';
 import { Context } from '~/server/createContext';
-import { UserLinkParams, GetUserLinksQuery } from '~/server/schema/user-link.schema';
+import { UpsertManyUserLinkParams, GetUserLinksQuery } from '~/server/schema/user-link.schema';
 import { getUserLinks } from '~/server/services/user-link.service';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 
@@ -13,7 +13,7 @@ export const upsertManyUserLinksHandler = async ({
   ctx,
 }: {
   ctx: Context;
-  input: UserLinkParams[];
+  input: UpsertManyUserLinkParams;
 }) => {
   if (!ctx.user) {
     throw throwAuthorizationError();
