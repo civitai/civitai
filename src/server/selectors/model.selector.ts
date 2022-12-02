@@ -78,6 +78,7 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
         take: 20,
       },
     },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
   },
   tagsOnModels: {
     select: {
