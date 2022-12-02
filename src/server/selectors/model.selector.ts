@@ -59,6 +59,12 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
   name: true,
   type: true,
   nsfw: true,
+  user: {
+    select: {
+      image: true,
+      username: true,
+    },
+  },
   modelVersions: {
     select: {
       id: true,

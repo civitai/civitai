@@ -17,8 +17,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const { nextPage, prevPage, baseUrl } = getPaginationLinks({ ...metadata, req });
 
         res.status(200).json({
-          items: items.map(({ modelVersions, tagsOnModels, ...model }) => ({
+          items: items.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
             ...model,
+            creator: {
+              username: user.username,
+              image: user.image ? getEdgeUrl(user.image, { width: 96 }) : null,
+            },
             tags: tagsOnModels.map(({ tag }) => tag.name),
             modelVersions: modelVersions.map(({ images, ...version }) => ({
               ...version,
