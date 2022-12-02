@@ -7,6 +7,7 @@ interface ExtendedUser {
   username?: string;
   tos?: boolean;
   isModerator?: boolean;
+  email?: string;
 }
 
 declare module 'next-auth' {
