@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { ModelFileType, Prisma } from '@prisma/client';
 import { imageSelect, imageSelectWithoutId } from '~/server/selectors/image.selector';
 
 export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
@@ -82,6 +82,18 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
           },
         },
         take: 20,
+      },
+      files: {
+        select: {
+          sizeKB: true,
+          type: true,
+          format: true,
+          pickleScanResult: true,
+          pickleScanMessage: true,
+          virusScanResult: true,
+          scannedAt: true,
+        },
+        where: { type: ModelFileType.Model },
       },
     },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],

@@ -24,12 +24,15 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { checkFileExists, getS3Client } from '~/utils/s3-utils';
+import { getModelFileFormat } from '~/utils/file-helpers';
 
 function prepareFiles(
   modelFile: z.infer<typeof modelVersionUpsertSchema>['modelFile'],
   trainingDataFile: z.infer<typeof modelVersionUpsertSchema>['trainingDataFile']
 ) {
-  const files: Partial<ModelFile>[] = [{ ...modelFile, type: ModelFileType.Model }];
+  const files: Partial<ModelFile>[] = [
+    { ...modelFile, type: ModelFileType.Model, format: getModelFileFormat(modelFile.name) },
+  ];
   if (trainingDataFile != null)
     files.push({ ...trainingDataFile, type: ModelFileType.TrainingData });
 
@@ -271,6 +274,7 @@ export const modelRouter = router({
                               type,
                               url,
                               sizeKB,
+                              format: getModelFileFormat(name),
                               ...unscannedFile,
                             })),
                           },
@@ -292,6 +296,7 @@ export const modelRouter = router({
                               type,
                               url,
                               sizeKB,
+                              format: getModelFileFormat(name),
                               ...unscannedFile,
                             })),
                             update: filesToUpdate.map(({ type, url, name, sizeKB }) => ({

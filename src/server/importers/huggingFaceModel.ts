@@ -5,6 +5,7 @@ import { uploadViaUrl } from '~/utils/cf-images-utils';
 import { markdownToHtml } from '~/utils/markdown-helpers';
 import { bytesToKB } from '~/utils/number-helpers';
 import { imageToBlurhash } from '~/utils/image-utils';
+import { getModelFileFormat } from '~/utils/file-helpers';
 
 // Find match for URL like: https://huggingface.co/nitrosocke/Arcane-Diffusion
 const hfModelRegex = /^https:\/\/huggingface\.co\/([\w\-\.]+)\/([\w\-\.]+)/;
@@ -58,7 +59,7 @@ export async function importModelFromHuggingFace(
   const modelVersions: Prisma.ModelVersionUncheckedCreateInput[] = [];
   let type: ModelType = ModelType.Checkpoint;
   for (const { name, url } of files) {
-    // TODO Import: Improve this to handle models that aren't saved as `.ckpt`
+    // TODO Import: Improve this to handle models that aren't saved as `.ckpt` or `.safetensors`
     // Example: https://huggingface.co/sd-dreambooth-library/the-witcher-game-ciri/tree/main
     if (!isModelFile(name)) continue;
 
@@ -81,6 +82,7 @@ export async function importModelFromHuggingFace(
             sizeKB: size,
             name,
             type: ModelFileType.Model,
+            format: getModelFileFormat(name),
           },
         ],
       },
@@ -188,7 +190,7 @@ function isImage(filename: string) {
   return /\.(png|gif|jpg|jpeg)$/.test(filename);
 }
 
-const modelFileRegex = /\.(ckpt|pt|bin)$/;
+const modelFileRegex = /\.(ckpt|pt|bin|safetensors)$/;
 function isModelFile(filename: string) {
   return !filename.includes('/') && modelFileRegex.test(filename);
 }

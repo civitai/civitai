@@ -2,9 +2,10 @@ import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { appRouter } from '~/server/routers';
+import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const apiCaller = appRouter.createCaller({ user: undefined });
   try {
     const { items, ...metadata } = await apiCaller.user.getCreators(req.query);
@@ -32,4 +33,4 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       res.status(500).json({ message: 'An unexpected error occurred', error });
     }
   }
-}
+});

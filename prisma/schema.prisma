@@ -185,18 +185,24 @@ enum ModelFileType {
   TrainingData
 }
 
+enum ModelFileFormat {
+  PickleTensor
+  SafeTensor
+}
+
 model ModelFile {
   name              String
   url               String
   sizeKB            Float
-  createdAt         DateTime       @default(now())
+  createdAt         DateTime         @default(now())
   type              ModelFileType
+  format            ModelFileFormat?
   modelVersionId    Int
-  modelVersion      ModelVersion   @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-  pickleScanResult  ScanResultCode @default(Pending)
+  modelVersion      ModelVersion     @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  pickleScanResult  ScanResultCode   @default(Pending)
   exists            Boolean?
   pickleScanMessage String?
-  virusScanResult   ScanResultCode @default(Pending)
+  virusScanResult   ScanResultCode   @default(Pending)
   virusScanMessage  String?
   scannedAt         DateTime?
   scanRequestedAt   DateTime?

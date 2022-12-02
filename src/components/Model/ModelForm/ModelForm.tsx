@@ -260,7 +260,7 @@ export function ModelForm({ model }: Props) {
                                 label="Model File"
                                 placeholder="Pick your model"
                                 uploadType="Model"
-                                accept=".ckpt,.pt"
+                                accept=".ckpt,.pt,.safetensors"
                                 onLoading={setUploading}
                                 withAsterisk
                               />
