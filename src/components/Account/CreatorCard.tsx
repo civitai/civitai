@@ -1,3 +1,9 @@
+import { Card, Stack } from '@mantine/core';
+
 export function CreatorCard() {
-  return <></>;
+  return (
+    <Card>
+      <Stack></Stack>
+    </Card>
+  );
 }

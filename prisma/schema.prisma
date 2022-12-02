@@ -67,6 +67,21 @@ model User {
   Import          Import[]
   keys            ApiKey[]
   favoriteModels  FavoriteModel[]
+  links           UserLink[]
+}
+
+enum LinkType {
+  Sponsorship
+  Social
+  Other
+}
+
+model UserLink {
+  id     Int      @id @default(autoincrement())
+  userId Int
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  url    String
+  type   LinkType
 }
 
 model VerificationToken {
