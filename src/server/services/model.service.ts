@@ -34,6 +34,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     cursor,
     query,
     tag,
+    user,
     username,
     types,
     sort,
@@ -54,8 +55,8 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   const where: Prisma.ModelWhereInput = {
     name: query ? { contains: query, mode: 'insensitive' } : undefined,
     tagsOnModels: tag ? { some: { tag: { name: tag } } } : undefined,
-    user: username ? { username } : undefined,
-    type: types ? { in: types } : undefined,
+    user: username ?? user ? { username: username ?? user } : undefined,
+    type: types?.length ? { in: types } : undefined,
     nsfw: !canViewNsfw ? { equals: false } : undefined,
     rank: rating
       ? {

@@ -14,7 +14,7 @@ import {
   ThemeIcon,
   useMantineTheme,
 } from '@mantine/core';
-import { MetricTimeframe, ModelStatus } from '@prisma/client';
+import { ModelStatus } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
 import { IconCloudOff, IconDownload, IconHeart } from '@tabler/icons';
 import {
@@ -34,12 +34,12 @@ import { useInView } from 'react-intersection-observer';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { useInfiniteModelFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
-import { useModelFilters } from '~/hooks/useModelFilters';
+import { useCookies } from '~/providers/CookiesProvider';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { QS } from '~/utils/qs';
 import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -49,12 +49,8 @@ type InfiniteModelsProps = {
 
 export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
   const router = useRouter();
-  // TODO Briant: Shouldn't this just use the filters?
-  // TODO Briant: Make filters persist
-  // let stringified = QS.stringify(router.query);
-  // if (!stringified) stringified = localStorage.getItem('defaultModelFilter') ?? '';
-  // const queryParams = QS.parse(stringified);
-  const queryParams = QS.parse(QS.stringify(router.query));
+  const { sort, period, types } = useCookies();
+  const filters = useInfiniteModelFilters((state) => state.filters);
 
   const { ref, inView } = useInView();
   const {
@@ -65,8 +61,9 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
     hasNextPage,
     // hasPreviousPage,
   } = trpc.model.getAll.useInfiniteQuery(
-    { limit: 100, ...queryParams },
+    { limit: 100, sort, period, types, ...filters, ...router.query },
     {
+      keepPreviousData: false,
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
     }
@@ -79,16 +76,15 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
   }, [fetchNextPage, inView]);
 
   const models = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
-  const loading = isLoading;
 
   return (
     <>
-      {loading ? (
+      {isLoading ? (
         <Center>
           <Loader size="xl" />
         </Center>
       ) : !!models.length ? (
-        <MasonryList columnWidth={300} data={models} />
+        <MasonryList columnWidth={300} data={models} filters={{ ...filters, ...router.query }} />
       ) : (
         <Stack align="center">
           <ThemeIcon size={128} radius={100}>
@@ -102,7 +98,7 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
           </Text>
         </Stack>
       )}
-      {!loading && hasNextPage && (
+      {!isLoading && hasNextPage && (
         <Group position="center" ref={ref}>
           <Loader />
         </Group>
@@ -114,13 +110,12 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
 type MasonryListProps = {
   columnWidth: number;
   data: GetModelsInfiniteReturnType;
+  filters: Record<string, unknown>;
 };
 
 // https://github.com/jaredLunde/masonic
-export function MasonryList({ columnWidth = 300, data }: MasonryListProps) {
+export function MasonryList({ columnWidth, data, filters }: MasonryListProps) {
   const router = useRouter();
-  // use stringified filters as key for positioner dependency array
-  const { filters } = useModelFilters();
   const stringified = JSON.stringify(filters);
   const modelId = Number(([] as string[]).concat(router.query.model ?? [])[0]);
 

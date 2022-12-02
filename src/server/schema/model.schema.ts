@@ -12,6 +12,7 @@ export const getAllModelsSchema = z.object({
   cursor: z.preprocess((val) => Number(val), z.number()).optional(),
   query: z.string().optional(),
   tag: z.string().optional(),
+  user: z.string().optional(),
   username: z.string().optional(),
   types: z
     .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
@@ -24,7 +25,7 @@ export const getAllModelsSchema = z.object({
     .preprocess((val) => Number(val), z.number())
     .transform((val) => Math.floor(val))
     .optional(),
-  favorites: z.boolean().optional().default(false),
+  favorites: z.preprocess((val) => val === 'true', z.boolean().optional().default(false)),
 });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;

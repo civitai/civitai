@@ -2,7 +2,7 @@
 import { ColorScheme, ColorSchemeProvider, MantineProvider } from '@mantine/core';
 import { NotificationsProvider } from '@mantine/notifications';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
-import { getCookie, setCookie } from 'cookies-next';
+import { getCookie, getCookies, setCookie } from 'cookies-next';
 import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
 import relativeTime from 'dayjs/plugin/relativeTime';
@@ -19,6 +19,7 @@ import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { CustomModalsProvider } from './../providers/CustomModalsProvider';
 import { TosProvider } from '~/providers/TosProvider';
+import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
 
 dayjs.extend(duration);
 dayjs.extend(relativeTime);
@@ -27,15 +28,18 @@ type CustomNextPage = NextPage & {
   getLayout?: (page: ReactElement) => ReactNode;
 };
 
-type CustomAppProps<P> = AppProps<P> & {
+type CustomAppProps = {
   Component: CustomNextPage;
+} & AppProps<{
+  session: Session | null;
   colorScheme: ColorScheme;
-};
+  cookies: CookiesContext;
+}>;
 
-function MyApp(props: CustomAppProps<{ session: Session | null; colorScheme: ColorScheme }>) {
+function MyApp(props: CustomAppProps) {
   const {
     Component,
-    pageProps: { session, colorScheme: initialColorScheme, ...pageProps },
+    pageProps: { session, colorScheme: initialColorScheme, cookies, ...pageProps },
   } = props;
   const [colorScheme, setColorScheme] = useState<ColorScheme>(initialColorScheme);
 
@@ -58,25 +62,27 @@ function MyApp(props: CustomAppProps<{ session: Session | null; colorScheme: Col
       </Head>
 
       <SessionProvider session={session}>
-        <ColorSchemeProvider colorScheme={colorScheme} toggleColorScheme={toggleColorScheme}>
-          <MantineProvider
-            theme={{
-              colorScheme,
-              components: {
-                Popover: { styles: { dropdown: { maxWidth: '100vw' } } },
-                Rating: { styles: { symbolBody: { cursor: 'pointer' } } },
-              },
-            }}
-            withGlobalStyles
-            withNormalizeCSS
-          >
-            <CustomModalsProvider>
-              <NotificationsProvider>
-                <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-              </NotificationsProvider>
-            </CustomModalsProvider>
-          </MantineProvider>
-        </ColorSchemeProvider>
+        <CookiesProvider value={cookies}>
+          <ColorSchemeProvider colorScheme={colorScheme} toggleColorScheme={toggleColorScheme}>
+            <MantineProvider
+              theme={{
+                colorScheme,
+                components: {
+                  Popover: { styles: { dropdown: { maxWidth: '100vw' } } },
+                  Rating: { styles: { symbolBody: { cursor: 'pointer' } } },
+                },
+              }}
+              withGlobalStyles
+              withNormalizeCSS
+            >
+              <CustomModalsProvider>
+                <NotificationsProvider>
+                  <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                </NotificationsProvider>
+              </CustomModalsProvider>
+            </MantineProvider>
+          </ColorSchemeProvider>
+        </CookiesProvider>
       </SessionProvider>
       {process.env.NODE_ENV == 'development' && <ReactQueryDevtools />}
     </>
@@ -87,11 +93,19 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const { pageProps, ...appProps } = await App.getInitialProps(appContext);
   const session = await getSession(appContext.ctx);
 
+  const cookies = getCookies(appContext.ctx);
+  const parsedCookies = parseCookies({
+    sort: cookies?.['f_sort'],
+    period: cookies?.['f_period'],
+    types: cookies?.['f_types'],
+  });
+
   return {
     pageProps: {
       ...pageProps,
       session,
-      colorScheme: getCookie('mantine-color-scheme', appContext.ctx) || 'light',
+      colorScheme: getCookie('mantine-color-scheme', appContext.ctx) ?? 'light',
+      cookies: parsedCookies,
     },
     ...appProps,
   };

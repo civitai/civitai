@@ -5,9 +5,11 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
-import { ListFilter } from '~/components/ListFilter/ListFilter';
-import { ListPeriod } from '~/components/ListPeriod/ListPeriod';
-import { ListSort } from '~/components/ListSort/ListSort';
+import {
+  InfiniteModelsFilter,
+  InfiniteModelsPeriod,
+  InfiniteModelsSort,
+} from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 
@@ -41,10 +43,10 @@ function Home() {
         )}
         <Stack spacing="xs">
           <Group position="apart">
-            <ListSort />
+            <InfiniteModelsSort />
             <Group spacing="xs">
-              <ListPeriod />
-              <ListFilter />
+              <InfiniteModelsPeriod />
+              <InfiniteModelsFilter />
             </Group>
           </Group>
           <InfiniteModels />
