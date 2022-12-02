@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { imageSelect } from '~/server/selectors/image.selector';
+import { imageSelect, imageSelectWithoutId } from '~/server/selectors/image.selector';
 
 export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
@@ -64,7 +64,19 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
       id: true,
       name: true,
       createdAt: true,
+      updatedAt: true,
       trainedWords: true,
+      images: {
+        orderBy: {
+          index: 'asc',
+        },
+        select: {
+          image: {
+            select: imageSelectWithoutId,
+          },
+        },
+        take: 20,
+      },
     },
   },
   tagsOnModels: {

@@ -10,6 +10,9 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   hash: true,
   meta: true,
 });
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const { id, name, ...imageSelectWithoutId } = imageSelect;
+export { imageSelectWithoutId };
 
 const image = Prisma.validator<Prisma.ImageArgs>()({ select: imageSelect });
 
