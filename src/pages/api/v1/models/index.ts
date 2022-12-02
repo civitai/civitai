@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
+import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 
 import { appRouter } from '~/server/routers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
@@ -19,8 +20,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           items: items.map(({ modelVersions, tagsOnModels, ...model }) => ({
             ...model,
             tags: tagsOnModels.map(({ tag }) => tag.name),
-            modelVersions: modelVersions.map((version) => ({
+            modelVersions: modelVersions.map(({ images, ...version }) => ({
               ...version,
+              images: images.map(({ image: { url, ...image } }) => ({
+                url: getEdgeUrl(url, { width: 450 }),
+                ...image,
+              })),
               downloadUrl: `${baseUrl.origin}/api/download/models/${version.id}`,
             })),
           })),
