@@ -34,9 +34,8 @@ import { useInView } from 'react-intersection-observer';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { useInfiniteModelFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
+import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
-import { useCookies } from '~/providers/CookiesProvider';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -49,8 +48,7 @@ type InfiniteModelsProps = {
 
 export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
   const router = useRouter();
-  const { sort, period, types } = useCookies();
-  const filters = useInfiniteModelFilters((state) => state.filters);
+  const filters = useInfiniteModelsFilters();
 
   const { ref, inView } = useInView();
   const {
@@ -61,7 +59,7 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
     hasNextPage,
     // hasPreviousPage,
   } = trpc.model.getAll.useInfiniteQuery(
-    { limit: 100, sort, period, types, ...filters, ...router.query },
+    { limit: 100, ...filters, ...router.query },
     {
       keepPreviousData: false,
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),

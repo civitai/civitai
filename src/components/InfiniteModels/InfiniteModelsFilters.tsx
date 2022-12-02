@@ -13,7 +13,7 @@ import { createContext, useContext, useState } from 'react';
 
 type FilterProps = z.input<typeof modelFilterSchema>;
 
-export const useInfiniteModelFilters = create<{
+export const useFilters = create<{
   filters: FilterProps;
   setSort: (sort?: ModelSort) => void;
   setPeriod: (period?: MetricTimeframe) => void;
@@ -42,6 +42,12 @@ export const useInfiniteModelFilters = create<{
   }))
 );
 
+export const useInfiniteModelsFilters = () => {
+  const { sort, period, types } = useCookies();
+  const filters = useFilters((state) => state.filters);
+  return { sort, period, types, ...filters };
+};
+
 // const InfiniteModelsCtx = createContext<FilterProps>({});
 // export const useInfiniteModelsFilters = () => useContext(InfiniteModelsCtx);
 // export const InfiniteModelsProvider = ({ children }: { children: React.ReactNode }) => {
@@ -54,10 +60,8 @@ export const useInfiniteModelFilters = create<{
 const sortOptions = Object.values(ModelSort);
 export function InfiniteModelsSort() {
   const cookies = useCookies();
-  const setSort = useInfiniteModelFilters((state) => state.setSort);
-  const sort = useInfiniteModelFilters(
-    (state) => state.filters.sort ?? cookies.sort ?? ModelSort.HighestRated
-  );
+  const setSort = useFilters((state) => state.setSort);
+  const sort = useFilters((state) => state.filters.sort ?? cookies.sort ?? ModelSort.HighestRated);
 
   return (
     <SelectMenu
@@ -72,8 +76,8 @@ export function InfiniteModelsSort() {
 const periodOptions = Object.values(MetricTimeframe);
 export function InfiniteModelsPeriod() {
   const cookies = useCookies();
-  const setPeriod = useInfiniteModelFilters((state) => state.setPeriod);
-  const period = useInfiniteModelFilters(
+  const setPeriod = useFilters((state) => state.setPeriod);
+  const period = useFilters(
     (state) => state.filters.period ?? cookies.period ?? MetricTimeframe.AllTime
   );
 
@@ -89,8 +93,8 @@ export function InfiniteModelsPeriod() {
 
 export function InfiniteModelsFilter() {
   const cookies = useCookies();
-  const setTypes = useInfiniteModelFilters((state) => state.setTypes);
-  const types = useInfiniteModelFilters((state) => state.filters.types ?? cookies.types ?? []);
+  const setTypes = useFilters((state) => state.setTypes);
+  const types = useFilters((state) => state.filters.types ?? cookies.types ?? []);
 
   return (
     <Popover withArrow>
