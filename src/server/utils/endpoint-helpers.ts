@@ -33,9 +33,9 @@ export function PublicEndpoint(
   allowedMethods: string[] = ['GET']
 ) {
   return async (req: NextApiRequest, res: NextApiResponse) => {
-    res.setHeader('Access-Controll-Allow-Origin', '*');
-    res.setHeader('Access-Controll-Allow-Headers', '*');
-    res.setHeader('Access-Controll-Allow-Methods', allowedMethods.join(', '));
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    res.setHeader('Access-Control-Allow-Methods', allowedMethods.join(', '));
     res.setHeader(
       'Cache-Control',
       `public, s-maxage=${PUBLIC_CACHE_MAX_AGE}, stale-while-revalidate=${PUBLIC_CACHE_STALE_WHILE_REVALIDATE}`
