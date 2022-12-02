@@ -70,9 +70,8 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
     hasNextPage,
     // hasPreviousPage,
   } = trpc.model.getAll.useInfiniteQuery(
-    { limit: 100, ...filters, ...queryParams },
+    { ...filters, ...queryParams },
     {
-      keepPreviousData: false,
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
     }

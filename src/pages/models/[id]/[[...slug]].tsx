@@ -78,6 +78,7 @@ import { splitUppercase, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 
 //TODO - Break model query into multiple queries
 /*
@@ -139,6 +140,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const { classes } = useStyles();
   const mobile = useIsMobile();
   const queryUtils = trpc.useContext();
+  const filters = useInfiniteModelsFilters();
 
   const { id, slug } = props;
   const { edit } = router.query;
@@ -251,6 +253,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
     async onSuccess() {
       await queryUtils.model.getAll.invalidate({ favorites: true });
+      queryUtils.model.getAll.setInfiniteData({ ...filters, favorites: true }, (oldData) => {
+        return { pageParams: [], pages: [] };
+      });
     },
     onError(_error, _variables, context) {
       queryUtils.user.getFavoriteModels.setData(undefined, context?.previousFavorites);
@@ -583,15 +588,17 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
                   <VerifiedShield file={latestVersion.modelFile} />
                   <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="bottom" withArrow>
-                    <LoginRedirect reason="favorite-model">
-                      <Button
-                        onClick={() => handleToggleFavorite()}
-                        color={isFavorite ? 'red' : 'gray'}
-                        sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                      >
-                        <IconHeart color="#fff" />
-                      </Button>
-                    </LoginRedirect>
+                    <div>
+                      <LoginRedirect reason="favorite-model">
+                        <Button
+                          onClick={() => handleToggleFavorite()}
+                          color={isFavorite ? 'red' : 'gray'}
+                          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                        >
+                          <IconHeart color="#fff" />
+                        </Button>
+                      </LoginRedirect>
+                    </div>
                   </Tooltip>
                 </Group>
               )}

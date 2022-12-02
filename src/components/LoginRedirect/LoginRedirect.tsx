@@ -22,3 +22,11 @@ export function LoginRedirect({ children, reason, returnUrl }: Props) {
       })
     : children;
 }
+
+//TODO: Briant - consider using a hook to return a function that accepts an onclick callback
+/*
+  const loginRedirect = useLoginRedirect()
+  const handleClick = () => {
+    loginRedirect(() => {...do something})
+  }
+*/

@@ -1,4 +1,4 @@
-import { Badge, BadgeProps } from '@mantine/core';
+import { Badge, BadgeProps, Button } from '@mantine/core';
 
 export function IconBadge({ icon, children, ...props }: IconBadgeProps) {
   return (
@@ -10,6 +10,7 @@ export function IconBadge({ icon, children, ...props }: IconBadgeProps) {
       radius="sm"
       color="gray"
       leftSection={icon}
+      component={Button}
       {...props}
     >
       {children}
@@ -20,4 +21,5 @@ export function IconBadge({ icon, children, ...props }: IconBadgeProps) {
 type IconBadgeProps = {
   icon: React.ReactNode;
   onClick?: React.MouseEventHandler<any> | undefined;
+  disabled?: boolean;
 } & Omit<BadgeProps, 'leftSection'>;

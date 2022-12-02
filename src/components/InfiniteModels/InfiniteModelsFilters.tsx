@@ -44,7 +44,7 @@ export const useFilters = create<{
 export const useInfiniteModelsFilters = () => {
   const { sort, period, types } = useCookies();
   const filters = useFilters((state) => state.filters);
-  return { sort, period, types, ...filters };
+  return { limit: 100, sort, period, types, ...filters };
 };
 
 const sortOptions = Object.values(ModelSort);
