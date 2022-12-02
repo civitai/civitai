@@ -30,4 +30,14 @@ export default defineNextConfig({
       'civitai-dev.s3.us-west-1.wasabisys.com',
     ],
   },
+  headers: async () => [
+    {
+      source: '/api/v1/:endpoints*',
+      headers: [
+        { key: 'Access-Control-Allow-Origin', value: '*' },
+        { key: 'Access-Control-Allow-Headers', value: '*' },
+        { key: 'Access-Control-Allow-Methods', value: 'OPTIONS, GET' },
+      ],
+    },
+  ],
 });
