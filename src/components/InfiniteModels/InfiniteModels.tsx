@@ -210,10 +210,7 @@ const MasonryItem = ({
   });
   const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
-  const maxNameLength =
-    maxNameLengthByType[data.type] - (rank.favoriteCount > 0 ? 5 : 0) - (itemWidth < 350 ? 10 : 0);
-  const hasLongName = name.length > maxNameLength;
-  const onTwoLines = rank.rating != null && rank.rating > 0;
+  const onTwoLines = true;
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
     const width = itemWidth > 0 ? itemWidth : 300;
@@ -224,7 +221,7 @@ const MasonryItem = ({
   }, [itemWidth, image.width, image.height, onTwoLines]);
 
   const modelText = (
-    <Text size={14} weight={500} lineClamp={2} style={{ flex: 1 }}>
+    <Text size={14} weight={500} lineClamp={1} style={{ flex: 1 }}>
       {name}
     </Text>
   );
@@ -236,30 +233,38 @@ const MasonryItem = ({
           {data.status}
         </Badge>
       )}
-      <Badge radius="sm">{splitUppercase(data.type)}</Badge>
+      <Badge radius="sm" size="xs">
+        {splitUppercase(data.type)}
+      </Badge>
     </>
   );
 
-  const modelRating = rank.ratingCount > 0 && (
-    <IconBadge sx={{ userSelect: 'none' }} icon={<Rating size="sm" value={rank.rating} readOnly />}>
+  const modelRating = (
+    <IconBadge
+      size="xs"
+      sx={{ userSelect: 'none' }}
+      icon={<Rating size="xs" value={rank.rating} readOnly />}
+    >
       <Text size="xs">{abbreviateNumber(rank.ratingCount)}</Text>
     </IconBadge>
   );
 
   const modelDownloads = (
     <IconBadge
-      icon={<IconDownload size={16} />}
+      size="xs"
+      icon={<IconDownload size={14} />}
       variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
     >
-      <Text size="xs">{abbreviateNumber(rank.downloadCount)}</Text>
+      <Text size={12}>{abbreviateNumber(rank.downloadCount)}</Text>
     </IconBadge>
   );
 
   const modelLikes = !!rank.favoriteCount && (
     <IconBadge
+      size="xs"
       icon={
         <IconHeart
-          size={16}
+          size={14}
           style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
           color={isFavorite ? theme.colors.red[6] : undefined}
         />
@@ -290,12 +295,7 @@ const MasonryItem = ({
   const oneLine = (
     <Group position="apart" align="flex-start" noWrap>
       {modelText}
-      <Group
-        spacing={4}
-        align="center"
-        position="right"
-        sx={{ maxWidth: hasLongName ? 140 : undefined }}
-      >
+      <Group spacing={4} align="center" position="right">
         {modelBadges}
         {modelLikes}
         {modelDownloads}
