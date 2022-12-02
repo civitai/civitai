@@ -9,7 +9,6 @@ import { modelFilterSchema, useCookies } from '~/providers/CookiesProvider';
 import { Popover, ActionIcon, Stack, Checkbox, Indicator } from '@mantine/core';
 import { IconFilter } from '@tabler/icons';
 import { z } from 'zod';
-import { createContext, useContext, useState } from 'react';
 
 type FilterProps = z.input<typeof modelFilterSchema>;
 
@@ -47,15 +46,6 @@ export const useInfiniteModelsFilters = () => {
   const filters = useFilters((state) => state.filters);
   return { sort, period, types, ...filters };
 };
-
-// const InfiniteModelsCtx = createContext<FilterProps>({});
-// export const useInfiniteModelsFilters = () => useContext(InfiniteModelsCtx);
-// export const InfiniteModelsProvider = ({ children }: { children: React.ReactNode }) => {
-//   const cookies = useCookies();
-//   const [filters, setFilters] = useState<FilterProps>({});
-
-//   return <InfiniteModelsCtx.Provider value={filters}>{children}</InfiniteModelsCtx.Provider>;
-// };
 
 const sortOptions = Object.values(ModelSort);
 export function InfiniteModelsSort() {

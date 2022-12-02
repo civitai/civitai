@@ -250,7 +250,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       return { previousFavorites, previousModel };
     },
     async onSuccess() {
-      await queryUtils.model.getAll.invalidate();
+      await queryUtils.model.getAll.invalidate({ favorites: true });
     },
     onError(_error, _variables, context) {
       queryUtils.user.getFavoriteModels.setData(undefined, context?.previousFavorites);

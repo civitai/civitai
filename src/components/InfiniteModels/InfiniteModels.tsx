@@ -30,6 +30,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
+import { z } from 'zod';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -46,9 +47,19 @@ type InfiniteModelsProps = {
   columnWidth?: number;
 };
 
+const filterSchema = z.object({
+  query: z.string().optional(),
+  user: z.string().optional(),
+  username: z.string().optional(),
+  tag: z.string().optional(),
+  favorites: z.preprocess((val) => val === true || val === 'true', z.boolean().optional()),
+});
+
 export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
   const router = useRouter();
   const filters = useInfiniteModelsFilters();
+  const result = filterSchema.safeParse(router.query);
+  const queryParams = result.success ? result.data : {};
 
   const { ref, inView } = useInView();
   const {
@@ -59,7 +70,7 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
     hasNextPage,
     // hasPreviousPage,
   } = trpc.model.getAll.useInfiniteQuery(
-    { limit: 100, ...filters, ...router.query },
+    { limit: 100, ...filters, ...queryParams },
     {
       keepPreviousData: false,
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
