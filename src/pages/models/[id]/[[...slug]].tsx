@@ -81,6 +81,7 @@ import { isNumber } from '~/utils/type-guards';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
+import { scrollToTop } from '~/utils/scroll-utils';
 
 //TODO - Break model query into multiple queries
 /*
@@ -481,14 +482,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 sx={{ cursor: 'pointer' }}
                 onClick={() => {
                   if (!reviewSectionRef.current) return;
-                  const top =
-                    reviewSectionRef.current.getBoundingClientRect().top -
-                    document.body.getBoundingClientRect().top -
-                    100;
-                  window.scrollTo({
-                    behavior: 'smooth',
-                    top,
-                  });
+                  scrollToTop(reviewSectionRef.current);
                 }}
               >
                 <Text size={mobile ? 'sm' : 'md'}>

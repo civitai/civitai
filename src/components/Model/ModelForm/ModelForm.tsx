@@ -180,33 +180,47 @@ export function ModelForm({ model }: Props) {
                   />
                 </Stack>
               </Paper>
-              <Paper radius="md" p="xl" withBorder>
-                <Stack>
-                  <Group sx={{ justifyContent: 'space-between' }}>
-                    <Title order={4}>Model Versions</Title>
-                    <Button
-                      size="xs"
-                      leftIcon={<IconPlus size={16} />}
-                      variant="outline"
-                      onClick={() => prepend(defaultModelVersion)}
-                      compact
-                    >
-                      Add Version
-                    </Button>
-                  </Group>
-                  <Stack>
-                    {/* Model Versions */}
-                    {fields.map((version, index) => {
-                      const trainedWords = form.watch(`modelVersions.${index}.trainedWords`);
-                      return (
-                        <Stack key={version.id ?? index} style={{ position: 'relative' }}>
-                          {fields.length > 1 && (
-                            <Group position="apart">
-                              <Group spacing={4}>
+              <Group sx={{ justifyContent: 'space-between' }}>
+                <Title order={4}>Model Versions</Title>
+                <Button
+                  size="xs"
+                  leftIcon={<IconPlus size={16} />}
+                  variant="outline"
+                  onClick={() => prepend(defaultModelVersion)}
+                  compact
+                >
+                  Add Version
+                </Button>
+              </Group>
+              {/* Model Versions */}
+              {fields.map((version, index) => {
+                const trainedWords = form.watch(`modelVersions.${index}.trainedWords`);
+                return (
+                  <Paper
+                    data-version-index={index}
+                    key={version.id ?? index}
+                    radius="md"
+                    p="xl"
+                    withBorder
+                  >
+                    <Stack style={{ position: 'relative' }}>
+                      <Grid gutter="md">
+                        <Grid.Col span={12}>
+                          <Group noWrap align="flex-end" spacing="xs">
+                            <InputText
+                              name={`modelVersions.${index}.name`}
+                              label="Name"
+                              placeholder="Version Name"
+                              withAsterisk
+                              style={{ flex: 1 }}
+                            />
+                            {fields.length > 1 && (
+                              <>
                                 {index < fields.length - 1 && (
                                   <ActionIcon
                                     variant="default"
                                     onClick={() => swap(index, index + 1)}
+                                    size="lg"
                                   >
                                     <IconArrowDown size={16} />
                                   </ActionIcon>
@@ -215,114 +229,105 @@ export function ModelForm({ model }: Props) {
                                   <ActionIcon
                                     variant="default"
                                     onClick={() => swap(index, index - 1)}
+                                    size="lg"
                                   >
                                     <IconArrowUp size={16} />
                                   </ActionIcon>
                                 )}
-                              </Group>
-                              <ActionIcon
-                                color="red"
-                                sx={{ position: 'absolute', top: 0, right: 0 }}
-                                onClick={() => remove(index)}
-                                variant="outline"
-                              >
-                                <IconTrash size={16} stroke={1.5} />
-                              </ActionIcon>
-                            </Group>
+                                <ActionIcon
+                                  color="red"
+                                  onClick={() => remove(index)}
+                                  variant="outline"
+                                  size="lg"
+                                >
+                                  <IconTrash size={16} stroke={1.5} />
+                                </ActionIcon>
+                              </>
+                            )}
+                          </Group>
+                        </Grid.Col>
+                        <Grid.Col span={12}>
+                          <InputRTE
+                            name={`modelVersions.${index}.description`}
+                            label="Version changes or notes"
+                            description="Tell us about this version"
+                          />
+                        </Grid.Col>
+                        <Grid.Col span={12}>
+                          {hasTrainingWords && (
+                            <InputMultiSelect
+                              name={`modelVersions.${index}.trainedWords`}
+                              label="Trained Words"
+                              placeholder="e.g.: Master Chief"
+                              description="Please input the words you have trained your model with"
+                              data={trainedWords}
+                              creatable
+                              getCreateLabel={(query) => `+ Create ${query}`}
+                              clearable
+                              searchable
+                              required
+                            />
                           )}
-                          <Grid gutter="md">
-                            <Grid.Col span={12}>
-                              <InputText
-                                name={`modelVersions.${index}.name`}
-                                label="Name"
-                                placeholder="Version Name"
-                                withAsterisk
-                              />
-                            </Grid.Col>
-                            <Grid.Col span={12}>
-                              <InputRTE
-                                name={`modelVersions.${index}.description`}
-                                label="Version changes or notes"
-                                description="Tell us about this version"
-                              />
-                            </Grid.Col>
-                            <Grid.Col span={12}>
-                              {hasTrainingWords && (
-                                <InputMultiSelect
-                                  name={`modelVersions.${index}.trainedWords`}
-                                  label="Trained Words"
-                                  placeholder="e.g.: Master Chief"
-                                  description="Please input the words you have trained your model with"
-                                  data={trainedWords}
-                                  creatable
-                                  getCreateLabel={(query) => `+ Create ${query}`}
-                                  clearable
-                                  searchable
-                                />
-                              )}
-                              <Switch
-                                label="This model doesn't require any trigger words"
-                                onChange={() => setHasTrainingWords((x) => !x)}
-                              />
-                            </Grid.Col>
-                            <Grid.Col span={6}>
-                              <InputNumber
-                                name={`modelVersions.${index}.epochs`}
-                                label="Training Epochs"
-                                placeholder="Training Epochs"
-                                min={0}
-                                max={100}
-                              />
-                            </Grid.Col>
-                            <Grid.Col span={6}>
-                              <InputNumber
-                                name={`modelVersions.${index}.steps`}
-                                label="Training Steps"
-                                placeholder="Training Steps"
-                                min={0}
-                                step={500}
-                              />
-                            </Grid.Col>
-                            <Grid.Col span={12}>
-                              <InputFileUpload
-                                name={`modelVersions.${index}.modelFile`}
-                                label="Model File"
-                                placeholder="Pick your model"
-                                uploadType="Model"
-                                accept=".ckpt,.pt,.safetensors"
-                                onLoading={setUploading}
-                                withAsterisk
-                              />
-                            </Grid.Col>
-                            <Grid.Col span={12}>
-                              <InputFileUpload
-                                name={`modelVersions.${index}.trainingDataFile`}
-                                label="Training Data"
-                                placeholder="Pick your training data"
-                                description="The data you used to train your model (as .zip archive)"
-                                uploadType="TrainingData"
-                                accept=".zip"
-                                onLoading={setUploading}
-                              />
-                            </Grid.Col>
-                            <Grid.Col span={12}>
-                              <InputImageUpload
-                                name={`modelVersions.${index}.images`}
-                                label="Example Images"
-                                max={20}
-                                hasPrimaryImage
-                                withAsterisk
-                                onChange={(values) => setUploading(values.some((x) => x.file))}
-                              />
-                            </Grid.Col>
-                          </Grid>
-                          {fields.length > 1 && index !== fields.length - 1 && <Divider />}
-                        </Stack>
-                      );
-                    })}
-                  </Stack>
-                </Stack>
-              </Paper>
+                          <Switch
+                            label="This model doesn't require any trigger words"
+                            onChange={() => setHasTrainingWords((x) => !x)}
+                          />
+                        </Grid.Col>
+                        <Grid.Col span={6}>
+                          <InputNumber
+                            name={`modelVersions.${index}.epochs`}
+                            label="Training Epochs"
+                            placeholder="Training Epochs"
+                            min={0}
+                            max={100}
+                          />
+                        </Grid.Col>
+                        <Grid.Col span={6}>
+                          <InputNumber
+                            name={`modelVersions.${index}.steps`}
+                            label="Training Steps"
+                            placeholder="Training Steps"
+                            min={0}
+                            step={500}
+                          />
+                        </Grid.Col>
+                        <Grid.Col span={12}>
+                          <InputFileUpload
+                            name={`modelVersions.${index}.modelFile`}
+                            label="Model File"
+                            placeholder="Pick your model"
+                            uploadType="Model"
+                            accept=".ckpt,.pt,.safetensors"
+                            onLoading={setUploading}
+                            withAsterisk
+                          />
+                        </Grid.Col>
+                        <Grid.Col span={12}>
+                          <InputFileUpload
+                            name={`modelVersions.${index}.trainingDataFile`}
+                            label="Training Data"
+                            placeholder="Pick your training data"
+                            description="The data you used to train your model (as .zip archive)"
+                            uploadType="TrainingData"
+                            accept=".zip"
+                            onLoading={setUploading}
+                          />
+                        </Grid.Col>
+                        <Grid.Col span={12}>
+                          <InputImageUpload
+                            name={`modelVersions.${index}.images`}
+                            label="Example Images"
+                            max={20}
+                            hasPrimaryImage
+                            withAsterisk
+                            onChange={(values) => setUploading(values.some((x) => x.file))}
+                          />
+                        </Grid.Col>
+                      </Grid>
+                    </Stack>
+                  </Paper>
+                );
+              })}
             </Stack>
           </Grid.Col>
           <Grid.Col lg={4}>
