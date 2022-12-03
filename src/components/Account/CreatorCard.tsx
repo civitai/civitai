@@ -34,14 +34,16 @@ export function CreatorCard() {
       <Card withBorder>
         <Stack>
           <Title order={2}>Creator Profile</Title>
-          <Card withBorder p="sm">
-            <Stack spacing="xs">
+          <Card withBorder>
+            <Card.Section withBorder p="sm">
               <Group position="apart">
                 <Title order={5}>Social Links</Title>
                 <Button compact onClick={() => setSelectedLink({ type: LinkType.Social })}>
                   Add Link
                 </Button>
               </Group>
+            </Card.Section>
+            <Card.Section p="sm">
               {!data?.social?.length ? (
                 <Alert>You have not added any social links</Alert>
               ) : (
@@ -54,17 +56,19 @@ export function CreatorCard() {
                   ))}
                 </div>
               )}
-            </Stack>
+            </Card.Section>
           </Card>
 
-          <Card withBorder p="sm">
-            <Stack spacing="xs">
+          <Card withBorder>
+            <Card.Section withBorder p="sm">
               <Group position="apart">
-                <Title order={4}>Sponsorship Links</Title>
+                <Title order={5}>Sponsorship Links</Title>
                 <Button compact onClick={() => setSelectedLink({ type: LinkType.Sponsorship })}>
                   Add Link
                 </Button>
               </Group>
+            </Card.Section>
+            <Card.Section p="sm">
               {!data?.sponsorship?.length ? (
                 <Alert>You have not added any sponsorship links</Alert>
               ) : (
@@ -77,7 +81,7 @@ export function CreatorCard() {
                   ))}
                 </div>
               )}
-            </Stack>
+            </Card.Section>
           </Card>
         </Stack>
       </Card>
