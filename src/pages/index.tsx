@@ -1,6 +1,7 @@
 import { Group, Stack, Container, Title } from '@mantine/core';
 import { capitalize } from 'lodash';
 import { GetServerSideProps } from 'next';
+import { useSession } from 'next-auth/react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 
@@ -10,6 +11,7 @@ import {
   InfiniteModelsPeriod,
   InfiniteModelsSort,
 } from '~/components/InfiniteModels/InfiniteModelsFilters';
+import { Meta } from '~/components/Meta/Meta';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 
@@ -27,12 +29,14 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 
 function Home() {
   const router = useRouter();
+  const { data: session } = useSession();
 
   return (
     <>
-      <Head>
-        <meta name="description" content="Community driven AI model sharing tool" />
-      </Head>
+      <Meta
+        title={`Civitai ${!session ? `| Every model in one place` : ''}`}
+        description={`Civitai is a platform for Stable Diffusion AI Art models. We have a collection of over 1000 models from over 50 creators. We also have a collection of over 145 reviews from the community along with 100+ images with prompts to get you started.`}
+      />
       <Container size="xl" p={0}>
         {router.query.username && typeof router.query.username === 'string' && (
           <Title>Models by {router.query.username}</Title>

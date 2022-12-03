@@ -436,7 +436,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   return (
     <>
       <Meta
-        title={`Civitai - ${model.name}`}
+        title={`${model.name} | Civitai`}
         description={removeTags(model.description ?? '')}
         image={
           (model.nsfw && !router.query['showNsfw']) || latestVersion?.images[0]?.image.url == null
