@@ -211,7 +211,7 @@ export function AppHeader({ links }: Props) {
               onClick={() => closeBurger()}
             >
               <Group align="center" spacing="xs">
-                <IconHeart stroke={1.5} color={theme.colors.pink[6]} stroke={1.5} />
+                <IconHeart stroke={1.5} color={theme.colors.pink[6]} />
                 Liked models
               </Group>
             </Anchor>
