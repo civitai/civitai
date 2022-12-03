@@ -179,7 +179,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   );
 
   const nsfw =
-    session?.user?.blurNsfw !== false && router.query.showNsfw !== 'true' && model && model.nsfw;
+    session?.user?.blurNsfw !== false && router.query.showNsfw !== 'true' && model?.nsfw === true;
   const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
   const deleteMutation = trpc.model.delete.useMutation({
