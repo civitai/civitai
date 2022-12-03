@@ -18,6 +18,7 @@ import {
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import {
+  IconEye,
   IconFile,
   IconHeart,
   IconLogout,
@@ -33,6 +34,7 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 
 const HEADER_HEIGHT = 70;
@@ -195,8 +197,22 @@ export function AppHeader({ links }: Props) {
               onClick={() => closeBurger()}
             >
               <Group align="center" spacing="xs">
-                <IconFile stroke={1.5} />
+                <IconFile stroke={1.5} color={theme.colors.blue[6]} />
                 Your models
+              </Group>
+            </Anchor>
+          </Link>,
+          <Link key="your-favorites-menu-item" href={`/?favorites=true`} passHref>
+            <Anchor
+              className={cx(classes.link, {
+                [classes.linkActive]: router.asPath.includes(`username=${session.user.username}`),
+              })}
+              variant="text"
+              onClick={() => closeBurger()}
+            >
+              <Group align="center" spacing="xs">
+                <IconHeart stroke={1.5} color={theme.colors.pink[6]} stroke={1.5} />
+                Liked models
               </Group>
             </Anchor>
           </Link>,
@@ -235,6 +251,21 @@ export function AppHeader({ links }: Props) {
     </UnstyledButton>,
     ...(session?.user
       ? [
+          <BlurToggle key="nsfw-switcher">
+            {({ icon, toggle }) => (
+              <UnstyledButton className={classes.link} onClick={toggle}>
+                <Group align="center" spacing="xs">
+                  {icon}
+                  Toggle NSFW blur
+                </Group>
+                <Switch
+                  checked={!session?.user?.blurNsfw}
+                  sx={{ display: 'flex', alignItems: 'center' }}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </UnstyledButton>
+            )}
+          </BlurToggle>,
           <Link key="your-models-menu-item" href="/user/account" passHref>
             <Anchor
               className={cx(classes.link, {
@@ -249,14 +280,9 @@ export function AppHeader({ links }: Props) {
               </Group>
             </Anchor>
           </Link>,
-          <UnstyledButton
-            key="user-logout"
-            className={classes.link}
-            onClick={() => signOut()}
-            sx={(theme) => ({ color: theme.colors.red[9] })}
-          >
+          <UnstyledButton key="user-logout" className={classes.link} onClick={() => signOut()}>
             <Group>
-              <IconLogout stroke={1.5} />
+              <IconLogout stroke={1.5} color={theme.colors.red[9]} />
               Logout
             </Group>
           </UnstyledButton>,
@@ -321,6 +347,7 @@ export function AppHeader({ links }: Props) {
                 Sign In
               </Button>
             ) : null}
+            <BlurToggle />
             <Menu
               width={260}
               opened={userMenuOpened}
