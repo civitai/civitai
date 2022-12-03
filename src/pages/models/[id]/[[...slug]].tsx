@@ -178,8 +178,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     }
   );
 
-  const nsfw =
-    session?.user?.blurNsfw !== false && router.query.showNsfw !== 'true' && model?.nsfw === true;
+  const showNsfwRequested = router.query.showNsfw !== 'true';
+  const userNotBlurringNsfw = session?.user?.blurNsfw !== false;
+  const nsfw = userNotBlurringNsfw && showNsfwRequested && model?.nsfw === true;
   const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
   const deleteMutation = trpc.model.delete.useMutation({
@@ -309,8 +310,27 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       </Container>
     );
   if (!model) return <NotFound />;
+
+  const meta = (
+    <Meta
+      title={`${model.name} | Civitai`}
+      description={removeTags(model.description ?? '')}
+      image={
+        nsfw || latestVersion?.images[0]?.image.url == null
+          ? undefined
+          : getEdgeUrl(latestVersion.images[0].image.url, { width: 1200 })
+      }
+    />
+  );
+
   if (!!edit && model && isOwner) return <ModelForm model={model} />;
-  if (model.nsfw && !session) return <SensitiveShield redirectTo={router.asPath} />;
+  if (model.nsfw && !session)
+    return (
+      <>
+        {meta}
+        <SensitiveShield redirectTo={router.asPath} />;
+      </>
+    );
 
   const handleDeleteModel = () => {
     openConfirmModal({
@@ -435,16 +455,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   return (
     <>
-      <Meta
-        title={`${model.name} | Civitai`}
-        description={removeTags(model.description ?? '')}
-        image={
-          (model.nsfw && !router.query['showNsfw']) || latestVersion?.images[0]?.image.url == null
-            ? undefined
-            : getEdgeUrl(latestVersion.images[0].image.url, { width: 1200 })
-        }
-      />
-
+      {meta}
       <Container size="xl" pt={0} pb="xl" px={0}>
         <Stack spacing="xs" mb="xl">
           <Group align="center" sx={{ justifyContent: 'space-between' }} noWrap>
