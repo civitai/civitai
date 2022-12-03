@@ -1,4 +1,4 @@
-import { Container, Stack, Title, Text, Card } from '@mantine/core';
+import { Container, Stack, Title, Text } from '@mantine/core';
 import { GetServerSideProps } from 'next';
 import { getProviders } from 'next-auth/react';
 import React from 'react';
@@ -20,7 +20,7 @@ export default function Account({ providers, isDev = false }: Props) {
     <>
       <Meta title="Manage your Account - Civitai" />
 
-      <Container p={0} size="xs">
+      <Container p={0} pb="md" size="xs">
         <Stack>
           <Stack spacing={0}>
             <Title order={1}>Manage Account</Title>
