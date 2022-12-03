@@ -1,4 +1,4 @@
-// src/server/trpc/router/index.ts
+import { userLinkRouter } from './user-link.router';
 import { router } from '~/server/trpc';
 import { accountRouter } from './account.router';
 import { apiKeyRouter } from './apiKey.router';
@@ -16,6 +16,7 @@ export const appRouter = router({
   review: reviewRouter,
   tag: tagRouter,
   user: userRouter,
+  userLink: userLinkRouter,
 });
 
 // export type definition of API

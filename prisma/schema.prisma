@@ -79,7 +79,6 @@ enum LinkType {
 
 model UserLink {
   id     Int      @id @default(autoincrement())
-  index  Int
   userId Int
   user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   url    String

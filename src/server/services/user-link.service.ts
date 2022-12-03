@@ -1,5 +1,6 @@
+import { GetByIdInput } from './../schema/base.schema';
 import { isDefined } from '~/utils/type-guards';
-import { UpsertManyUserLinkParams } from './../schema/user-link.schema';
+import { UpsertManyUserLinkParams, UpsertUserLinkParams } from './../schema/user-link.schema';
 
 import { prisma } from '~/server/db/client';
 import { SessionUser } from 'next-auth';
@@ -60,4 +61,14 @@ export const upsertManyUserLinks = async ({
       });
     }
   });
+};
+
+export const upsertUserLink = async ({ data }: { data: UpsertUserLinkParams }) => {
+  if (!data.id) await prisma.userLink.create({ data });
+  else await prisma.userLink.update({ where: { id: data.id }, data });
+  // await prisma.userLink.upsert({ where: { id: data.id }, create: data, update: data });
+};
+
+export const deleteUserLink = async ({ id }: GetByIdInput) => {
+  await prisma.userLink.delete({ where: { id } });
 };
