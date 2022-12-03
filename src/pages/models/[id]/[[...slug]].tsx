@@ -437,7 +437,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         title={`Civitai - ${model.name}`}
         description={removeTags(model.description ?? '')}
         image={
-          model.nsfw || latestVersion?.images[0]?.image.url == null
+          (model.nsfw && !router.query['nsfw']) || latestVersion?.images[0]?.image.url == null
             ? undefined
             : getEdgeUrl(latestVersion.images[0].image.url, { width: 1200 })
         }

@@ -16,7 +16,7 @@ import {
 } from '@mantine/core';
 import { ModelStatus, ModelType } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
-import { IconCloudOff, IconDownload, IconHeart } from '@tabler/icons';
+import { IconCloudOff, IconDownload, IconHeart, IconStar } from '@tabler/icons';
 import {
   useContainerPosition,
   useMasonry,
@@ -241,17 +241,29 @@ const MasonryItem = ({
 
   const modelRating = (
     <IconBadge
-      size="xs"
       sx={{ userSelect: 'none' }}
-      icon={<Rating size="xs" value={rank.rating} readOnly />}
+      icon={
+        <Rating
+          size="xs"
+          value={rank.rating}
+          readOnly
+          emptySymbol={
+            theme.colorScheme === 'dark' ? (
+              <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />
+            ) : undefined
+          }
+        />
+      }
+      variant={theme.colorScheme === 'dark' && rank.ratingCount > 0 ? 'filled' : 'light'}
     >
-      <Text size="xs">{abbreviateNumber(rank.ratingCount)}</Text>
+      <Text size="xs" color={rank.ratingCount > 0 ? undefined : 'dimmed'}>
+        {abbreviateNumber(rank.ratingCount)}
+      </Text>
     </IconBadge>
   );
 
   const modelDownloads = (
     <IconBadge
-      size="xs"
       icon={<IconDownload size={14} />}
       variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
     >
@@ -261,7 +273,6 @@ const MasonryItem = ({
 
   const modelLikes = !!rank.favoriteCount && (
     <IconBadge
-      size="xs"
       icon={
         <IconHeart
           size={14}
