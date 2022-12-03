@@ -75,13 +75,13 @@ export const SensitiveContent = ({
 };
 
 type SensitiveContentToggleProps = BadgeProps;
-export const SensitiveContentToggle = ({ children, ...props }: SensitiveContentToggleProps) => {
+const SensitiveContentToggle = ({ ...props }: SensitiveContentToggleProps) => {
   const { show, toggleShow } = useSensitiveContentContext();
   const { data: session } = useSession();
   const [opened, { close, open }] = useDisclosure(false);
   const isAuthenticated = !!session?.user;
 
-  const badge = children ?? (
+  const badge = (
     <Badge
       component="div"
       color="red"
