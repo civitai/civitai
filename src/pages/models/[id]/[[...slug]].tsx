@@ -177,8 +177,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       keepPreviousData: true,
     }
   );
+
   const nsfw =
-    router.query.showNsfw !== 'true' && model && model.nsfw && session && !session.user?.blurNsfw;
+    session?.user?.blurNsfw !== false && router.query.showNsfw !== 'true' && model && model.nsfw;
   const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
   const deleteMutation = trpc.model.delete.useMutation({

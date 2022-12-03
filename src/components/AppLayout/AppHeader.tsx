@@ -251,21 +251,25 @@ export function AppHeader({ links }: Props) {
     </UnstyledButton>,
     ...(session?.user
       ? [
-          <BlurToggle key="nsfw-switcher">
-            {({ icon, toggle }) => (
-              <UnstyledButton className={classes.link} onClick={toggle}>
-                <Group align="center" spacing="xs">
-                  {icon}
-                  Toggle NSFW blur
-                </Group>
-                <Switch
-                  checked={!session?.user?.blurNsfw}
-                  sx={{ display: 'flex', alignItems: 'center' }}
-                  onClick={(e) => e.stopPropagation()}
-                />
-              </UnstyledButton>
-            )}
-          </BlurToggle>,
+          ...(session?.user?.showNsfw
+            ? [
+                <BlurToggle key="nsfw-switcher">
+                  {({ icon, toggle }) => (
+                    <UnstyledButton className={classes.link} onClick={toggle}>
+                      <Group align="center" spacing="xs">
+                        {icon}
+                        Toggle NSFW blur
+                      </Group>
+                      <Switch
+                        checked={!session?.user?.blurNsfw}
+                        sx={{ display: 'flex', alignItems: 'center' }}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </UnstyledButton>
+                  )}
+                </BlurToggle>,
+              ]
+            : []),
           <Link key="your-models-menu-item" href="/user/account" passHref>
             <Anchor
               className={cx(classes.link, {
@@ -347,7 +351,8 @@ export function AppHeader({ links }: Props) {
                 Sign In
               </Button>
             ) : null}
-            <BlurToggle />
+
+            {session?.user?.showNsfw && <BlurToggle />}
             <Menu
               width={260}
               opened={userMenuOpened}
