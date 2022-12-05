@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Divider, Group, Stack, Title } from '@mantine/core';
+import { Alert, Button, Card, Center, Divider, Group, Loader, Stack, Title } from '@mantine/core';
 import { LinkType } from '@prisma/client';
 import { useSession } from 'next-auth/react';
 import React from 'react';
@@ -17,7 +17,7 @@ export function CreatorCard() {
   }>();
 
   // const utils = trpc.useContext();
-  const { data } = trpc.userLink.getAll.useQuery(
+  const { data, isLoading } = trpc.userLink.getAll.useQuery(
     { userId: session?.user?.id },
     {
       select: (data) => {
@@ -29,60 +29,47 @@ export function CreatorCard() {
     }
   );
 
+  const renderLinks = (type: LinkType) => {
+    const links = type === LinkType.Social ? data?.social : data?.sponsorship;
+    return (
+      <Card withBorder>
+        <Card.Section withBorder p="sm">
+          <Group position="apart">
+            <Title order={5}>{type} Links</Title>
+            <Button compact onClick={() => setSelectedLink({ type })}>
+              Add Link
+            </Button>
+          </Group>
+        </Card.Section>
+        <Card.Section p="sm">
+          {isLoading ? (
+            <Center p="md">
+              <Loader />
+            </Center>
+          ) : !links?.length ? (
+            <Alert>You have not added any {type.toLowerCase()} links</Alert>
+          ) : (
+            <div>
+              {links?.map((link, index) => (
+                <React.Fragment key={link.id}>
+                  <SocialLink link={link} setSelected={setSelectedLink} />
+                  {index < links.length - 1 && <Divider p={0} my="xs" />}
+                </React.Fragment>
+              ))}
+            </div>
+          )}
+        </Card.Section>
+      </Card>
+    );
+  };
+
   return (
     <>
       <Card withBorder>
         <Stack>
           <Title order={2}>Creator Profile</Title>
-          <Card withBorder>
-            <Card.Section withBorder p="sm">
-              <Group position="apart">
-                <Title order={5}>Social Links</Title>
-                <Button compact onClick={() => setSelectedLink({ type: LinkType.Social })}>
-                  Add Link
-                </Button>
-              </Group>
-            </Card.Section>
-            <Card.Section p="sm">
-              {!data?.social?.length ? (
-                <Alert>You have not added any social links</Alert>
-              ) : (
-                <div>
-                  {data?.social?.map((link, index) => (
-                    <React.Fragment key={link.id}>
-                      <SocialLink link={link} setSelected={setSelectedLink} />
-                      {index < data.social.length - 1 && <Divider p={0} my="xs" />}
-                    </React.Fragment>
-                  ))}
-                </div>
-              )}
-            </Card.Section>
-          </Card>
-
-          <Card withBorder>
-            <Card.Section withBorder p="sm">
-              <Group position="apart">
-                <Title order={5}>Sponsorship Links</Title>
-                <Button compact onClick={() => setSelectedLink({ type: LinkType.Sponsorship })}>
-                  Add Link
-                </Button>
-              </Group>
-            </Card.Section>
-            <Card.Section p="sm">
-              {!data?.sponsorship?.length ? (
-                <Alert>You have not added any sponsorship links</Alert>
-              ) : (
-                <div>
-                  {data?.sponsorship?.map((link, index) => (
-                    <React.Fragment key={link.id}>
-                      <SocialLink link={link} setSelected={setSelectedLink} />
-                      {index < data.sponsorship.length - 1 && <Divider p={0} my="xs" />}
-                    </React.Fragment>
-                  ))}
-                </div>
-              )}
-            </Card.Section>
-          </Card>
+          {renderLinks(LinkType.Social)}
+          {renderLinks(LinkType.Sponsorship)}
         </Stack>
       </Card>
       <SocialLinkModal selected={selectedLink} onClose={() => setSelectedLink(undefined)} />

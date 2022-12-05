@@ -31,7 +31,7 @@ export default function Account({ providers, isDev = false }: Props) {
           </Stack>
           <ProfileCard />
           <SettingsCard />
-          {/* <CreatorCard /> */}
+          <CreatorCard />
           <AccountsCard providers={providers} />
           {isDev && <ApiKeysCard />}
         </Stack>
