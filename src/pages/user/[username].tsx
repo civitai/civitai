@@ -14,7 +14,7 @@ import { trpc } from '~/utils/trpc';
 export const getServerSideProps: GetServerSideProps = async (ctx) => {
   const ssg = await getServerProxySSGHelpers(ctx);
   const username = ctx.query.username as string;
-  if (username) await ssg.user.getStats.prefetch({ username });
+  if (username) await ssg.user.getCreator.prefetch({ username });
 
   return {
     props: {
@@ -27,14 +27,17 @@ export default function UserPage() {
   const router = useRouter();
   const username = router.query.username as string;
 
-  const { data, isLoading } = trpc.user.getStats.useQuery({ username }, { enabled: !!username });
+  const { data, isLoading } = trpc.user.getCreator.useQuery({ username });
 
   return (
     <>
       <Head>
         <meta name="description" content="Community driven AI model sharing tool" />
       </Head>
-      <Container size="xl" p={0}>
+      <Container fluid>
+        <h1>test</h1>
+      </Container>
+      <Container size="xl">
         {router.query.username && <Title>Models by {router.query.username}</Title>}
         <Stack spacing="xs">
           <Group position="apart">

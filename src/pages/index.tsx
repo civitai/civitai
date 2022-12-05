@@ -37,7 +37,7 @@ function Home() {
         title={`Civitai ${!session ? `| Every model in one place` : ''}`}
         description={`Civitai is a platform for Stable Diffusion AI Art models. We have a collection of over 1000 models from over 50 creators. We also have a collection of over 145 reviews from the community along with 100+ images with prompts to get you started.`}
       />
-      <Container size="xl" p={0}>
+      <Container size="xl">
         {router.query.username && typeof router.query.username === 'string' && (
           <Title>Models by {router.query.username}</Title>
         )}

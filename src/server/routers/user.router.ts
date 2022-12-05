@@ -1,10 +1,10 @@
+import { getUserCreatorHandler } from './../controllers/user.controller';
 import {
   deleteUserHandler,
   getAllUsersHandler,
   getCreatorsHandler,
   getUserByIdHandler,
   getUserFavoriteModelsHandler,
-  getUserStatsHandler,
   toggleFavoriteModelHandler,
   updateUserHandler,
 } from '~/server/controllers/user.controller';
@@ -18,7 +18,7 @@ import {
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const userRouter = router({
-  getStats: publicProcedure.input(getUserByUsernameSchema).query(getUserStatsHandler),
+  getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),
   getAll: publicProcedure.input(getAllUsersInput).query(getAllUsersHandler),
   getById: publicProcedure.input(getByIdSchema).query(getUserByIdHandler),
   getFavoriteModels: protectedProcedure.query(getUserFavoriteModelsHandler),

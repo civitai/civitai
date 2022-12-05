@@ -456,7 +456,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   return (
     <>
       {meta}
-      <Container size="xl" pt={0} pb="xl" px={0}>
+      <Container size="xl" pb="xl">
         <Stack spacing="xs" mb="xl">
           <Group align="center" sx={{ justifyContent: 'space-between' }} noWrap>
             <Group align="center" spacing={mobile ? 4 : 'xs'}>

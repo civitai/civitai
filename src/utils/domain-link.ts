@@ -23,8 +23,6 @@ export function getDomainLinkType(url: string) {
   return key;
 }
 
-console.log({ domainLinksArray: sortArray });
-
 export function sortDomainLinks<T extends string | { url: string }>(links?: T[]) {
   return links?.sort((a, b) => {
     const typeA = getDomainLinkType(typeof a === 'string' ? a : a.url);
