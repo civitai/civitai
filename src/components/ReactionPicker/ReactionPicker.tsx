@@ -6,6 +6,7 @@ import { Session } from 'next-auth';
 import { useSession } from 'next-auth/react';
 import { createContext, useContext, useMemo } from 'react';
 import { ReactionDetails } from '~/server/selectors/review.selector';
+import { ReviewGetReactions } from '~/types/router';
 import { toStringList } from '~/utils/array-helpers';
 
 type ReactionToEmoji = { [k in ReviewReactions]: string };
@@ -38,7 +39,7 @@ export function ReactionPicker({ reactions, disabled = false, onSelect }: Reacti
     <ReactionPickerContext.Provider
       value={{ onEmojiClick: onSelect, user: currentUser, reactions, disabled }}
     >
-      <Group spacing={4} mt="sm" align="center">
+      <Group spacing={4} align="center">
         <Popover shadow="md" position="top-start" withArrow withinPortal>
           <Popover.Target>
             <Button variant="subtle" size="xs" color="gray" radius="xl" compact>
@@ -67,7 +68,7 @@ export function ReactionPicker({ reactions, disabled = false, onSelect }: Reacti
 }
 
 type ReactionPickerProps = {
-  reactions: ReactionDetails[];
+  reactions: NonNullable<ReviewGetReactions>;
   onSelect: (reaction: ReviewReactions) => void;
   disabled?: boolean;
 };

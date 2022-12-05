@@ -27,6 +27,7 @@ export const getAllReviewsSelect = Prisma.validator<Prisma.ReviewSelect>()({
       },
     },
   },
+  _count: { select: { comments: true } },
 });
 
 export type ReviewDetails = Prisma.ReviewGetPayload<typeof getAllReviews>;

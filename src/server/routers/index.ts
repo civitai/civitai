@@ -3,6 +3,7 @@ import { router } from '~/server/trpc';
 import { accountRouter } from './account.router';
 import { apiKeyRouter } from './apiKey.router';
 import { authRouter } from './auth.router';
+import { commentRouter } from './comment.router';
 import { modelRouter } from './model.router';
 import { reviewRouter } from './review.router';
 import { tagRouter } from './tag.router';
@@ -12,6 +13,7 @@ export const appRouter = router({
   account: accountRouter,
   apiKey: apiKeyRouter,
   auth: authRouter,
+  comment: commentRouter,
   model: modelRouter,
   review: reviewRouter,
   tag: tagRouter,

@@ -7,7 +7,8 @@ import {
   ReviewUpsertInput,
   ToggleReacionInput,
 } from '~/server/schema/review.schema';
-import { getAllReviewsSelect } from '~/server/selectors/review.selector';
+import { getAllReviewsSelect, getReactionsSelect } from '~/server/selectors/review.selector';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
 import {
   getReviewReactions,
   getReviews,
@@ -16,6 +17,7 @@ import {
   deleteUserReviewById,
   getUserReactionByReviewId,
   updateReviewById,
+  getReviewById,
 } from '~/server/services/review.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
@@ -147,5 +149,30 @@ export const toggleReactionHandler = async ({
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
+  }
+};
+
+export const getReviewHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const review = await getReviewById({
+      ...input,
+      select: {
+        comments: {
+          select: {
+            id: true,
+            content: true,
+            createdAt: true,
+            reactions: { select: getReactionsSelect },
+            user: { select: simpleUserSelect },
+          },
+        },
+      },
+    });
+
+    if (!review) throw throwNotFoundError(`No review with id ${input.id}`);
+
+    return review;
+  } catch (error) {
+    throw throwDbError(error);
   }
 };

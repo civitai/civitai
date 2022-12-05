@@ -1,22 +1,22 @@
 import { TRPCError } from '@trpc/server';
 
-import { prisma } from '~/server/db/client';
 import {
-  deleteUserReviewHandler,
-  getReviewHandler,
-  getReviewReactionsHandler,
-  getReviewsInfiniteHandler,
-  reportReviewHandler,
+  deleteUserCommentHandler,
+  getCommentHandler,
+  getCommentReactionsHandler,
+  getCommentsInfiniteHandler,
+  reportCommentHandler,
   toggleReactionHandler,
-  upsertReviewHandler,
-} from '~/server/controllers/review.controller';
+  upsertCommentHandler,
+} from '~/server/controllers/comment.controller';
+import { prisma } from '~/server/db/client';
 import { getByIdSchema, reportInputSchema } from '~/server/schema/base.schema';
 import {
-  getAllReviewSchema,
-  getReviewReactionsSchema,
-  reviewUpsertSchema,
-  toggleReactionInput,
-} from '~/server/schema/review.schema';
+  commentUpsertInput,
+  getAllCommentsSchema,
+  getCommentReactionsSchema,
+} from '~/server/schema/comment.schema';
+import { toggleReactionInput } from '~/server/schema/review.schema';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 
@@ -28,7 +28,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
   let ownerId: number = userId;
   if (id) {
     const isModerator = ctx?.user?.isModerator;
-    ownerId = (await prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
+    ownerId = (await prisma.comment.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator && ownerId) {
       if (ownerId !== userId) throw throwAuthorizationError();
     }
@@ -44,18 +44,18 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
   });
 });
 
-export const reviewRouter = router({
-  getAll: publicProcedure.input(getAllReviewSchema).query(getReviewsInfiniteHandler),
-  getReactions: publicProcedure.input(getReviewReactionsSchema).query(getReviewReactionsHandler),
-  getById: publicProcedure.input(getByIdSchema).query(getReviewHandler),
+export const commentRouter = router({
+  getAll: publicProcedure.input(getAllCommentsSchema).query(getCommentsInfiniteHandler),
+  getById: publicProcedure.input(getByIdSchema).query(getCommentHandler),
+  getReactions: publicProcedure.input(getCommentReactionsSchema).query(getCommentReactionsHandler),
   upsert: protectedProcedure
-    .input(reviewUpsertSchema)
+    .input(commentUpsertInput)
     .use(isOwnerOrModerator)
-    .mutation(upsertReviewHandler),
+    .mutation(upsertCommentHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
-    .mutation(deleteUserReviewHandler),
-  report: protectedProcedure.input(reportInputSchema).mutation(reportReviewHandler),
+    .mutation(deleteUserCommentHandler),
+  report: protectedProcedure.input(reportInputSchema).mutation(reportCommentHandler),
   toggleReaction: protectedProcedure.input(toggleReactionInput).mutation(toggleReactionHandler),
 });

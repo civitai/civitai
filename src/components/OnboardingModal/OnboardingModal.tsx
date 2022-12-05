@@ -1,4 +1,4 @@
-import { Button, Stack, Text, Alert, Title } from '@mantine/core';
+import { Button, Stack, Text, Alert } from '@mantine/core';
 import { ContextModalProps } from '@mantine/modals';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
@@ -71,7 +71,6 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
 
   return (
     <Stack>
-      <Title order={3}>Your Account</Title>
       {alerts.length > 0 ? <Alert variant="light">{`Please ${toStringList(alerts)}`}</Alert> : null}
 
       <Form form={form} onSubmit={handleSubmit}>

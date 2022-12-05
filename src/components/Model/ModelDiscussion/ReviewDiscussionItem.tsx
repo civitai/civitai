@@ -3,73 +3,46 @@ import {
   ActionIcon,
   AspectRatio,
   Badge,
+  Button,
   Card,
-  Grid,
   Group,
-  LoadingOverlay,
   Menu,
-  Paper,
   Rating,
   Stack,
   Text,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
-import { hideNotification, showNotification } from '@mantine/notifications';
+import { showNotification, hideNotification } from '@mantine/notifications';
 import { ReportReason, ReviewReactions } from '@prisma/client';
-import { IconDotsVertical, IconEdit, IconFlag, IconTrash } from '@tabler/icons';
-import dayjs from 'dayjs';
+import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconMessage } from '@tabler/icons';
 import { useSession } from 'next-auth/react';
+import { useState } from 'react';
+
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { ReviewFilter } from '~/server/common/enums';
-import { ImageModel } from '~/server/selectors/image.selector';
-import { ReviewDetails, ReactionDetails } from '~/server/selectors/review.selector';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { useModalsContext } from '~/providers/CustomModalsProvider';
+import { ReactionDetails } from '~/server/selectors/review.selector';
+import { ReviewGetAllItem } from '~/types/router';
+import { daysFromNow } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
-export function ModelReviews({ items, loading = false }: Props) {
-  return (
-    <Grid>
-      <Grid.Col span={12} sx={{ position: 'relative' }}>
-        <LoadingOverlay visible={loading} />
-        {items.length > 0 ? (
-          <MasonryGrid items={items} render={ReviewItem} />
-        ) : (
-          <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Stack>
-              <Text size="xl">There are no reviews for this model yet.</Text>
-              <Text color="dimmed">
-                Be the first to let the people know about this model by leaving your review.
-              </Text>
-            </Stack>
-          </Paper>
-        )}
-      </Grid.Col>
-    </Grid>
-  );
-}
-
-type ModReviewDetails = Omit<ReviewDetails, 'imagesOnReviews'> & {
-  images: ImageModel[];
-};
-
-type Props = {
-  items: ModReviewDetails[];
-  onFilterChange: (values: ReviewFilter[]) => void;
-  loading?: boolean;
-};
-
-function ReviewItem({ data: review }: ItemProps) {
+export function ReviewDiscussionItem({ review }: Props) {
+  const mobile = useIsMobile();
+  const { openModal } = useModalsContext();
   const { data: session } = useSession();
   const currentUser = session?.user;
   const isOwner = currentUser?.id === review.user.id;
   const isMod = currentUser?.isModerator ?? false;
+
+  const [showNsfw, setShowNsfw] = useState(false);
 
   const { data: reactions = [] } = trpc.review.getReactions.useQuery({ reviewId: review.id });
 
@@ -91,7 +64,7 @@ function ReviewItem({ data: review }: ItemProps) {
       title: 'Delete Review',
       children: (
         <Text size="sm">
-          Are you sure you want to delete this model? This action is destructive and cannot be
+          Are you sure you want to delete this review? This action is destructive and cannot be
           reverted.
         </Text>
       ),
@@ -208,7 +181,7 @@ function ReviewItem({ data: review }: ItemProps) {
         <Group align="flex-start" sx={{ justifyContent: 'space-between' }} noWrap>
           <UserAvatar
             user={review.user}
-            subText={`${dayjs(review.createdAt).fromNow()} - ${review.modelVersion?.name}`}
+            subText={`${daysFromNow(review.createdAt)} - ${review.modelVersion?.name}`}
             withUsername
           />
           <Menu position="bottom-end">
@@ -230,7 +203,7 @@ function ReviewItem({ data: review }: ItemProps) {
                   <Menu.Item
                     icon={<IconEdit size={14} stroke={1.5} />}
                     onClick={() =>
-                      openContextModal({
+                      openModal({
                         modal: 'reviewEdit',
                         title: `Editing review`,
                         closeOnClickOutside: false,
@@ -281,6 +254,7 @@ function ReviewItem({ data: review }: ItemProps) {
               placeholder={
                 <AspectRatio ratio={1}>{firstImage && <MediaHash {...firstImage} />}</AspectRatio>
               }
+              onToggleClick={(value) => setShowNsfw(value)}
             >
               {carousel}
             </SensitiveContent>
@@ -308,15 +282,45 @@ function ReviewItem({ data: review }: ItemProps) {
         <Text>{review.text}</Text>
       </ContentClamp>
 
-      <ReactionPicker
-        reactions={reactions}
-        onSelect={handleReactionClick}
-        disabled={toggleReactionMutation.isLoading}
-      />
+      <Group mt="sm" align="flex-start" position="apart" noWrap>
+        <ReactionPicker
+          reactions={reactions}
+          onSelect={handleReactionClick}
+          disabled={toggleReactionMutation.isLoading}
+        />
+        <Button
+          size="xs"
+          radius="xl"
+          variant="subtle"
+          onClick={() =>
+            openModal({
+              modal: 'reviewThread',
+              innerProps: { review, showNsfw },
+              size: mobile ? '100%' : '50%',
+              title: (
+                <Group spacing="xs" align="center">
+                  <UserAvatar
+                    user={review.user}
+                    subText={daysFromNow(review.createdAt)}
+                    size="lg"
+                    spacing="xs"
+                    withUsername
+                  />
+                  <Rating value={review.rating} fractions={2} readOnly />
+                </Group>
+              ),
+            })
+          }
+          compact
+        >
+          <Group spacing={2} noWrap>
+            <IconMessage size={14} />
+            <Text>{abbreviateNumber(review._count.comments)}</Text>
+          </Group>
+        </Button>
+      </Group>
     </Card>
   );
 }
 
-type ItemProps = {
-  data: Props['items'][number];
-};
+type Props = { review: ReviewGetAllItem };

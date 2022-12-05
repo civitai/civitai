@@ -105,7 +105,7 @@ export const createOrUpdateReview = async ({
       )
     );
 
-    return await prisma.review.upsert({
+    return prisma.review.upsert({
       where: { id: id ?? -1 },
       create: {
         ...reviewInput,
@@ -147,7 +147,7 @@ export const createOrUpdateReview = async ({
 };
 
 export const reportReviewById = ({ id, reason, userId }: ReportInput & { userId: number }) => {
-  const data: Prisma.ModelUpdateInput =
+  const data: Prisma.ReviewUpdateInput =
     reason === ReportReason.NSFW ? { nsfw: true } : { tosViolation: true };
 
   return prisma.$transaction([
