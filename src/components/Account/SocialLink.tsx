@@ -1,6 +1,7 @@
 import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
 import { IconPencil, IconTrash } from '@tabler/icons';
 import { GetUserLinksResult } from '~/server/controllers/user-link.controller';
+import { getSocialLinkType } from '~/utils/social-link';
 import { trpc } from '~/utils/trpc';
 
 export function SocialLink({
@@ -17,6 +18,9 @@ export function SocialLink({
       utils.userLink.invalidate();
     },
   });
+
+  const test = getSocialLinkType(link.url);
+  console.log({ test });
 
   return (
     <Group position="apart" noWrap>
