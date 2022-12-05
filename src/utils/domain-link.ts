@@ -1,4 +1,4 @@
-export enum SocialLink {
+export enum DomainLink {
   Reddit = 'www.reddit.com',
   Facebook = 'www.facebook.com',
   Google = 'www.google.com',
@@ -6,7 +6,7 @@ export enum SocialLink {
   Instagram = '',
 }
 
-export function getSocialLinkType(url: string) {
+export function getDomainLinkType(url: string) {
   const { hostname } = new URL(url);
-  return Object.values(SocialLink).includes(hostname as any) ? (hostname as SocialLink) : undefined;
+  return Object.values(DomainLink).includes(hostname as any) ? (hostname as DomainLink) : undefined;
 }
