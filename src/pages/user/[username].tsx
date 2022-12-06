@@ -162,7 +162,6 @@ export default function UserPage() {
         </Box>
       )}
       <Container size="xl">
-        {router.query.username && <Title>Models by {router.query.username}</Title>}
         <Stack spacing="xs">
           <Group position="apart">
             <InfiniteModelsSort />
