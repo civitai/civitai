@@ -7,7 +7,7 @@
 <br />
 <div align="center">
   <a href="https://civitai.com/">
-    <img src="media/logo.png" alt="Logo" width="120" height="auto">
+    <img src="media/logo.png" alt="Civitai Logo" width="120" height="auto">
   </a>
 </div>
 

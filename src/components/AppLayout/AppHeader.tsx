@@ -34,6 +34,7 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { Logo } from '~/components/Logo/Logo';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 
@@ -297,27 +298,11 @@ export function AppHeader({ links }: Props) {
   return (
     <Header ref={ref} height={HEADER_HEIGHT} fixed>
       <Grid className={classes.header} m={0} gutter="xs" align="center">
-        <Grid.Col span="auto">
+        <Grid.Col span="auto" pl={0}>
           <Group spacing="xs">
             <Link href="/" passHref>
               <Anchor variant="text" onClick={() => closeBurger()}>
-                <Title order={1}>
-                  C
-                  <Text
-                    component="span"
-                    sx={(theme) => ({
-                      display: 'none',
-                      [theme.fn.largerThan('xs')]: {
-                        display: 'inline',
-                      },
-                    })}
-                  >
-                    ivit
-                  </Text>
-                  <Text component="span" color="blue">
-                    ai
-                  </Text>
-                </Title>
+                <Logo />
               </Anchor>
             </Link>
             <LoginRedirect reason="upload-model" returnUrl="/models/create">
