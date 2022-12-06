@@ -8,16 +8,16 @@ export function UserAvatar({ user, withUsername, subText, avatarProps }: Props) 
     <Group align="center" spacing={4}>
       <Avatar
         src={user?.image ? getEdgeUrl(user.image, { width: 96 }) : undefined}
-        alt={user?.name ?? 'User avatar'}
+        alt={user?.username ?? 'User avatar'}
         radius="xl"
         size={20}
         {...avatarProps}
       >
-        {user?.name ? getInitials(user?.name) : null}
+        {user?.username ? getInitials(user?.username) : null}
       </Avatar>
       {withUsername || subText ? (
         <Stack spacing={0}>
-          {withUsername && <Text size="sm">{user?.username ?? user?.name}</Text>}
+          {withUsername && <Text size="sm">{user?.username}</Text>}
           {subText && (
             <Text size="xs" color="dimmed">
               {subText}
