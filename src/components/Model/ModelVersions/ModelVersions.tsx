@@ -58,10 +58,7 @@ type Props = {
 
 function TabContent({ version, nsfw }: TabContentProps) {
   const mobile = useIsMobile();
-  const { openImageLightbox } = useImageLightbox({
-    initialSlide: 0,
-    images: version.images.map(({ image }) => image),
-  });
+  const { openImageLightbox } = useImageLightbox();
 
   const versionDetails: DescriptionTableProps['items'] = [
     {

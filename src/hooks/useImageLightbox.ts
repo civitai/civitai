@@ -1,19 +1,21 @@
 import { ImageModel } from '../server/selectors/image.selector';
 import { useMantineTheme } from '@mantine/core';
-import { openContextModal } from '@mantine/modals';
 import { useCallback } from 'react';
+import { useModalsContext } from '~/providers/CustomModalsProvider';
 
 type OpenLightboxProps = {
   initialSlide?: number;
   images?: ImageModel[];
 };
 
-export const useImageLightbox = (options?: OpenLightboxProps) => {
+export const useImageLightbox = () => {
   const theme = useMantineTheme();
 
+  const { openModal } = useModalsContext();
+
   const openImageLightbox = useCallback(
-    (innerProps?: OpenLightboxProps) => {
-      openContextModal({
+    (innerProps: OpenLightboxProps) => {
+      openModal<OpenLightboxProps>({
         modal: 'imageLightbox',
         fullScreen: true,
         withCloseButton: false,
@@ -22,13 +24,10 @@ export const useImageLightbox = (options?: OpenLightboxProps) => {
             background: theme.colors.dark[7],
           },
         },
-        innerProps: {
-          ...options,
-          ...innerProps,
-        },
+        innerProps,
       });
     },
-    [options, theme.colors.dark]
+    [openModal, theme]
   );
 
   return { openImageLightbox };

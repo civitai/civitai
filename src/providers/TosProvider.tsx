@@ -1,6 +1,6 @@
 import { signIn, useSession } from 'next-auth/react';
 import { useEffect } from 'react';
-import { closeAllModals, closeModal, openContextModal } from '@mantine/modals';
+import { closeModal, openContextModal } from '@mantine/modals';
 import { useRouter } from 'next/router';
 
 export function TosProvider({ children }: { children: React.ReactNode }) {
@@ -28,17 +28,6 @@ export function TosProvider({ children }: { children: React.ReactNode }) {
       signIn();
     }
   }, [session]);
-
-  useEffect(() => {
-    router.beforePopState(({ as }) => {
-      if (as !== router.asPath) {
-        closeAllModals();
-      }
-      return true;
-    });
-
-    return () => router.beforePopState(() => true);
-  }, [router]);
 
   return <>{children}</>;
 }
