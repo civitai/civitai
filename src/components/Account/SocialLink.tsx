@@ -1,5 +1,6 @@
 import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
 import { IconPencil, IconTrash } from '@tabler/icons';
+import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { GetUserLinksResult } from '~/server/controllers/user-link.controller';
 import { trpc } from '~/utils/trpc';
 
@@ -19,8 +20,9 @@ export function SocialLink({
   });
 
   return (
-    <Group position="apart" noWrap>
-      <Text lineClamp={1} size="sm">
+    <Group noWrap spacing="sm">
+      <DomainIcon url={link.url} />
+      <Text lineClamp={1} size="sm" style={{ flex: 1 }}>
         {link.url}
       </Text>
       <Group noWrap spacing="xs">

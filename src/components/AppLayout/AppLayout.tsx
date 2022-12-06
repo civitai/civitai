@@ -11,6 +11,12 @@ export function AppLayout({ children, showNavbar }: Props) {
         header={<AppHeader />}
         footer={<AppFooter />}
         navbar={showNavbar ? <SideNavigation /> : undefined}
+        styles={{
+          main: {
+            paddingLeft: 0,
+            paddingRight: 0,
+          },
+        }}
       >
         {children}
       </AppShell>

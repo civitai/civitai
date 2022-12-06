@@ -440,7 +440,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     {
       label: 'Uploaded By',
       value: model.user && (
-        <Link href={`/?username=${model.user.username}`} passHref>
+        <Link href={`/user/${model.user.username}`} passHref>
           <Text size="sm" variant="link" component="a" style={{ cursor: 'pointer' }}>
             <Group align="center" spacing={4}>
               <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
@@ -456,7 +456,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   return (
     <>
       {meta}
-      <Container size="xl" pt={0} pb="xl" px={0}>
+      <Container size="xl" pb="xl">
         <Stack spacing="xs" mb="xl">
           <Group align="center" sx={{ justifyContent: 'space-between' }} noWrap>
             <Group align="center" spacing={mobile ? 4 : 'xs'}>

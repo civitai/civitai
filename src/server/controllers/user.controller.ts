@@ -1,9 +1,9 @@
 import { Context } from '~/server/createContext';
 import {
   getCreators,
+  getUserCreator,
   getUserFavoriteModelByModelId,
   getUserFavoriteModels,
-  getUserModelStats,
 } from '~/server/services/user.service';
 import { TRPCError } from '@trpc/server';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
@@ -22,12 +22,6 @@ import {
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
-export const getUserStatsHandler = async ({ input }: { input: GetUserByUsernameSchema }) => {
-  const rankStats = await getUserModelStats({ input });
-
-  return { rank: rankStats };
-};
-
 export const getAllUsersHandler = async ({ input }: { input: GetAllUsersInput }) => {
   try {
     return await getUsers({
@@ -37,6 +31,18 @@ export const getAllUsersHandler = async ({ input }: { input: GetAllUsersInput })
         id: true,
       },
     });
+  } catch (error) {
+    throwDbError(error);
+  }
+};
+
+export const getUserCreatorHandler = async ({
+  input: { username },
+}: {
+  input: GetUserByUsernameSchema;
+}) => {
+  try {
+    return await getUserCreator({ username });
   } catch (error) {
     throwDbError(error);
   }

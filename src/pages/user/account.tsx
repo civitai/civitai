@@ -20,7 +20,7 @@ export default function Account({ providers, isDev = false }: Props) {
     <>
       <Meta title="Manage your Account - Civitai" />
 
-      <Container p={0} pb="md" size="xs">
+      <Container pb="md" size="xs">
         <Stack>
           <Stack spacing={0}>
             <Title order={1}>Manage Account</Title>

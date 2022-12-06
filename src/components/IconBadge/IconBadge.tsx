@@ -1,4 +1,4 @@
-import { Badge, BadgeProps, Button } from '@mantine/core';
+import { Badge, BadgeProps } from '@mantine/core';
 
 export function IconBadge({ icon, children, ...props }: IconBadgeProps) {
   return (
