@@ -23,10 +23,11 @@ export function getDomainLinkType(url: string) {
   return key;
 }
 
-export function sortDomainLinks<T extends string | { url: string }>(links?: T[]) {
-  return links?.sort((a, b) => {
-    const typeA = getDomainLinkType(typeof a === 'string' ? a : a.url);
-    const typeB = getDomainLinkType(typeof b === 'string' ? b : b.url);
-    return sortArray.indexOf(typeA) - sortArray.indexOf(typeB);
-  });
+export function sortDomainLinks<T extends { url: string }>(links?: T[]) {
+  return links
+    ?.map((link) => {
+      const domain = getDomainLinkType(link.url);
+      return { ...link, domain };
+    })
+    .sort((a, b) => sortArray.indexOf(a.domain) - sortArray.indexOf(b.domain));
 }

@@ -142,8 +142,8 @@ export function MasonryList({ columnWidth, data, filters }: MasonryListProps) {
   });
 
   useEffect(() => {
-    if (!data?.length) return;
-    if (!modelId) scrollToIndex(0);
+    if (!data?.length || !modelId) return;
+    // if (!modelId) scrollToIndex(0);
     const index = data.findIndex((x) => x.id === modelId);
     if (index === -1 || data.length < index) return;
 

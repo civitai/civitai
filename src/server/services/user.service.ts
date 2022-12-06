@@ -25,6 +25,11 @@ export const getUserCreator = async ({ username }: { username: string }) => {
           favoriteCountAllTime: true,
         },
       },
+      _count: {
+        select: {
+          models: true,
+        },
+      },
     },
   });
 };

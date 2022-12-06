@@ -68,7 +68,7 @@ model User {
   keys            ApiKey[]
   favoriteModels  FavoriteModel[]
   links           UserLink[]
-  userRank        UserRank[]
+  userRank        UserRank?
 }
 
 enum LinkType {

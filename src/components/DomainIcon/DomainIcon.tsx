@@ -13,11 +13,15 @@ import {
   TablerIcon,
   TablerIconProps,
 } from '@tabler/icons';
-import { IconBrandHuggingFace } from '~/components/CustomIcons/IconHuggingFace';
+import { IconBrandHuggingFace } from '~/components/SVG/IconHuggingFace';
 import { getDomainLinkType, DomainLink } from '~/utils/domain-link';
 
-export function DomainIcon({ url, ...iconProps }: { url: string } & TablerIconProps) {
-  const type = getDomainLinkType(url);
+export function DomainIcon({
+  url,
+  domain,
+  ...iconProps
+}: { url?: string; domain?: DomainLink } & TablerIconProps) {
+  const type = url ? getDomainLinkType(url) : domain;
   const Icon = type ? tablerIconMap[type] : IconWorld;
   return <Icon {...iconProps} />;
 }

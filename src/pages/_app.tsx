@@ -70,6 +70,9 @@ function MyApp(props: CustomAppProps) {
                 components: {
                   Popover: { styles: { dropdown: { maxWidth: '100vw' } } },
                   Rating: { styles: { symbolBody: { cursor: 'pointer' } } },
+                  Switch: {
+                    styles: { track: { cursor: 'pointer' }, label: { cursor: 'pointer' } },
+                  },
                 },
               }}
               withGlobalStyles
