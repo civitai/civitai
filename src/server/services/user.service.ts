@@ -17,7 +17,7 @@ export const getUserCreator = async ({ username }: { username: string }) => {
           type: true,
         },
       },
-      userRank: {
+      rank: {
         select: {
           ratingAllTime: true,
           ratingCountAllTime: true,
@@ -59,7 +59,7 @@ export const getUserById = <TSelect extends Prisma.UserSelect = Prisma.UserSelec
   id,
   select,
 }: GetByIdInput & { select: TSelect }) => {
-  return prisma.model.findUnique({
+  return prisma.user.findUnique({
     where: { id },
     select,
   });

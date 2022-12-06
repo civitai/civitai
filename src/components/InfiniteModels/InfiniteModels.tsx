@@ -131,7 +131,6 @@ export function MasonryList({ columnWidth, data, filters }: MasonryListProps) {
   const [windowWidth, height] = useWindowSize();
   const { offset, width } = useContainerPosition(containerRef, [windowWidth, height]);
   // with 'stringified' in the dependency array, masonic knows to expect layout changes
-  console.log('stringified', stringified);
   const positioner = usePositioner({ width, columnGutter: 16, columnWidth }, [stringified]);
   const { scrollTop, isScrolling } = useScroller(offset);
   const resizeObserver = useResizeObserver(positioner);
@@ -178,12 +177,12 @@ const mantineColors: DefaultMantineColor[] = [
   'yellow',
 ];
 
-const maxNameLengthByType: Record<ModelType, number> = {
-  [ModelType.Checkpoint]: 30,
-  [ModelType.Hypernetwork]: 30,
-  [ModelType.AestheticGradient]: 25,
-  [ModelType.TextualInversion]: 24,
-};
+// const maxNameLengthByType: Record<ModelType, number> = {
+//   [ModelType.Checkpoint]: 30,
+//   [ModelType.Hypernetwork]: 30,
+//   [ModelType.AestheticGradient]: 25,
+//   [ModelType.TextualInversion]: 24,
+// };
 
 const MasonryItem = ({
   data,

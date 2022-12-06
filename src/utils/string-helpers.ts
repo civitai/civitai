@@ -3,6 +3,9 @@ import truncate from 'lodash/truncate';
 import slugify from 'slugify';
 
 export function splitUppercase(value: string) {
+  // if all uppercase, return as is
+  if (value === value.toUpperCase()) return value;
+
   return value
     .trim()
     .split(/(?=[A-Z])/)

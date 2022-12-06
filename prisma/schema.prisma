@@ -53,6 +53,7 @@ model User {
   blurNsfw      Boolean?  @default(true)
   isModerator   Boolean?  @default(false)
   tos           Boolean?  @default(false)
+  createdAt     DateTime  @default(now())
 
   accounts        Account[]
   sessions        Session[]
@@ -68,7 +69,7 @@ model User {
   keys            ApiKey[]
   favoriteModels  FavoriteModel[]
   links           UserLink[]
-  userRank        UserRank?
+  rank            UserRank?
 }
 
 enum LinkType {
@@ -98,6 +99,7 @@ enum ModelType {
   TextualInversion
   Hypernetwork
   AestheticGradient
+  VAE
 }
 
 enum ImportStatus {

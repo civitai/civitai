@@ -51,7 +51,7 @@ export default function UserPage() {
   const { data: user } = trpc.user.getCreator.useQuery({ username });
 
   const uploads = user?._count.models;
-  const rank = user?.userRank;
+  const rank = user?.rank;
 
   return (
     <>
