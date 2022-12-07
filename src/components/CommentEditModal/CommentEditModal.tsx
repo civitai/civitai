@@ -39,8 +39,8 @@ export default function CommentEditModal({ context, id, innerProps }: ContextMod
 
   return (
     <Form form={form} onSubmit={(data) => saveCommentMutation.mutate(data)}>
-      <Stack spacing="xs">
-        <InputTextArea name="content" placeholder="Type your thoughts..." autosize />
+      <Stack spacing="md">
+        <InputTextArea name="content" minRows={3} placeholder="Type your thoughts..." autosize />
         <Group position="apart">
           <Button variant="default" onClick={handleClose}>
             Cancel

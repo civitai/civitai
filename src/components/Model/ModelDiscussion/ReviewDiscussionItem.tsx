@@ -14,7 +14,7 @@ import {
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { showNotification, hideNotification } from '@mantine/notifications';
 import { ReportReason, ReviewReactions } from '@prisma/client';
-import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconMessage } from '@tabler/icons';
+import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconMessageCircle2 } from '@tabler/icons';
 import { useSession } from 'next-auth/react';
 import { useState } from 'react';
 
@@ -321,7 +321,7 @@ export function ReviewDiscussionItem({ review }: Props) {
           compact
         >
           <Group spacing={2} noWrap>
-            <IconMessage size={14} />
+            <IconMessageCircle2 size={14} />
             <Text>{abbreviateNumber(review._count.comments)}</Text>
           </Group>
         </Button>
