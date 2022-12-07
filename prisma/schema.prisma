@@ -482,6 +482,13 @@ model ModelRank {
   favoriteCountAllTimeRank Int
 }
 
+model Log {
+  id        String   @id @default(cuid())
+  event     String
+  details   Json?
+  createdAt DateTime @default(now())
+}
+
 /// @view
 model ModelVersionRank {
   modelVersion             ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
