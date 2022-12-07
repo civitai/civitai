@@ -2,20 +2,23 @@ import { ImageModel } from '../server/selectors/image.selector';
 import { useMantineTheme } from '@mantine/core';
 import { useCallback } from 'react';
 import { useModalsContext } from '~/providers/CustomModalsProvider';
+import { openContextModal } from '@mantine/modals';
 
 type OpenLightboxProps = {
   initialSlide?: number;
   images?: ImageModel[];
 };
 
-export const useImageLightbox = () => {
+export const useImageLightbox = (args?: { withRouter?: boolean }) => {
   const theme = useMantineTheme();
+  const { withRouter = true } = args ?? {};
 
   const { openModal } = useModalsContext();
+  const fn = withRouter ? openModal : openContextModal;
 
   const openImageLightbox = useCallback(
     (innerProps: OpenLightboxProps) => {
-      openModal<OpenLightboxProps>({
+      fn<OpenLightboxProps>({
         modal: 'imageLightbox',
         fullScreen: true,
         withCloseButton: false,
@@ -27,7 +30,7 @@ export const useImageLightbox = () => {
         innerProps,
       });
     },
-    [openModal, theme]
+    [fn, theme]
   );
 
   return { openImageLightbox };

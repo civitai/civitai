@@ -25,6 +25,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useModalsContext } from '~/providers/CustomModalsProvider';
 import { ReactionDetails } from '~/server/selectors/review.selector';
@@ -41,6 +42,7 @@ export function ReviewDiscussionItem({ review }: Props) {
   const currentUser = session?.user;
   const isOwner = currentUser?.id === review.user.id;
   const isMod = currentUser?.isModerator ?? false;
+  const { openImageLightbox } = useImageLightbox();
 
   const [showNsfw, setShowNsfw] = useState(false);
 
@@ -161,13 +163,18 @@ export function ReviewDiscussionItem({ review }: Props) {
 
   const carousel = (
     <Carousel withControls={hasMultipleImages} draggable={hasMultipleImages} loop>
-      {review.images.map((image) => (
+      {review.images.map((image, index) => (
         <Carousel.Slide key={image.id}>
           <ImagePreview
             image={image}
             edgeImageProps={{ width: 400 }}
             aspectRatio={1}
-            lightboxImages={review.images.map((image) => image)}
+            onClick={() =>
+              openImageLightbox({
+                initialSlide: index,
+                images: review.images.map((image) => image),
+              })
+            }
             withMeta
           />
         </Carousel.Slide>
