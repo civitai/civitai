@@ -1,4 +1,15 @@
-import { Group, Stack, Container, Title } from '@mantine/core';
+import {
+  Group,
+  Stack,
+  Container,
+  Title,
+  Alert,
+  ThemeIcon,
+  Text,
+  createStyles,
+} from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
+import { IconInfoCircle } from '@tabler/icons';
 import { capitalize } from 'lodash';
 import { GetServerSideProps } from 'next';
 import { useSession } from 'next-auth/react';
@@ -30,6 +41,15 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 function Home() {
   const router = useRouter();
   const { data: session } = useSession();
+  const { classes } = useStyles();
+  const [welcomeAlert, setWelcomeAlert] = useLocalStorage({
+    key: 'welcomeAlert',
+    defaultValue: true,
+  });
+
+  const closeWelcomeAlert = () => {
+    setWelcomeAlert(false);
+  };
 
   return (
     <>
@@ -46,6 +66,30 @@ function Home() {
           <Title>{capitalize(router.query.tag)} Models</Title>
         )}
         <Stack spacing="xs">
+          {welcomeAlert && (
+            <Alert
+              color="blue"
+              withCloseButton
+              py={5}
+              pl={3}
+              className={classes.welcome}
+              onClose={closeWelcomeAlert}
+            >
+              <Group spacing="xs" noWrap>
+                <Text size={36} p={0}>
+                  👋
+                </Text>
+                <Stack spacing={0}>
+                  <Text size="md" weight={500} className={classes.welcomeTitle} mb={4}>
+                    Welcome to Civitai!
+                  </Text>
+                  <Text size="sm" className={classes.welcomeText}>
+                    Browse, share, and review custom Stable Diffusion AI art models.
+                  </Text>
+                </Stack>
+              </Group>
+            </Alert>
+          )}
           <Group position="apart">
             <InfiniteModelsSort />
             <Group spacing="xs">
@@ -62,3 +106,32 @@ function Home() {
 
 // Home.getLayout = (page: React.ReactElement) => <>{page}</>;
 export default Home;
+
+const useStyles = createStyles((theme) => ({
+  welcome: {
+    maxWidth: 600,
+    top: 75,
+    marginBottom: -40,
+    position: 'sticky',
+    alignSelf: 'center',
+    zIndex: 11,
+    boxShadow: theme.shadows.md,
+    border: `1px solid ${
+      theme.colorScheme === 'dark' ? theme.colors.blue[5] : theme.colors.blue[2]
+    }`,
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.blue[8] : theme.colors.blue[1],
+    [theme.fn.smallerThan('sm')]: {
+      marginBottom: 5,
+      marginLeft: -5,
+      marginRight: -5,
+    },
+  },
+  welcomeTitle: {
+    color: theme.colorScheme === 'dark' ? theme.colors.blue[0] : theme.colors.blue[7],
+    lineHeight: 1.1,
+  },
+  welcomeText: {
+    color: theme.colorScheme === 'dark' ? theme.colors.blue[2] : undefined,
+    lineHeight: 1.1,
+  },
+}));
