@@ -12,6 +12,7 @@ export const getAllModelsSchema = z.object({
   cursor: z.preprocess((val) => Number(val), z.number()).optional(),
   query: z.string().optional(),
   tag: z.string().optional(),
+  tagname: z.string().optional(),
   user: z.string().optional(),
   username: z.string().optional(),
   types: z

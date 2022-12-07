@@ -51,6 +51,7 @@ const filterSchema = z.object({
   query: z.string().optional(),
   user: z.string().optional(),
   username: z.string().optional(),
+  tagname: z.string().optional(),
   tag: z.string().optional(),
   favorites: z.preprocess((val) => val === true || val === 'true', z.boolean().optional()),
 });
