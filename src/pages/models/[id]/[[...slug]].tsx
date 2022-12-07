@@ -392,7 +392,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       value: (
         <Group spacing={4}>
           {model.tagsOnModels.map(({ tag }) => (
-            <Link key={tag.id} href={`/?tag=${tag.name}`} passHref>
+            <Link key={tag.id} href={`/tag/${tag.name.toLowerCase()}`} passHref>
               <Badge
                 key={tag.id}
                 color={tag.color ?? 'blue'}

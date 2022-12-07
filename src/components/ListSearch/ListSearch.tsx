@@ -67,7 +67,7 @@ export function ListSearch({ onSearch }: Props) {
     const parsedQuery = parseTagQuery(query);
     const tag = tags?.items.find((x) => x.name.toLowerCase() === parsedQuery);
     if (!tag) return;
-    router.push(`/tag/${tag.name}`);
+    router.push(`/tag/${tag.name.toLowerCase()}`);
   };
 
   const handleSetUsers = (query: string) => {
