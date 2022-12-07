@@ -47,6 +47,7 @@ import { ModelById } from '~/types/router';
 import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { showErrorNotification } from '~/utils/notifications';
 
 const schema = modelSchema.extend({ tagsOnModels: z.string().array() });
 
@@ -165,7 +166,16 @@ export function ModelForm({ model }: Props) {
         </ActionIcon>
         <Title order={3}>{model ? 'Editing model' : 'Upload model'}</Title>
       </Group>
-      <Form form={form} onSubmit={handleSubmit}>
+      <Form
+        form={form}
+        onSubmit={handleSubmit}
+        onError={() =>
+          showErrorNotification({
+            error: new Error('Please check the fields marked with red to fix the issues.'),
+            title: 'Form Validation Failed',
+          })
+        }
+      >
         <Grid gutter="xl">
           <Grid.Col lg={8}>
             <Stack>
@@ -377,8 +387,8 @@ export function ModelForm({ model }: Props) {
                 >
                   Discard changes
                 </Button>
-                <Button type="submit" loading={mutating} disabled={uploading}>
-                  Save
+                <Button type="submit" loading={mutating || uploading}>
+                  {uploading ? 'Uploading...' : mutating ? 'Saving...' : 'Save'}
                 </Button>
               </Group>
             </Stack>

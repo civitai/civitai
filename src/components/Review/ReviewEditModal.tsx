@@ -1,11 +1,18 @@
-import { Button, Group, Stack, Rating, Select, Input, Textarea, Checkbox } from '@mantine/core';
-import { useForm, zodResolver } from '@mantine/form';
+import { Button, Group, Stack } from '@mantine/core';
 import { ContextModalProps } from '@mantine/modals';
-import { showNotification } from '@mantine/notifications';
-import { IconX } from '@tabler/icons';
+import { useState } from 'react';
 
-import { ImageUpload } from '~/components/ImageUpload/ImageUpload';
+import {
+  Form,
+  InputCheckbox,
+  InputImageUpload,
+  InputRating,
+  InputSelect,
+  InputTextArea,
+  useForm,
+} from '~/libs/form';
 import { ReviewUpsertInput, reviewUpsertSchema } from '~/server/schema/review.schema';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 type ReviewModelProps = {
@@ -19,29 +26,32 @@ export default function ReviewEditModal({
 }: ContextModalProps<ReviewModelProps>) {
   const queryUtils = trpc.useContext();
   const { review } = innerProps;
-  const { mutate, isLoading } = trpc.review.upsert.useMutation();
-
-  const form = useForm<ReviewUpsertInput>({
-    validate: zodResolver(reviewUpsertSchema),
-    initialValues: review,
+  const form = useForm({
+    schema: reviewUpsertSchema,
+    defaultValues: review,
+    mode: 'onChange',
+    shouldFocusError: true,
+    shouldUnregister: false,
   });
+
+  const [uploading, setUploading] = useState(false);
 
   const { data: versions = [] } = trpc.model.getVersions.useQuery({
     id: review.modelId,
   });
 
+  const { mutate, isLoading } = trpc.review.upsert.useMutation();
   const handleSubmit = (data: ReviewUpsertInput) => {
     mutate(data, {
       onSuccess: async (_, { modelId }) => {
         context.closeModal(id);
         await queryUtils.review.getAll.invalidate({ modelId });
       },
-      onError: () => {
-        showNotification({
+      onError: (error) => {
+        showErrorNotification({
+          error: new Error(error.message),
           title: 'Could not save the review',
-          message: `There was an error when trying to save your review. Please try again`,
-          color: 'red',
-          icon: <IconX size={18} />,
+          reason: `There was an error when trying to save your review. Please try again`,
         });
       },
     });
@@ -49,39 +59,35 @@ export default function ReviewEditModal({
 
   return (
     <>
-      <form onSubmit={form.onSubmit(handleSubmit, console.error)}>
+      <Form form={form} onSubmit={handleSubmit}>
         <Stack>
-          <Select
-            {...form.getInputProps('modelVersionId')}
+          <InputSelect
+            name="modelVersionId"
             data={versions.map(({ id, name }) => ({ label: name, value: id }))}
             label="Version of the model"
             placeholder="Select a version"
+            withAsterisk
             required
           />
-          <Input.Wrapper label="Rate the model" required {...form.getInputProps('rating')}>
-            <Rating {...form.getInputProps('rating')} size="xl" />
-          </Input.Wrapper>
-          <Textarea
-            {...form.getInputProps('text')}
-            label="Comments or feedback"
-            minRows={2}
-            autosize
+          <InputRating name="rating" label="Rate the model" size="xl" withAsterisk required />
+          <InputTextArea name="text" label="Comments or feedback" minRows={2} autosize />
+          <InputImageUpload
+            name="images"
+            label="Generated Images"
+            max={5}
+            onChange={(values) => setUploading(values.some((value) => value.file))}
           />
-          <ImageUpload label="Generated Images" max={5} {...form.getInputProps('images')} />
-          <Checkbox
-            {...form.getInputProps('nsfw', { type: 'checkbox' })}
-            label="This review or images associated with it are NSFW"
-          />
+          <InputCheckbox name="nsfw" label="This review or images associated with it are NSFW" />
           <Group position="apart">
             <Button variant="default" onClick={() => context.closeModal(id)} disabled={isLoading}>
               Cancel
             </Button>
-            <Button type="submit" loading={isLoading}>
-              Save
+            <Button type="submit" loading={isLoading || uploading}>
+              {uploading ? 'Uploading...' : isLoading ? 'Saving...' : 'Save'}
             </Button>
           </Group>
         </Stack>
-      </form>
+      </Form>
     </>
   );
 }

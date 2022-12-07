@@ -13,7 +13,6 @@ import {
   JsonInput,
   PasswordInput,
   Radio,
-  Rating,
   SegmentedControl,
   Slider,
   Switch,
@@ -26,6 +25,7 @@ import { DatePicker } from '@mantine/dates';
 import { FileInputUpload } from '~/components/FileInputUpload/FileInputUpload';
 import { ProfileImageUpload } from '~/components/ProfileImageUpload/ProfileImageUpload';
 import { withWatcher } from '~/libs/form/hoc/withWatcher';
+import { RatingWrapper } from '~/libs/form/components/RatingWrapper';
 
 export * from './Form';
 
@@ -45,7 +45,7 @@ export const InputColorInput = withWatcher(withController(ColorInput));
 export const InputChips = withWatcher(withController(Chip.Group));
 export const InputAutocomplete = withWatcher(withController(Autocomplete));
 export const InputDatePicker = withWatcher(withController(DatePicker));
-export const InputRating = withWatcher(withController(Rating));
+export const InputRating = withWatcher(withController(RatingWrapper));
 export const InputSlider = withWatcher(withController(Slider));
 export const InputFileInput = withWatcher(withController(FileInput));
 export const InputRTE = withWatcher(withController(RichTextEditor));

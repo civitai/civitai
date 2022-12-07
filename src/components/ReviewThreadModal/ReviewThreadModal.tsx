@@ -31,7 +31,9 @@ export default function ReviewThreadModal({ innerProps }: ContextModalProps<Prop
 
   const carousel = (
     <Carousel
-      breakpoints={[{ minWidth: 'sm', slideSize: '50%', slideGap: 'xl' }]}
+      breakpoints={[
+        { minWidth: 'sm', slideSize: hasMultipleImages ? '50%' : '100%', slideGap: 'xl' },
+      ]}
       align="center"
       slidesToScroll={mobile ? 1 : 2}
       withControls={hasMultipleImages}

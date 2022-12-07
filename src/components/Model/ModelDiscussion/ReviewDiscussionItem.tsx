@@ -36,7 +36,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ReviewDiscussionItem({ review }: Props) {
-  const mobile = useIsMobile();
+  const mobile = useIsMobile({ breakpoint: 'md' });
   const { openModal } = useModalsContext();
   const { data: session } = useSession();
   const currentUser = session?.user;
