@@ -1,4 +1,4 @@
-import { Popover, Text, Stack, Box, NavLink } from '@mantine/core';
+import { Popover, Text, Stack, Box, NavLink, Group, Badge } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons';
 import { useState, useRef, useEffect } from 'react';
@@ -7,6 +7,7 @@ import { ClearableTextInput } from './../ClearableTextInput/ClearableTextInput';
 import { useForm } from '@mantine/form';
 import { useRouter } from 'next/router';
 import { useModelFilters } from '~/hooks/useModelFilters';
+import { slugit } from '~/utils/string-helpers';
 
 const limit = 3;
 
@@ -25,6 +26,11 @@ export function ListSearch({ onSearch }: Props) {
       query: '',
     },
   });
+
+  useEffect(() => {
+    setValue('');
+    setFocused(false);
+  }, [router]);
 
   useEffect(() => {
     form.setValues({
@@ -51,23 +57,30 @@ export function ListSearch({ onSearch }: Props) {
     { enabled: !!value.length && canQueryTags, keepPreviousData: true }
   );
 
+  const canQueryModels = !value.startsWith('#') && !value.startsWith('@');
+  const { data: models } = trpc.model.getAllPagedSimple.useQuery(
+    { query: parseTagQuery(value), limit },
+    { enabled: !!value.length && canQueryModels, keepPreviousData: true }
+  );
+
   const handleSetTags = (query: string) => {
     const parsedQuery = parseTagQuery(query);
     const tag = tags?.items.find((x) => x.name.toLowerCase() === parsedQuery);
     if (!tag) return;
-    setFilters((state) => ({ ...state, tag: tag.name, query: undefined, user: undefined }));
+    router.push(`/tag/${tag.name}`);
   };
 
   const handleSetUsers = (query: string) => {
     const parsedQuery = parseUserQuery(query);
     const user = users?.find((x) => x.username?.toLowerCase() === parsedQuery);
     if (!user) return;
-    setFilters((state) => ({
-      ...state,
-      tag: undefined,
-      query: undefined,
-      username: user.username || undefined,
-    }));
+    router.push(`/user/${user.username}`);
+  };
+
+  const handleSetModel = (query: string) => {
+    const model = models?.items.find((x) => x.name.toLowerCase() === query.toLowerCase());
+    if (!model) return;
+    router.push(`/models/${model.id}/${slugit(model.name)}`);
   };
 
   const handleSetQuery = (query: string) => {
@@ -88,9 +101,13 @@ export function ListSearch({ onSearch }: Props) {
     return !!parsedQuery.length ? x.username?.toLowerCase().includes(parsedQuery) : false;
   });
 
+  const hasQueriedModels = models?.items.some((x) =>
+    x.name.toLowerCase().includes(value.toLowerCase())
+  );
+
   return (
     <Popover
-      opened={focused && !!value.length && (hasQueriedTags || hasQueriedUsers)}
+      opened={focused && !!value.length && (hasQueriedTags || hasQueriedUsers || hasQueriedModels)}
       width="target"
       transition="pop"
     >
@@ -107,7 +124,7 @@ export function ListSearch({ onSearch }: Props) {
             placeholder="Search models, #tags, @users"
             {...form.getInputProps('query')}
             onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
+            // onBlur={() => setFocused(false)}
             onChange={(e) => {
               const query = e.target.value;
               form.setValues({ query });
@@ -121,6 +138,29 @@ export function ListSearch({ onSearch }: Props) {
       </Popover.Target>
       <Popover.Dropdown px={0}>
         <Stack spacing="lg">
+          {models?.items.some((x) => x.name.toLowerCase().includes(value.toLowerCase())) && (
+            <Stack spacing={5}>
+              <Text size="sm" weight={700} color="dimmed" px="xs">
+                Models
+              </Text>
+              <Box>
+                {models.items.map((model) => (
+                  <NavLink
+                    key={model.id}
+                    label={
+                      <Group noWrap spacing="xs">
+                        <Text lineClamp={1}>{model.name}</Text>{' '}
+                        {model.nsfw && <Badge color="red">NSFW</Badge>}
+                      </Group>
+                    }
+                    onClick={() => {
+                      handleSetModel(model.name);
+                    }}
+                  />
+                ))}
+              </Box>
+            </Stack>
+          )}
           {users?.some((x) => x.username?.toLowerCase().includes(parseUserQuery(value))) && (
             <Stack spacing={5}>
               <Text size="sm" weight={700} color="dimmed" px="xs">
@@ -134,7 +174,6 @@ export function ListSearch({ onSearch }: Props) {
                         key={id}
                         label={`@ ${username}`}
                         onClick={() => {
-                          form.setValues({ query: `@${username}` });
                           handleSetUsers(username);
                         }}
                       />
@@ -143,6 +182,7 @@ export function ListSearch({ onSearch }: Props) {
               </Box>
             </Stack>
           )}
+
           {tags?.items.some((x) => x.name.toLowerCase().includes(parseTagQuery(value))) && (
             <Stack spacing={5}>
               <Text size="sm" weight={700} color="dimmed" px="xs">
@@ -154,7 +194,6 @@ export function ListSearch({ onSearch }: Props) {
                     key={tag.id}
                     label={`# ${tag.name}`}
                     onClick={() => {
-                      form.setValues({ query: `#${tag.name}` });
                       handleSetTags(tag.name);
                     }}
                   />

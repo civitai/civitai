@@ -109,6 +109,27 @@ export const getModelsInfiniteHandler = async ({
   };
 };
 
+export const getModelsPagedSimpleHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetAllModelsOutput;
+  ctx: Context;
+}) => {
+  const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
+  const { take, skip } = getPagination(limit, page);
+  const results = await getModels({
+    input: { ...input, take, skip },
+    user: ctx.user,
+    select: {
+      id: true,
+      name: true,
+      nsfw: true,
+    },
+  });
+  return getPagingData(results, take, page);
+};
+
 export const getModelVersionsHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     const modelVersions = await getModelVersionsMicro(input);
