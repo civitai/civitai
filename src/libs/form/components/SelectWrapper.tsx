@@ -27,18 +27,19 @@ export function SelectWrapper<T extends string | number>({
   const initialType =
     !data.length || typeof data[0] !== 'object' ? typeof data[0] : typeof data[0].value;
 
-  // const parsedData = data.map((x): string | SelectItem => {
-  //   if (typeof x === 'string') return x;
-  //   return {
-  //     ...x,
-  //     value: String(x.value),
-  //   } as SelectItem;
-  // });
+  const parsedData = data.map((x): string | SelectItem => {
+    if (typeof x === 'string') return x;
+    return {
+      ...x,
+      value: String(x.value),
+    } as SelectItem;
+  });
 
   const parsedValue = useMemo(
     () => (value !== undefined && value !== null ? String(value) : undefined),
     [value]
   );
+
   const parsedDefaultValue = useMemo(
     () => (defaultValue ? String(defaultValue) : undefined),
     [defaultValue]
@@ -51,7 +52,7 @@ export function SelectWrapper<T extends string | number>({
 
   return (
     <Select
-      data={data as (string | SelectItem)[]}
+      data={parsedData as (string | SelectItem)[]}
       value={parsedValue}
       onChange={handleChange}
       defaultValue={parsedDefaultValue}

@@ -39,13 +39,13 @@ export function MultiSelectWrapper<T extends string | number>({
   const initialType =
     !data.length || (typeof data[0] !== 'object' ? typeof data[0] : typeof data[0].value);
 
-  // const parsedData = data.map((x): string | SelectItem => {
-  //   if (typeof x === 'string') return x;
-  //   return {
-  //     ...x,
-  //     value: String(x.value),
-  //   } as SelectItem;
-  // });
+  const parsedData = data.map((x): string | SelectItem => {
+    if (typeof x === 'string') return x;
+    return {
+      ...x,
+      value: String(x.value),
+    } as SelectItem;
+  });
 
   const parsedValue = useMemo(() => (value ? value?.map(String) : undefined), [value]);
   const parsedDefaultValue = useMemo(
@@ -61,7 +61,7 @@ export function MultiSelectWrapper<T extends string | number>({
   return (
     <MultiSelectContext.Provider value={{ limit: props.limit }}>
       <MultiSelect
-        data={data as (string | SelectItem)[]}
+        data={parsedData as (string | SelectItem)[]}
         value={parsedValue}
         onChange={handleChange}
         dropdownComponent={

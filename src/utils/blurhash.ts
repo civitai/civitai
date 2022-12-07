@@ -17,18 +17,38 @@ export const loadImage = async (src: string) =>
 export const getClampedSize = (
   width: number,
   height: number,
-  max: number
+  max: number,
+  type: 'width' | 'height' | 'all' = 'all'
 ): { width: number; height: number } => {
-  if (width >= height && width > max) {
-    return { width: max, height: Math.round((height / width) * max) };
+  if (type === 'all') {
+    if (width >= height) type = 'width';
+    else if (height >= width) type = 'height';
   }
 
-  if (height > width && height > max) {
+  if (type === 'width' && width > max)
+    return { width: max, height: Math.round((height / width) * max) };
+
+  if (type === 'height' && height > max)
     return { width: Math.round((width / height) * max), height: max };
-  }
 
   return { width, height };
 };
+
+// export const getClampedSize = (
+//   width: number,
+//   height: number,
+//   max: number
+// ): { width: number; height: number } => {
+//   if (width >= height && width > max) {
+//     return { width: max, height: Math.round((height / width) * max) };
+//   }
+
+//   if (height > width && height > max) {
+//     return { width: Math.round((width / height) * max), height: max };
+//   }
+
+//   return { width, height };
+// };
 
 export function blurHashImage(img: HTMLImageElement): HashResult {
   const clampedSize = getClampedSize(img.width, img.height, 64);

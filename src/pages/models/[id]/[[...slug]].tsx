@@ -671,7 +671,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                             images: latestVersion.images.map((x) => x.image),
                           })
                         }
-                        style={{ width: '100%' }}
+                        // style={{ width: '100%' }}
                         withMeta
                       />
                     </Center>

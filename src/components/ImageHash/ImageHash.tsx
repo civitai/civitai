@@ -6,7 +6,7 @@ export type MediaHashProps = {
   hash?: string | null;
   width?: number | null;
   height?: number | null;
-  style?: CSSProperties | null;
+  style?: CSSProperties;
 };
 
 export function MediaHash({ hash, height, width, style }: MediaHashProps) {
@@ -27,7 +27,7 @@ export function MediaHash({ hash, height, width, style }: MediaHashProps) {
         left: 0,
         objectFit: 'cover',
         objectPosition: 'center',
-        ...(style ?? {}),
+        ...style,
       }}
     />
   );

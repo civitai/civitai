@@ -1,4 +1,4 @@
-import { ActionIcon, AspectRatio, Paper, PaperProps } from '@mantine/core';
+import { ActionIcon, AspectRatio, Center, createStyles, Paper, PaperProps } from '@mantine/core';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageModel } from '~/server/selectors/image.selector';
 // import { useImageLightbox } from '~/hooks/useImageLightbox';
@@ -6,6 +6,7 @@ import { EdgeImage, EdgeImageProps } from '~/components/EdgeImage/EdgeImage';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { IconInfoCircle } from '@tabler/icons';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { getClampedSize } from '~/utils/blurhash';
 
 type ImagePreviewProps = {
   nsfw?: boolean;
@@ -22,36 +23,39 @@ export function ImagePreview({
   edgeImageProps = {},
   nsfw,
   aspectRatio,
-  // lightboxImages = [],
-  style,
   withMeta,
   onClick,
+  className,
   ...props
 }: ImagePreviewProps) {
-  // const { openImageLightbox } = useImageLightbox();
+  const { classes, cx } = useStyles();
 
-  if (!edgeImageProps.width && width) edgeImageProps.width = width;
-  // const includeLightbox = !!lightboxImages.length;
-  // const handleClick = () => {
-  //   const index = lightboxImages.findIndex((image) => image.url === url);
-  //   openImageLightbox({ initialSlide: index, images: lightboxImages });
-  // };
+  if (!edgeImageProps.width && !edgeImageProps.height) {
+    if (!edgeImageProps.height && width) edgeImageProps.width = width;
+    else if (!edgeImageProps.width && height) edgeImageProps.height = height;
+  }
 
-  return (
-    <Paper radius={0} style={{ overflow: 'hidden', position: 'relative', ...style }} {...props}>
-      <AspectRatio ratio={aspectRatio ?? (width ?? 16) / (height ?? 9)}>
-        {nsfw ? (
-          <MediaHash hash={hash} width={width} height={height} />
-        ) : (
-          <EdgeImage
-            src={url}
-            alt={name ?? undefined}
-            {...edgeImageProps}
-            onClick={onClick}
-            style={onClick ? { cursor: 'pointer' } : undefined}
-          />
-        )}
-      </AspectRatio>
+  if (!width || !height) return null;
+  const { width: cw, height: ch } = getClampedSize(
+    width,
+    height,
+    edgeImageProps.height ?? edgeImageProps.width ?? 500,
+    edgeImageProps.height ? 'height' : edgeImageProps.width ? 'width' : 'all'
+  );
+
+  const Preview = nsfw ? (
+    <Center style={{ width: cw, height: ch, maxWidth: '100%' }}>
+      <MediaHash hash={hash} width={width} height={height} />
+    </Center>
+  ) : (
+    <div>
+      <EdgeImage
+        src={url}
+        alt={name ?? undefined}
+        {...edgeImageProps}
+        onClick={onClick}
+        style={onClick ? { cursor: 'pointer' } : undefined}
+      />
       {!nsfw && withMeta && meta && (
         <ImageMetaPopover meta={meta as ImageMetaProps}>
           <ActionIcon
@@ -63,6 +67,19 @@ export function ImagePreview({
           </ActionIcon>
         </ImageMetaPopover>
       )}
+    </div>
+  );
+
+  return (
+    <Paper radius={0} className={cx(classes.root, className)} {...props}>
+      {aspectRatio ? <AspectRatio ratio={aspectRatio}>{Preview}</AspectRatio> : Preview}
     </Paper>
   );
 }
+
+const useStyles = createStyles((theme) => ({
+  root: {
+    position: 'relative',
+    overflow: 'hidden',
+  },
+}));
