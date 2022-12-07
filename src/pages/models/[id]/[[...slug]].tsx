@@ -82,6 +82,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { scrollToTop } from '~/utils/scroll-utils';
+import { useImageLightbox } from '~/hooks/useImageLightbox';
 
 //TODO - Break model query into multiple queries
 /*
@@ -144,6 +145,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const mobile = useIsMobile();
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();
+  const { openImageLightbox } = useImageLightbox();
 
   const { id, slug } = props;
   const { edit } = router.query;
@@ -661,7 +663,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
                 loop
               >
-                {latestVersion?.images.map(({ image }) => (
+                {latestVersion?.images.map(({ image }, index) => (
                   <Carousel.Slide key={image.id}>
                     <Center style={{ height: '100%' }}>
                       <ImagePreview
@@ -669,7 +671,12 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                         edgeImageProps={{ width: 400 }}
                         nsfw={nsfw}
                         radius="md"
-                        lightboxImages={latestVersion.images.map((x) => x.image)}
+                        onClick={() =>
+                          openImageLightbox({
+                            initialSlide: index,
+                            images: latestVersion.images.map((x) => x.image),
+                          })
+                        }
                         style={{ width: '100%' }}
                         withMeta
                       />

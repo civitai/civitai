@@ -157,7 +157,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
               nsfw={nsfw}
               radius="md"
               aspectRatio={1}
-              lightboxImages={versionImages}
+              onClick={() => openImageLightbox({ initialSlide: index, images: versionImages })}
               withMeta
               sx={{
                 height: '100%',

@@ -1,7 +1,7 @@
 import { ActionIcon, AspectRatio, Paper, PaperProps } from '@mantine/core';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageModel } from '~/server/selectors/image.selector';
-import { useImageLightbox } from '~/hooks/useImageLightbox';
+// import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { EdgeImage, EdgeImageProps } from '~/components/EdgeImage/EdgeImage';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { IconInfoCircle } from '@tabler/icons';
@@ -14,6 +14,7 @@ type ImagePreviewProps = {
   image: ImageModel;
   edgeImageProps?: Omit<EdgeImageProps, 'src'>;
   withMeta?: boolean;
+  onClick?: React.MouseEventHandler<HTMLImageElement>;
 } & Omit<PaperProps, 'component'>;
 
 export function ImagePreview({
@@ -21,19 +22,20 @@ export function ImagePreview({
   edgeImageProps = {},
   nsfw,
   aspectRatio,
-  lightboxImages = [],
+  // lightboxImages = [],
   style,
   withMeta,
+  onClick,
   ...props
 }: ImagePreviewProps) {
-  const { openImageLightbox } = useImageLightbox();
+  // const { openImageLightbox } = useImageLightbox();
 
   if (!edgeImageProps.width && width) edgeImageProps.width = width;
-  const includeLightbox = !!lightboxImages.length;
-  const handleClick = () => {
-    const index = lightboxImages.findIndex((image) => image.url === url);
-    openImageLightbox({ initialSlide: index, images: lightboxImages });
-  };
+  // const includeLightbox = !!lightboxImages.length;
+  // const handleClick = () => {
+  //   const index = lightboxImages.findIndex((image) => image.url === url);
+  //   openImageLightbox({ initialSlide: index, images: lightboxImages });
+  // };
 
   return (
     <Paper radius={0} style={{ overflow: 'hidden', position: 'relative', ...style }} {...props}>
@@ -45,8 +47,8 @@ export function ImagePreview({
             src={url}
             alt={name ?? undefined}
             {...edgeImageProps}
-            onClick={includeLightbox ? handleClick : undefined}
-            style={includeLightbox ? { cursor: 'pointer' } : undefined}
+            onClick={onClick}
+            style={onClick ? { cursor: 'pointer' } : undefined}
           />
         )}
       </AspectRatio>

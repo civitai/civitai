@@ -9,8 +9,9 @@ type OpenLightboxProps = {
   images?: ImageModel[];
 };
 
-export const useImageLightbox = ({ withRouter = true }: { withRouter?: boolean }) => {
+export const useImageLightbox = (args?: { withRouter?: boolean }) => {
   const theme = useMantineTheme();
+  const { withRouter = true } = args ?? {};
 
   const { openModal } = useModalsContext();
   const fn = withRouter ? openModal : openContextModal;

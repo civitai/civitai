@@ -27,6 +27,7 @@ import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { ReviewFilter } from '~/server/common/enums';
 import { ImageModel } from '~/server/selectors/image.selector';
 import { ReviewDetails, ReactionDetails } from '~/server/selectors/review.selector';
@@ -70,6 +71,7 @@ function ReviewItem({ data: review }: ItemProps) {
   const currentUser = session?.user;
   const isOwner = currentUser?.id === review.user.id;
   const isMod = currentUser?.isModerator ?? false;
+  const { openImageLightbox } = useImageLightbox();
 
   const { data: reactions = [] } = trpc.review.getReactions.useQuery({ reviewId: review.id });
 
@@ -188,13 +190,18 @@ function ReviewItem({ data: review }: ItemProps) {
 
   const carousel = (
     <Carousel withControls={hasMultipleImages} draggable={hasMultipleImages} loop>
-      {review.images.map((image) => (
+      {review.images.map((image, index) => (
         <Carousel.Slide key={image.id}>
           <ImagePreview
             image={image}
             edgeImageProps={{ width: 400 }}
             aspectRatio={1}
-            lightboxImages={review.images.map((image) => image)}
+            onClick={() =>
+              openImageLightbox({
+                initialSlide: index,
+                images: review.images.map((image) => image),
+              })
+            }
             withMeta
           />
         </Carousel.Slide>
