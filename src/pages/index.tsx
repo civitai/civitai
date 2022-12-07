@@ -117,10 +117,13 @@ const useStyles = createStyles((theme) => ({
     zIndex: 11,
     boxShadow: theme.shadows.md,
     border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.blue[5] : theme.colors.blue[2]
+      theme.colorScheme === 'dark' ? theme.colors.blue[9] : theme.colors.blue[2]
     }`,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.blue[8] : theme.colors.blue[1],
-    [theme.fn.smallerThan('sm')]: {
+    backgroundColor:
+      theme.colorScheme === 'dark'
+        ? theme.fn.darken(theme.colors.blue[8], 0.5)
+        : theme.colors.blue[1],
+    [theme.fn.smallerThan('md')]: {
       marginBottom: 5,
       marginLeft: -5,
       marginRight: -5,
