@@ -188,6 +188,7 @@ model ModelVersion {
   status       ModelStatus @default(Draft)
   fromImport   Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId Int?
+  inaccurate   Boolean     @default(false)
 
   reviews Review[]
   images  ImagesOnModels[]

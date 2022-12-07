@@ -282,6 +282,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model?.modelVersions[0];
+  const inaccurate = model?.modelVersions.some((version) => version.inaccurate);
 
   if (loadingModel)
     return (
@@ -556,6 +557,19 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 <Text size="md">
                   This model has been unpublished because it looks like the model file failed to
                   upload. Please re-upload the file.
+                </Text>
+              </Group>
+            </Alert>
+          )}
+          {inaccurate && (
+            <Alert color="yellow">
+              <Group spacing="xs" noWrap align="flex-start">
+                <ThemeIcon color="yellow">
+                  <IconExclamationMark />
+                </ThemeIcon>
+                <Text size="md">
+                  The images on this {splitUppercase(model.type).toLowerCase()} are inaccurate.
+                  Please submit reviews with images so that we can improve this page.
                 </Text>
               </Group>
             </Alert>
