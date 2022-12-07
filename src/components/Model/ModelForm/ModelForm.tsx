@@ -118,9 +118,8 @@ export function ModelForm({ model }: Props) {
 
   const handleSubmit = (values: z.infer<typeof schema>) => {
     const commonOptions = {
-      async onSuccess(results: void | Model, input: { id?: number }) {
-        const response = results as Model;
-        const modelLink = `/models/${response.id}/${slugit(response.name)}`;
+      async onSuccess(results: Model | undefined, input: { id?: number }) {
+        const modelLink = `/models/${results?.id}/${slugit(results?.name ?? '')}`;
 
         showNotification({
           title: 'Your model was saved',

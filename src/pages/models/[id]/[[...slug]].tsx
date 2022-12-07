@@ -19,11 +19,10 @@ import {
   Modal,
   Alert,
   ThemeIcon,
-  Paper,
   Tooltip,
   Rating,
 } from '@mantine/core';
-import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
+import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { ModelStatus, ReportReason } from '@prisma/client';
@@ -37,8 +36,8 @@ import {
   IconFlag,
   IconHeart,
   IconLicense,
-  IconPlus,
-  IconShield,
+  IconMessage,
+  IconStar,
   IconTrash,
 } from '@tabler/icons';
 import startCase from 'lodash/startCase';
@@ -46,8 +45,7 @@ import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { InView } from 'react-intersection-observer';
+import { useEffect, useRef, useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -56,19 +54,20 @@ import {
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
+import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { ModelForm } from '~/components/Model/ModelForm/ModelForm';
-import { ModelRating } from '~/components/ModelRating/ModelRating';
-import { ModelReviews } from '~/components/Model/ModelReviews/ModelReviews';
+import { ModelDiscussion } from '~/components/Model/ModelDiscussion/ModelDiscussion';
 import { ModelVersions } from '~/components/Model/ModelVersions/ModelVersions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { TrainingWordBadge } from '~/components/TrainingWordBadge/TrainingWordBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useModalsContext } from '~/providers/CustomModalsProvider';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -78,8 +77,6 @@ import { QS } from '~/utils/qs';
 import { splitUppercase, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { scrollToTop } from '~/utils/scroll-utils';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
@@ -141,6 +138,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const theme = useMantineTheme();
   const router = useRouter();
   const { data: session } = useSession();
+  const { openModal } = useModalsContext();
   const { classes } = useStyles();
   const mobile = useIsMobile();
   const queryUtils = trpc.useContext();
@@ -150,7 +148,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const { id, slug } = props;
   const { edit } = router.query;
 
-  const reviewSectionRef = useRef<HTMLDivElement | null>(null);
+  const discussionSectionRef = useRef<HTMLDivElement | null>(null);
   const [reviewFilters, setReviewFilters] = useState<{
     filterBy: ReviewFilter[];
     sort: ReviewSort;
@@ -165,20 +163,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     cacheTime: Infinity,
     staleTime: Infinity,
   });
-  const {
-    data: reviewsData,
-    isLoading: loadingReviews,
-    isFetchingNextPage,
-    fetchNextPage,
-    hasNextPage,
-  } = trpc.review.getAll.useInfiniteQuery(
-    { modelId: id, limit: 5, ...reviewFilters },
-    {
-      enabled: !edit,
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-      keepPreviousData: true,
-    }
-  );
 
   const showNsfwRequested = router.query.showNsfw !== 'true';
   const userNotBlurringNsfw = session?.user?.blurNsfw !== false;
@@ -261,7 +245,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
     async onSuccess() {
       await queryUtils.model.getAll.invalidate({ favorites: true });
-      queryUtils.model.getAll.setInfiniteData({ ...filters, favorites: true }, (oldData) => {
+      queryUtils.model.getAll.setInfiniteData({ ...filters, favorites: true }, () => {
         return { pageParams: [], pages: [] };
       });
     },
@@ -275,10 +259,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
   });
 
-  const reviews = useMemo(
-    () => reviewsData?.pages.flatMap((x) => x.reviews) ?? [],
-    [reviewsData?.pages]
-  );
   const isModerator = session?.user?.isModerator ?? false;
   const isOwner = model?.user.id === session?.user?.id || isModerator;
 
@@ -496,8 +476,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 icon={<Rating value={model.rank?.ratingAllTime ?? 0} readOnly />}
                 sx={{ cursor: 'pointer' }}
                 onClick={() => {
-                  if (!reviewSectionRef.current) return;
-                  scrollToTop(reviewSectionRef.current);
+                  if (!discussionSectionRef.current) return;
+                  scrollToTop(discussionSectionRef.current);
                 }}
               >
                 <Text size={mobile ? 'sm' : 'md'}>
@@ -705,17 +685,63 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
           </Grid.Col>
           <Grid.Col span={12} orderSm={4} my="xl">
             <Stack spacing="xl">
-              <Group ref={reviewSectionRef} sx={{ justifyContent: 'space-between' }}>
-                <Group spacing={4}>
-                  <Title order={3}>Reviews</Title>
+              <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
+                <Group spacing="xs">
+                  <Title order={3}>Discussion</Title>
+
+                  <LoginRedirect reason="create-review">
+                    <Button
+                      leftIcon={<IconStar size={16} />}
+                      variant="outline"
+                      fullWidth={mobile}
+                      size="xs"
+                      onClick={() => {
+                        return openModal({
+                          modal: 'reviewEdit',
+                          title: `Reviewing ${model.name}`,
+                          closeOnClickOutside: false,
+                          innerProps: {
+                            review: {
+                              modelId: model.id,
+                              modelVersionId:
+                                model.modelVersions.length === 1
+                                  ? model.modelVersions[0].id
+                                  : undefined,
+                            },
+                          },
+                        });
+                      }}
+                    >
+                      Add Review
+                    </Button>
+                  </LoginRedirect>
+                  <LoginRedirect reason="create-comment">
+                    <Button
+                      leftIcon={<IconMessage size={16} />}
+                      variant="outline"
+                      fullWidth={mobile}
+                      onClick={() => {
+                        return openModal({
+                          modal: 'commentEdit',
+                          title: `Add a comment`,
+                          innerProps: {
+                            comment: { modelId: model.id },
+                          },
+                        });
+                      }}
+                      size="xs"
+                    >
+                      Add Comment
+                    </Button>
+                  </LoginRedirect>
                 </Group>
                 <Group spacing="xs" noWrap grow>
                   <Select
                     defaultValue={ReviewSort.Newest}
                     icon={<IconArrowsSort size={14} />}
                     data={Object.values(ReviewSort)
-                      // Only include Newest and Oldest until reactions are implemented
-                      .filter((sort) => [ReviewSort.Newest, ReviewSort.Oldest].includes(sort))
+                      // Only exclude MostDisliked until there's a clear way to sort by it
+                      .filter((sort) => ![ReviewSort.MostDisliked].includes(sort))
                       .map((sort) => ({
                         label: startCase(sort),
                         value: sort,
@@ -736,66 +762,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     clearButtonLabel="Clear review filters"
                     clearable
                   />
-                  <LoginRedirect reason="create-review">
-                    <Button
-                      leftIcon={<IconPlus size={16} />}
-                      variant="outline"
-                      fullWidth={mobile}
-                      size="xs"
-                      onClick={() => {
-                        return openContextModal({
-                          modal: 'reviewEdit',
-                          title: `Reviewing ${model.name}`,
-                          closeOnClickOutside: false,
-                          innerProps: {
-                            review: {
-                              modelId: model.id,
-                              modelVersionId:
-                                model.modelVersions.length === 1
-                                  ? model.modelVersions[0].id
-                                  : undefined,
-                            },
-                          },
-                        });
-                      }}
-                    >
-                      Add Review
-                    </Button>
-                  </LoginRedirect>
                 </Group>
               </Group>
-              <ModelReviews
-                items={reviews}
-                onFilterChange={handleReviewFilterChange}
-                loading={loadingReviews}
-              />
-              {/* At the bottom to detect infinite scroll */}
-              {reviews.length > 0 ? (
-                <InView
-                  fallbackInView
-                  threshold={1}
-                  onChange={(inView) => {
-                    if (inView && !isFetchingNextPage && hasNextPage) {
-                      fetchNextPage();
-                    }
-                  }}
-                >
-                  {({ ref }) => (
-                    <Button
-                      ref={ref}
-                      variant="subtle"
-                      onClick={() => fetchNextPage()}
-                      disabled={!hasNextPage || isFetchingNextPage}
-                    >
-                      {isFetchingNextPage
-                        ? 'Loading more...'
-                        : hasNextPage
-                        ? 'Load More'
-                        : 'Nothing more to load'}
-                    </Button>
-                  )}
-                </InView>
-              ) : null}
+              <ModelDiscussion modelId={model.id} filters={reviewFilters} />
             </Stack>
           </Grid.Col>
         </Grid>

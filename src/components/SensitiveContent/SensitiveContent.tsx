@@ -49,11 +49,7 @@ export const SensitiveContent = ({
 
   return (
     <SensitiveContentContext.Provider value={{ show, toggleShow: handleToggle }}>
-      <div
-        className={cx(classes.root, className)}
-        {...rootProps}
-        // onClick={(e) => e.stopPropagation()}
-      >
+      <div className={cx(classes.root, className)} {...rootProps}>
         <div className={classes.controls}>{controls ?? <SensitiveContentToggle m="md" />}</div>
         {!show ? (
           <>

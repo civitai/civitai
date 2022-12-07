@@ -11,17 +11,29 @@ import { useCallback, useEffect, createContext, useContext } from 'react';
 import { QS } from '~/utils/qs';
 
 const DynamicReviewEditModal = dynamic(() => import('~/components/Review/ReviewEditModal'));
+const DynamicCommentEditModal = dynamic(
+  () => import('~/components/CommentEditModal/CommentEditModal')
+);
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
 );
 const DynamicLightboxImageCarousel = dynamic(
   () => import('~/components/LightboxImageCarousel/LightboxImageCarousel')
 );
+const DynamicCommentThreadModal = dynamic(
+  () => import('~/components/CommentThreadModal/CommentThreadModal')
+);
+const DynamicReviewThreadModal = dynamic(
+  () => import('~/components/ReviewThreadModal/ReviewThreadModal')
+);
 
 const modals = {
   reviewEdit: DynamicReviewEditModal,
   imageLightbox: DynamicLightboxImageCarousel,
   onboarding: DynamicOnboardingModal,
+  commentEdit: DynamicCommentEditModal,
+  commentThread: DynamicCommentThreadModal,
+  reviewThread: DynamicReviewThreadModal,
 };
 
 type OpenContextModalProps<CustomProps extends Record<string, unknown>> =
@@ -34,7 +46,12 @@ type ModalContext = {
 };
 
 const ModalCtx = createContext<ModalContext>({} as ModalContext);
-export const useModalsContext = () => useContext(ModalCtx);
+export const useModalsContext = () => {
+  const context = useContext(ModalCtx);
+  if (!context) throw new Error('useModalsContext can only be used inside CustomModalsProvider');
+
+  return context;
+};
 
 export const CustomModalsProvider = ({ children }: { children: React.ReactNode }) => {
   const router = useRouter();

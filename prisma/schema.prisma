@@ -55,21 +55,24 @@ model User {
   tos           Boolean?  @default(false)
   createdAt     DateTime  @default(now())
 
-  accounts        Account[]
-  sessions        Session[]
-  reviews         Review[]
-  reviewReactions ReviewReaction[]
-  images          Image[]
-  models          Model[]
-  activities      UserActivity[]
-  saves           SavedModel[]
-  modelReports    ModelReport[]
-  reviewReports   ReviewReport[]
-  Import          Import[]
-  keys            ApiKey[]
-  favoriteModels  FavoriteModel[]
-  links           UserLink[]
-  rank            UserRank?
+  accounts         Account[]
+  sessions         Session[]
+  reviews          Review[]
+  reviewReactions  ReviewReaction[]
+  images           Image[]
+  models           Model[]
+  activities       UserActivity[]
+  saves            SavedModel[]
+  modelReports     ModelReport[]
+  reviewReports    ReviewReport[]
+  Import           Import[]
+  keys             ApiKey[]
+  favoriteModels   FavoriteModel[]
+  links            UserLink[]
+  rank             UserRank?
+  comments         Comment[]
+  commentReactions CommentReaction[]
+  commentReports   CommentReport[]
 }
 
 enum LinkType {
@@ -157,6 +160,7 @@ model Model {
   rank           ModelRank?
   reports        ModelReport[]
   favoriteModels FavoriteModel[]
+  comments       Comment[]
 }
 
 model FavoriteModel {
@@ -309,6 +313,7 @@ model Review {
   reactions       ReviewReaction[]
   imagesOnReviews ImagesOnReviews[]
   reports         ReviewReport[]
+  comments        Comment[]
 }
 
 model ReviewReport {
@@ -434,6 +439,50 @@ model ApiKey {
 enum KeyScope {
   Read
   Write
+}
+
+model Comment {
+  id           Int      @id @default(autoincrement())
+  content      String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  nsfw         Boolean  @default(false)
+  tosViolation Boolean  @default(false)
+  parent       Comment? @relation("ParentComments", fields: [parentId], references: [id], onDelete: Cascade)
+  parentId     Int?
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId       Int
+  model        Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelId      Int
+  review       Review?  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  reviewId     Int?
+
+  comments  Comment[]         @relation("ParentComments")
+  reactions CommentReaction[]
+  reports   CommentReport[]
+}
+
+model CommentReaction {
+  id        Int             @id @default(autoincrement())
+  commentId Int
+  comment   Comment         @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([commentId, userId, reaction])
+}
+
+model CommentReport {
+  id        Int          @id @default(autoincrement())
+  commentId Int
+  comment   Comment      @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason    ReportReason
+  createdAt DateTime     @default(now())
 }
 
 /// @view

@@ -22,11 +22,7 @@ export const getReviews = async <TSelect extends Prisma.ReviewSelect>({
 }) => {
   const take = limit ?? 10;
   const skip = page ? (page - 1) * take : undefined;
-  const canViewNsfw = user?.showNsfw
-    ? filterBy?.includes(ReviewFilter.NSFW)
-      ? true
-      : undefined
-    : false;
+  const canViewNsfw = user?.showNsfw ?? true;
 
   return await prisma.review.findMany({
     take,
@@ -36,12 +32,14 @@ export const getReviews = async <TSelect extends Prisma.ReviewSelect>({
       modelId,
       modelVersionId,
       userId,
-      nsfw: !canViewNsfw ? { equals: false } : undefined,
+      nsfw: canViewNsfw ? (filterBy?.includes(ReviewFilter.NSFW) ? true : undefined) : false,
       imagesOnReviews: filterBy?.includes(ReviewFilter.IncludesImages) ? { some: {} } : undefined,
     },
     orderBy: {
       createdAt:
         sort === ReviewSort.Oldest ? 'asc' : sort === ReviewSort.Newest ? 'desc' : undefined,
+      reactions: sort === ReviewSort.MostLiked ? { _count: 'desc' } : undefined,
+      comments: sort === ReviewSort.MostComments ? { _count: 'desc' } : undefined,
     },
     select,
   });
@@ -105,7 +103,7 @@ export const createOrUpdateReview = async ({
       )
     );
 
-    return await prisma.review.upsert({
+    return prisma.review.upsert({
       where: { id: id ?? -1 },
       create: {
         ...reviewInput,
@@ -147,7 +145,7 @@ export const createOrUpdateReview = async ({
 };
 
 export const reportReviewById = ({ id, reason, userId }: ReportInput & { userId: number }) => {
-  const data: Prisma.ModelUpdateInput =
+  const data: Prisma.ReviewUpdateInput =
     reason === ReportReason.NSFW ? { nsfw: true } : { tosViolation: true };
 
   return prisma.$transaction([
