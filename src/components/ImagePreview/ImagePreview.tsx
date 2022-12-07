@@ -10,7 +10,7 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 type ImagePreviewProps = {
   nsfw?: boolean;
   aspectRatio?: number;
-  lightboxImages?: ImageModel[];
+  // lightboxImages?: ImageModel[];
   image: ImageModel;
   edgeImageProps?: Omit<EdgeImageProps, 'src'>;
   withMeta?: boolean;
