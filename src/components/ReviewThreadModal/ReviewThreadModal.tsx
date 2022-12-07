@@ -1,6 +1,7 @@
-import { Carousel } from '@mantine/carousel';
+import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
 import { AspectRatio, Center, Grid, Loader, Text } from '@mantine/core';
 import { ContextModalProps } from '@mantine/modals';
+import { useRef } from 'react';
 
 import CommentSection from '~/components/CommentSection/CommentSection';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -11,10 +12,14 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { ReviewGetAllItem } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
+const TRANSITION_DURATION = 200;
+
 export default function ReviewThreadModal({ innerProps }: ContextModalProps<Props>) {
   const { review, showNsfw = false } = innerProps;
   const mobile = useIsMobile();
   const { openImageLightbox } = useImageLightbox({ withRouter: false });
+
+  const emblaRef = useRef<Embla | null>(null);
 
   const { data: reviewDetails, isLoading } = trpc.review.getById.useQuery({ id: review.id });
 
@@ -22,12 +27,15 @@ export default function ReviewThreadModal({ innerProps }: ContextModalProps<Prop
   const hasMultipleImages = review.images.length > 2;
   const firstImage = hasImages ? review.images[0] : undefined;
 
+  useAnimationOffsetEffect(emblaRef.current, TRANSITION_DURATION);
+
   const carousel = (
     <Carousel
       breakpoints={[{ minWidth: 'sm', slideSize: '50%', slideGap: 'xl' }]}
       align="center"
       slidesToScroll={mobile ? 1 : 2}
       withControls={hasMultipleImages}
+      getEmblaApi={(embla) => (emblaRef.current = embla)}
       loop
     >
       {review.images.map((image, index) => (
