@@ -6,6 +6,10 @@ import {
   PutBucketCorsCommand,
   GetObjectCommandInput,
   HeadObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -35,6 +39,7 @@ export async function setCors(s3: S3Client | null = null) {
         CORSRules: [
           {
             AllowedHeaders: ['content-type'],
+            ExposeHeaders: ['ETag'],
             AllowedMethods: ['PUT', 'GET'],
             AllowedOrigins: env.S3_ORIGINS ? env.S3_ORIGINS : ['*'],
           },
@@ -66,6 +71,69 @@ export async function getPutUrl(key: string, s3: S3Client | null = null) {
     expiresIn: 60 * 60, // 1 hour
   });
   return { url, bucket, key };
+}
+
+const UPLOAD_EXPIRATION = 60 * 60 * 1; // 1 hour
+const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
+export async function getMultipartPutUrl(key: string, size: number, s3: S3Client | null = null) {
+  if (!s3) s3 = getS3Client();
+
+  const bucket = env.S3_UPLOAD_BUCKET;
+  const { UploadId } = await s3.send(
+    new CreateMultipartUploadCommand({ Bucket: bucket, Key: key })
+  );
+
+  const promises = [];
+  for (let i = 0; i < Math.ceil(size / FILE_CHUNK_SIZE); i++) {
+    promises.push(
+      getSignedUrl(
+        s3,
+        new UploadPartCommand({ Bucket: bucket, Key: key, UploadId, PartNumber: i + 1 }),
+        { expiresIn: UPLOAD_EXPIRATION }
+      ).then((url) => ({ url, partNumber: i + 1 }))
+    );
+  }
+  const urls = await Promise.all(promises);
+
+  return { urls, bucket, key, uploadId: UploadId };
+}
+
+interface MultipartUploadPart {
+  ETag: string;
+  PartNumber: number;
+}
+export async function completeMultipartUpload(
+  key: string,
+  uploadId: string,
+  parts: MultipartUploadPart[],
+  s3: S3Client | null = null
+) {
+  if (!s3) s3 = getS3Client();
+  const bucket = env.S3_UPLOAD_BUCKET;
+  await s3.send(
+    new CompleteMultipartUploadCommand({
+      Bucket: bucket,
+      Key: key,
+      UploadId: uploadId,
+      MultipartUpload: { Parts: parts },
+    })
+  );
+}
+
+export async function abortMultipartUpload(
+  key: string,
+  uploadId: string,
+  s3: S3Client | null = null
+) {
+  if (!s3) s3 = getS3Client();
+  const bucket = env.S3_UPLOAD_BUCKET;
+  await s3.send(
+    new AbortMultipartUploadCommand({
+      Bucket: bucket,
+      Key: key,
+      UploadId: uploadId,
+    })
+  );
 }
 
 type GetObjectOptions = {

@@ -58,6 +58,12 @@ export function FileInputUpload({
           uploadType === 'Model' ? 'model' : 'training-images'
         );
         url = uploaded.url;
+        // TODO Upload Bug: when upload is aborted or errored, we aren't clearing this...
+        if (!url) {
+          setState(undefined);
+          onChange?.(undefined);
+          return;
+        }
         onLoading?.(false);
         const value: ModelFileProps = {
           sizeKB: file.size ? bytesToKB(file.size) : 0,

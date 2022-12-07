@@ -3,7 +3,7 @@ import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { UploadType } from '~/server/common/enums';
 import { extname } from 'node:path';
 import { filenamize, generateToken } from '~/utils/string-helpers';
-import { getPutUrl } from '~/utils/s3-utils';
+import { getMultipartPutUrl } from '~/utils/s3-utils';
 import { logToDb } from '~/utils/logging';
 
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
@@ -21,9 +21,14 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   if (!type || !Object.values(UploadType).includes(type)) type = UploadType.Default;
 
   const key = `${userId}/${type ?? UploadType.Default}/${filename}.${generateToken(4)}${ext}`;
-  const result = await getPutUrl(key);
-  console.log('log');
-  await logToDb('s3-upload', { userId, type, filename: fullFilename, key, url: result.url });
+  const result = await getMultipartPutUrl(key, req.body.size);
+  await logToDb('s3-upload', {
+    userId,
+    type,
+    filename: fullFilename,
+    key,
+    uploadId: result.uploadId,
+  });
 
   res.status(200).json(result);
 };
