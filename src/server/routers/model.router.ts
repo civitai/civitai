@@ -212,8 +212,6 @@ export const modelRouter = router({
           .filter((version) => !versionIds.includes(version.id))
           .map(({ id }) => id);
 
-        console.log('_____START_____');
-
         const model = await prisma.$transaction(
           async (tx) => {
             const imagesToUpdate = modelVersions.flatMap((x) => x.images).filter((x) => !!x.id);
@@ -362,8 +360,6 @@ export const modelRouter = router({
             timeout: 10000,
           }
         );
-
-        console.log('_____FINISH_____');
 
         if (!model) {
           throw throwNotFoundError(`No model with id ${id}`);

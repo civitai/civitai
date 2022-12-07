@@ -429,7 +429,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       ),
     },
     {
-      label: 'Trained Words',
+      label: 'Trigger Words',
       visible: !!latestVersion?.trainedWords?.length,
       value: (
         <Group spacing={4}>

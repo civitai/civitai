@@ -257,7 +257,7 @@ export function ModelForm({ model }: Props) {
                           {hasTrainingWords && (
                             <InputMultiSelect
                               name={`modelVersions.${index}.trainedWords`}
-                              label="Trained Words"
+                              label="Trigger Words"
                               placeholder="e.g.: Master Chief"
                               description="Please input the words you have trained your model with"
                               data={trainedWords}

@@ -238,7 +238,6 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
         let retryCount = 0;
         while (retryCount < 3) {
           uploadStatus = await uploadPart(url, partNumber);
-          console.log({ uploadStatus });
           if (uploadStatus !== 'error') break;
           retryCount++;
           await new Promise((resolve) => setTimeout(resolve, 5000 * retryCount));

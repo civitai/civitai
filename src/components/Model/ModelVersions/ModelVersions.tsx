@@ -75,7 +75,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
     { label: 'Steps', value: version.steps?.toLocaleString() ?? 0, visible: !!version.steps },
     { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0, visible: !!version.epochs },
     {
-      label: 'Trained Words',
+      label: 'Trigger Words',
       visible: !!version.trainedWords?.length,
       value: (
         <Group spacing={4}>
