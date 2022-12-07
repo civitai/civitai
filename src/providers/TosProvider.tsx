@@ -1,12 +1,10 @@
 import { signIn, useSession } from 'next-auth/react';
 import { useEffect } from 'react';
-import { closeModal } from '@mantine/modals';
+import { closeModal, openContextModal } from '@mantine/modals';
 import { useRouter } from 'next/router';
-import { useModalsContext } from '~/providers/CustomModalsProvider';
 
 export function TosProvider({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
-  const { openModal } = useModalsContext();
   const router = useRouter();
 
   useEffect(() => {
@@ -14,7 +12,7 @@ export function TosProvider({ children }: { children: React.ReactNode }) {
     if (status !== 'authenticated' || router.pathname.startsWith('/content')) return;
     if (!session?.user?.tos || !session.user.email) {
       closeModal('onboarding');
-      openModal({
+      openContextModal({
         modal: 'onboarding',
         title: 'Your Account',
         withCloseButton: false,
@@ -23,7 +21,7 @@ export function TosProvider({ children }: { children: React.ReactNode }) {
         innerProps: {},
       });
     }
-  }, [status, session?.user?.tos, router.pathname, session?.user?.email, openModal]);
+  }, [status, session?.user?.tos, router.pathname, session?.user?.email]);
 
   // https://next-auth.js.org/tutorials/refresh-token-rotation#client-side
   useEffect(() => {
