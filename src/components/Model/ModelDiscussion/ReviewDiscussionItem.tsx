@@ -11,7 +11,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { closeAllModals, openConfirmModal, openContextModal } from '@mantine/modals';
+import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { showNotification, hideNotification } from '@mantine/notifications';
 import { ReportReason, ReviewReactions } from '@prisma/client';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconMessage } from '@tabler/icons';

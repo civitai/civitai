@@ -6,6 +6,7 @@ import CommentSection from '~/components/CommentSection/CommentSection';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
+import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ReviewGetAllItem } from '~/types/router';
 import { trpc } from '~/utils/trpc';
@@ -13,6 +14,8 @@ import { trpc } from '~/utils/trpc';
 export default function ReviewThreadModal({ innerProps }: ContextModalProps<Props>) {
   const { review, showNsfw = false } = innerProps;
   const mobile = useIsMobile();
+  const { openImageLightbox } = useImageLightbox({ withRouter: false });
+
   const { data: reviewDetails, isLoading } = trpc.review.getById.useQuery({ id: review.id });
 
   const hasImages = review.images.length > 0;
@@ -27,14 +30,14 @@ export default function ReviewThreadModal({ innerProps }: ContextModalProps<Prop
       withControls={hasMultipleImages}
       loop
     >
-      {review.images.map((image) => (
+      {review.images.map((image, index) => (
         <Carousel.Slide key={image.id}>
           <Center style={{ height: '100%' }}>
             <ImagePreview
               image={image}
               edgeImageProps={{ width: 400 }}
               radius="md"
-              lightboxImages={review.images}
+              onClick={() => openImageLightbox({ initialSlide: index, images: review.images })}
               style={{ width: '100%' }}
               withMeta
             />
