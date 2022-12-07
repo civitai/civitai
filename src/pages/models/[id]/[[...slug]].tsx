@@ -740,8 +740,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     defaultValue={ReviewSort.Newest}
                     icon={<IconArrowsSort size={14} />}
                     data={Object.values(ReviewSort)
-                      // Only include Newest and Oldest until reactions are implemented
-                      .filter((sort) => [ReviewSort.Newest, ReviewSort.Oldest].includes(sort))
+                      // Only exclude MostDisliked until there's a clear way to sort by it
+                      .filter((sort) => ![ReviewSort.MostDisliked].includes(sort))
                       .map((sort) => ({
                         label: startCase(sort),
                         value: sort,

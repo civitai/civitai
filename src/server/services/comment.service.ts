@@ -22,11 +22,9 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
 }) => {
   const take = limit ?? 10;
   const skip = page && take ? (page - 1) * take : undefined;
-  const canViewNsfw = user?.showNsfw
-    ? filterBy?.includes(ReviewFilter.NSFW)
-      ? true
-      : undefined
-    : false;
+  const canViewNsfw = user?.showNsfw ?? true;
+
+  if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
   return await prisma.comment.findMany({
     take,
@@ -35,13 +33,15 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
     where: {
       modelId,
       userId,
-      nsfw: !canViewNsfw ? { equals: false } : undefined,
+      nsfw: canViewNsfw ? (filterBy?.includes(ReviewFilter.NSFW) ? true : undefined) : false,
       reviewId: { equals: null },
       parentId: { equals: null },
     },
     orderBy: {
       createdAt:
         sort === ReviewSort.Oldest ? 'asc' : sort === ReviewSort.Newest ? 'desc' : undefined,
+      reactions: sort === ReviewSort.MostLiked ? { _count: 'desc' } : undefined,
+      comments: sort === ReviewSort.MostComments ? { _count: 'desc' } : undefined,
     },
     select,
   });
