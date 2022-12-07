@@ -46,7 +46,7 @@ export default function UserPage() {
   const router = useRouter();
   const theme = useMantineTheme();
   const username = router.query.username as string;
-  const { classes, cx } = useStyles();
+  const { classes } = useStyles();
 
   const { data: user } = trpc.user.getCreator.useQuery({ username });
 

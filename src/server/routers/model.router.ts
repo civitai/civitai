@@ -7,6 +7,7 @@ import {
   deleteModelHandler,
   getModelHandler,
   getModelsInfiniteHandler,
+  getModelsPagedSimpleHandler,
   getModelsWithVersionsHandler,
   getModelVersionsHandler,
   reportModelHandler,
@@ -78,6 +79,7 @@ export const modelRouter = router({
   getAll: publicProcedure
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
     .query(getModelsInfiniteHandler),
+  getAllPagedSimple: publicProcedure.input(getAllModelsSchema).query(getModelsPagedSimpleHandler),
   getAllWithVersions: publicProcedure
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
     .query(getModelsWithVersionsHandler),

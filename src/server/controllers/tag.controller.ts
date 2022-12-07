@@ -1,7 +1,19 @@
-import { GetTagsInput } from '~/server/schema/tag.schema';
-import { getTags } from '~/server/services/tag.service';
+import { GetTagByNameInput, GetTagsInput } from '~/server/schema/tag.schema';
+import { getTags, getTagWithModelCount } from '~/server/services/tag.service';
 import { throwDbError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+
+export const getTagWithModelCountHandler = async ({
+  input: { name },
+}: {
+  input: GetTagByNameInput;
+}) => {
+  try {
+    return await getTagWithModelCount({ name });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
 
 export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => {
   try {

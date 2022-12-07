@@ -34,6 +34,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     cursor,
     query,
     tag,
+    tagname,
     user,
     username,
     types,
@@ -54,7 +55,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   const canViewNsfw = sessionUser?.showNsfw ?? true;
   const where: Prisma.ModelWhereInput = {
     name: query ? { contains: query, mode: 'insensitive' } : undefined,
-    tagsOnModels: tag ? { some: { tag: { name: tag } } } : undefined,
+    tagsOnModels:
+      tagname ?? tag
+        ? { some: { tag: { name: { equals: tagname ?? tag, mode: 'insensitive' } } } }
+        : undefined,
     user: username ?? user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
     nsfw: !canViewNsfw ? { equals: false } : undefined,
