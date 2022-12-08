@@ -55,24 +55,26 @@ model User {
   tos           Boolean?  @default(false)
   createdAt     DateTime  @default(now())
 
-  accounts         Account[]
-  sessions         Session[]
-  reviews          Review[]
-  reviewReactions  ReviewReaction[]
-  images           Image[]
-  models           Model[]
-  activities       UserActivity[]
-  saves            SavedModel[]
-  modelReports     ModelReport[]
-  reviewReports    ReviewReport[]
-  Import           Import[]
-  keys             ApiKey[]
-  favoriteModels   FavoriteModel[]
-  links            UserLink[]
-  rank             UserRank?
-  comments         Comment[]
-  commentReactions CommentReaction[]
-  commentReports   CommentReport[]
+  accounts             Account[]
+  sessions             Session[]
+  reviews              Review[]
+  reviewReactions      ReviewReaction[]
+  images               Image[]
+  models               Model[]
+  activities           UserActivity[]
+  saves                SavedModel[]
+  modelReports         ModelReport[]
+  reviewReports        ReviewReport[]
+  Import               Import[]
+  keys                 ApiKey[]
+  favoriteModels       FavoriteModel[]
+  links                UserLink[]
+  rank                 UserRank[]
+  comments             Comment[]
+  commentReactions     CommentReaction[]
+  commentReports       CommentReport[]
+  notifications        Notification[]
+  notificationSettings UserNotificationSettings[]
 }
 
 enum LinkType {
@@ -485,6 +487,31 @@ model CommentReport {
   createdAt DateTime     @default(now())
 }
 
+model Log {
+  id        String   @id @default(cuid())
+  event     String
+  details   Json?
+  createdAt DateTime @default(now())
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  details   Json?
+  createdAt DateTime  @default(now())
+  viewedAt  DateTime?
+}
+
+model UserNotificationSettings {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       String
+  disabledAt DateTime @default(now())
+}
+
 /// @view
 model ModelRank {
   model                    Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
@@ -529,13 +556,6 @@ model ModelRank {
   favoriteCountMonthRank   Int
   favoriteCountYearRank    Int
   favoriteCountAllTimeRank Int
-}
-
-model Log {
-  id        String   @id @default(cuid())
-  event     String
-  details   Json?
-  createdAt DateTime @default(now())
 }
 
 /// @view

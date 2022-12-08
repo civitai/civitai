@@ -4,6 +4,7 @@ import {
   getUserCreator,
   getUserFavoriteModelByModelId,
   getUserFavoriteModels,
+  getUserUnreadNotificationsCount,
 } from '~/server/services/user.service';
 import { TRPCError } from '@trpc/server';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
@@ -60,6 +61,42 @@ export const getUserByIdHandler = async ({ input }: { input: GetByIdInput }) => 
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
+  }
+};
+
+export const getNotificationSettingsHandler = async ({
+  ctx,
+}: {
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { id } = ctx.user;
+
+  try {
+    const user = await getUserById({
+      id,
+      select: { notificationSettings: { select: { id: true, type: true, disabledAt: true } } },
+    });
+
+    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    return { notificationSettings: user.notificationSettings };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const checkUserNotificationsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  const { id } = ctx.user;
+
+  try {
+    const user = await getUserUnreadNotificationsCount({ id });
+    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    return { count: user._count.notifications };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };
 

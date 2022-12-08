@@ -7,7 +7,7 @@ export const notificationProcessors = [reviewNotifications, reactionNotification
 export function getNotificationMessage(notification: BareNotification) {
   const { types } = notificationProcessors.find((x) => x.types?.[notification.type]) ?? {};
   if (!types) return null;
-  return types?.[notification.type]?.(notification);
+  return types?.[notification.type]?.run(notification);
 }
 
 export function getNotificationTypes() {

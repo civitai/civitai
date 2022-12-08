@@ -7,8 +7,6 @@ import {
   Header,
   Menu,
   Switch,
-  Title,
-  Text,
   UnstyledButton,
   useMantineColorScheme,
   Transition,
@@ -18,7 +16,6 @@ import {
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import {
-  IconEye,
   IconFile,
   IconHeart,
   IconLogout,
@@ -35,6 +32,7 @@ import { useState } from 'react';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
+import { NotificationBell } from '~/components/Notifications/NotificationBell';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 
@@ -326,7 +324,7 @@ export function AppHeader({ links }: Props) {
         </Grid.Col>
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
           <Group spacing="sm">{menuItems}</Group>
-          <Group spacing="xs">
+          <Group spacing="xs" align="center">
             {!session ? (
               <Button
                 component={NextLink}
@@ -338,6 +336,7 @@ export function AppHeader({ links }: Props) {
             ) : null}
 
             {session?.user?.showNsfw && <BlurToggle />}
+            {session?.user && <NotificationBell />}
             <Menu
               width={260}
               opened={userMenuOpened}

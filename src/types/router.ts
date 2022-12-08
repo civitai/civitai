@@ -18,3 +18,7 @@ type CommentRouter = RouterOutput['comment'];
 export type CommentGetAll = CommentRouter['getAll'];
 export type CommentGetAllItem = CommentGetAll['comments'][number];
 export type CommentGetById = CommentRouter['getById'];
+
+type NotificationRouter = RouterOutput['notification'];
+export type NotificationGetAll = NotificationRouter['getAllByUser'];
+export type NotificationGetAllItem = NotificationGetAll['items'][number];

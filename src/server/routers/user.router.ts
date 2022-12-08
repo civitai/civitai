@@ -1,4 +1,8 @@
-import { getUserCreatorHandler } from './../controllers/user.controller';
+import {
+  checkUserNotificationsHandler,
+  getNotificationSettingsHandler,
+  getUserCreatorHandler,
+} from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
   getAllUsersHandler,
@@ -23,6 +27,8 @@ export const userRouter = router({
   getById: publicProcedure.input(getByIdSchema).query(getUserByIdHandler),
   getFavoriteModels: protectedProcedure.query(getUserFavoriteModelsHandler),
   getCreators: publicProcedure.input(getAllQuerySchema.partial()).query(getCreatorsHandler),
+  getNotificationSettings: protectedProcedure.query(getNotificationSettingsHandler),
+  checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
   update: protectedProcedure.input(userUpsertSchema.partial()).mutation(updateUserHandler),
   delete: protectedProcedure.input(getByIdSchema).mutation(deleteUserHandler),
   toggleFavorite: protectedProcedure

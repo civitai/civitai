@@ -1,5 +1,11 @@
 import { Button, ButtonProps } from '@mantine/core';
-import { TablerIconProps, IconBrandDiscord, IconBrandGithub, IconBrandGoogle, IconBrandReddit } from '@tabler/icons';
+import {
+  TablerIconProps,
+  IconBrandDiscord,
+  IconBrandGithub,
+  IconBrandGoogle,
+  IconBrandReddit,
+} from '@tabler/icons';
 import { BuiltInProviderType } from 'next-auth/providers';
 
 type SocialProps = Partial<

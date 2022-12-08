@@ -5,6 +5,7 @@ import { apiKeyRouter } from './apiKey.router';
 import { authRouter } from './auth.router';
 import { commentRouter } from './comment.router';
 import { modelRouter } from './model.router';
+import { notificationRouter } from './notification.router';
 import { reviewRouter } from './review.router';
 import { tagRouter } from './tag.router';
 import { userRouter } from './user.router';
@@ -15,6 +16,7 @@ export const appRouter = router({
   auth: authRouter,
   comment: commentRouter,
   model: modelRouter,
+  notification: notificationRouter,
   review: reviewRouter,
   tag: tagRouter,
   user: userRouter,
