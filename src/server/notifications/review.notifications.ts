@@ -40,9 +40,12 @@ export const reviewNotifications = createNotificationProcessor(
     };
   },
   {
-    'new-review': ({ details }) => ({
-      message: `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`,
-      url: `/models/${details.modelId}?modal=review&reviewId=${details.reviewId}`, // Open up modal with review (or page if it's easier)
-    }),
+    'new-review': {
+      displayName: 'New Reviews',
+      run: ({ details }) => ({
+        message: `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`,
+        url: `/models/${details.modelId}?modal=review&reviewId=${details.reviewId}`, // Open up modal with review (or page if it's easier)
+      }),
+    },
   }
 );

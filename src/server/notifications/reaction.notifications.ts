@@ -52,9 +52,12 @@ export const reactionNotifications = createNotificationProcessor(
     };
   },
   {
-    'comment-reaction-milestone': ({ details }) => ({
-      message: `Go see your comment on ${details.modelName}: "${details.commentSample}..."`,
-      url: `/model/${details.modelId}?modal=comment&commentId=${details.rootCommentId}`,
-    }),
+    'comment-reaction-milestone': {
+      displayName: 'Comment Reaction Milestones',
+      run: ({ details }) => ({
+        message: `Go see your comment on ${details.modelName}: "${details.commentSample}..."`,
+        url: `/model/${details.modelId}?modal=comment&commentId=${details.rootCommentId}`,
+      }),
+    },
   }
 );

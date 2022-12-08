@@ -5,7 +5,12 @@ type NotificationProcessor = {
     input: NotificationProcessorRunInput,
     ctx: NotificationProcessorContext
   ) => Promise<NotificationProcessorResult>;
-  types?: Record<string, (notification: BareNotification) => NotificationMessage>;
+  types?: Record<string, NotificationMessagePreparer>;
+};
+
+type NotificationMessagePreparer = {
+  run: (notification: BareNotification) => NotificationMessage;
+  displayName: string;
 };
 
 type NotificationProcessorContext = {

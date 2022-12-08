@@ -9,3 +9,16 @@ export function getNotificationMessage(notification: BareNotification) {
   if (!types) return null;
   return types?.[notification.type]?.(notification);
 }
+
+export function getNotificationTypes() {
+  const notificationTypes: Record<string, string> = {};
+  for (const { types } of notificationProcessors) {
+    if (!types) continue;
+
+    for (const [key, { displayName }] of Object.entries(types)) {
+      notificationTypes[key] = displayName;
+    }
+  }
+
+  return notificationTypes;
+}
