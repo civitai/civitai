@@ -3,6 +3,7 @@
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
 [![Apache License 2.0][license-shield]][license-url]
+[![Discord][discord-shield]][discord-url]
 
 <br />
 <div align="center">
@@ -29,7 +30,7 @@
 
 ![Civitai Homepage Screenshot](media/header.png)
 
-Share you models, textual inversions, hypernetworks, aesthetic gradients, and any other crazy stuff people do to customize their AI generations.
+Share you models, textual inversions, hypernetworks, aesthetic gradients, VAEs, and any other crazy stuff people do to customize their AI generations.
 
 ### Built with
 - **DB:** Prisma + Postgres
@@ -131,3 +132,5 @@ Apache License 2.0 - Please have a look at the [LICENSE](/LICENSE) for more deta
 [issues-url]: https://github.com/civitai/civitai/issues
 [license-shield]: https://img.shields.io/github/license/civitai/civitai.svg?style=for-the-badge
 [license-url]: https://github.com/civitai/civitai/blob/master/LICENSE
+[discord-shield]: https://img.shields.io/discord/1037799583784370196?style=for-the-badge
+[discord-url]: https://discord.gg/UwX5wKwm6c
