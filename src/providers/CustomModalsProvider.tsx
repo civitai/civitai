@@ -27,6 +27,8 @@ const DynamicReviewThreadModal = dynamic(
   () => import('~/components/ReviewThreadModal/ReviewThreadModal')
 );
 
+const DynamicRunStrategyModal = dynamic(() => import('~/components/RunStrategy/RunStrategyModal'));
+
 const modals = {
   reviewEdit: DynamicReviewEditModal,
   imageLightbox: DynamicLightboxImageCarousel,
@@ -34,6 +36,7 @@ const modals = {
   commentEdit: DynamicCommentEditModal,
   commentThread: DynamicCommentThreadModal,
   reviewThread: DynamicReviewThreadModal,
+  runStrategy: DynamicRunStrategyModal,
 };
 
 type OpenContextModalProps<CustomProps extends Record<string, unknown>> =
