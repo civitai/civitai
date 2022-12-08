@@ -1,8 +1,21 @@
+import { PrismaClient } from '@prisma/client';
+
 type NotificationProcessor = {
-  run: (input: NotificationProcessorRunInput) => Promise<NotificationProcessorResult>;
-  types?: Record<string, (notification: Notification) => NotificationMessage>;
+  run: (
+    input: NotificationProcessorRunInput,
+    ctx: NotificationProcessorContext
+  ) => Promise<NotificationProcessorResult>;
+  types?: Record<string, (notification: BareNotification) => NotificationMessage>;
 };
 
+type NotificationProcessorContext = {
+  prisma: PrismaClient;
+};
+
+export type BareNotification = {
+  type: string;
+  details: MixedObject;
+};
 type NotificationMessage = {
   message: string;
   url?: string;

@@ -1,8 +1,7 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { prisma } from '~/server/db/client';
 
 export const reactionNotifications = createNotificationProcessor(
-  async ({ lastSent }) => {
+  async ({ lastSent }, { prisma }) => {
     const where = {
       createdAt: { gt: lastSent },
     };

@@ -1,8 +1,7 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { prisma } from '~/server/db/client';
 
 export const reviewNotifications = createNotificationProcessor(
-  async ({ lastSent }) => {
+  async ({ lastSent }, { prisma }) => {
     // Get all reviews added since lastSent
     const reviews = await prisma.review.findMany({
       where: {

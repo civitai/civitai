@@ -18,7 +18,7 @@ export const processImportsJob = createJob(
 
     // Run all processors in parralel
     const promises = notificationProcessors.map(async ({ run }) => {
-      await run({ lastSent });
+      await run({ lastSent }, { prisma });
     });
     await Promise.all(promises);
   },
