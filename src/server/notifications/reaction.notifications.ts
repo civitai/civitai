@@ -53,9 +53,9 @@ export const reactionNotifications = createNotificationProcessor(
     };
   },
   {
-    'new-review': ({ details }) => ({
-      message: `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`,
-      url: `/models/${details.modelId}?modal=review&reviewId=${details.reviewId}`, // Open up modal with review (or page if it's easier)
+    'comment-reaction-milestone': ({ details }) => ({
+      message: `Go see your comment on ${details.modelName}: "${details.commentSample}..."`,
+      url: `/model/${details.modelId}?modal=comment&commentId=${details.rootCommentId}`,
     }),
   }
 );
