@@ -78,6 +78,7 @@ export const getModelsInfiniteHandler = async ({
         select: {
           [`downloadCount${input.period}`]: true,
           [`favoriteCount${input.period}`]: true,
+          [`commentCount${input.period}`]: true,
           [`ratingCount${input.period}`]: true,
           [`rating${input.period}`]: true,
         },
@@ -100,6 +101,7 @@ export const getModelsInfiniteHandler = async ({
         rank: {
           downloadCount: rank[`downloadCount${input.period}`],
           favoriteCount: rank[`favoriteCount${input.period}`],
+          commentCount: rank[`commentCount${input.period}`],
           ratingCount: rank[`ratingCount${input.period}`],
           rating: rank[`rating${input.period}`],
         },

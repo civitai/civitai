@@ -86,6 +86,9 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       ...(sort === ModelSort.MostDownloaded
         ? [{ rank: { [`downloadCount${period}Rank`]: 'asc' } }]
         : []),
+      ...(sort === ModelSort.MostDiscussed
+        ? [{ rank: { [`commentCount${period}Rank`]: 'asc' } }]
+        : []),
       { createdAt: 'desc' },
     ],
     select,

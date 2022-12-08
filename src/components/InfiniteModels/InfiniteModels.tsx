@@ -16,7 +16,7 @@ import {
 } from '@mantine/core';
 import { ModelStatus, ModelType } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
-import { IconCloudOff, IconDownload, IconHeart, IconStar } from '@tabler/icons';
+import { IconCloudOff, IconDownload, IconHeart, IconMessageCircle2, IconStar } from '@tabler/icons';
 import {
   useContainerPosition,
   useMasonry,
@@ -288,6 +288,15 @@ const MasonryItem = ({
     </IconBadge>
   );
 
+  const modelComments = !!rank.commentCount && (
+    <IconBadge
+      icon={<IconMessageCircle2 size={14} />}
+      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+    >
+      <Text size="xs">{abbreviateNumber(rank.commentCount)}</Text>
+    </IconBadge>
+  );
+
   const twoLine = (
     <Stack spacing={6}>
       <Group position="left" spacing={4}>
@@ -298,6 +307,7 @@ const MasonryItem = ({
         {modelRating}
         <Group spacing={4} align="center" ml="auto">
           {modelLikes}
+          {modelComments}
           {modelDownloads}
         </Group>
       </Group>
@@ -310,6 +320,7 @@ const MasonryItem = ({
       <Group spacing={4} align="center" position="right">
         {modelBadges}
         {modelLikes}
+        {modelComments}
         {modelDownloads}
       </Group>
     </Group>
