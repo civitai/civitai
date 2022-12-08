@@ -1,15 +1,13 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { getGetUrl } from '~/utils/s3-utils';
-import { ModelFileType, ModelType, UserActivityType } from '@prisma/client';
+import { UserActivityType } from '@prisma/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { prisma } from '~/server/db/client';
-import { filenamize } from '~/utils/string-helpers';
 import { z } from 'zod';
-import { env } from '~/env/server.mjs';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
   strategyId: z.preprocess((val) => Number(val), z.number()).optional(),
+  partnerId: z.preprocess((val) => Number(val), z.number()).optional(),
 });
 
 export default async function runModel(req: NextApiRequest, res: NextApiResponse) {
@@ -19,8 +17,8 @@ export default async function runModel(req: NextApiRequest, res: NextApiResponse
       .status(400)
       .json({ error: `Invalid id: ${results.error.flatten().fieldErrors.modelVersionId}` });
 
-  const { modelVersionId, strategyId } = results.data;
-  if (!modelVersionId) return res.status(400).json({ error: 'Missing modelVersionId' });
+  const { modelVersionId, strategyId, partnerId } = results.data;
+  if (!modelVersionId) return res.status(420).json({ error: 'Missing modelVersionId' });
 
   // Get the modelVersion's run strategies and details
   const modelVersion = await prisma.modelVersion.findFirst({
@@ -49,14 +47,13 @@ export default async function runModel(req: NextApiRequest, res: NextApiResponse
   const session = await getServerAuthSession({ req, res });
   const userId = session?.user?.id;
 
-  // Get selected, preferred, or first runStrategy
-  if (!strategyId && userId != null) {
-    // Get preferred user strategy
-    // strategyId = somethingToGetPreferredStrat(modelVersion.runStrategies);
-  }
-  const runStrategy = strategyId
-    ? modelVersion.runStrategies.find((x) => x.id == strategyId)
-    : modelVersion.runStrategies[0];
+  // Get selected, partner, or first runStrategy
+  let runStrategy: typeof modelVersion.runStrategies[0] | undefined;
+  if (strategyId) runStrategy = modelVersion.runStrategies.find((x) => x.id == strategyId);
+  else if (partnerId)
+    runStrategy = modelVersion.runStrategies.find((x) => x.partner.id == partnerId);
+  else runStrategy = modelVersion.runStrategies[0];
+
   if (!runStrategy) return res.status(404).json({ error: "We don't have a way to run that model" });
 
   // Track activity
