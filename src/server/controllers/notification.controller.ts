@@ -3,11 +3,12 @@ import { Context } from '~/server/createContext';
 import {
   GetUserNotificationsSchema,
   MarkReadNotificationInput,
-  UpsertNotificationSettingInput,
+  ToggleNotificationSettingInput,
 } from '~/server/schema/notification.schema';
 import { getAllNotificationsSelect } from '~/server/selectors/notification.selector';
 import {
-  createOrUpdateNotificationSetting,
+  createUserNotificationSetting,
+  deleteUserNotificationSetting,
   getUserNotifications,
   updateUserNoticationById,
 } from '~/server/services/notification.service';
@@ -44,14 +45,28 @@ export const getUserNotificationsInfiniteHandler = async ({
   }
 };
 
-export const upsertNotificationSettingsHandler = async ({
+export const getNotificationSettingsHandler = () => {
+  return [
+    { type: 'new-review', label: 'New reviews' },
+    { type: 'comment-reaction-milestone', label: 'Reaction milestone' },
+    { type: 'new-comment', label: 'New comments in your models' },
+    { type: 'new-creator-model', label: 'New model upload by creators you follow' },
+    { type: 'model-like-milestone', label: 'Likes in your models' },
+  ];
+};
+
+export const upsertUserNotificationSettingsHandler = async ({
   input,
 }: {
-  input: UpsertNotificationSettingInput;
+  input: ToggleNotificationSettingInput;
 }) => {
   try {
-    const notificationSetting = await createOrUpdateNotificationSetting({ ...input });
+    if (input.toggle) {
+      const deleted = await deleteUserNotificationSetting({ ...input });
+      return { deleted };
+    }
 
+    const notificationSetting = await createUserNotificationSetting({ ...input });
     return { notificationSetting };
   } catch (error) {
     throw throwDbError(error);

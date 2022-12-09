@@ -61,7 +61,11 @@ export default function Notifications() {
                 </ActionIcon>
               </Tooltip>
               <Tooltip label="Notification settings" position="bottom">
-                <ActionIcon component={NextLink} size="lg" href="/user/account">
+                <ActionIcon
+                  component={NextLink}
+                  size="lg"
+                  href="/user/account#notification-settings"
+                >
                   <IconSettings />
                 </ActionIcon>
               </Tooltip>

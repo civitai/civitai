@@ -8,12 +8,12 @@ export const getUserNotificationsSchema = getAllQuerySchema.extend({
 });
 export type GetUserNotificationsSchema = z.infer<typeof getUserNotificationsSchema>;
 
-export const upsertNotificationSettingInput = z.object({
-  id: z.number().optional(),
+export const toggleNotificationSettingInput = z.object({
+  toggle: z.boolean(),
   type: z.string(),
   userId: z.number(),
 });
-export type UpsertNotificationSettingInput = z.input<typeof upsertNotificationSettingInput>;
+export type ToggleNotificationSettingInput = z.input<typeof toggleNotificationSettingInput>;
 
 export const markReadNotificationInput = z.object({
   userId: z.number(),

@@ -66,7 +66,11 @@ export function NotificationBell() {
                 </ActionIcon>
               </Tooltip>
               <Tooltip label="Notification settings" position="bottom">
-                <ActionIcon component={NextLink} size="sm" href="/user/account">
+                <ActionIcon
+                  component={NextLink}
+                  size="sm"
+                  href="/user/account#notification-settings"
+                >
                   <IconSettings />
                 </ActionIcon>
               </Tooltip>

@@ -20,7 +20,7 @@ export function AccountsCard({ providers }: { providers: AsyncReturnType<typeof 
     <Card withBorder>
       <Stack>
         <Stack spacing={0}>
-          <Title order={2}>Accounts</Title>
+          <Title order={2}>Connected Accounts</Title>
           <Text color="dimmed" size="sm">
             Connect multiple accounts to your user and sign in with any of them
           </Text>

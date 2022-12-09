@@ -79,7 +79,7 @@ export const getNotificationSettingsHandler = async ({
 
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
-    return { notificationSettings: user.notificationSettings };
+    return user.notificationSettings;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

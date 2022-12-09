@@ -1,16 +1,18 @@
-import { protectedProcedure, router } from '~/server/trpc';
+import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import {
   getUserNotificationsSchema,
   markReadNotificationInput,
-  upsertNotificationSettingInput,
+  toggleNotificationSettingInput,
 } from '~/server/schema/notification.schema';
 import {
+  getNotificationSettingsHandler,
   getUserNotificationsInfiniteHandler,
   markReadNotificationHandler,
-  upsertNotificationSettingsHandler,
+  upsertUserNotificationSettingsHandler,
 } from '~/server/controllers/notification.controller';
 
 export const notificationRouter = router({
+  getSettings: publicProcedure.query(getNotificationSettingsHandler),
   getAllByUser: protectedProcedure
     .input(getUserNotificationsSchema.partial())
     .query(getUserNotificationsInfiniteHandler),
@@ -18,6 +20,6 @@ export const notificationRouter = router({
     .input(markReadNotificationInput)
     .mutation(markReadNotificationHandler),
   updateUserSettings: protectedProcedure
-    .input(upsertNotificationSettingInput)
-    .mutation(upsertNotificationSettingsHandler),
+    .input(toggleNotificationSettingInput)
+    .mutation(upsertUserNotificationSettingsHandler),
 });

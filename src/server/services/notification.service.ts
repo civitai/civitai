@@ -4,7 +4,7 @@ import { prisma } from '~/server/db/client';
 import {
   GetUserNotificationsSchema,
   MarkReadNotificationInput,
-  UpsertNotificationSettingInput,
+  ToggleNotificationSettingInput,
 } from '~/server/schema/notification.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
@@ -46,15 +46,11 @@ export const getUserNotifications = async <TSelect extends Prisma.NotificationSe
   return { items };
 };
 
-export const createOrUpdateNotificationSetting = async ({
-  id,
+export const createUserNotificationSetting = async ({
+  toggle,
   ...data
-}: UpsertNotificationSettingInput) => {
-  return prisma.userNotificationSettings.upsert({
-    where: { id: id ?? -1 },
-    update: { ...data, disabledAt: new Date() },
-    create: { ...data, disabledAt: new Date() },
-  });
+}: ToggleNotificationSettingInput) => {
+  return prisma.userNotificationSettings.create({ data });
 };
 
 export const updateUserNoticationById = ({
@@ -67,4 +63,8 @@ export const updateUserNoticationById = ({
     where: { id: !all ? id : undefined, userId, viewedAt: { equals: null } },
     data,
   });
+};
+
+export const deleteUserNotificationSetting = ({ type, userId }: ToggleNotificationSettingInput) => {
+  return prisma.userNotificationSettings.deleteMany({ where: { type, userId } });
 };
