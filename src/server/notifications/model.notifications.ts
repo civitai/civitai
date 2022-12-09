@@ -3,7 +3,7 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 const modelDownloadMilestones = [5, 10, 20, 50, 100, 500] as const;
 const modelLikeMilestones = [100, 500, 1000, 10000, 50000] as const;
 
-export const reactionNotifications = createNotificationProcessor({
+export const modelNotifications = createNotificationProcessor({
   'model-download-milestone': {
     displayName: 'Model Download Milestones',
     prepareMessage: ({ details }) => ({
@@ -49,7 +49,7 @@ export const reactionNotifications = createNotificationProcessor({
         LEFT JOIN prior_milestones pm ON pm.download_count >= ms.value AND pm.model_id = mval.model_id
         WHERE pm.model_id IS NULL
       )
-      -- INSERT INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",

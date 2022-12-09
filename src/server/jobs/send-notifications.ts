@@ -2,7 +2,7 @@ import { createJob } from './job';
 import { prisma } from '~/server/db/client';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
 
-const NOTIFICATIONS_LAST_SENT_KEY = 'last-notifications-sent';
+const NOTIFICATIONS_LAST_SENT_KEY = 'last-sent-notifications';
 export const processImportsJob = createJob(
   'send-notifications',
   '*/1 * * * *',

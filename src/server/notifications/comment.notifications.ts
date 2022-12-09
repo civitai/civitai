@@ -1,6 +1,6 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
-export const reviewNotifications = createNotificationProcessor({
+export const commentNotifications = createNotificationProcessor({
   'new-comment': {
     displayName: 'New Comments on your Models',
     prepareMessage: ({ details }) => ({
@@ -56,9 +56,9 @@ export const reviewNotifications = createNotificationProcessor({
         JOIN "Model" m ON m.id = c."modelId"
         WHERE m."userId" > 0
           AND c."createdAt" > '${lastSent}'
+          AND c."userId" != p."userId"
       )
-      INSERT
-      INTO "Notification"("id", "userId", "type", "details")
+      INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",

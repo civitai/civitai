@@ -1,6 +1,6 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
-export const reviewNotifications = createNotificationProcessor({
+export const systemNotifications = createNotificationProcessor({
   'civitai-features': {
     displayName: 'New Civitai Features',
     prepareMessage: ({ details }) => ({

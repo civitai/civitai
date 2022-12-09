@@ -1,10 +1,16 @@
 import { BareNotification } from '~/server/notifications/base.notifications';
+import { commentNotifications } from '~/server/notifications/comment.notifications';
+import { modelNotifications } from '~/server/notifications/model.notifications';
 import { reactionNotifications } from '~/server/notifications/reaction.notifications';
 import { reviewNotifications } from '~/server/notifications/review.notifications';
+import { systemNotifications } from '~/server/notifications/system.notifications';
 
 export const notificationProcessors = {
   ...reviewNotifications,
   ...reactionNotifications,
+  ...modelNotifications,
+  ...systemNotifications,
+  ...commentNotifications,
 };
 
 export function getNotificationMessage(notification: BareNotification) {
