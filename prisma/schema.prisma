@@ -252,6 +252,7 @@ model ModelMetric {
   ratingCount   Int             @default(0)
   downloadCount Int             @default(0)
   favoriteCount Int             @default(0)
+  commentCount  Int             @default(0)
 
   @@id([modelId, timeframe])
 }
@@ -264,6 +265,7 @@ model ModelVersionMetric {
   ratingCount    Int             @default(0)
   downloadCount  Int             @default(0)
   favoriteCount  Int             @default(0)
+  commentCount   Int             @default(0)
 
   @@id([modelVersionId, timeframe])
 }
@@ -543,6 +545,11 @@ model ModelRank {
   favoriteCountMonth       Int
   favoriteCountYear        Int
   favoriteCountAllTime     Int
+  commentCountDay          Int
+  commentCountWeek         Int
+  commentCountMonth        Int
+  commentCountYear         Int
+  commentCountAllTime      Int
   downloadCountDayRank     Int
   downloadCountWeekRank    Int
   downloadCountMonthRank   Int
@@ -563,6 +570,11 @@ model ModelRank {
   favoriteCountMonthRank   Int
   favoriteCountYearRank    Int
   favoriteCountAllTimeRank Int
+  commentCountDayRank      Int
+  commentCountWeekRank     Int
+  commentCountMonthRank    Int
+  commentCountYearRank     Int
+  commentCountAllTimeRank  Int
 }
 
 model Log {

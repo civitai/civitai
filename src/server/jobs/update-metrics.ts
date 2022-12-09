@@ -41,12 +41,20 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           FROM "Review" r
           WHERE (r."createdAt" > '${lastUpdate.toISOString()}' OR r."updatedAt" > '${lastUpdate.toISOString()}')
         ),
-        -- Get all reviews that have been created/updated since then
+        -- Get all favorites that have been created since then
         recent_favorites AS
         (
           SELECT
             "modelId" AS model_id
           FROM "FavoriteModel"
+          WHERE ("createdAt" > '${lastUpdate.toISOString()}')
+        ),
+        -- Get all comments that have been created since then
+        recent_comments AS
+        (
+          SELECT
+            "modelId" AS model_id
+          FROM "Comment"
           WHERE ("createdAt" > '${lastUpdate.toISOString()}')
         ),
         -- Get all affected models
@@ -62,6 +70,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
             SELECT DISTINCT
                 f.model_id
             FROM recent_favorites f
+
+            UNION
+
+            SELECT DISTINCT
+                c.model_id
+            FROM recent_comments c
 
             UNION
 
@@ -92,7 +106,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
 
         -- upsert metrics for all affected models
         -- perform a one-pass table scan producing all metrics for all affected models
-        INSERT INTO "${tableName}" ("${tableId}", timeframe, "downloadCount", "ratingCount", rating, "favoriteCount")
+        INSERT INTO "${tableName}" ("${tableId}", timeframe, "downloadCount", "ratingCount", rating, "favoriteCount", "commentCount")
         SELECT
           m.${viewId},
           tf.timeframe,
@@ -123,7 +137,14 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
             WHEN tf.timeframe = 'Month' THEN month_favorite_count
             WHEN tf.timeframe = 'Week' THEN week_favorite_count
             WHEN tf.timeframe = 'Day' THEN day_favorite_count
-          END AS favorite_count
+          END AS favorite_count,
+          CASE
+            WHEN tf.timeframe = 'AllTime' THEN comment_count
+            WHEN tf.timeframe = 'Year' THEN year_comment_count
+            WHEN tf.timeframe = 'Month' THEN month_comment_count
+            WHEN tf.timeframe = 'Week' THEN week_comment_count
+            WHEN tf.timeframe = 'Day' THEN day_comment_count
+          END AS comment_count
         FROM
         (
           SELECT
@@ -147,7 +168,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
             COALESCE(fs.year_favorite_count, 0) AS year_favorite_count,
             COALESCE(fs.month_favorite_count, 0) AS month_favorite_count,
             COALESCE(fs.week_favorite_count, 0) AS week_favorite_count,
-            COALESCE(fs.day_favorite_count, 0) AS day_favorite_count
+            COALESCE(fs.day_favorite_count, 0) AS day_favorite_count,
+            COALESCE(cs.comment_count, 0) AS comment_count,
+            COALESCE(cs.year_comment_count, 0) AS year_comment_count,
+            COALESCE(cs.month_comment_count, 0) AS month_comment_count,
+            COALESCE(cs.week_comment_count, 0) AS week_comment_count,
+            COALESCE(cs.day_comment_count, 0) AS day_comment_count
           FROM ${viewName} m
           LEFT JOIN (
             SELECT
@@ -202,12 +228,23 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
             FROM "FavoriteModel" f
             GROUP BY f."modelId"
           ) fs ON m.model_id = fs.model_id
+          LEFT JOIN (
+            SELECT
+              "modelId" AS model_id,
+              COUNT("modelId") AS comment_count,
+              SUM(CASE WHEN "createdAt" >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_comment_count,
+              SUM(CASE WHEN "createdAt" >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_comment_count,
+              SUM(CASE WHEN "createdAt" >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_comment_count,
+              SUM(CASE WHEN "createdAt" >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_comment_count
+            FROM "Comment"
+            GROUP BY "modelId"
+          ) cs ON m.model_id = cs.model_id
         ) m
         CROSS JOIN (
           SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
         ) tf
         ON CONFLICT ("${tableId}", timeframe) DO UPDATE
-          SET "downloadCount" = EXCLUDED."downloadCount", "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating, "favoriteCount" = EXCLUDED."favoriteCount";
+          SET "downloadCount" = EXCLUDED."downloadCount", "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating, "favoriteCount" = EXCLUDED."favoriteCount", "commentCount" = EXCLUDED."commentCount";
         `);
   };
 

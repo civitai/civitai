@@ -28,8 +28,6 @@ export default function ReviewThreadModal({ innerProps }: ContextModalProps<Prop
 
   useAnimationOffsetEffect(emblaRef.current, TRANSITION_DURATION);
 
-  console.log(review.images);
-
   const carousel = (
     <Carousel
       align="center"
@@ -42,7 +40,14 @@ export default function ReviewThreadModal({ innerProps }: ContextModalProps<Prop
         return (
           <Carousel.Slide key={image.id}>
             <Center>
-              <ImagePreview image={image} edgeImageProps={{ height: 400 }} radius="md" withMeta />
+              <ImagePreview
+                image={image}
+                aspectRatio={0}
+                edgeImageProps={{ width: 400 }}
+                radius="md"
+                withMeta
+                style={{ height: 400 }}
+              />
             </Center>
           </Carousel.Slide>
         );
@@ -62,7 +67,7 @@ export default function ReviewThreadModal({ innerProps }: ContextModalProps<Prop
               controls={<SensitiveContent.Toggle my="xs" mx="md" />}
               placeholder={
                 <>
-                  <AspectRatio ratio={16 / 9}>
+                  <AspectRatio ratio={16 / 9} style={{ height: 400 }}>
                     {firstImage && <MediaHash {...firstImage} style={{ borderRadius: 8 }} />}
                   </AspectRatio>
                   {hasMultipleImages && (

@@ -20,7 +20,7 @@ export const getAllModelsSchema = z.object({
     .optional()
     .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
     .optional(),
-  sort: z.nativeEnum(ModelSort).default(ModelSort.HighestRated),
+  sort: z.nativeEnum(ModelSort).default(ModelSort.MostDownloaded),
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
   rating: z
     .preprocess((val) => Number(val), z.number())
