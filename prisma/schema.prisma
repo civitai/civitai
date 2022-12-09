@@ -146,6 +146,7 @@ model Model {
   updatedAt    DateTime    @updatedAt
   nsfw         Boolean     @default(false)
   tosViolation Boolean     @default(false)
+  poi          Boolean     @default(false)
   userId       Int
   user         User        @relation(fields: [userId], references: [id])
   status       ModelStatus @default(Draft)

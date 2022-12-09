@@ -171,7 +171,14 @@ export const modelRouter = router({
     .input(modelSchema.extend({ id: z.number() }))
     .use(isOwnerOrModerator)
     .mutation(async ({ ctx, input }) => {
-      const { id, modelVersions, tagsOnModels, ...data } = input;
+      const { id, modelVersions, tagsOnModels, poi, nsfw, ...data } = input;
+
+      if (poi && nsfw) {
+        throw throwBadRequestError(
+          `Models or images depicting real people in NSFW contexts are not permitted.`
+        );
+      }
+
       const { tagsToCreate, tagsToUpdate } = tagsOnModels?.reduce(
         (acc, current) => {
           if (!current.id) acc.tagsToCreate.push(current);
@@ -232,6 +239,8 @@ export const modelRouter = router({
               where: { id },
               data: {
                 ...data,
+                poi,
+                nsfw,
                 status: data.status,
                 modelVersions: {
                   deleteMany:

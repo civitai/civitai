@@ -3,12 +3,15 @@ import {
   Button,
   Container,
   Divider,
+  Text,
   Grid,
   Group,
   Paper,
   Stack,
   Switch,
   Title,
+  Alert,
+  ThemeIcon,
 } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import { Model, ModelFileType, ModelStatus, ModelType } from '@prisma/client';
@@ -17,6 +20,7 @@ import {
   IconArrowLeft,
   IconArrowUp,
   IconCheck,
+  IconExclamationMark,
   IconPlus,
   IconTrash,
   IconX,
@@ -116,6 +120,8 @@ export function ModelForm({ model }: Props) {
   }, [tagsOnModels, tags]);
 
   const mutating = addMutation.isLoading || updateMutation.isLoading;
+  const [poi, nsfw] = form.watch(['poi', 'nsfw']);
+  const poiNsfw = poi && nsfw;
 
   const handleSubmit = (values: z.infer<typeof schema>) => {
     const commonOptions = {
@@ -373,12 +379,35 @@ export function ModelForm({ model }: Props) {
                     clearable
                     searchable
                   />
+                  <Text size="sm" weight={500}>
+                    This model or it's images:
+                  </Text>
                   <InputCheckbox
-                    name="nsfw"
-                    label="This model or images associated with it are NSFW"
+                    name="poi"
+                    label="Depict an actual person"
+                    description="For Example: Tom Cruise or Tom Cruise as Maverick"
                   />
+                  <InputCheckbox name="nsfw" label="Are NSFW" />
                 </Stack>
               </Paper>
+              {poiNsfw && (
+                <>
+                  <Alert color="red" pl={10}>
+                    <Group noWrap spacing={10}>
+                      <ThemeIcon color="red">
+                        <IconExclamationMark />
+                      </ThemeIcon>
+                      <Text size="xs" sx={{ lineHeight: 1.2 }}>
+                        NSFW content depicting actual people is not permitted.
+                      </Text>
+                    </Group>
+                  </Alert>
+                  <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
+                    Please revise the content of this listing to ensure no actual person is depicted
+                    in an NSFW context out of respect for the individual.
+                  </Text>
+                </>
+              )}
               <Group position="right" mt="lg">
                 <Button
                   variant="outline"
@@ -387,7 +416,7 @@ export function ModelForm({ model }: Props) {
                 >
                   Discard changes
                 </Button>
-                <Button type="submit" loading={mutating || uploading}>
+                <Button type="submit" loading={mutating || uploading} disabled={poiNsfw}>
                   {uploading ? 'Uploading...' : mutating ? 'Saving...' : 'Save'}
                 </Button>
               </Group>

@@ -26,6 +26,7 @@ Any Content you download, access or use from us or another User, is at your own 
 These rules apply to all Content posted on Civitai. Moderators consider context and intent while enforcing the community rules. Moderators may at anytime flag or remove content or users at their discretion.
 
 - Sexual, provocative, disturbing, or violent content MUST be flagged Not Safe for Work (NSFW)
+  - Not Safe for Work content displaying actual people (for example Tom Cruise or Tom Cruise as Maverick)
 - content displaying or clearly intented to be used for illegal or violent activity including, but not limited to:
   - child abuse and exploitation (includes photo, video, print, artwork)
   - rape and domestic abuse
