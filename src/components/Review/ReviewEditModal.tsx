@@ -74,7 +74,7 @@ export default function ReviewEditModal({
           <InputImageUpload
             name="images"
             label="Generated Images"
-            max={5}
+            loading={uploading}
             onChange={(values) => setUploading(values.some((value) => value.file))}
           />
           <InputCheckbox name="nsfw" label="This review or images associated with it are NSFW" />
