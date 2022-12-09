@@ -510,6 +510,8 @@ model UserNotificationSettings {
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   type       String
   disabledAt DateTime @default(now())
+
+  @@unique([userId, type])
 }
 
 /// @view
