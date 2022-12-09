@@ -1,30 +1,33 @@
 import { Card, Stack, Switch, Title } from '@mantine/core';
-import { useSession } from 'next-auth/react';
+
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { reloadSession } from '~/utils/next-auth-helpers';
+import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function SettingsCard() {
-  const { data: session } = useSession();
-  const user = session?.user;
+  const user = useCurrentUser();
   const utils = trpc.useContext();
 
   const { mutate, isLoading } = trpc.user.update.useMutation({
-    async onSuccess(user) {
+    async onSuccess() {
       await utils.model.getAll.invalidate();
       await utils.review.getAll.invalidate();
       await reloadSession();
+      showSuccessNotification({ message: 'User profile updated' });
     },
   });
 
   return (
     <Card withBorder>
       <Stack>
-        <Title order={2}>Settings</Title>
+        <Title order={2}>Browsing Settings</Title>
         <Switch
           name="showNsfw"
           label="Show me NSFW content"
           description="If you are not of legal age to view NSFW content, please do not enable this option"
           defaultChecked={user?.showNsfw}
+          disabled={isLoading}
           onChange={(e) => mutate({ id: user?.id, showNsfw: e.target.checked })}
         />
         {user?.showNsfw && (
@@ -32,6 +35,7 @@ export function SettingsCard() {
             name="blurNsfw"
             label="Blur NSFW content"
             defaultChecked={user?.blurNsfw}
+            disabled={isLoading}
             onChange={(e) => mutate({ id: user?.id, blurNsfw: e.target.checked })}
           />
         )}

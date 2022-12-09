@@ -126,3 +126,14 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
 
   return { items };
 };
+
+export const getUserUnreadNotificationsCount = ({ id }: { id: number }) => {
+  return prisma.user.findUnique({
+    where: { id },
+    select: {
+      _count: {
+        select: { notifications: { where: { viewedAt: { equals: null } } } },
+      },
+    },
+  });
+};

@@ -14,6 +14,7 @@ import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelper
 import { AccountsCard } from '~/components/Account/AccountsCard';
 import { ApiKeysCard } from '~/components/Account/ApiKeysCard';
 import { CreatorCard } from '~/components/Account/CreatorCard';
+import { NotificationsCard } from '~/components/Account/NotificationsCard';
 
 export default function Account({ providers, isDev = false }: Props) {
   return (
@@ -30,8 +31,9 @@ export default function Account({ providers, isDev = false }: Props) {
             </Text>
           </Stack>
           <ProfileCard />
-          <SettingsCard />
           <CreatorCard />
+          <SettingsCard />
+          <NotificationsCard />
           <AccountsCard providers={providers} />
           {isDev && <ApiKeysCard />}
         </Stack>
