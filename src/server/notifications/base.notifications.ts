@@ -1,20 +1,7 @@
-import { PrismaClient } from '@prisma/client';
-
 type NotificationProcessor = {
-  run: (
-    input: NotificationProcessorRunInput,
-    ctx: NotificationProcessorContext
-  ) => Promise<NotificationProcessorResult>;
-  types?: Record<string, NotificationMessagePreparer>;
-};
-
-type NotificationMessagePreparer = {
-  run: (notification: BareNotification) => NotificationMessage;
   displayName: string;
-};
-
-type NotificationProcessorContext = {
-  prisma: PrismaClient;
+  prepareQuery?: (input: NotificationProcessorRunInput) => string;
+  prepareMessage: (notification: BareNotification) => NotificationMessage;
 };
 
 export type BareNotification = {
@@ -26,20 +13,9 @@ type NotificationMessage = {
   url?: string;
 };
 export type NotificationProcessorRunInput = {
-  lastSent: Date;
+  lastSent: string;
 };
 
-type NotificationProcessorResult = {
-  success: boolean;
-  sent: Record<string, number>;
-};
-
-export function createNotificationProcessor(
-  run: NotificationProcessor['run'],
-  types: NotificationProcessor['types']
-): NotificationProcessor {
-  return {
-    run,
-    types,
-  };
+export function createNotificationProcessor(processor: Record<string, NotificationProcessor>) {
+  return processor;
 }
