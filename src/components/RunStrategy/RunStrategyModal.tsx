@@ -22,6 +22,7 @@ import {
   IconArrowBigRight,
   IconArrowRight,
   IconBan,
+  IconCloud,
   IconInfoCircle,
   IconPhoto,
   IconPlayerPlay,
@@ -69,32 +70,13 @@ export default function RunStrategyModal({
     openDelay: 500,
   };
 
-  // const demoPartners = [
-  //   ...partnersWithStrategies,
-  //   ...partnersWithStrategies,
-  //   ...partnersWithStrategies,
-  //   ...partnersWithStrategies,
-  //   ...partnersWithStrategies,
-  //   ...partnersWithStrategies,
-  //   ...partnersWithStrategies,
-  //   ...partnersWithStrategies,
-  //   ...partnersWithStrategies,
-  //   ...partnersWithStrategies,
-  //   ...partnersWithStrategies,
-  //   ...partnersWithStrategies,
-  //   ...partnersWithStrategies,
-  // ]
-  //   .map((partner, index) => ({
-  //     ...partner,
-  //     enabled: index % 2 === 0,
-  //     name: `${partner.name} ${index}`,
-  //   }))
-  //   .sort((a, b) => Number(b.enabled) - Number(a.enabled));
-
   const availablePartners = partnersWithStrategies.filter((x) => x.available);
   const unavailablePartners = partnersWithStrategies.filter((x) => !x.available);
 
-  const renderPartners = (partners: typeof partnersWithStrategies) => {
+  const renderPartners = (
+    partners: typeof partnersWithStrategies,
+    extra: React.ReactNode = null
+  ) => {
     return (
       <Table striped verticalSpacing={0} horizontalSpacing={0}>
         <tbody>
@@ -213,6 +195,7 @@ export default function RunStrategyModal({
               </tr>
             )
           )}
+          {extra}
         </tbody>
       </Table>
     );
@@ -231,9 +214,39 @@ export default function RunStrategyModal({
       ) : !!partnersWithStrategies?.length ? (
         <ScrollArea.Autosize maxHeight={500}>
           <Stack>
-            {availablePartners && renderPartners(availablePartners)}
-
-            {unavailablePartners && (
+            {renderPartners(
+              availablePartners,
+              <tr>
+                <td>
+                  <Group position="apart" p="sm">
+                    <Group spacing="xs">
+                      <Text>Automatic 1111 Web UI (Local)</Text>
+                    </Group>
+                    <Group spacing="xs" position="apart">
+                      <Group spacing="xs" noWrap>
+                        <Badge {...defaultBadgeProps}>Coming Soon</Badge>
+                        <Badge {...defaultBadgeProps} color="yellow">
+                          Help Wanted
+                        </Badge>
+                      </Group>
+                      <Button
+                        color="blue"
+                        compact
+                        size="xs"
+                        px="md"
+                        component="a"
+                        href={`https://github.com/civitai/sd_civitai_extension`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <IconArrowBigRight size={20} />
+                      </Button>
+                    </Group>
+                  </Group>
+                </td>
+              </tr>
+            )}
+            {unavailablePartners.length > 0 && (
               <>
                 <Divider
                   variant="dashed"
