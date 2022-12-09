@@ -2,6 +2,7 @@ import { Card, Stack, Switch, Title } from '@mantine/core';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { reloadSession } from '~/utils/next-auth-helpers';
+import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function SettingsCard() {
@@ -13,6 +14,7 @@ export function SettingsCard() {
       await utils.model.getAll.invalidate();
       await utils.review.getAll.invalidate();
       await reloadSession();
+      showSuccessNotification({ message: 'User profile updated' });
     },
   });
 
