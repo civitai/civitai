@@ -29,7 +29,7 @@ import {
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
-import { IconPencil, IconTrash } from '@tabler/icons';
+import { IconPencil, IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons';
 import { cloneElement, useState } from 'react';
 import { blurHashImage, loadImage } from '../../utils/blurhash';
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
@@ -43,6 +43,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   max?: number;
   value?: Array<CustomFile>;
   onChange?: (value: Array<CustomFile>) => void;
+  loading?: boolean;
 };
 
 //TODO File Safety: Limit to the specific file extensions we want to allow
@@ -52,9 +53,10 @@ export function ImageUpload({
   label,
   max = 10,
   hasPrimaryImage,
+  loading = false,
   ...inputWrapperProps
 }: Props) {
-  const { classes } = useStyles();
+  const { classes, theme, cx } = useStyles();
   const isClient = useIsClient();
 
   const sensors = useSensors(
@@ -118,125 +120,155 @@ export function ImageUpload({
       })
     );
   };
+  const dropzoneDisabled = files.length >= max;
 
   return (
-    <div>
-      <Input.Wrapper label={label} {...inputWrapperProps}>
-        <Stack>
-          <Dropzone
-            accept={IMAGE_MIME_TYPE}
-            onDrop={handleDrop}
-            maxFiles={max}
-            styles={(theme) => ({
-              root: !!inputWrapperProps.error
-                ? {
-                    borderColor: theme.colors.red[6],
-                    marginBottom: theme.spacing.xs / 2,
-                  }
-                : undefined,
-            })}
+    <Input.Wrapper
+      label={label}
+      description={`${files.length}/${max} uploaded files`}
+      {...inputWrapperProps}
+    >
+      <Stack my={5}>
+        <Dropzone
+          accept={IMAGE_MIME_TYPE}
+          onDrop={handleDrop}
+          maxFiles={max - files.length}
+          className={cx({ [classes.disabled]: dropzoneDisabled })}
+          styles={(theme) => ({
+            root: !!inputWrapperProps.error
+              ? {
+                  borderColor: theme.colors.red[6],
+                  marginBottom: theme.spacing.xs / 2,
+                }
+              : undefined,
+          })}
+          disabled={dropzoneDisabled}
+          loading={loading}
+        >
+          <Group position="center" spacing="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
+            <Dropzone.Accept>
+              <IconUpload
+                size={50}
+                stroke={1.5}
+                color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
+              />
+            </Dropzone.Accept>
+            <Dropzone.Reject>
+              <IconX
+                size={50}
+                stroke={1.5}
+                color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
+              />
+            </Dropzone.Reject>
+            <Dropzone.Idle>
+              <IconPhoto size={50} stroke={1.5} />
+            </Dropzone.Idle>
+
+            <div>
+              <Text size="xl" inline>
+                Drag images here or click to select files
+              </Text>
+              <Text size="sm" color="dimmed" inline mt={7}>
+                {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
+              </Text>
+            </div>
+          </Group>
+        </Dropzone>
+
+        {isClient && (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+            onDragStart={handleDragStart}
+            onDragCancel={handleDragCancel}
           >
-            <Text align="center">Drop images here</Text>
-          </Dropzone>
+            <SortableContext items={files.map((x) => x.url)}>
+              {files.length > 0 ? (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: `repeat(3, 1fr)`,
+                    gridGap: 10,
+                  }}
+                >
+                  {files.map((image, index) => {
+                    const match = imageFiles.find((file) => image.file === file.file);
+                    const { progress } = match ?? { progress: 0 };
+                    const showLoading = match && progress < 100 && !!image.file;
 
-          {isClient && (
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
-              onDragStart={handleDragStart}
-              onDragCancel={handleDragCancel}
-            >
-              <SortableContext items={files.map((x) => x.url)}>
-                {files.length > 0 ? (
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: `repeat(3, 1fr)`,
-                      gridGap: 10,
-                      padding: 10,
-                    }}
-                  >
-                    {files.map((image, index) => {
-                      const match = imageFiles.find((file) => image.file === file.file);
-                      const { progress } = match ?? { progress: 0 };
-                      const showLoading = match && progress < 100 && !!image.file;
-
-                      return (
-                        // <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
-                        <ImageUploadPreview
-                          key={image.url}
-                          image={image}
-                          isPrimary={hasPrimaryImage && index === 0}
-                          // disabled={hasSelectedFile}
-                          id={image.url}
+                    return (
+                      // <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
+                      <ImageUploadPreview
+                        key={image.url}
+                        image={image}
+                        isPrimary={hasPrimaryImage && index === 0}
+                        // disabled={hasSelectedFile}
+                        id={image.url}
+                      >
+                        {showLoading && (
+                          <RingProgress
+                            sx={{ position: 'absolute' }}
+                            sections={[{ value: progress, color: 'blue' }]}
+                            size={48}
+                            thickness={4}
+                            roundCaps
+                          />
+                        )}
+                        <Group
+                          className={classes.actionsGroup}
+                          align="center"
+                          position="right"
+                          p={4}
+                          spacing={4}
                         >
-                          {showLoading && (
-                            <RingProgress
-                              sx={{ position: 'absolute' }}
-                              sections={[{ value: progress, color: 'blue' }]}
-                              size={48}
-                              thickness={4}
-                              roundCaps
-                            />
-                          )}
-                          <Group
-                            className={classes.actionsGroup}
-                            align="center"
-                            position="right"
-                            p={4}
-                            spacing={4}
+                          <ImageMetaPopover
+                            meta={image.meta}
+                            onSubmit={(meta) => filesHandlers.setItem(index, { ...image, meta })}
                           >
-                            <ImageMetaPopover
-                              meta={image.meta}
-                              onSubmit={(meta) => filesHandlers.setItem(index, { ...image, meta })}
-                            >
-                              <ActionIcon
-                                variant="outline"
-                                color={
-                                  image.meta && Object.keys(image.meta).length
-                                    ? 'primary'
-                                    : undefined
-                                }
-                              >
-                                <IconPencil />
-                              </ActionIcon>
-                            </ImageMetaPopover>
                             <ActionIcon
-                              color="red"
                               variant="outline"
-                              onClick={() =>
-                                filesHandlers.setState((state) => [
-                                  ...state.filter((x) => x.url !== image.url),
-                                ])
+                              color={
+                                image.meta && Object.keys(image.meta).length ? 'primary' : undefined
                               }
                             >
-                              <IconTrash size={16} />
+                              <IconPencil />
                             </ActionIcon>
-                          </Group>
-                        </ImageUploadPreview>
-                        // </SortableImage>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </SortableContext>
-              {hasPrimaryImage && (
-                <DragOverlay adjustScale={true}>
-                  {activeId && (
-                    <ImageUploadPreview
-                      isPrimary={files.findIndex((file) => file.url === activeId) === 0}
-                      image={files.find((file) => file.url === activeId)}
-                      id="selected"
-                    />
-                  )}
-                </DragOverlay>
-              )}
-            </DndContext>
-          )}
-        </Stack>
-      </Input.Wrapper>
-    </div>
+                          </ImageMetaPopover>
+                          <ActionIcon
+                            color="red"
+                            variant="outline"
+                            onClick={() =>
+                              filesHandlers.setState((state) => [
+                                ...state.filter((x) => x.url !== image.url),
+                              ])
+                            }
+                          >
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        </Group>
+                      </ImageUploadPreview>
+                      // </SortableImage>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </SortableContext>
+            {hasPrimaryImage && (
+              <DragOverlay adjustScale={true}>
+                {activeId && (
+                  <ImageUploadPreview
+                    isPrimary={files.findIndex((file) => file.url === activeId) === 0}
+                    image={files.find((file) => file.url === activeId)}
+                    id="selected"
+                  />
+                )}
+              </DragOverlay>
+            )}
+          </DndContext>
+        )}
+      </Stack>
+    </Input.Wrapper>
   );
 
   function handleDragEnd(event: DragEndEvent) {
@@ -423,5 +455,15 @@ const useStyles = createStyles((theme, _params, getRef) => ({
 
   fullWidth: {
     width: '100%',
+  },
+
+  disabled: {
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+    borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
+    cursor: 'not-allowed',
+
+    '& *': {
+      color: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[5],
+    },
   },
 }));

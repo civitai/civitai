@@ -2,7 +2,6 @@ import {
   ActionIcon,
   Button,
   Container,
-  Divider,
   Text,
   Grid,
   Group,
@@ -333,6 +332,7 @@ export function ModelForm({ model }: Props) {
                             name={`modelVersions.${index}.images`}
                             label="Example Images"
                             max={20}
+                            loading={uploading}
                             hasPrimaryImage
                             withAsterisk
                             onChange={(values) => setUploading(values.some((x) => x.file))}
@@ -380,7 +380,7 @@ export function ModelForm({ model }: Props) {
                     searchable
                   />
                   <Text size="sm" weight={500}>
-                    This model or it's images:
+                    {`This model or it's images:`}
                   </Text>
                   <InputCheckbox
                     name="poi"
