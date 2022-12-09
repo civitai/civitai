@@ -1,8 +1,9 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { prisma } from '~/server/db/client';
 import { env } from '~/env/server.mjs';
-import { hashToken } from '~/server/utils/security-helpers';
 import { Partner } from '@prisma/client';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { generateSecretHash } from '~/server/utils/key-generator';
 
 export function TokenSecuredEndpoint(
   token: string,
@@ -49,15 +50,35 @@ export function PublicEndpoint(
 }
 
 export function PartnerEndpoint(
-  handler: (req: NextApiRequest, res: NextApiResponse, partner: Partner) => Promise<void>
+  handler: (req: NextApiRequest, res: NextApiResponse, partner: Partner) => Promise<void>,
+  allowedMethods: string[] = ['GET']
 ) {
   return async (req: NextApiRequest, res: NextApiResponse) => {
+    if (!req.method || !allowedMethods.includes(req.method))
+      return res.status(405).json({ error: 'Method not allowed' });
+
     if (!req.query.token || Array.isArray(req.query.token))
       return res.status(401).json({ error: 'Unauthorized' });
-    const token = hashToken(req.query.token);
+    const token = generateSecretHash(req.query.token);
     const partner = await prisma.partner.findUnique({ where: { token } });
     if (!partner) return res.status(401).json({ error: 'Unauthorized', message: 'Bad token' });
 
     await handler(req, res, partner);
+  };
+}
+
+export function ModEndpoint(
+  handler: (req: NextApiRequest, res: NextApiResponse) => Promise<void>,
+  allowedMethods: string[] = ['GET']
+) {
+  return async (req: NextApiRequest, res: NextApiResponse) => {
+    if (!req.method || !allowedMethods.includes(req.method))
+      return res.status(405).json({ error: 'Method not allowed' });
+
+    const session = await getServerAuthSession({ req, res });
+    const { isModerator } = session?.user ?? {};
+    if (!isModerator) return res.status(401).json({ error: 'Unauthorized' });
+
+    await handler(req, res);
   };
 }

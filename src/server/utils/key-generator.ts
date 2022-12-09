@@ -1,4 +1,5 @@
-import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
+import { env } from '~/env/server.mjs';
 
 const API_KEY_LENGTH = 64 as const;
 
@@ -18,15 +19,5 @@ export function generateKey(size = API_KEY_LENGTH / 2, format: BufferEncoding = 
  * Generates a secret hash based on a public key. Should be stored in the db.
  */
 export function generateSecretHash(key: string) {
-  const salt = randomBytes(8).toString('hex'); // Might be a good idea to have an env var as secret for hashing
-  const buffer = scryptSync(key, salt, API_KEY_LENGTH) as Buffer;
-
-  return `${buffer.toString('hex')}.${salt}`;
-}
-
-export function compareKeys(storedKey: string, suppliedKey: string) {
-  const [hashedPassword, salt] = storedKey.split('.');
-  const buffer = scryptSync(suppliedKey, salt, API_KEY_LENGTH) as Buffer;
-
-  return timingSafeEqual(Buffer.from(hashedPassword, 'hex'), buffer);
+  return createHash('sha512').update(`${key}${env.NEXTAUTH_SECRET}`).digest('hex');
 }
