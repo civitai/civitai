@@ -11,7 +11,7 @@ export const reviewUpsertSchema = z.object({
   rating: z.number(),
   text: z.string().nullish(),
   nsfw: z.boolean().optional(),
-  images: z.array(imageSchema).max(5, 'You can only upload up to 5 images').optional(),
+  images: z.array(imageSchema).max(10, 'You can only upload up to 10 images').optional(),
 });
 
 export type GetAllReviewsInput = z.infer<typeof getAllReviewSchema>;
