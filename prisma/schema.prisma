@@ -456,6 +456,9 @@ model Partner {
   price          String
   about          String?
   createdAt      DateTime            @default(now())
+  nsfw           Boolean             @default(false)
+  poi            Boolean             @default(false)
+  token          String?             @unique
   runStrategies  RunStrategy[]
 }
 

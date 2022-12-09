@@ -1,5 +1,8 @@
 import { NextApiRequest, NextApiResponse } from 'next';
+import { prisma } from '~/server/db/client';
 import { env } from '~/env/server.mjs';
+import { hashToken } from '~/server/utils/security-helpers';
+import { Partner } from '@prisma/client';
 
 export function TokenSecuredEndpoint(
   token: string,
@@ -42,5 +45,19 @@ export function PublicEndpoint(
     );
     if (req.method === 'OPTIONS') return res.status(200).json({});
     await handler(req, res);
+  };
+}
+
+export function PartnerEndpoint(
+  handler: (req: NextApiRequest, res: NextApiResponse, partner: Partner) => Promise<void>
+) {
+  return async (req: NextApiRequest, res: NextApiResponse) => {
+    if (!req.query.token || Array.isArray(req.query.token))
+      return res.status(401).json({ error: 'Unauthorized' });
+    const token = hashToken(req.query.token);
+    const partner = await prisma.partner.findUnique({ where: { token } });
+    if (!partner) return res.status(401).json({ error: 'Unauthorized', message: 'Bad token' });
+
+    await handler(req, res, partner);
   };
 }
