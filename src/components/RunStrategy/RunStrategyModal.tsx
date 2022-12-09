@@ -7,17 +7,13 @@ import {
   Alert,
   Stack,
   Text,
-  ActionIcon,
   useMantineTheme,
   BadgeProps,
   Tooltip,
   TooltipProps,
   Popover,
-  createStyles,
   ScrollArea,
   Center,
-  Title,
-  CenterProps,
   Button,
 } from '@mantine/core';
 import { ContextModalProps } from '@mantine/modals';
@@ -31,8 +27,6 @@ import {
 } from '@tabler/icons';
 import { trpc } from '~/utils/trpc';
 import { QS } from '~/utils/qs';
-import { useState } from 'react';
-import Link from 'next/link';
 
 export default function RunStrategyModal({
   context,
