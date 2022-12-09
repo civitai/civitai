@@ -21,6 +21,7 @@ export const getAllPartners = async <TSelect extends Prisma.PartnerSelect>(args?
       pricingModel: true,
       price: true,
       onDemand: true,
+      about: true,
       // about: true,
       // createdAt: true,
     },

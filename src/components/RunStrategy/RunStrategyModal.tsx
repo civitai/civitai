@@ -1,27 +1,73 @@
-import { Table, Group, Badge, Box, Loader, Alert, Stack, Text, ActionIcon } from '@mantine/core';
+import {
+  Table,
+  Group,
+  Badge,
+  Box,
+  Loader,
+  Alert,
+  Stack,
+  Text,
+  ActionIcon,
+  useMantineTheme,
+  BadgeProps,
+  Tooltip,
+  TooltipProps,
+  Popover,
+  createStyles,
+  ScrollArea,
+  Center,
+  Title,
+  CenterProps,
+  Button,
+} from '@mantine/core';
 import { ContextModalProps } from '@mantine/modals';
-import { IconPhoto, IconPlayerPlay, IconRefresh } from '@tabler/icons';
+import {
+  IconArrowBigRight,
+  IconArrowRight,
+  IconInfoCircle,
+  IconPhoto,
+  IconPlayerPlay,
+  IconRefresh,
+} from '@tabler/icons';
 import { trpc } from '~/utils/trpc';
 import { QS } from '~/utils/qs';
+import { useState } from 'react';
+import Link from 'next/link';
 
 export default function RunStrategyModal({
   context,
   id,
   innerProps,
 }: ContextModalProps<{ modelVersionId: number }>) {
+  const theme = useMantineTheme();
   const { modelVersionId } = innerProps;
 
   const { data: strategies = [], isLoading: strategiesLoading } =
     trpc.modelVersion.getRunStrategies.useQuery({ id: modelVersionId });
   const { data: partners, isLoading: partnersLoading } = trpc.partner.getAll.useQuery();
 
-  // add strategies to partners and filter out unavailable partners
+  // add strategies to partners
   const partnersWithStrategies = partners
     ?.map((partner) => ({
       ...partner,
       strategies: strategies.filter((strategy) => strategy.partnerId === partner.id),
     }))
-    .filter((partner) => partner.onDemand || partner.strategies.length > 0);
+    .map((partner) => ({ ...partner, enabled: partner.onDemand || partner.strategies.length > 0 }))
+    .sort((a, b) => Number(b.enabled) - Number(a.enabled));
+
+  const defaultBadgeProps: BadgeProps = {
+    variant: 'outline',
+    radius: 'sm',
+    color: theme.colorScheme === 'dark' ? 'gray' : 'dark',
+    styles: {
+      root: { textTransform: 'none', userSelect: 'none' },
+    },
+  };
+
+  const defaultTooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
+    withArrow: true,
+    openDelay: 500,
+  };
 
   return (
     <Stack>
@@ -33,37 +79,101 @@ export default function RunStrategyModal({
         <Box p="md">
           <Loader />
         </Box>
-      ) : partnersWithStrategies ? (
-        <Table striped>
-          <tbody>
-            {partnersWithStrategies?.map(
-              ({ id, name, startupTime, stepsPerSecond, pricingModel }) => (
-                <tr key={id}>
-                  <Group position="apart" noWrap>
-                    {name}
-                    <Group spacing="xs">
-                      {startupTime && (
-                        <Badge leftSection={<IconRefresh size={16} />}>{startupTime}</Badge>
-                      )}
-                      {stepsPerSecond && (
-                        <Badge leftSection={<IconPhoto />}>{stepsPerSecond / 30}</Badge>
-                      )}
-                      {pricingModel && <Badge>{pricingModel}</Badge>}
-                      <ActionIcon
-                        variant="filled"
-                        component="a"
-                        href={`/api/run/${modelVersionId}?${QS.stringify({})}`}
-                        target="_blank"
-                      >
-                        <IconPlayerPlay />
-                      </ActionIcon>
-                    </Group>
-                  </Group>
-                </tr>
-              )
-            )}
-          </tbody>
-        </Table>
+      ) : !!partnersWithStrategies?.length ? (
+        <ScrollArea.Autosize maxHeight={500}>
+          <Table striped verticalSpacing={0} horizontalSpacing={0}>
+            <tbody>
+              {
+                // [
+                //   ...partnersWithStrategies,
+                //   ...partnersWithStrategies,
+                //   ...partnersWithStrategies,
+                //   ...partnersWithStrategies,
+                //   ...partnersWithStrategies,
+                //   ...partnersWithStrategies,
+                //   ...partnersWithStrategies,
+                // ]
+                //   .map((partner, index) => ({
+                //     ...partner,
+                //     enabled: index % 2 === 0,
+                //     name: `${partner.name} ${index}`,
+                //   }))
+                //   .sort((a, b) => Number(b.enabled) - Number(a.enabled))
+                partnersWithStrategies.map(
+                  (
+                    { id, name, about, startupTime, stepsPerSecond, price, strategies, enabled },
+                    index
+                  ) => (
+                    <tr key={index} style={{ opacity: !enabled ? 1 : undefined }}>
+                      <td>
+                        <Group position="apart" p="sm">
+                          <Group spacing="xs">
+                            <Text>{name}</Text>
+                            <Popover width={500} withinPortal withArrow position="right">
+                              <Popover.Target>
+                                <Center style={{ cursor: 'pointer' }}>
+                                  <IconInfoCircle size={20} />
+                                </Center>
+                              </Popover.Target>
+                              <Popover.Dropdown>
+                                <Text>{about}</Text>
+                              </Popover.Dropdown>
+                            </Popover>
+                          </Group>
+                          <Group spacing="xs" position="apart">
+                            <Group spacing="xs" noWrap>
+                              {startupTime && (
+                                <Tooltip {...defaultTooltipProps} label="Startup time">
+                                  <Badge
+                                    {...defaultBadgeProps}
+                                    leftSection={<IconRefresh size={14} />}
+                                  >
+                                    {abbreviateTime(startupTime)}
+                                  </Badge>
+                                </Tooltip>
+                              )}
+                              {stepsPerSecond && (
+                                <Tooltip {...defaultTooltipProps} label="Image generation time">
+                                  <Badge
+                                    {...defaultBadgeProps}
+                                    leftSection={<IconPhoto size={14} />}
+                                  >
+                                    {abbreviateTime(calculateStepsPerSecond(stepsPerSecond))}
+                                  </Badge>
+                                </Tooltip>
+                              )}
+                              {price && (
+                                <Tooltip {...defaultTooltipProps} label="Price">
+                                  <Badge {...defaultBadgeProps}>{price}</Badge>
+                                </Tooltip>
+                              )}
+                            </Group>
+                            <Button
+                              color="blue"
+                              compact
+                              size="xs"
+                              px="md"
+                              component="a"
+                              href={`/api/run/${modelVersionId}?${QS.stringify({
+                                partnerId: id,
+                                strategyId: strategies[0]?.id,
+                              })}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              disabled={!enabled}
+                            >
+                              <IconArrowBigRight size={20} />
+                            </Button>
+                          </Group>
+                        </Group>
+                      </td>
+                    </tr>
+                  )
+                )
+              }
+            </tbody>
+          </Table>
+        </ScrollArea.Autosize>
       ) : (
         <Alert color="yellow">
           Currently, there are no model generating services for this model
@@ -83,3 +193,15 @@ export default function RunStrategyModal({
     </Stack>
   );
 }
+
+const abbreviateTime = (value: number) => {
+  if (value < 60) return `${value}s`;
+  else return `${Math.round(value / 60)}m`;
+};
+
+const calculateStepsPerSecond = (value: number) => {
+  const parsed = 30 / value;
+  if (parsed < 1) return Math.round(parsed * 10) / 10;
+
+  return Math.round(parsed);
+};
