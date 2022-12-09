@@ -1,8 +1,8 @@
-import { Button, Text } from '@mantine/core';
+import { Button, ButtonProps, Text } from '@mantine/core';
 import { IconPlayerPlay } from '@tabler/icons';
 import { useModalsContext } from '~/providers/CustomModalsProvider';
 
-export function RunButton({ modelVersionId }: { modelVersionId: number }) {
+export function RunButton({ modelVersionId, ...props }: { modelVersionId: number } & ButtonProps) {
   const { openModal } = useModalsContext();
 
   const handleClick = () =>
@@ -16,7 +16,13 @@ export function RunButton({ modelVersionId }: { modelVersionId: number }) {
     });
 
   return (
-    <Button rightIcon={<IconPlayerPlay size={16} />} onClick={handleClick} px="sm">
+    <Button
+      rightIcon={<IconPlayerPlay size={16} />}
+      onClick={handleClick}
+      px="sm"
+      color="green"
+      {...props}
+    >
       Run
     </Button>
   );

@@ -133,7 +133,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 </Group>
               )}
             </Stack>
-            <RunButton modelVersionId={version.id} />
+            <RunButton modelVersionId={version.id} variant="light" />
           </Group>
 
           <DescriptionTable items={versionDetails} labelWidth="30%" />
