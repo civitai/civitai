@@ -73,6 +73,9 @@ function MyApp(props: CustomAppProps) {
                   Switch: {
                     styles: { track: { cursor: 'pointer' }, label: { cursor: 'pointer' } },
                   },
+                  Badge: {
+                    styles: { leftSection: { lineHeight: 1 } },
+                  },
                 },
               }}
               withGlobalStyles

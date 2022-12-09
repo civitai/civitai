@@ -1,3 +1,5 @@
+import { modelVersionRouter } from './model-version.router';
+import { partnerRouter } from './partner.router';
 import { userLinkRouter } from './user-link.router';
 import { router } from '~/server/trpc';
 import { accountRouter } from './account.router';
@@ -21,6 +23,8 @@ export const appRouter = router({
   tag: tagRouter,
   user: userRouter,
   userLink: userLinkRouter,
+  partner: partnerRouter,
+  modelVersion: modelVersionRouter,
 });
 
 // export type definition of API

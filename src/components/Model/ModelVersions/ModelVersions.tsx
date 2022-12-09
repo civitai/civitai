@@ -8,6 +8,7 @@ import {
 } from '~/components/DescriptionTable/DescriptionTable';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { RunButton } from '~/components/RunStrategy/RunButton';
 import { TrainingWordBadge } from '~/components/TrainingWordBadge/TrainingWordBadge';
 import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
@@ -109,25 +110,31 @@ function TabContent({ version, nsfw }: TabContentProps) {
     <Grid gutter="xl">
       <Grid.Col xs={12} md={4} orderMd={2}>
         <Stack spacing="xs">
-          <Stack spacing={4}>
-            <Button
-              component="a"
-              href={`/api/download/models/${version.id}`}
-              leftIcon={<IconDownload size={16} />}
-              download
-              variant="light"
-            >
-              {`Download (${formatKBytes(version.modelFile?.sizeKB ?? 0)})`}
-            </Button>
-            {version.modelFile && (
-              <Group position="apart">
-                <VerifiedText file={version.modelFile} />
-                <Text size="xs" color="dimmed">
-                  {version.modelFile.format}
-                </Text>
+          <Group spacing="xs" align="flex-start">
+            <Stack spacing={4} style={{ flex: 1 }}>
+              <Group spacing="xs">
+                <Button
+                  component="a"
+                  href={`/api/download/models/${version.id}`}
+                  leftIcon={<IconDownload size={16} />}
+                  download
+                  variant="light"
+                  style={{ flex: 1 }}
+                >
+                  {`Download (${formatKBytes(version.modelFile?.sizeKB ?? 0)})`}
+                </Button>
               </Group>
-            )}
-          </Stack>
+              {version.modelFile && (
+                <Group position="apart">
+                  <VerifiedText file={version.modelFile} />
+                  <Text size="xs" color="dimmed">
+                    {version.modelFile.format}
+                  </Text>
+                </Group>
+              )}
+            </Stack>
+            <RunButton modelVersionId={version.id} variant="light" />
+          </Group>
 
           <DescriptionTable items={versionDetails} labelWidth="30%" />
           <Text size={16} weight={500}>

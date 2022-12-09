@@ -177,6 +177,12 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           rawScanResult: true,
         },
       },
+      // runStrategies: {
+      //   select: {
+      //     id: true,
+      //     partnerId: true,
+      //   },
+      // },
     },
   },
   rank: {

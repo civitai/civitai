@@ -193,11 +193,12 @@ model ModelVersion {
   fromImportId Int?
   inaccurate   Boolean     @default(false)
 
-  reviews Review[]
-  images  ImagesOnModels[]
-  metrics ModelVersionMetric[]
-  rank    ModelVersionRank?
-  files   ModelFile[]
+  reviews       Review[]
+  images        ImagesOnModels[]
+  metrics       ModelVersionMetric[]
+  rank          ModelVersionRank?
+  files         ModelFile[]
+  runStrategies RunStrategy[]
 }
 
 enum ScanResultCode {
@@ -274,6 +275,7 @@ model ModelVersionMetric {
 
 enum UserActivityType {
   ModelDownload
+  ModelRun
   TrainingDataDownload
 }
 
@@ -424,6 +426,37 @@ model SavedModel {
   updatedAt DateTime @updatedAt
 
   @@id([modelId, userId])
+}
+
+model RunStrategy {
+  id             Int          @id @default(autoincrement())
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id])
+  partnerId      Int
+  partner        Partner      @relation(fields: [partnerId], references: [id])
+  url            String
+  createdAt      DateTime     @default(now())
+}
+
+enum PartnerPricingModel {
+  Duration
+  PerImage
+}
+
+model Partner {
+  id             Int                 @id @default(autoincrement())
+  name           String
+  homepage       String?
+  tos            String?
+  privacy        String?
+  startupTime    Int? //Seconds
+  onDemand       Boolean
+  stepsPerSecond Int
+  pricingModel   PartnerPricingModel
+  price          String
+  about          String?
+  createdAt      DateTime            @default(now())
+  runStrategies  RunStrategy[]
 }
 
 model KeyValue {

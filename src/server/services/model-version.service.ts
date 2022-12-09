@@ -15,3 +15,16 @@ export const getModelVersion = async <TSelect extends Prisma.ModelVersionSelect>
   const model = await prisma.modelVersion.findUnique({ where: { id }, select });
   return model;
 };
+
+export const getModelVersionRunStrategies = async ({
+  modelVersionId,
+}: {
+  modelVersionId: number;
+}) =>
+  prisma.runStrategy.findMany({
+    where: { modelVersionId },
+    select: {
+      id: true,
+      partnerId: true,
+    },
+  });

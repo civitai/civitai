@@ -27,6 +27,8 @@ const DynamicReviewThreadModal = dynamic(
   () => import('~/components/ReviewThreadModal/ReviewThreadModal')
 );
 
+const DynamicRunStrategyModal = dynamic(() => import('~/components/RunStrategy/RunStrategyModal'));
+
 const modals = {
   reviewEdit: DynamicReviewEditModal,
   imageLightbox: DynamicLightboxImageCarousel,
@@ -34,6 +36,7 @@ const modals = {
   commentEdit: DynamicCommentEditModal,
   commentThread: DynamicCommentThreadModal,
   reviewThread: DynamicReviewThreadModal,
+  runStrategy: DynamicRunStrategyModal,
 };
 
 type OpenContextModalProps<CustomProps extends Record<string, unknown>> =
@@ -65,7 +68,12 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
     router.beforePopState(({ as }) => {
       if (as !== router.asPath && router.query.modal !== undefined) {
         closeAllModals();
-        router.replace(as, undefined, { shallow: true });
+        const [asPathname, asQuery] = as.split('?');
+        router.replace(
+          { pathname: asPathname, query: { ...router.query, ...QS.parse(asQuery) } as any },
+          as,
+          { shallow: true }
+        );
         return false;
       }
       return true;
@@ -80,6 +88,7 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
       onClose,
       ...payload
     }: OpenContextModalProps<CustomProps>) => {
+      console.log({ router });
       const [pathname, visibleQuery] = router.asPath.split('?');
       const asQuery = { ...QS.parse(visibleQuery), modal: modal };
       router.push(

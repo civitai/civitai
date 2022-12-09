@@ -80,6 +80,7 @@ import { isNumber } from '~/utils/type-guards';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { scrollToTop } from '~/utils/scroll-utils';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
+import { RunButton } from '~/components/RunStrategy/RunButton';
 
 //TODO - Break model query into multiple queries
 /*
@@ -600,6 +601,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     )}
                   </Stack>
 
+                  <RunButton modelVersionId={latestVersion.id} />
                   <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="bottom" withArrow>
                     <div>
                       <LoginRedirect reason="favorite-model">
