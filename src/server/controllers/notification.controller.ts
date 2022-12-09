@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
+import { getNotificationTypes } from '~/server/notifications/utils.notifications';
 import {
   GetUserNotificationsSchema,
   MarkReadNotificationInput,
@@ -43,16 +44,6 @@ export const getUserNotificationsInfiniteHandler = async ({
   } catch (error) {
     throw throwDbError(error);
   }
-};
-
-export const getNotificationSettingsHandler = () => {
-  return [
-    { type: 'new-review', label: 'New reviews' },
-    { type: 'comment-reaction-milestone', label: 'Reaction milestone' },
-    { type: 'new-comment', label: 'New comments in your models' },
-    { type: 'new-creator-model', label: 'New model upload by creators you follow' },
-    { type: 'model-like-milestone', label: 'Likes in your models' },
-  ];
 };
 
 export const upsertUserNotificationSettingsHandler = async ({

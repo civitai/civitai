@@ -1,17 +1,13 @@
 import { Card, Center, Loader, Stack, Switch, Title } from '@mantine/core';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { getNotificationTypes } from '~/server/notifications/utils.notifications';
 
 import { trpc } from '~/utils/trpc';
 
+const settings = Object.entries(getNotificationTypes()).map(([type, label]) => ({ type, label }));
+
 export function NotificationsCard() {
   const currentUser = useCurrentUser();
-
-  // Get these from our API
-  const { data: settings = [], isLoading: loadingSettings } =
-    trpc.notification.getSettings.useQuery(undefined, {
-      cacheTime: Infinity,
-      staleTime: Infinity,
-    });
 
   const { data: userNotificationSettings = [], isLoading } =
     trpc.user.getNotificationSettings.useQuery();
@@ -29,23 +25,17 @@ export function NotificationsCard() {
         <Title id="notification-settings" order={2}>
           Notifications Settings
         </Title>
-        {loadingSettings ? (
-          <Center>
-            <Loader />
-          </Center>
-        ) : (
-          settings.map(({ type, label }) => (
-            <Switch
-              key={type}
-              label={label}
-              defaultChecked={!disabledSettings.includes(type)}
-              disabled={isLoading}
-              onChange={({ target }) =>
-                handleUpdateNotificationSetting({ toggle: target.checked, type: type })
-              }
-            />
-          ))
-        )}
+        {settings.map(({ type, label }) => (
+          <Switch
+            key={type}
+            label={label}
+            defaultChecked={!disabledSettings.includes(type)}
+            disabled={isLoading}
+            onChange={({ target }) =>
+              handleUpdateNotificationSetting({ toggle: target.checked, type: type })
+            }
+          />
+        ))}
       </Stack>
     </Card>
   );
