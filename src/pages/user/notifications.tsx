@@ -26,7 +26,12 @@ export default function Notifications() {
   const { ref, inView } = useInView();
 
   const { data, isLoading, fetchNextPage, hasNextPage } =
-    trpc.notification.getAllByUser.useInfiniteQuery({});
+    trpc.notification.getAllByUser.useInfiniteQuery(
+      {},
+      {
+        getNextPageParam: (lastPage) => lastPage.nextCursor,
+      }
+    );
   const notifications = useMemo(
     () => data?.pages.flatMap((page) => page.items) ?? [],
     [data?.pages]

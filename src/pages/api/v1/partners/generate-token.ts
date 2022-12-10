@@ -10,7 +10,6 @@ export default ModEndpoint(
   async function importSource(req: NextApiRequest, res: NextApiResponse) {
     const { partnerId } = schema.parse(req.query);
     const token = generateKey();
-    console.log(token);
     const hash = generateSecretHash(token);
 
     await prisma.partner.updateMany({

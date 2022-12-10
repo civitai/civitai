@@ -132,7 +132,7 @@ export const modelNotifications = createNotificationProcessor({
           ) "details"
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
-        JOIN "FavoriteModel" fm ON m.id = fm."modelId" AND mv."createdAt" <= fm."createdAt"
+        JOIN "FavoriteModel" fm ON m.id = fm."modelId" AND mv."createdAt" >= fm."createdAt"
         WHERE mv."createdAt" > '${lastSent}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")

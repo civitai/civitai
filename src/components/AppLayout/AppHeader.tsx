@@ -413,18 +413,21 @@ export function AppHeader({ links }: Props) {
           </Group>
         </Grid.Col>
         <Grid.Col span="auto" className={classes.burger}>
-          <Burger
-            opened={burgerOpened}
-            onClick={burgerOpened ? closeBurger : openBurger}
-            size="sm"
-          />
-          <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
-            {(styles) => (
-              <Paper className={classes.dropdown} withBorder style={styles}>
-                {extendedMenuItems}
-              </Paper>
-            )}
-          </Transition>
+          <Group>
+            {session?.user && <NotificationBell />}
+            <Burger
+              opened={burgerOpened}
+              onClick={burgerOpened ? closeBurger : openBurger}
+              size="sm"
+            />
+            <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
+              {(styles) => (
+                <Paper className={classes.dropdown} withBorder style={styles}>
+                  {extendedMenuItems}
+                </Paper>
+              )}
+            </Transition>
+          </Group>
         </Grid.Col>
       </Grid>
     </Header>

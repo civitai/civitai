@@ -29,7 +29,7 @@ export const getUserNotifications = async <TSelect extends Prisma.NotificationSe
     cursor: cursor ? { id: cursor } : undefined,
     where,
     select,
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
   });
 
   if (count) {

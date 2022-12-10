@@ -88,7 +88,6 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
       onClose,
       ...payload
     }: OpenContextModalProps<CustomProps>) => {
-      console.log({ router });
       const [pathname, visibleQuery] = router.asPath.split('?');
       const asQuery = { ...QS.parse(visibleQuery), modal: modal };
       router.push(

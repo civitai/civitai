@@ -83,7 +83,7 @@ export function NotificationBell() {
             </Center>
           ) : notifications && notifications.items.length > 0 ? (
             <Stack spacing={0}>
-              <ScrollArea.Autosize maxHeight={500}>
+              <ScrollArea.Autosize maxHeight={410}>
                 <NotificationList
                   textSize="xs"
                   items={notifications.items}

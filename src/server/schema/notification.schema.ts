@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 
 export const getUserNotificationsSchema = getAllQuerySchema.extend({
-  cursor: z.string().cuid(),
+  cursor: z.string(),
   unread: z.boolean().default(false),
 });
 export type GetUserNotificationsSchema = z.infer<typeof getUserNotificationsSchema>;

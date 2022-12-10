@@ -24,12 +24,12 @@ export const getUserNotificationsInfiniteHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   const { id: userId } = ctx.user;
-  const limit = (input.limit ?? DEFAULT_PAGE_SIZE) + 1;
+  const limit = input.limit ?? DEFAULT_PAGE_SIZE;
 
   try {
     const { items } = await getUserNotifications({
       ...input,
-      limit,
+      limit: limit + 1,
       userId,
       select: getAllNotificationsSelect,
     });
