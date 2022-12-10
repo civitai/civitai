@@ -23,7 +23,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       ...getModelVersionDetailsSelect,
       modelId: true,
       model: {
-        select: { name: true },
+        select: { name: true, type: true, nsfw: true, poi: true },
       },
     },
   });
@@ -42,7 +42,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
   res.status(200).json({
     ...version,
-    modelName: model.name,
+    model,
     files: modelFiles.map(({ type, ...file }) => ({ ...file })),
     images: images.map(({ image: { url, ...image } }) => ({
       url: getEdgeUrl(url, { width: 450 }),
