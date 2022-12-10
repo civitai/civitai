@@ -1,5 +1,6 @@
-import { ModelFileType, Prisma } from '@prisma/client';
-import { imageSelect, imageSelectWithoutId } from '~/server/selectors/image.selector';
+import { Prisma } from '@prisma/client';
+import { imageSelect } from '~/server/selectors/image.selector';
+import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
 
 export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
@@ -73,36 +74,7 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
     },
   },
   modelVersions: {
-    select: {
-      id: true,
-      name: true,
-      createdAt: true,
-      updatedAt: true,
-      trainedWords: true,
-      images: {
-        orderBy: {
-          index: 'asc',
-        },
-        select: {
-          image: {
-            select: imageSelectWithoutId,
-          },
-        },
-        take: 20,
-      },
-      files: {
-        select: {
-          sizeKB: true,
-          type: true,
-          format: true,
-          pickleScanResult: true,
-          pickleScanMessage: true,
-          virusScanResult: true,
-          scannedAt: true,
-        },
-        where: { type: ModelFileType.Model },
-      },
-    },
+    select: getModelVersionDetailsSelect,
     orderBy: { index: 'asc' },
   },
   tagsOnModels: {
