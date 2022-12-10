@@ -1,4 +1,4 @@
-import { Button, ButtonProps, Text } from '@mantine/core';
+import { Button, ButtonProps, Text, Tooltip } from '@mantine/core';
 import { IconPlayerPlay } from '@tabler/icons';
 import { useModalsContext } from '~/providers/CustomModalsProvider';
 
@@ -16,14 +16,19 @@ export function RunButton({ modelVersionId, ...props }: { modelVersionId: number
     });
 
   return (
-    <Button
-      rightIcon={<IconPlayerPlay size={16} />}
-      onClick={handleClick}
-      px="sm"
-      color="green"
-      {...props}
-    >
-      Run
-    </Button>
+    <Tooltip label="Run Model" withArrow position="bottom">
+      <Button
+        onClick={handleClick}
+        color="green"
+        {...props}
+        sx={{
+          paddingLeft: 0,
+          paddingRight: 0,
+          width: 36,
+        }}
+      >
+        <IconPlayerPlay />
+      </Button>
+    </Tooltip>
   );
 }

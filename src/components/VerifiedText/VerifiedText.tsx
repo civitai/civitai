@@ -6,6 +6,7 @@ import {
   DefaultMantineColor,
   Group,
   ThemeIcon,
+  createStyles,
 } from '@mantine/core';
 import { ScanResultCode } from '@prisma/client';
 import { IconShieldCheck, IconShieldOff, IconShieldX } from '@tabler/icons';
@@ -44,6 +45,7 @@ const StatusCodeOrder = ['Pending', 'Danger', 'Error', 'Success'] as const;
 export function VerifiedText({ file, ...props }: Props) {
   if (!file) return null;
 
+  const { classes } = useStyles();
   const { virusScanResult, virusScanMessage, pickleScanResult, pickleScanMessage, scannedAt } =
     file;
 
@@ -62,7 +64,10 @@ export function VerifiedText({ file, ...props }: Props) {
         {icon}
       </ThemeIcon>
       <Text color="dimmed" size="xs">
-        <Text component="span">File {verified ? 'Verified' : 'Unverified'}: </Text>
+        <Text component="span">
+          <span className={classes.hideSm}>File </span>
+          {verified ? 'Verified' : 'Unverified'}:{' '}
+        </Text>
         <Popover withArrow width={350} position="bottom" withinPortal>
           <Popover.Target>
             <Text component="a" sx={{ cursor: 'pointer' }}>
@@ -100,3 +105,11 @@ export function VerifiedText({ file, ...props }: Props) {
     </Group>
   );
 }
+
+const useStyles = createStyles((theme) => ({
+  hideSm: {
+    [theme.fn.smallerThan('md')]: {
+      display: 'none',
+    },
+  },
+}));
