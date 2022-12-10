@@ -69,7 +69,7 @@ model User {
   keys                 ApiKey[]
   favoriteModels       FavoriteModel[]
   links                UserLink[]
-  rank                 UserRank[]
+  rank                 UserRank?
   comments             Comment[]
   commentReactions     CommentReaction[]
   commentReports       CommentReport[]

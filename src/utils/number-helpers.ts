@@ -45,6 +45,8 @@ export function formatSeconds(seconds: number) {
 }
 
 export function abbreviateNumber(value: number): string {
+  if (!value) return '0';
+
   let newValue = value.toString();
   if (value >= 1000) {
     const suffixes = ['', 'k', 'm', 'b', 't'];
