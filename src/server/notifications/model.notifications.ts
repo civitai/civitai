@@ -7,7 +7,7 @@ export const modelNotifications = createNotificationProcessor({
   'model-download-milestone': {
     displayName: 'Model Download Milestones',
     prepareMessage: ({ details }) => ({
-      message: `Congrats! Your ${details.modelName} has recieved ${details.downloadCount} downloads`,
+      message: `Congrats! Your ${details.modelName} model has recieved ${details.downloadCount} downloads`,
       url: `/models/${details.modelId}`,
     }),
     prepareQuery: ({ lastSent }) => `
@@ -34,7 +34,7 @@ export const modelNotifications = createNotificationProcessor({
           cast(details->'downloadCount' as int) download_count
         FROM "Notification"
         JOIN affected_models ON model_id = cast(details->'modelId' as int)
-        WHERE type = 'model-like-milestone'
+        WHERE type = 'model-download-milestone'
       ), model_milestone AS (
         SELECT
           m."userId" "ownerId",
@@ -63,7 +63,7 @@ export const modelNotifications = createNotificationProcessor({
   'model-like-milestone': {
     displayName: 'Model Like Milestones',
     prepareMessage: ({ details }) => ({
-      message: `Congrats! Your ${details.modelName} has recieved ${details.favoriteCount} likes`,
+      message: `Congrats! Your ${details.modelName} model has recieved ${details.favoriteCount} likes`,
       url: `/models/${details.modelId}`,
     }),
     prepareQuery: ({ lastSent }) => `
