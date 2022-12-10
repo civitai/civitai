@@ -269,11 +269,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       if (as === '/' || as.startsWith('/?') || as.startsWith('/user/')) {
         const [route, queryString] = as.split('?');
         const queryParams = QS.parse(queryString);
-        setTimeout(() => {
-          router.replace({ pathname: route, query: { ...queryParams, model: id } }, undefined, {
-            shallow: true,
-          });
-        }, 0);
+        router.replace({ pathname: route, query: { ...queryParams, model: id } }, undefined, {
+          shallow: true,
+        });
+        return false;
       }
       return true;
     });
