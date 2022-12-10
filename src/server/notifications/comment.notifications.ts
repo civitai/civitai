@@ -23,6 +23,7 @@ export const commentNotifications = createNotificationProcessor({
         WHERE m."userId" > 0
           AND c."parentId" IS NULL
           AND c."createdAt" > '${lastSent}'
+          AND c."userId" != m."userId"
       )
       INSERT
       INTO "Notification"("id", "userId", "type", "details")

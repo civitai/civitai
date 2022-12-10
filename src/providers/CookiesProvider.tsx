@@ -27,7 +27,8 @@ export const parseCookies = z
   )
   .implement(({ types, ...args }) => ({
     ...args,
-    types: !!types ? JSON.parse(types) : [],
+    // types: !!types ? JSON.parse(types) : [],
+    types: !!types ? JSON.parse(decodeURIComponent(types)) : [],
   }));
 
 const CookiesCtx = createContext<CookiesContext>({});
