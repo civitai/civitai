@@ -6,11 +6,11 @@ import { reviewNotifications } from '~/server/notifications/review.notifications
 import { systemNotifications } from '~/server/notifications/system.notifications';
 
 export const notificationProcessors = {
-  ...reviewNotifications,
-  ...reactionNotifications,
   ...modelNotifications,
-  ...systemNotifications,
+  ...reviewNotifications,
   ...commentNotifications,
+  ...reactionNotifications,
+  ...systemNotifications,
 };
 
 export function getNotificationMessage(notification: BareNotification) {
