@@ -266,10 +266,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
     router.beforePopState(({ as }) => {
-      if (as === '/' || as.startsWith('/?') || as.startsWith('/user/')) {
+      if (as === '/' || as.startsWith('/?') || as.startsWith('/user/') || as.startsWith('/tag/')) {
         const [route, queryString] = as.split('?');
         const queryParams = QS.parse(queryString);
-        router.replace({ pathname: route, query: { ...queryParams, model: id } }, undefined, {
+        router.replace({ pathname: route, query: { ...queryParams, model: id } }, as, {
           shallow: true,
         });
         return false;
