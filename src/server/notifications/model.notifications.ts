@@ -8,7 +8,7 @@ export const modelNotifications = createNotificationProcessor({
     displayName: 'Model Download Milestones',
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your ${details.modelName} has recieved ${details.downloadCount} downloads`,
-      url: `/model/${details.modelId}`,
+      url: `/models/${details.modelId}`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH milestones AS (
@@ -55,14 +55,16 @@ export const modelNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'model-download-milestone' "type",
         details
-      FROM model_milestone;
+      FROM model_milestone
+      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
+      WHERE no."userId" IS NULL;
     `,
   },
   'model-like-milestone': {
     displayName: 'Model Like Milestones',
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your ${details.modelName} has recieved ${details.favoriteCount} likes`,
-      url: `/model/${details.modelId}`,
+      url: `/models/${details.modelId}`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH milestones AS (
@@ -108,14 +110,16 @@ export const modelNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'model-like-milestone' "type",
         details
-      FROM model_milestone;
+      FROM model_milestone
+      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
+      WHERE no."userId" IS NULL;
     `,
   },
   'new-model-version': {
     displayName: 'New Versions of Liked Models',
     prepareMessage: ({ details }) => ({
       message: `The ${details.modelName} model you liked has a new version: ${details.versionName}`,
-      url: `/model/${details.modelId}`,
+      url: `/models/${details.modelId}`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH new_model_version AS (
@@ -128,7 +132,7 @@ export const modelNotifications = createNotificationProcessor({
           ) "details"
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
-        JOIN "FavoriteModel" fm ON m.id = fm."modelId"
+        JOIN "FavoriteModel" fm ON m.id = fm."modelId" AND mv."createdAt" <= fm."createdAt"
         WHERE mv."createdAt" > '${lastSent}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")
@@ -137,7 +141,9 @@ export const modelNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-model-version' "type",
         details
-      FROM new_model_version;
+      FROM new_model_version
+      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
+      WHERE no."userId" IS NULL;
     `,
   },
 });

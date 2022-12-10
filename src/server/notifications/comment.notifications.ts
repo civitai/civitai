@@ -32,7 +32,9 @@ export const commentNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-comment' "type",
         details
-      FROM new_comments;
+      FROM new_comments
+      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
+      WHERE no."userId" IS NULL;
     `,
   },
   'new-comment-response': {
@@ -65,7 +67,9 @@ export const commentNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-comment-response' "type",
         details
-      FROM new_comment_response;
+      FROM new_comment_response
+      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
+      WHERE no."userId" IS NULL;
     `,
   },
 });

@@ -4,10 +4,11 @@ import { z } from 'zod';
 
 import { processImportsJob } from '~/server/jobs/process-imports';
 import { scanFilesJob } from '~/server/jobs/scan-files';
+import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { updateMetricsJob } from '~/server/jobs/update-metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
-const jobs = [scanFilesJob, updateMetricsJob, processImportsJob];
+const jobs = [scanFilesJob, updateMetricsJob, processImportsJob, sendNotificationsJob];
 
 export default WebhookEndpoint(async (req, res) => {
   const { run: runJob } = querySchema.parse(req.query);

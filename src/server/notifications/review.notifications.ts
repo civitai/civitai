@@ -32,6 +32,8 @@ export const reviewNotifications = createNotificationProcessor({
         "ownerId" "userId",
         'new-review' "type",
         details
-      FROM new_reviews;`,
+      FROM new_reviews
+      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
+      WHERE no."userId" IS NULL;`,
   },
 });
