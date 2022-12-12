@@ -199,6 +199,23 @@ model ModelVersion {
   rank          ModelVersionRank?
   files         ModelFile[]
   runStrategies RunStrategy[]
+  hashes        ModelHash[]
+}
+
+enum ModelHashType {
+  AutoV1
+  SHA256
+  CRC
+}
+
+model ModelHash {
+  modelVersion   ModelVersion  @relation(fields: [modelVersionId], references: [id])
+  modelVersionId Int
+  type           ModelHashType
+  hash           String
+  createdAt      DateTime      @default(now())
+
+  @@id([modelVersionId, type])
 }
 
 enum ScanResultCode {
