@@ -19,6 +19,7 @@ export function FileInputUpload({
   value,
   error,
   fileName = value?.name,
+  grow = false,
   ...props
 }: Props) {
   const isClient = useIsClient();
@@ -90,7 +91,7 @@ export function FileInputUpload({
   );
 
   return (
-    <Stack>
+    <Stack sx={grow ? { flexGrow: 1 } : undefined}>
       <FileInput
         {...props}
         error={error ?? fileTypeError}
@@ -149,4 +150,5 @@ type Props = Omit<FileInputProps, 'icon' | 'onChange' | 'value'> & {
   onLoading?: (loading: boolean) => void;
   uploadType?: ModelFileType;
   fileName?: string;
+  grow?: boolean;
 };
