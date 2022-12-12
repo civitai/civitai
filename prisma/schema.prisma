@@ -210,7 +210,10 @@ enum ScanResultCode {
 
 enum ModelFileType {
   Model
+  PrunedModel
   TrainingData
+  VAE
+  Config
 }
 
 enum ModelFileFormat {
@@ -235,6 +238,7 @@ model ModelFile {
   scannedAt         DateTime?
   scanRequestedAt   DateTime?
   rawScanResult     Json?
+  primary           Boolean          @default(false)
 
   @@id([modelVersionId, type])
 }
