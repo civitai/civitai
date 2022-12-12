@@ -113,8 +113,8 @@ export async function importModelFromHuggingFace(
         url: `https://thumbnails.huggingface.co/social-thumbnails/models/${id}.png`,
       });
 
-    // Process images
-    for (const { name, url } of imageFiles) {
+    // Process images (limit to 20)
+    for (const { name, url } of imageFiles.slice(0, 20)) {
       try {
         const { hash, height, width } = await imageToBlurhash(url);
         const { id } = await uploadViaUrl(url, {
