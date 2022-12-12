@@ -43,7 +43,7 @@ type UploadResult = {
 };
 
 type RequestOptions = {
-  body: Record<string, any>;
+  body: MixedObject;
   headers: HeadersInit;
 };
 
@@ -80,7 +80,7 @@ const pendingTrackedFile = {
   speed: 0,
   timeRemaining: 0,
   status: 'pending',
-  abort: () => {},
+  abort: () => undefined,
 };
 
 export const useS3Upload: UseS3Upload = (options = {}) => {

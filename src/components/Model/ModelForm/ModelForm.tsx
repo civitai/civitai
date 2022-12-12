@@ -51,6 +51,7 @@ import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { showErrorNotification } from '~/utils/notifications';
+import { ModelFileFormItem } from '~/components/Model/ModelForm/ModelFileFormItem';
 
 const schema = modelSchema.extend({ tagsOnModels: z.string().array() });
 
@@ -83,6 +84,7 @@ export function ModelForm({ model }: Props) {
     trainedWords: [],
     images: [],
     modelFile: defaultModelFile,
+    files: [defaultModelFile],
   };
 
   const defaultValues: z.infer<typeof schema> = {
@@ -97,6 +99,9 @@ export function ModelForm({ model }: Props) {
       trainedWords: trainedWords ?? [],
       // HOTFIX: Casting image.meta type issue with generated prisma schema
       images: images.map(({ image }) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
+      files: version.trainingDataFile
+        ? [modelFile ?? defaultModelFile, version.trainingDataFile]
+        : [modelFile ?? defaultModelFile],
     })) ?? [defaultModelVersion],
   };
 
@@ -304,6 +309,9 @@ export function ModelForm({ model }: Props) {
                             min={0}
                             step={500}
                           />
+                        </Grid.Col>
+                        <Grid.Col span={12}>
+                          <ModelFileFormItem parentIndex={index} control={form.control} />
                         </Grid.Col>
                         <Grid.Col span={12}>
                           <InputFileUpload
