@@ -294,6 +294,7 @@ enum UserActivityType {
   ModelDownload
   ModelRun
   TrainingDataDownload
+  HashReport
 }
 
 model UserActivity {
@@ -373,18 +374,19 @@ model ReviewReaction {
 }
 
 model Image {
-  id        Int      @id @default(autoincrement())
-  name      String?
-  url       String
-  user      User     @relation(fields: [userId], references: [id])
-  userId    Int
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  meta      Json?
-  hash      String?
-  height    Int?
-  width     Int?
-  nsfw      Boolean  @default(false)
+  id           Int      @id @default(autoincrement())
+  name         String?
+  url          String
+  user         User     @relation(fields: [userId], references: [id])
+  userId       Int
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  meta         Json?
+  hash         String?
+  height       Int?
+  width        Int?
+  nsfw         Boolean  @default(false)
+  tosViolation Boolean  @default(false)
 
   imagesOnModels  ImagesOnModels[]
   imagesOnReviews ImagesOnReviews[]
