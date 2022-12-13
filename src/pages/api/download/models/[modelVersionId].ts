@@ -64,8 +64,8 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
     const ext = modelFile.name.split('.').pop();
     let fileName = modelFile.name;
     if (modelVersion.model.type === ModelType.TextualInversion) {
-      const trainedWord = modelVersion.trainedWords[0] ?? modelVersion.model.name;
-      fileName = `${trainedWord}.pt`;
+      const trainedWord = modelVersion.trainedWords[0];
+      if (trainedWord) fileName = `${trainedWord}.pt`;
     } else
       fileName = `${filenamize(modelVersion.model.name)}_${filenamize(modelVersion.name)}.${ext}`;
     const { url } = await getGetUrl(modelFile.url, { fileName });
