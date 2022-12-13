@@ -14,13 +14,13 @@ import {
 import { useHotkeys } from '@mantine/hooks';
 import { IconMinus, IconInfoCircle } from '@tabler/icons';
 import { useState, useRef } from 'react';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageModel } from '~/server/selectors/image.selector';
 
 type LightboxProps = {
+  nsfw?: boolean;
   initialSlide?: number;
   images?: ImageModel[];
 };
@@ -30,6 +30,7 @@ export function Lightbox({
   images = [],
   opened,
   onClose,
+  nsfw,
   ...props
 }: Omit<ModalProps, 'children'> & LightboxProps) {
   const theme = useMantineTheme();
@@ -111,6 +112,7 @@ export function Lightbox({
                     aspectRatio={0}
                     image={image}
                     edgeImageProps={{ width: image.width ?? 1200 }}
+                    nsfw={nsfw}
                     // src={image.url}
                     // alt={image.name ?? undefined}
                     style={{ maxHeight: '100%', maxWidth: '100%' }}
