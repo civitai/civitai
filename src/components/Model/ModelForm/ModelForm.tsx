@@ -34,7 +34,6 @@ import { z } from 'zod';
 import {
   Form,
   InputCheckbox,
-  InputFileUpload,
   InputImageUpload,
   InputMultiSelect,
   InputNumber,
@@ -74,7 +73,13 @@ export function ModelForm({ model }: Props) {
   const [uploading, setUploading] = useState(false);
   const [hasTrainingWords, setHasTrainingWords] = useState(true);
 
-  const defaultModelFile = { name: '', url: '', sizeKB: 0, type: ModelFileType.Model };
+  const defaultModelFile = {
+    name: '',
+    url: '',
+    sizeKB: 0,
+    type: ModelFileType.Model,
+    primary: false,
+  };
 
   const defaultModelVersion: z.infer<typeof modelVersionUpsertSchema> = {
     name: '',
@@ -83,7 +88,6 @@ export function ModelForm({ model }: Props) {
     steps: null,
     trainedWords: [],
     images: [],
-    modelFile: defaultModelFile,
     files: [defaultModelFile],
   };
 
@@ -93,15 +97,12 @@ export function ModelForm({ model }: Props) {
     type: model?.type ?? ModelType.Checkpoint,
     status: model?.status ?? ModelStatus.Published,
     tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
-    modelVersions: model?.modelVersions.map(({ trainedWords, images, modelFile, ...version }) => ({
+    modelVersions: model?.modelVersions.map(({ trainedWords, images, files, ...version }) => ({
       ...version,
-      modelFile: modelFile ?? defaultModelFile,
       trainedWords: trainedWords ?? [],
       // HOTFIX: Casting image.meta type issue with generated prisma schema
       images: images.map(({ image }) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
-      files: version.trainingDataFile
-        ? [modelFile ?? defaultModelFile, version.trainingDataFile]
-        : [modelFile ?? defaultModelFile],
+      files: files ? files : [defaultModelFile],
     })) ?? [defaultModelVersion],
   };
 
@@ -312,28 +313,6 @@ export function ModelForm({ model }: Props) {
                         </Grid.Col>
                         <Grid.Col span={12}>
                           <ModelFileFormItem parentIndex={index} control={form.control} />
-                        </Grid.Col>
-                        <Grid.Col span={12}>
-                          <InputFileUpload
-                            name={`modelVersions.${index}.modelFile`}
-                            label="Model File"
-                            placeholder="Pick your model"
-                            uploadType="Model"
-                            accept=".ckpt,.pt,.safetensors"
-                            onLoading={setUploading}
-                            withAsterisk
-                          />
-                        </Grid.Col>
-                        <Grid.Col span={12}>
-                          <InputFileUpload
-                            name={`modelVersions.${index}.trainingDataFile`}
-                            label="Training Data"
-                            placeholder="Pick your training data"
-                            description="The data you used to train your model (as .zip archive)"
-                            uploadType="TrainingData"
-                            accept=".zip"
-                            onLoading={setUploading}
-                          />
                         </Grid.Col>
                         <Grid.Col span={12}>
                           <InputImageUpload

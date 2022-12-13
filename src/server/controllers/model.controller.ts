@@ -1,41 +1,44 @@
-import { ModelFileType, ModelStatus } from '@prisma/client';
+import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
+import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
+import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   getAllModelsWithVersionsSelect,
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-
-import { GetByIdInput, ReportInput } from '../schema/base.schema';
-import { GetAllModelsOutput } from '../schema/model.schema';
 import {
+  createModel,
   deleteModelById,
   getModel,
   getModels,
   getModelVersionsMicro,
   reportModelById,
+  updateModel,
   updateModelById,
-} from '../services/model.service';
+} from '~/server/services/model.service';
+import {
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
-  const model = await getModel({ input, user: ctx.user, select: modelWithDetailsSelect });
-  if (!model) {
-    throw throwNotFoundError(`No model with id ${input.id}`);
-  }
+  try {
+    const model = await getModel({ input, user: ctx.user, select: modelWithDetailsSelect });
+    if (!model) {
+      throw throwNotFoundError(`No model with id ${input.id}`);
+    }
 
-  return {
-    ...model,
-    modelVersions: model.modelVersions.map(({ files, ...version }) => ({
-      ...version,
-      trainingDataFile: files.find((file) => file.type === ModelFileType.TrainingData),
-      modelFile: files.find((file) => file.type === ModelFileType.Model),
-    })),
-  };
+    return model;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
 };
 
 export type GetModelsInfiniteReturnType = AsyncReturnType<typeof getModelsInfiniteHandler>['items'];
@@ -138,6 +141,53 @@ export const getModelVersionsHandler = async ({ input }: { input: GetByIdInput }
     return modelVersions;
   } catch (error) {
     throwDbError(error);
+  }
+};
+
+export const createModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ModelInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { user } = ctx;
+    const model = await createModel({ ...input, userId: user.id });
+
+    return model;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const updateModelHandler = async ({
+  ctx,
+  input,
+}: {
+  input: ModelInput & { id: number };
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+  const { id, poi, nsfw } = input;
+
+  if (poi && nsfw) {
+    throw throwBadRequestError(
+      `Models or images depicting real people in NSFW contexts are not permitted.`
+    );
+  }
+
+  try {
+    const model = await updateModel({ ...input, userId: user.id });
+    if (!model) {
+      throw throwNotFoundError(`No model with id ${id}`);
+    }
+
+    return model;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
   }
 };
 

@@ -9,12 +9,10 @@ export const modelVersionUpsertSchema = z.object({
   description: sanitizedStringSchema,
   steps: z.number().nullish(),
   epochs: z.number().nullish(),
-  modelFile: modelFileSchema,
-  trainingDataFile: modelFileSchema.nullish(),
   images: z
     .array(imageSchema)
     .min(1, 'At least one example image must be uploaded')
     .max(20, 'You can only upload up to 20 images'),
   trainedWords: z.array(z.string()),
-  files: z.array(modelFileSchema).nullish(),
+  files: z.array(modelFileSchema).min(1, 'At least one model file must be uploaded'),
 });
