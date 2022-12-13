@@ -32,7 +32,7 @@ export function generateToken(length: number) {
 }
 
 export function filenamize(value: string, length = 20) {
-  return truncate(camelCase(value.replace(/[^a-z0-9]/gi, '_')), { length });
+  return truncate(camelCase(value.replace(/[^a-z0-9]/gi, '_')), { length, omission: '' });
 }
 
 /**

@@ -63,11 +63,17 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
   } else {
     const ext = modelFile.name.split('.').pop();
     let fileName = modelFile.name;
+    let fileSuffix = '';
+    if (fileName.includes('-inpainting')) fileSuffix = '-inpainting';
+
     if (modelVersion.model.type === ModelType.TextualInversion) {
       const trainedWord = modelVersion.trainedWords[0];
       if (trainedWord) fileName = `${trainedWord}.pt`;
     } else
-      fileName = `${filenamize(modelVersion.model.name)}_${filenamize(modelVersion.name)}.${ext}`;
+      fileName = `${filenamize(modelVersion.model.name)}_${filenamize(
+        modelVersion.name
+      )}${fileSuffix}.${ext}`;
+
     const { url } = await getGetUrl(modelFile.url, { fileName });
     res.redirect(url);
   }
