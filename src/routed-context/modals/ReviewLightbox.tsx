@@ -8,10 +8,13 @@ export const reviewLightboxSchema = z.object({
 
 export default createRoutedContext({
   schema: reviewLightboxSchema,
-  element: ({ context, props }) => {
+  Element: ({ context, props: { reviewId } }) => {
+    // check infinite query cach for review
+    // if not there, fetch review details?
+
     return (
       <Modal opened={context.opened} onClose={context.close}>
-        {props.reviewId}
+        {reviewId}
       </Modal>
     );
   },

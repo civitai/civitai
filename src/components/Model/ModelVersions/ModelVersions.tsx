@@ -10,10 +10,9 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { TrainingWordBadge } from '~/components/TrainingWordBadge/TrainingWordBadge';
-import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
-import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -59,7 +58,7 @@ type Props = {
 
 function TabContent({ version, nsfw }: TabContentProps) {
   const mobile = useIsMobile();
-  const { openImageLightbox } = useImageLightbox();
+  const { openContext } = useRoutedContext();
 
   const versionDetails: DescriptionTableProps['items'] = [
     {
@@ -164,7 +163,12 @@ function TabContent({ version, nsfw }: TabContentProps) {
               nsfw={nsfw}
               radius="md"
               aspectRatio={1}
-              onClick={() => openImageLightbox({ initialSlide: index, images: versionImages })}
+              onClick={() =>
+                openContext('modelVersionLightbox', {
+                  initialSlide: index,
+                  modelVersionId: version.id,
+                })
+              }
               withMeta
               sx={{
                 height: '100%',
@@ -185,7 +189,10 @@ function TabContent({ version, nsfw }: TabContentProps) {
               variant="outline"
               sx={!mobile ? { height: '100%' } : undefined}
               onClick={() =>
-                openImageLightbox({ initialSlide: imagesLimit, images: versionImages })
+                openContext('modelVersionLightbox', {
+                  initialSlide: imagesLimit,
+                  modelVersionId: version.id,
+                })
               }
             >
               View more

@@ -1,3 +1,4 @@
+import { useRouter } from 'next/router';
 import { z } from 'zod';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { Lightbox } from '~/routed-context/modals/Lightbox';
@@ -5,11 +6,12 @@ import { trpc } from '~/utils/trpc';
 
 export default createRoutedContext({
   schema: z.object({
-    id: z.number(),
     modelVersionId: z.number(),
     initialSlide: z.number().optional(),
   }),
-  element: ({ context, props: { id, modelVersionId, initialSlide } }) => {
+  Element: ({ context, props: { modelVersionId, initialSlide } }) => {
+    const router = useRouter();
+    const id = Number(router.query.id);
     // this should be ok to do once we update the model detail page
     // TODO - have this use a different query: trpc.modelVersion.getById.useQuery({id: modelVersionId})
     const { data } = trpc.model.getById.useQuery({ id });

@@ -1,14 +1,17 @@
+import { usePrevious } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import React, { createContext, useContext } from 'react';
+import React, { createContext, useContext, useEffect } from 'react';
 import { QS } from '~/utils/qs';
 
 const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
 const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLightbox'));
+const RunStrategy = dynamic(() => import('~/routed-context/modals/RunStrategy'));
 
 const dictionary = {
   modelVersionLightbox: ModelVersionLightbox,
   reviewLightbox: ReviewLightbox,
+  runStrategy: RunStrategy,
 };
 
 // function register<T extends Record<string, ComponentType>>(dictionary: T) {
@@ -20,6 +23,7 @@ type RoutedContext = {
     name: TName,
     props: React.ComponentProps<typeof dictionary[TName]>
   ) => void;
+  closeContext: () => void;
 };
 
 const RoutedCtx = createContext<RoutedContext>({} as any);
@@ -34,13 +38,23 @@ export const useRoutedContext = () => {
 export function RoutedContextProvider({ children }: { children: React.ReactElement }) {
   const router = useRouter();
   const { modal } = router.query;
+  const previous = usePrevious(router.asPath.split('?')[0]);
+
+  useEffect(() => {
+    /*
+    The current value of prevPath doesn't matter. What matters is that prevPath won't have a session value on the first page a user lands on. If a user has a modal link that they copy and paste into the url, prevPath won't have a value, and the modal close button will behave differently
+    */
+    if (previous) sessionStorage.setItem('prevPath', previous);
+  }, [previous]);
 
   function openContext<TName extends keyof typeof dictionary>(
     name: TName,
     props: React.ComponentProps<typeof dictionary[TName]>
   ) {
     const [pathname, query] = router.asPath.split('?');
+    //TODO - when a value is present in the url params, don't let it be added to the query string
     const ctxProps = { ...QS.parse(query), modal: name, ...props };
+
     router.push(
       { pathname, query: { ...router.query, ...ctxProps } },
       { pathname, query: { ...ctxProps } },
@@ -48,6 +62,19 @@ export function RoutedContextProvider({ children }: { children: React.ReactEleme
         shallow: true,
       }
     );
+  }
+
+  function closeContext() {
+    // extract the props you don't want to forward
+    const { modal, ...query } = router.query;
+    const prev = sessionStorage.getItem('prev');
+    !prev
+      ? router.push(
+          { pathname: router.asPath.split('?')[0], query },
+          { pathname: router.asPath.split('?')[0] },
+          { shallow: true }
+        )
+      : router.back();
   }
 
   function renderModal() {
@@ -58,7 +85,7 @@ export function RoutedContextProvider({ children }: { children: React.ReactEleme
   }
 
   return (
-    <RoutedCtx.Provider value={{ openContext }}>
+    <RoutedCtx.Provider value={{ openContext, closeContext }}>
       {children}
       {renderModal()}
     </RoutedCtx.Provider>

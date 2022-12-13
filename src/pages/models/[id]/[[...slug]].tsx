@@ -79,7 +79,6 @@ import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { scrollToTop } from '~/utils/scroll-utils';
-import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 
@@ -145,7 +144,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const mobile = useIsMobile();
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();
-  const { openImageLightbox } = useImageLightbox();
   const { openContext } = useRoutedContext();
 
   // useEffect(() => console.log({ router }), [router]);
@@ -670,17 +668,11 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                         edgeImageProps={{ width: 400 }}
                         nsfw={nsfw}
                         radius="md"
-                        onClick={
-                          () =>
-                            openContext('modelVersionLightbox', {
-                              id: model.id,
-                              modelVersionId: latestVersion.id,
-                              initialSlide: index,
-                            })
-                          // openImageLightbox({
-                          //   initialSlide: index,
-                          //   images: latestVersion.images.map((x) => x.image),
-                          // })
+                        onClick={() =>
+                          openContext('modelVersionLightbox', {
+                            modelVersionId: latestVersion.id,
+                            initialSlide: index,
+                          })
                         }
                         style={{ width: '100%' }}
                         withMeta
