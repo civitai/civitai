@@ -59,10 +59,10 @@ export const useModalsContext = () => {
 export const CustomModalsProvider = ({ children }: { children: React.ReactNode }) => {
   const router = useRouter();
 
-  useEffect(() => {
-    const { modal, ...query } = router.query;
-    if (modal) router.replace({ query }, undefined, { shallow: true });
-  }, []); //eslint-disable-line
+  // useEffect(() => {
+  //   const { modal, ...query } = router.query;
+  //   if (modal) router.replace({ query }, undefined, { shallow: true });
+  // }, []); //eslint-disable-line
 
   useEffect(() => {
     router.beforePopState(({ as }) => {

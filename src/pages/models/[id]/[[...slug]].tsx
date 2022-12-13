@@ -81,6 +81,7 @@ import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { scrollToTop } from '~/utils/scroll-utils';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { RunButton } from '~/components/RunStrategy/RunButton';
+import { useRoutedContext } from '~/routed-context/routed-context.provider';
 
 //TODO - Break model query into multiple queries
 /*
@@ -145,6 +146,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();
   const { openImageLightbox } = useImageLightbox();
+  const { openContext } = useRoutedContext();
+
+  // useEffect(() => console.log({ router }), [router]);
 
   const { id, slug } = props;
   const { edit } = router.query;
@@ -666,11 +670,17 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                         edgeImageProps={{ width: 400 }}
                         nsfw={nsfw}
                         radius="md"
-                        onClick={() =>
-                          openImageLightbox({
-                            initialSlide: index,
-                            images: latestVersion.images.map((x) => x.image),
-                          })
+                        onClick={
+                          () =>
+                            openContext('modelVersionLightbox', {
+                              id: model.id,
+                              modelVersionId: latestVersion.id,
+                              initialSlide: index,
+                            })
+                          // openImageLightbox({
+                          //   initialSlide: index,
+                          //   images: latestVersion.images.map((x) => x.image),
+                          // })
                         }
                         style={{ width: '100%' }}
                         withMeta
@@ -791,6 +801,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         centered
         withCloseButton={false}
         padding={30}
+        zIndex={1000}
       >
         <Stack spacing="xl">
           <Text align="center">The content of this model has been marked NSFW</Text>
@@ -800,12 +811,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             </Button>
             <Button
               onClick={() => {
-                const [route, queryString] = router.asPath.split('?');
-                const query = QS.parse(queryString);
                 router.replace(
                   {
-                    pathname: route,
-                    query: { ...query, showNsfw: true },
+                    pathname: router.asPath.split('?')[0],
+                    query: { ...router.query, showNsfw: true },
                   },
                   router.asPath,
                   {
