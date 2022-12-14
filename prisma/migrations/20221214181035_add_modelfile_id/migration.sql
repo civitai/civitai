@@ -10,5 +10,4 @@ ALTER TYPE "ModelFileFormat" ADD VALUE 'Other';
 -- AlterTable
 ALTER TABLE "ModelFile" DROP CONSTRAINT "ModelFile_pkey",
 ADD COLUMN     "id" SERIAL NOT NULL,
-ALTER COLUMN "format" SET DEFAULT 'Other',
 ADD CONSTRAINT "ModelFile_pkey" PRIMARY KEY ("id");
