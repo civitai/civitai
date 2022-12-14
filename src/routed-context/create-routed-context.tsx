@@ -25,13 +25,15 @@ export function createRoutedContext<TSchema extends z.AnyZodObject>({
 }) {
   function RoutedContext(props: z.infer<TSchema>) {
     const router = useRouter();
-    const [opened, setOpened] = useState(false);
+    // const [opened, setOpened] = useState(false);
     const result = schema.safeParse(props);
     const { closeContext } = useRoutedContext();
 
-    useEffect(() => {
-      setOpened(true);
-    }, [router]);
+    // useEffect(() => {
+    //   setOpened(true);
+    // }, [router]);
+
+    // console.log('fire');
 
     // this effect is necessary for catching browser back button actions outside of our control
     // for some reason this effect won't work in routed-context.provider.tsx
@@ -54,7 +56,7 @@ export function createRoutedContext<TSchema extends z.AnyZodObject>({
 
     if (!result.success) return null;
 
-    return <BaseComponent context={{ opened, close: closeContext }} props={result.data} />;
+    return <BaseComponent context={{ opened: true, close: closeContext }} props={result.data} />;
   }
 
   return RoutedContext;

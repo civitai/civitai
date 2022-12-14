@@ -48,7 +48,7 @@ export default function ReviewThreadModal({ innerProps }: ContextModalProps<Prop
                 edgeImageProps={{ width: 400 }}
                 radius="md"
                 withMeta
-                // style={{ height: 400 }}
+                style={{ height: 400 }}
               />
             </Center>
           </Carousel.Slide>

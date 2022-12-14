@@ -49,7 +49,6 @@ export default createRoutedContext({
     const firstImage = hasImages ? review.images[0] : undefined;
 
     useAnimationOffsetEffect(emblaRef.current, TRANSITION_DURATION);
-    // TODO - fix issue with carousel images not being centered on scroll
 
     const carousel = review && (
       <Carousel
@@ -63,11 +62,11 @@ export default createRoutedContext({
         {review.images.map((image) => {
           return (
             <Carousel.Slide key={image.id}>
-              <Center>
+              <Center style={{ height: '100%' }}>
                 <ImagePreview
                   image={image}
                   aspectRatio={0}
-                  edgeImageProps={{ width: 400 }}
+                  edgeImageProps={{ height: 400 }}
                   radius="md"
                   withMeta
                 />
