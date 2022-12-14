@@ -10,7 +10,6 @@ import { useRouter } from 'next/router';
 import { useCallback, useEffect, createContext, useContext } from 'react';
 import { QS } from '~/utils/qs';
 
-const DynamicReviewEditModal = dynamic(() => import('~/components/Review/ReviewEditModal'));
 const DynamicCommentEditModal = dynamic(
   () => import('~/components/CommentEditModal/CommentEditModal')
 );
@@ -28,7 +27,6 @@ const DynamicReviewThreadModal = dynamic(
 );
 
 const modals = {
-  reviewEdit: DynamicReviewEditModal,
   // still in use by review items
   imageLightbox: DynamicLightboxImageCarousel,
   onboarding: DynamicOnboardingModal,

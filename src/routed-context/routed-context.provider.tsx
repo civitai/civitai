@@ -69,7 +69,8 @@ export function RoutedContextProvider({ children }: { children: React.ReactEleme
   function closeContext() {
     // extract the props you don't want to forward
     const { modal, ...query } = router.query;
-    const prev = sessionStorage.getItem('prev');
+    const prev = sessionStorage.getItem('prevPath');
+    // console.log(!prev ? 'push' : 'back', { prev });
     !prev
       ? router.push(
           { pathname: router.asPath.split('?')[0], query },
