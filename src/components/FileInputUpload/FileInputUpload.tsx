@@ -71,6 +71,7 @@ export function FileInputUpload({
           type: uploadType,
           url,
           name: file.name,
+          primary: false,
         };
         setState(value);
         onChange?.(value);

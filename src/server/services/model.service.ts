@@ -252,7 +252,7 @@ export const updateModel = async ({
                 }));
                 const existingVersion = currentVersions.find((x) => x.id === id);
 
-                // Determine what files to create/update
+                // Determine which files to create/update
                 const existingFileUrls: Record<string, string> = {};
                 for (const existingFile of existingVersion?.files ?? [])
                   existingFileUrls[existingFile.type] = existingFile.url;
@@ -295,13 +295,9 @@ export const updateModel = async ({
                     status: data.status,
                     files: {
                       create: filesToCreate.map(prepareFile),
-                      update: filesToUpdate.map(({ type, url, name, sizeKB }) => ({
-                        where: { modelVersionId_type: { modelVersionId: id, type } },
-                        data: {
-                          url,
-                          name,
-                          sizeKB,
-                        },
+                      update: filesToUpdate.map(({ id, ...fileData }) => ({
+                        where: { id: id ?? -1 },
+                        data: { ...fileData },
                       })),
                     },
                     images: {

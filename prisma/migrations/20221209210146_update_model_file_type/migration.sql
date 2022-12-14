@@ -20,5 +20,6 @@ ALTER TABLE "ModelFile" ADD COLUMN "primary" BOOLEAN NOT NULL DEFAULT false;
 -- Update ModelFile to set primary
 
 UPDATE "ModelFile"
-SET primary = true
-WHERE type = 'Model'
+SET "primary" = true
+WHERE "type" = 'Model';
+

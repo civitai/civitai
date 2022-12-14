@@ -1,16 +1,18 @@
-import { Button, Grid, Rating, SimpleGrid, Stack, Tabs, Text, Group } from '@mantine/core';
-import { IconDownload } from '@tabler/icons';
+import { Button, Grid, Rating, SimpleGrid, Stack, Tabs, Text, Group, Menu } from '@mantine/core';
+import { ModelFileType } from '@prisma/client';
+import { startCase } from 'lodash';
 import React from 'react';
+
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
+import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { TrainingWordBadge } from '~/components/TrainingWordBadge/TrainingWordBadge';
-import { VerifiedShield } from '~/components/VerifiedShield/VerifiedShield';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -99,12 +101,14 @@ function TabContent({ version, nsfw }: TabContentProps) {
           Download
         </Text>
       ),
-      visible: !!version.trainingDataFile?.url,
+      visible: !!version.files?.find((file) => file.type === ModelFileType.TrainingData),
     },
   ];
 
   const versionImages = version.images.map((x) => x.image);
   const imagesLimit = mobile ? VERSION_IMAGES_LIMIT / 2 : VERSION_IMAGES_LIMIT;
+  const primaryFile = version.files.find((file) => file.primary === true);
+  const secondaryFiles = version.files.filter((file) => !file.primary);
 
   return (
     <Grid gutter="xl">
@@ -112,23 +116,32 @@ function TabContent({ version, nsfw }: TabContentProps) {
         <Stack spacing="xs">
           <Group spacing="xs" align="flex-start">
             <Stack spacing={4} style={{ flex: 1 }}>
-              <Group spacing="xs">
-                <Button
-                  component="a"
-                  href={`/api/download/models/${version.id}`}
-                  leftIcon={<IconDownload size={16} />}
-                  download
-                  variant="light"
-                  style={{ flex: 1 }}
-                >
-                  {`Download (${formatKBytes(version.modelFile?.sizeKB ?? 0)})`}
-                </Button>
-              </Group>
-              {version.modelFile && (
+              <MultiActionButton
+                variant="light"
+                component="a"
+                href={`/api/download/models/${version.id}`}
+                menuItems={secondaryFiles.map((file, index) => (
+                  <Menu.Item
+                    key={index}
+                    component="a"
+                    icon={<VerifiedText file={file} iconOnly />}
+                    href={`/api/download/${
+                      file.type === 'TrainingData' ? 'training-data' : 'models'
+                    }/${version.id}`}
+                    download
+                  >
+                    {`${startCase(file.type)} (${formatKBytes(file.sizeKB)})`}
+                  </Menu.Item>
+                ))}
+                download
+              >
+                {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+              </MultiActionButton>
+              {primaryFile && (
                 <Group position="apart">
-                  <VerifiedText file={version.modelFile} />
+                  <VerifiedText file={primaryFile} />
                   <Text size="xs" color="dimmed">
-                    {version.modelFile.format}
+                    {primaryFile.format}
                   </Text>
                 </Group>
               )}

@@ -6,7 +6,7 @@ export function getModelFileFormat(filename: string) {
   else if (filename.endsWith('.pt') || filename.endsWith('.ckpt'))
     return ModelFileFormat.PickleTensor;
 
-  return null;
+  return ModelFileFormat.Other;
 }
 
 const unscannedFile = {
@@ -26,6 +26,6 @@ export function prepareFile(file: ModelFileInput) {
     format:
       file.type === ModelFileType.Model || file.type === ModelFileType.PrunedModel
         ? getModelFileFormat(file.name)
-        : null,
+        : ModelFileFormat.Other,
   };
 }
