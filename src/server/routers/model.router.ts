@@ -45,7 +45,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   });
 });
 
-const checkFilesExistance = middleware(async ({ input, ctx, next }) => {
+const checkFilesExistence = middleware(async ({ input, ctx, next }) => {
   if (!ctx.user) throw throwAuthorizationError();
 
   const { modelVersions } = input as ModelInput;
@@ -76,11 +76,11 @@ export const modelRouter = router({
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
     .query(getModelsWithVersionsHandler),
   getVersions: publicProcedure.input(getByIdSchema).query(getModelVersionsHandler),
-  add: protectedProcedure.input(modelSchema).use(checkFilesExistance).mutation(createModelHandler),
+  add: protectedProcedure.input(modelSchema).use(checkFilesExistence).mutation(createModelHandler),
   update: protectedProcedure
     .input(modelSchema.extend({ id: z.number() }))
     .use(isOwnerOrModerator)
-    .use(checkFilesExistance)
+    .use(checkFilesExistence)
     .mutation(updateModelHandler),
   delete: protectedProcedure
     .input(getByIdSchema)

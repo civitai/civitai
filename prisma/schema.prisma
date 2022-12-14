@@ -236,15 +236,17 @@ enum ModelFileType {
 enum ModelFileFormat {
   PickleTensor
   SafeTensor
+  Other
 }
 
 model ModelFile {
+  id                Int              @id @default(autoincrement())
   name              String
   url               String
   sizeKB            Float
   createdAt         DateTime         @default(now())
   type              ModelFileType
-  format            ModelFileFormat?
+  format            ModelFileFormat? @default(Other)
   modelVersionId    Int
   modelVersion      ModelVersion     @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   pickleScanResult  ScanResultCode   @default(Pending)
@@ -256,8 +258,6 @@ model ModelFile {
   scanRequestedAt   DateTime?
   rawScanResult     Json?
   primary           Boolean          @default(false)
-
-  @@id([modelVersionId, type])
 }
 
 enum MetricTimeframe {

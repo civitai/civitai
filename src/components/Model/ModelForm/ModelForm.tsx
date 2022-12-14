@@ -50,7 +50,7 @@ import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { showErrorNotification } from '~/utils/notifications';
-import { ModelFileFormItem } from '~/components/Model/ModelForm/ModelFileFormItem';
+import { FileList } from '~/components/Model/ModelForm/FileList';
 
 const schema = modelSchema.extend({ tagsOnModels: z.string().array() });
 
@@ -78,7 +78,7 @@ export function ModelForm({ model }: Props) {
     url: '',
     sizeKB: 0,
     type: ModelFileType.Model,
-    primary: false,
+    primary: true,
   };
 
   const defaultModelVersion: z.infer<typeof modelVersionUpsertSchema> = {
@@ -112,10 +112,10 @@ export function ModelForm({ model }: Props) {
     mode: 'onChange',
     defaultValues,
   });
-
   const { fields, prepend, remove, swap } = useFieldArray({
     control: form.control,
     name: 'modelVersions',
+    rules: { minLength: 1, required: true },
   });
 
   const tagsOnModels = form.watch('tagsOnModels');
@@ -214,7 +214,7 @@ export function ModelForm({ model }: Props) {
               </Group>
               {/* Model Versions */}
               {fields.map((version, index) => {
-                const trainedWords = form.watch(`modelVersions.${index}.trainedWords`);
+                const trainedWords = form.watch(`modelVersions.${index}.trainedWords`) ?? [];
                 return (
                   <Paper
                     data-version-index={index}
@@ -312,7 +312,7 @@ export function ModelForm({ model }: Props) {
                           />
                         </Grid.Col>
                         <Grid.Col span={12}>
-                          <ModelFileFormItem parentIndex={index} control={form.control} />
+                          <FileList parentIndex={index} control={form.control} />
                         </Grid.Col>
                         <Grid.Col span={12}>
                           <InputImageUpload

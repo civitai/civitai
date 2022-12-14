@@ -135,6 +135,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
         },
       },
       files: {
+        orderBy: { primary: 'desc' },
         select: {
           url: true,
           sizeKB: true,
