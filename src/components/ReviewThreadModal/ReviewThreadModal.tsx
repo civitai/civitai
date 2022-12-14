@@ -20,7 +20,9 @@ export default function ReviewThreadModal({ innerProps }: ContextModalProps<Prop
 
   const emblaRef = useRef<Embla | null>(null);
 
-  const { data: reviewDetails, isLoading } = trpc.review.getById.useQuery({ id: review.id });
+  const { data: reviewDetails, isLoading } = trpc.review.getReviewComments.useQuery({
+    id: review.id,
+  });
 
   const hasImages = review.images.length > 0;
   const hasMultipleImages = review.images.length > 1;

@@ -1,3 +1,4 @@
+import { reviewDetailSelect } from './../selectors/review.selector';
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
@@ -152,7 +153,27 @@ export const toggleReactionHandler = async ({
   }
 };
 
-export const getReviewHandler = async ({ input }: { input: GetByIdInput }) => {
+export type ReviewDetails = AsyncReturnType<typeof getReviewDetails>;
+export const getReviewDetails = async ({ input: { id } }: { input: GetByIdInput }) => {
+  try {
+    const result = await getReviewById({
+      id,
+      select: reviewDetailSelect,
+    });
+
+    if (!result) throw throwNotFoundError(`No review with id ${id}`);
+
+    const { imagesOnReviews, ...review } = result;
+    return {
+      ...review,
+      images: imagesOnReviews.map((x) => x.image),
+    };
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getReviewComments = async ({ input }: { input: GetByIdInput }) => {
   try {
     const review = await getReviewById({
       ...input,

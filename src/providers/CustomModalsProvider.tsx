@@ -27,8 +27,6 @@ const DynamicReviewThreadModal = dynamic(
   () => import('~/components/ReviewThreadModal/ReviewThreadModal')
 );
 
-const DynamicRunStrategyModal = dynamic(() => import('~/components/RunStrategy/RunStrategyModal'));
-
 const modals = {
   reviewEdit: DynamicReviewEditModal,
   // still in use by review items

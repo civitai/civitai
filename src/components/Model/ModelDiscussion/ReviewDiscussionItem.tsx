@@ -28,6 +28,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useModalsContext } from '~/providers/CustomModalsProvider';
+import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReactionDetails } from '~/server/selectors/review.selector';
 import { ReviewGetAllItem } from '~/types/router';
 import { daysFromNow } from '~/utils/date-helpers';
@@ -38,6 +39,7 @@ import { trpc } from '~/utils/trpc';
 export function ReviewDiscussionItem({ review }: Props) {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const { openModal } = useModalsContext();
+  const { openContext } = useRoutedContext();
   const { data: session } = useSession();
   const currentUser = session?.user;
   const isOwner = currentUser?.id === review.user.id;
@@ -209,13 +211,14 @@ export function ReviewDiscussionItem({ review }: Props) {
                   </Menu.Item>
                   <Menu.Item
                     icon={<IconEdit size={14} stroke={1.5} />}
-                    onClick={() =>
-                      openModal({
-                        modal: 'reviewEdit',
-                        title: `Editing review`,
-                        closeOnClickOutside: false,
-                        innerProps: { review },
-                      })
+                    onClick={
+                      () => openContext('reviewEdit', { reviewId: review.id })
+                      // openModal({
+                      //   modal: 'reviewEdit',
+                      //   title: `Editing review`,
+                      //   closeOnClickOutside: false,
+                      //   innerProps: { review },
+                      // })
                     }
                   >
                     Edit review

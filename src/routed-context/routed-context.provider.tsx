@@ -6,11 +6,13 @@ import { QS } from '~/utils/qs';
 
 const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
 const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLightbox'));
+const ReviewEdit = dynamic(() => import('~/routed-context/modals/ReviewEdit'));
 const RunStrategy = dynamic(() => import('~/routed-context/modals/RunStrategy'));
 
 const dictionary = {
   modelVersionLightbox: ModelVersionLightbox,
-  reviewLightbox: ReviewLightbox,
+  // reviewLightbox: ReviewLightbox,
+  reviewEdit: ReviewEdit,
   runStrategy: RunStrategy,
 };
 

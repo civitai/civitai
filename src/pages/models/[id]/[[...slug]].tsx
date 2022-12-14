@@ -712,23 +712,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       variant="outline"
                       fullWidth={mobile}
                       size="xs"
-                      onClick={() => {
-                        return openModal({
-                          modal: 'reviewEdit',
-                          title: `Reviewing ${model.name}`,
-                          closeOnClickOutside: false,
-                          innerProps: {
-                            review: {
-                              modelId: model.id,
-                              images: [],
-                              modelVersionId:
-                                model.modelVersions.length === 1
-                                  ? model.modelVersions[0].id
-                                  : undefined,
-                            },
-                          },
-                        });
-                      }}
+                      onClick={() => openContext('reviewEdit', {})}
                     >
                       Add Review
                     </Button>

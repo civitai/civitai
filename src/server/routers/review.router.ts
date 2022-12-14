@@ -3,7 +3,8 @@ import { TRPCError } from '@trpc/server';
 import { prisma } from '~/server/db/client';
 import {
   deleteUserReviewHandler,
-  getReviewHandler,
+  getReviewComments as getReviewCommentsHandler,
+  getReviewDetails as getReviewDetailsHandler,
   getReviewReactionsHandler,
   getReviewsInfiniteHandler,
   reportReviewHandler,
@@ -47,7 +48,8 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
 export const reviewRouter = router({
   getAll: publicProcedure.input(getAllReviewSchema).query(getReviewsInfiniteHandler),
   getReactions: publicProcedure.input(getReviewReactionsSchema).query(getReviewReactionsHandler),
-  getById: publicProcedure.input(getByIdSchema).query(getReviewHandler),
+  getDetail: publicProcedure.input(getByIdSchema).query(getReviewDetailsHandler),
+  getReviewComments: publicProcedure.input(getByIdSchema).query(getReviewCommentsHandler),
   upsert: protectedProcedure
     .input(reviewUpsertSchema)
     .use(isOwnerOrModerator)
