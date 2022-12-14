@@ -31,6 +31,7 @@ import React, { useMemo, useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
 
+import { FileList } from '~/components/Model/ModelForm/FileList';
 import {
   Form,
   InputCheckbox,
@@ -43,6 +44,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { modelSchema } from '~/server/schema/model.schema';
+import { ModelFileInput, modelFileSchema } from '~/server/schema/model-file.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ModelById } from '~/types/router';
@@ -50,9 +52,20 @@ import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { showErrorNotification } from '~/utils/notifications';
-import { FileList } from '~/components/Model/ModelForm/FileList';
 
-const schema = modelSchema.extend({ tagsOnModels: z.string().array() });
+const schema = modelSchema.extend({
+  tagsOnModels: z.string().array(),
+  modelVersions: z
+    .array(
+      modelVersionUpsertSchema.extend({
+        files: z.preprocess((val) => {
+          const list = val as ModelFileInput[];
+          return list.filter((file) => file.url);
+        }, z.array(modelFileSchema).min(1, 'At least one model file must be uploaded')),
+      })
+    )
+    .min(1, 'At least one model version is required.'),
+});
 
 type CreateModelProps = z.infer<typeof modelSchema>;
 type UpdateModelProps = Omit<CreateModelProps, 'id'> & { id: number };

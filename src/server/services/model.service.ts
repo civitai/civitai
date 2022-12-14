@@ -205,20 +205,12 @@ export const updateModel = async ({
       return acc;
     },
     {
-      tagsToCreate: [] as Array<typeof tagsOnModels[number]>,
-      tagsToUpdate: [] as Array<typeof tagsOnModels[number]>,
+      tagsToCreate: [] as typeof tagsOnModels,
+      tagsToUpdate: [] as typeof tagsOnModels,
     }
   ) ?? { tagsToCreate: [], tagsToUpdate: [] };
 
-  // Get current versions for file and version comparison
-  const currentVersions = await prisma.modelVersion.findMany({
-    where: { modelId: id },
-    select: { id: true, files: { select: { type: true, url: true } } },
-  });
-  const versionIds = modelVersions.map((version) => version.id).filter(Boolean);
-  const versionsToDelete = currentVersions
-    .filter((version) => !versionIds.includes(version.id))
-    .map(({ id }) => id);
+  const versionIds = modelVersions.map((version) => version.id).filter(Boolean) as number[];
 
   const model = await prisma.$transaction(
     async (tx) => {
@@ -241,7 +233,7 @@ export const updateModel = async ({
           ...data,
           status: data.status,
           modelVersions: {
-            deleteMany: versionsToDelete.length > 0 ? { id: { in: versionsToDelete } } : undefined,
+            deleteMany: versionIds.length > 0 ? { id: { notIn: versionIds } } : undefined,
             upsert: modelVersions.map(
               ({ id = -1, images, files = [], ...version }, versionIndex) => {
                 const imagesWithIndex = images.map((image, index) => ({
@@ -250,27 +242,36 @@ export const updateModel = async ({
                   ...image,
                   meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
                 }));
-                const existingVersion = currentVersions.find((x) => x.id === id);
+                const fileIds = files.map((file) => file.id).filter(Boolean) as number[];
 
                 // Determine which files to create/update
-                const existingFileUrls: Record<string, string> = {};
-                for (const existingFile of existingVersion?.files ?? [])
-                  existingFileUrls[existingFile.type] = existingFile.url;
+                const { filesToCreate, filesToUpdate } = files.reduce(
+                  (acc, current) => {
+                    if (!current.id) acc.filesToCreate.push(current);
+                    else acc.filesToUpdate.push(current);
 
-                const filesToCreate: NonNullable<typeof files> = [];
-                const filesToUpdate: NonNullable<typeof files> = [];
-                for (const file of files) {
-                  if (!file.type) continue;
-                  const existingUrl = existingFileUrls[file.type];
-                  if (!existingUrl) filesToCreate.push(file);
-                  else if (existingUrl !== file.url) filesToUpdate.push(file);
-                }
+                    return acc;
+                  },
+                  {
+                    filesToCreate: [] as typeof files,
+                    filesToUpdate: [] as typeof files,
+                  }
+                );
 
                 // Determine what images to create/update
-                const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
-                const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
+                const { imagesToCreate, imagesToUpdate } = imagesWithIndex.reduce(
+                  (acc, current) => {
+                    if (!current.id) acc.imagesToCreate.push(current);
+                    else acc.imagesToUpdate.push(current);
 
-                // TODO Model Status: Allow them to save as draft and publish/unpublish
+                    return acc;
+                  },
+                  {
+                    imagesToCreate: [] as typeof imagesWithIndex,
+                    imagesToUpdate: [] as typeof imagesWithIndex,
+                  }
+                );
+
                 return {
                   where: { id },
                   create: {
@@ -294,6 +295,7 @@ export const updateModel = async ({
                     steps: version.steps ?? null,
                     status: data.status,
                     files: {
+                      deleteMany: fileIds.length > 0 ? { id: { notIn: fileIds } } : undefined,
                       create: filesToCreate.map(prepareFile),
                       update: filesToUpdate.map(({ id, ...fileData }) => ({
                         where: { id: id ?? -1 },

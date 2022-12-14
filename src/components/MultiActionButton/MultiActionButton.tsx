@@ -26,7 +26,7 @@ const _MultiActionButton = forwardRef<HTMLButtonElement, Props>(
                   borderBottomRightRadius: 0,
                   flexGrow: 1,
                   borderRight: `2px solid ${theme.fn.rgba(
-                    theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[0],
+                    theme.colorScheme === 'dark' ? theme.colors.dark[9] : '#fff',
                     0.5
                   )}`,
                 }

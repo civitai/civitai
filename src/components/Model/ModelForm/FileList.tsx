@@ -1,6 +1,7 @@
-import { ActionIcon, Box, Button, Group, Input, Stack, Tooltip } from '@mantine/core';
+import { ActionIcon, Button, Group, Input, InputWrapperProps, Stack, Tooltip } from '@mantine/core';
 import { ModelFileFormat, ModelFileType } from '@prisma/client';
 import { IconPlus, IconStar, IconTrash } from '@tabler/icons';
+import get from 'lodash/get';
 import startCase from 'lodash/startCase';
 import { useState } from 'react';
 import { Control, useFieldArray } from 'react-hook-form';
@@ -13,7 +14,7 @@ const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   Model: '.ckpt,.pt,.safetensors',
   PrunedModel: '.ckpt,.pt,.safetensors',
   TrainingData: '.zip',
-  Config: '.yaml',
+  Config: '.yaml,.yml',
   VAE: '.pt',
 };
 
@@ -29,65 +30,71 @@ export function FileList<TControl extends Control<any>>({ parentIndex, control }
   });
 
   const handlePrimaryClick = (index: number) => {
-    fields.map((field, i) => update(i, { ...field, primary: index === i }));
+    fields.map(({ id, ...field }, i) => {
+      const matchingFile: ModelFileInput = get(
+        control._formValues,
+        `modelVersions.${parentIndex}.files.${i}`
+      );
+      update(i, { ...matchingFile, ...field, primary: index === i });
+    });
   };
 
   const handleTypeChange = (index: number, type: ModelFileInput['type']) => {
-    update(index, { type, primary: false, sizeKb: 0, name: '', url: '' });
+    update(index, { type, primary: false, sizeKB: 0, name: '', url: '' });
   };
 
   return (
-    <Stack>
-      <Input.Wrapper
-        styles={{ label: { width: '100%' } }}
-        label={
-          <Group position="apart">
-            <Input.Label required>Model Files</Input.Label>
-            <Box />
-            <Button
-              size="xs"
-              leftIcon={<IconPlus size={16} />}
-              variant="outline"
-              onClick={() =>
-                fields.length < fileTypeCount
-                  ? append({
-                      type: ModelFileType.Model,
-                      url: '',
-                      name: '',
-                      sizeKb: 0,
-                      primary: false,
-                    })
-                  : undefined
-              }
-              disabled={fields.length >= fileTypeCount}
-              compact
-            >
-              Add File
-            </Button>
-          </Group>
-        }
-        description="Add multiple files for this version"
-      >
-        {fields.map(({ id, ...item }, index) => {
-          const file = item as ModelFileInput;
-          return (
-            <FileItem
-              key={id}
-              index={index}
-              parentIndex={parentIndex}
-              onRemoveClick={(index) => remove(index)}
-              onPrimaryClick={handlePrimaryClick}
-              onTypeChange={handleTypeChange}
-              {...file}
-            />
-          );
-        })}
-      </Input.Wrapper>
-    </Stack>
+    <Input.Wrapper
+      styles={{ label: { width: '100%' } }}
+      label={
+        <Group position="apart">
+          <Input.Label required>Model Files</Input.Label>
+          <Button
+            size="xs"
+            leftIcon={<IconPlus size={16} />}
+            variant="outline"
+            onClick={() =>
+              fields.length < fileTypeCount
+                ? append({
+                    type: ModelFileType.Model,
+                    url: '',
+                    name: '',
+                    sizeKB: 0,
+                    primary: false,
+                  })
+                : undefined
+            }
+            disabled={fields.length >= fileTypeCount}
+            compact
+          >
+            Add File
+          </Button>
+        </Group>
+      }
+      description="Add multiple files for this version"
+    >
+      {fields.map(({ id, ...item }, index) => {
+        const file = item as ModelFileInput;
+        return (
+          <FileItem
+            key={id}
+            index={index}
+            parentIndex={parentIndex}
+            onRemoveClick={(index) => remove(index)}
+            onPrimaryClick={handlePrimaryClick}
+            onTypeChange={handleTypeChange}
+            {...file}
+          />
+        );
+      })}
+    </Input.Wrapper>
   );
 }
 
-type Props<TControl extends Control<any>> = { parentIndex: number; control: TControl };
+type Props<TControl extends Control<any>> = Omit<InputWrapperProps, 'children' | 'onChange'> & {
+  parentIndex: number;
+  control: TControl;
+};
 
 function FileItem({
   primary,
