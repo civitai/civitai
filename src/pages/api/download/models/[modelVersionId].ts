@@ -1,13 +1,28 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getGetUrl } from '~/utils/s3-utils';
-import { ModelFileType, ModelType, UserActivityType } from '@prisma/client';
+import {
+  ModelFile,
+  ModelFileFormat,
+  ModelFileType,
+  ModelType,
+  UserActivityType,
+} from '@prisma/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { prisma } from '~/server/db/client';
 import { filenamize } from '~/utils/string-helpers';
 import { z } from 'zod';
 import { env } from '~/env/server.mjs';
 
-const schema = z.object({ modelVersionId: z.preprocess((val) => Number(val), z.number()) });
+const schema = z.object({
+  modelVersionId: z.preprocess((val) => Number(val), z.number()),
+  type: z.nativeEnum(ModelFileType).optional(),
+  format: z.nativeEnum(ModelFileFormat).optional(),
+});
+
+// /api/download/train-data/[modelVersionId]  => /api/download/models/[modelVersionId]?type=TrainingData
+// /api/download/models/[modelVersionId] (returns primary file)
+// /api/download/models/[modelVersionId]?type=TrainingData
+// /api/download/models/[modelVersionId]?type=Model&format=SafeTensors
 
 export default async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
   const results = schema.safeParse(req.query);
@@ -16,34 +31,37 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
       .status(400)
       .json({ error: `Invalid id: ${results.error.flatten().fieldErrors.modelVersionId}` });
 
-  if (!results.data.modelVersionId)
-    return res.status(400).json({ error: 'Missing modelVersionId' });
+  const { type, modelVersionId, format } = results.data;
+  if (!modelVersionId) return res.status(400).json({ error: 'Missing modelVersionId' });
+
+  // TODO Fix Type: @Manuel
+  const fileWhere: any = {};
+  if (type) fileWhere.type = type;
+  if (format) fileWhere.format = format;
+  if (!type && !format) fileWhere.isPrimary = true;
 
   const modelVersion = await prisma.modelVersion.findFirst({
-    where: { id: results.data.modelVersionId },
+    where: { id: modelVersionId },
     select: {
       id: true,
       model: { select: { id: true, name: true, type: true } },
       name: true,
       trainedWords: true,
-      files: { where: { type: ModelFileType.Model }, select: { url: true, name: true } },
+      files: { where: fileWhere, select: { url: true, name: true, type: true } },
     },
   });
-  if (!modelVersion) {
-    return res.status(404).json({ error: 'Model not found' });
-  }
+  if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
+  if (!modelVersion.files.length) return res.status(404).json({ error: 'Model file not found' });
 
   const session = await getServerAuthSession({ req, res });
   const userId = session?.user?.id;
-  // Let people download without an acct
-  // TODO make this an ENV option
-  /* if (!userId) {
+  if (!env.UNAUTHENTICATED_DOWNLOAD && !userId) {
     if (req.headers['content-type'] === 'application/json')
       return res.status(401).json({ error: 'Unauthorized' });
     else return res.redirect(`/login?returnUrl=/models/${modelVersion.model.id}`);
-  }*/
+  }
 
-  // Track activity
+  // Track download
   try {
     await prisma.userActivity.create({
       data: {
@@ -57,24 +75,24 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
   }
 
   const [modelFile] = modelVersion.files;
-  // Handle files that are still on other services
-  if (!modelFile.url.includes(env.S3_UPLOAD_BUCKET)) {
-    res.redirect(modelFile.url);
+  let fileName = modelFile.name;
+  if (modelVersion.model.type === ModelType.TextualInversion) {
+    const trainedWord = modelVersion.trainedWords[0];
+    if (trainedWord) fileName = `${trainedWord}.pt`;
+  } else if (modelFile.type === ModelFileType.TrainingData) {
+    fileName = `${filenamize(modelVersion.model.name)}_${filenamize(
+      modelVersion.name
+    )}_trainingData.zip`;
   } else {
-    const ext = modelFile.name.split('.').pop();
-    let fileName = modelFile.name;
     let fileSuffix = '';
     if (fileName.includes('-inpainting')) fileSuffix = '-inpainting';
 
-    if (modelVersion.model.type === ModelType.TextualInversion) {
-      const trainedWord = modelVersion.trainedWords[0];
-      if (trainedWord) fileName = `${trainedWord}.pt`;
-    } else
-      fileName = `${filenamize(modelVersion.model.name)}_${filenamize(
-        modelVersion.name
-      )}${fileSuffix}.${ext}`;
-
-    const { url } = await getGetUrl(modelFile.url, { fileName });
-    res.redirect(url);
+    const ext = modelFile.name.split('.').pop();
+    fileName = `${filenamize(modelVersion.model.name)}_${filenamize(
+      modelVersion.name
+    )}${fileSuffix}.${ext}`;
   }
+
+  const { url } = await getGetUrl(modelFile.url, { fileName });
+  res.redirect(url);
 }
