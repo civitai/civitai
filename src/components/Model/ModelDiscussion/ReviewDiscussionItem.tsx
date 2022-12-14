@@ -26,8 +26,6 @@ import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
-import { useIsMobile } from '~/hooks/useIsMobile';
-import { useModalsContext } from '~/providers/CustomModalsProvider';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReactionDetails } from '~/server/selectors/review.selector';
 import { ReviewGetAllItem } from '~/types/router';
@@ -37,8 +35,6 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ReviewDiscussionItem({ review }: Props) {
-  const mobile = useIsMobile({ breakpoint: 'md' });
-  const { openModal } = useModalsContext();
   const { openContext } = useRoutedContext();
   const { data: session } = useSession();
   const currentUser = session?.user;
@@ -302,25 +298,7 @@ export function ReviewDiscussionItem({ review }: Props) {
           size="xs"
           radius="xl"
           variant="subtle"
-          onClick={() =>
-            openModal({
-              modal: 'reviewThread',
-              innerProps: { review, showNsfw },
-              size: mobile ? '100%' : '50%',
-              title: (
-                <Group spacing="xs" align="center">
-                  <UserAvatar
-                    user={review.user}
-                    subText={daysFromNow(review.createdAt)}
-                    size="lg"
-                    spacing="xs"
-                    withUsername
-                  />
-                  <Rating value={review.rating} fractions={2} readOnly />
-                </Group>
-              ),
-            })
-          }
+          onClick={() => openContext('reviewThread', { reviewId: review.id })}
           compact
         >
           <Group spacing={2} noWrap>

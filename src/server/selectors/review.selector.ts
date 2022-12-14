@@ -4,6 +4,7 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 
 export const reviewDetailSelect = Prisma.validator<Prisma.ReviewSelect>()({
   id: true,
+  createdAt: true,
   nsfw: true,
   rating: true,
   text: true,

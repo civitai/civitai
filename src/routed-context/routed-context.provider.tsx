@@ -8,12 +8,14 @@ const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/Model
 const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLightbox'));
 const ReviewEdit = dynamic(() => import('~/routed-context/modals/ReviewEdit'));
 const RunStrategy = dynamic(() => import('~/routed-context/modals/RunStrategy'));
+const ReviewThread = dynamic(() => import('~/routed-context/modals/ReviewThread'));
 
 const dictionary = {
   modelVersionLightbox: ModelVersionLightbox,
   // reviewLightbox: ReviewLightbox,
   reviewEdit: ReviewEdit,
   runStrategy: RunStrategy,
+  reviewThread: ReviewThread,
 };
 
 // function register<T extends Record<string, ComponentType>>(dictionary: T) {
