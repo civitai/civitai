@@ -30,4 +30,13 @@ export default defineNextConfig({
       'civitai-dev.s3.us-west-1.wasabisys.com',
     ],
   },
+  redirects: async () => {
+    return [
+      {
+        source: '/api/download/training-data/:modelVersionId',
+        destination: '/api/download/models/:modelVersionId?type=TrainingData',
+        permanent: true,
+      },
+    ];
+  },
 });

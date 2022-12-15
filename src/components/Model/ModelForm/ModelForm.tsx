@@ -7,7 +7,6 @@ import {
   Group,
   Paper,
   Stack,
-  Switch,
   Title,
   Alert,
   ThemeIcon,
@@ -31,28 +30,48 @@ import React, { useMemo, useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
 
+import { FileList } from '~/components/Model/ModelForm/FileList';
 import {
   Form,
   InputCheckbox,
-  InputFileUpload,
   InputImageUpload,
   InputMultiSelect,
   InputNumber,
   InputRTE,
   InputSelect,
+  InputSwitch,
   InputText,
   useForm,
 } from '~/libs/form';
 import { modelSchema } from '~/server/schema/model.schema';
+import { ModelFileInput, modelFileSchema } from '~/server/schema/model-file.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ModelById } from '~/types/router';
+import { showErrorNotification } from '~/utils/notifications';
 import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { showErrorNotification } from '~/utils/notifications';
 
-const schema = modelSchema.extend({ tagsOnModels: z.string().array() });
+const schema = modelSchema.extend({
+  tagsOnModels: z.string().array(),
+  modelVersions: z
+    .array(
+      modelVersionUpsertSchema
+        .extend({
+          files: z.preprocess((val) => {
+            const list = val as ModelFileInput[];
+            return list.filter((file) => file.url);
+          }, z.array(modelFileSchema).min(1, 'At least one model file must be uploaded')),
+          skipTrainedWords: z.boolean().default(false),
+        })
+        .refine((data) => (!data.skipTrainedWords ? data.trainedWords.length > 0 : true), {
+          message: 'You need to specify at least one trained word',
+          path: ['trainedWords'],
+        })
+    )
+    .min(1, 'At least one model version is required.'),
+});
 
 type CreateModelProps = z.infer<typeof modelSchema>;
 type UpdateModelProps = Omit<CreateModelProps, 'id'> & { id: number };
@@ -71,18 +90,24 @@ export function ModelForm({ model }: Props) {
   const addMutation = trpc.model.add.useMutation();
   const updateMutation = trpc.model.update.useMutation();
   const [uploading, setUploading] = useState(false);
-  const [hasTrainingWords, setHasTrainingWords] = useState(true);
 
-  const defaultModelFile = { name: '', url: '', sizeKB: 0, type: ModelFileType.Model };
+  const defaultModelFile = {
+    name: '',
+    url: '',
+    sizeKB: 0,
+    type: ModelFileType.Model,
+    primary: true,
+  };
 
-  const defaultModelVersion: z.infer<typeof modelVersionUpsertSchema> = {
+  const defaultModelVersion: z.infer<typeof schema>['modelVersions'][number] = {
     name: '',
     description: '',
     epochs: null,
     steps: null,
     trainedWords: [],
+    skipTrainedWords: false,
     images: [],
-    modelFile: defaultModelFile,
+    files: [defaultModelFile],
   };
 
   const defaultValues: z.infer<typeof schema> = {
@@ -91,25 +116,26 @@ export function ModelForm({ model }: Props) {
     type: model?.type ?? ModelType.Checkpoint,
     status: model?.status ?? ModelStatus.Published,
     tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
-    modelVersions: model?.modelVersions.map(({ trainedWords, images, modelFile, ...version }) => ({
+    modelVersions: model?.modelVersions.map(({ trainedWords, images, files, ...version }) => ({
       ...version,
-      modelFile: modelFile ?? defaultModelFile,
-      trainedWords: trainedWords ?? [],
+      trainedWords: trainedWords,
+      skipTrainedWords: !trainedWords.length,
       // HOTFIX: Casting image.meta type issue with generated prisma schema
       images: images.map(({ image }) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
+      files: files,
     })) ?? [defaultModelVersion],
   };
 
   const form = useForm({
-    schema: schema,
+    schema,
     shouldUnregister: false,
     mode: 'onChange',
     defaultValues,
   });
-
   const { fields, prepend, remove, swap } = useFieldArray({
     control: form.control,
     name: 'modelVersions',
+    rules: { minLength: 1, required: true },
   });
 
   const tagsOnModels = form.watch('tagsOnModels');
@@ -208,7 +234,10 @@ export function ModelForm({ model }: Props) {
               </Group>
               {/* Model Versions */}
               {fields.map((version, index) => {
-                const trainedWords = form.watch(`modelVersions.${index}.trainedWords`);
+                const trainedWords = form.watch(`modelVersions.${index}.trainedWords`) ?? [];
+                const skipTrainedWords =
+                  form.watch(`modelVersions.${index}.skipTrainedWords`) ?? false;
+
                 return (
                   <Paper
                     data-version-index={index}
@@ -268,7 +297,7 @@ export function ModelForm({ model }: Props) {
                           />
                         </Grid.Col>
                         <Grid.Col span={12}>
-                          {hasTrainingWords && (
+                          {!skipTrainedWords && (
                             <InputMultiSelect
                               name={`modelVersions.${index}.trainedWords`}
                               label="Trigger Words"
@@ -282,9 +311,9 @@ export function ModelForm({ model }: Props) {
                               required
                             />
                           )}
-                          <Switch
-                            label="This model doesn't require any trigger words"
-                            onChange={() => setHasTrainingWords((x) => !x)}
+                          <InputSwitch
+                            name={`modelVersions.${index}.skipTrainedWords`}
+                            label="This version doesn't require any trigger words"
                           />
                         </Grid.Col>
                         <Grid.Col span={6}>
@@ -306,26 +335,7 @@ export function ModelForm({ model }: Props) {
                           />
                         </Grid.Col>
                         <Grid.Col span={12}>
-                          <InputFileUpload
-                            name={`modelVersions.${index}.modelFile`}
-                            label="Model File"
-                            placeholder="Pick your model"
-                            uploadType="Model"
-                            accept=".ckpt,.pt,.safetensors"
-                            onLoading={setUploading}
-                            withAsterisk
-                          />
-                        </Grid.Col>
-                        <Grid.Col span={12}>
-                          <InputFileUpload
-                            name={`modelVersions.${index}.trainingDataFile`}
-                            label="Training Data"
-                            placeholder="Pick your training data"
-                            description="The data you used to train your model (as .zip archive)"
-                            uploadType="TrainingData"
-                            accept=".zip"
-                            onLoading={setUploading}
-                          />
+                          <FileList parentIndex={index} form={form} />
                         </Grid.Col>
                         <Grid.Col span={12}>
                           <InputImageUpload

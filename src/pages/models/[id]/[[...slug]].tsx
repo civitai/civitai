@@ -16,7 +16,6 @@ import {
   Text,
   Title,
   useMantineTheme,
-  Modal,
   Alert,
   ThemeIcon,
   Tooltip,
@@ -32,6 +31,7 @@ import {
   IconArrowsSort,
   IconBan,
   IconDotsVertical,
+  IconDownload,
   IconEdit,
   IconExclamationMark,
   IconFilter,
@@ -84,6 +84,8 @@ import { RunButton } from '~/components/RunStrategy/RunButton';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { SFW } from '~/components/Media/SFW';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
+import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 
 //TODO - Break model query into multiple queries
 /*
@@ -286,6 +288,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model?.modelVersions[0];
+  const secondaryFiles = latestVersion?.files?.filter((file) => !file.primary) ?? [];
+  const primaryFile = latestVersion?.files?.find((file) => file.primary === true);
   const inaccurate = model?.modelVersions.some((version) => version.inaccurate);
 
   if (loadingModel)
@@ -583,22 +587,44 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
             <Stack>
               {latestVersion && (
-                <Group spacing="xs" style={{ alignItems: 'flex-start' }} noWrap>
+                <Group spacing="xs" style={{ alignItems: 'flex-start' }}>
                   <Stack sx={{ flex: 1 }} spacing={4}>
-                    <Button
+                    <MultiActionButton
                       component="a"
-                      href={`/api/download/models/${latestVersion?.id}`}
+                      href={createModelFileDownloadUrl({
+                        versionId: latestVersion.id,
+                        primary: true,
+                      })}
+                      leftIcon={<IconDownload size={16} />}
+                      menuItems={secondaryFiles.map((file, index) => (
+                        <Menu.Item
+                          key={index}
+                          component="a"
+                          py={4}
+                          icon={<VerifiedText file={file} iconOnly />}
+                          href={createModelFileDownloadUrl({
+                            versionId: latestVersion.id,
+                            type: file.type,
+                            format: file.format,
+                          })}
+                          download
+                        >
+                          {`${startCase(file.type)}${
+                            ['Model', 'PrunedModel'].includes(file.type) ? ' ' + file.format : ''
+                          } (${formatKBytes(file.sizeKB)})`}
+                        </Menu.Item>
+                      ))}
                       download
                     >
                       <Text align="center">
-                        {`Download Latest (${formatKBytes(latestVersion?.modelFile?.sizeKB ?? 0)})`}
+                        {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
                       </Text>
-                    </Button>
-                    {latestVersion.modelFile && (
+                    </MultiActionButton>
+                    {primaryFile && (
                       <Group position="apart">
-                        <VerifiedText file={latestVersion.modelFile} />
+                        <VerifiedText file={primaryFile} />
                         <Text size="xs" color="dimmed">
-                          {latestVersion.modelFile.format}
+                          {primaryFile.format}
                         </Text>
                       </Group>
                     )}
@@ -813,39 +839,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
           </Grid.Col>
         </Grid>
       </Container>
-      {/* <Modal
-        opened={nsfw}
-        onClose={() => router.push('/')}
-        centered
-        withCloseButton={false}
-        padding={30}
-        zIndex={1000}
-      >
-        <Stack spacing="xl">
-          <Text align="center">The content of this model has been marked NSFW</Text>
-          <Group position="center">
-            <Button variant="default" onClick={() => router.push('/')}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                router.replace(
-                  {
-                    pathname: router.asPath.split('?')[0],
-                    query: { ...router.query, showNsfw: true },
-                  },
-                  router.asPath,
-                  {
-                    shallow: true,
-                  }
-                );
-              }}
-            >
-              Click to view NSFW
-            </Button>
-          </Group>
-        </Stack>
-      </Modal> */}
     </>
   );
 }

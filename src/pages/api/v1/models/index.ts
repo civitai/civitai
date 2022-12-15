@@ -1,9 +1,9 @@
-import { ModelFileType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 
+import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
@@ -24,17 +24,29 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
         tags: tagsOnModels.map(({ tag }) => tag.name),
         modelVersions: modelVersions
           .map(({ images, files, ...version }) => {
-            const modelFiles = files.filter((x) => x.type === ModelFileType.Model);
-            if (modelFiles.length === 0) return null;
+            const hasPrimary = files.findIndex((file) => file.primary) > -1;
+            if (!hasPrimary) return null;
 
             return {
               ...version,
-              files: modelFiles.map(({ type, ...file }) => ({ ...file })),
+              files: files.map(({ primary, ...file }) => ({
+                ...file,
+                primary: primary === true ? primary : undefined,
+                downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
+                  versionId: version.id,
+                  type: file.type,
+                  format: file.format,
+                  primary,
+                })}`,
+              })),
               images: images.map(({ image: { url, ...image } }) => ({
                 url: getEdgeUrl(url, { width: 450 }),
                 ...image,
               })),
-              downloadUrl: `${baseUrl.origin}/api/download/models/${version.id}`,
+              downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
+                versionId: version.id,
+                primary: true,
+              })}`,
             };
           })
           .filter((x) => x),

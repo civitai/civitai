@@ -1,5 +1,4 @@
-import React, { useRef, useState, forwardRef } from 'react';
-import { UploadType, UploadTypeUnion } from '~/server/common/enums';
+import { useState } from 'react';
 
 type TrackedFile = {
   file: File;
@@ -80,7 +79,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
 
     await new Promise((resolve) => {
       let uploadStart = Date.now();
-      xhr.upload.addEventListener('loadstart', (e) => {
+      xhr.upload.addEventListener('loadstart', () => {
         uploadStart = Date.now();
       });
       xhr.upload.addEventListener('progress', ({ loaded, total }) => {

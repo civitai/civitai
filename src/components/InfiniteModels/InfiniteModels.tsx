@@ -341,6 +341,7 @@ const MasonryItem = ({
           size={14}
           color="red"
           title="Updated"
+          sx={{ zIndex: 10 }}
         >
           <Card
             ref={ref}

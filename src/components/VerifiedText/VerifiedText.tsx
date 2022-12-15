@@ -1,6 +1,5 @@
 import {
   ButtonProps,
-  Button,
   Popover,
   Text,
   DefaultMantineColor,
@@ -20,7 +19,7 @@ type VerifiedFile = {
   pickleScanMessage: string | null;
   scannedAt: Date | null;
 };
-type Props = { file: VerifiedFile | undefined } & Omit<ButtonProps, 'children'>;
+type Props = Omit<ButtonProps, 'children'> & { file: VerifiedFile | undefined; iconOnly?: boolean };
 const statusColors: Record<ScanResultCode, DefaultMantineColor> = {
   Pending: 'gray',
   Success: 'green',
@@ -42,10 +41,10 @@ const statusMessage: Record<ScanResultCode, string> = {
 
 const StatusCodeOrder = ['Pending', 'Danger', 'Error', 'Success'] as const;
 
-export function VerifiedText({ file, ...props }: Props) {
+export function VerifiedText({ file, iconOnly }: Props) {
+  const { classes } = useStyles();
   if (!file) return null;
 
-  const { classes } = useStyles();
   const { virusScanResult, virusScanMessage, pickleScanResult, pickleScanMessage, scannedAt } =
     file;
 
@@ -63,45 +62,47 @@ export function VerifiedText({ file, ...props }: Props) {
       <ThemeIcon color={color} size="xs">
         {icon}
       </ThemeIcon>
-      <Text color="dimmed" size="xs">
-        <Text component="span">
-          <span className={classes.hideSm}>File </span>
-          {verified ? 'Verified' : 'Unverified'}:{' '}
-        </Text>
-        <Popover withArrow width={350} position="bottom" withinPortal>
-          <Popover.Target>
-            <Text component="a" sx={{ cursor: 'pointer' }}>
-              {scannedDate ? (
-                <abbr title={scannedDate.format()}>{scannedDate.fromNow()}</abbr>
-              ) : (
-                <>Scan requested</>
+      {!iconOnly ? (
+        <Text color="dimmed" size="xs">
+          <Text component="span">
+            <span className={classes.hideSm}>File </span>
+            {verified ? 'Verified' : 'Unverified'}:{' '}
+          </Text>
+          <Popover withArrow width={350} position="bottom" withinPortal>
+            <Popover.Target>
+              <Text component="a" sx={{ cursor: 'pointer' }}>
+                {scannedDate ? (
+                  <abbr title={scannedDate.format()}>{scannedDate.fromNow()}</abbr>
+                ) : (
+                  <>Scan requested</>
+                )}
+              </Text>
+            </Popover.Target>
+            <Popover.Dropdown>
+              <Text weight={500} size="md" color={verified ? 'green' : 'red'} pb={5}>
+                File {verified ? 'Verified' : 'Unverified'}
+              </Text>
+              <Text pb={5}>{defaultMessage}</Text>
+              {virusScanMessage && (
+                <ReactMarkdown className="popover-markdown">{virusScanMessage}</ReactMarkdown>
               )}
-            </Text>
-          </Popover.Target>
-          <Popover.Dropdown>
-            <Text weight={500} size="md" color={verified ? 'green' : 'red'} pb={5}>
-              File {verified ? 'Verified' : 'Unverified'}
-            </Text>
-            <Text pb={5}>{defaultMessage}</Text>
-            {virusScanMessage && (
-              <ReactMarkdown className="popover-markdown">{virusScanMessage}</ReactMarkdown>
-            )}
-            {pickleScanMessage && (
-              <ReactMarkdown className="popover-markdown">{pickleScanMessage}</ReactMarkdown>
-            )}
-            <Text
-              component="a"
-              href="https://github.com/civitai/civitai/wiki/Model-Safety-Checks"
-              target="_blank"
-              size="xs"
-              color="dimmed"
-              td="underline"
-            >
-              What does this mean?
-            </Text>
-          </Popover.Dropdown>
-        </Popover>
-      </Text>
+              {pickleScanMessage && (
+                <ReactMarkdown className="popover-markdown">{pickleScanMessage}</ReactMarkdown>
+              )}
+              <Text
+                component="a"
+                href="https://github.com/civitai/civitai/wiki/Model-Safety-Checks"
+                target="_blank"
+                size="xs"
+                color="dimmed"
+                td="underline"
+              >
+                What does this mean?
+              </Text>
+            </Popover.Dropdown>
+          </Popover>
+        </Text>
+      ) : null}
     </Group>
   );
 }
