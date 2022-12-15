@@ -37,6 +37,7 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getMetadata } from '~/utils/image-metadata';
+import isEqual from 'lodash/isEqual';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -65,15 +66,15 @@ export function ImageUpload({
   );
 
   const { uploadToCF, files: imageFiles } = useCFImageUpload();
-  const [files, filesHandlers] = useListState<CustomFile>(value);
+  const [files, filesHandlers] = useListState<CustomFile>(Array.isArray(value) ? value : []);
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
 
   // Disabled this because it seemed to cause state loop...
-  // useDidUpdate(() => {
-  //   const shouldReset = !isEqual(value, files);
-  //   console.log('did update');
-  //   if (shouldReset) filesHandlers.setState(value);
-  // }, [value]);
+  useDidUpdate(() => {
+    const shouldReset = !isEqual(value, files);
+    // console.log('did update', { shouldReset });
+    if (shouldReset) filesHandlers.setState(value);
+  }, [value]);
 
   useDidUpdate(() => {
     if (files) onChange?.(files);

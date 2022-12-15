@@ -11,6 +11,7 @@ import { notificationRouter } from './notification.router';
 import { reviewRouter } from './review.router';
 import { tagRouter } from './tag.router';
 import { userRouter } from './user.router';
+import { imageRouter } from './image.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -25,6 +26,7 @@ export const appRouter = router({
   userLink: userLinkRouter,
   partner: partnerRouter,
   modelVersion: modelVersionRouter,
+  image: imageRouter,
 });
 
 // export type definition of API

@@ -7,7 +7,7 @@ import {
   GetCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
 import { ToggleReacionInput } from '~/server/schema/review.schema';
-import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
+import { commentDetailSelect, getAllCommentsSelect } from '~/server/selectors/comment.selector';
 import { getReactionsSelect } from '~/server/selectors/review.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import {
@@ -159,6 +159,7 @@ export const getCommentHandler = async ({ input }: { input: GetByIdInput }) => {
     const comment = await getCommentById({
       ...input,
       select: {
+        ...commentDetailSelect,
         comments: {
           select: {
             id: true,

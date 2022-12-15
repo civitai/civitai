@@ -1,24 +1,14 @@
-import { Button, ButtonProps, Text, Tooltip } from '@mantine/core';
+import { Button, ButtonProps, Tooltip } from '@mantine/core';
 import { IconPlayerPlay } from '@tabler/icons';
-import { useModalsContext } from '~/providers/CustomModalsProvider';
+import { useRoutedContext } from '~/routed-context/routed-context.provider';
 
 export function RunButton({ modelVersionId, ...props }: { modelVersionId: number } & ButtonProps) {
-  const { openModal } = useModalsContext();
-
-  const handleClick = () =>
-    openModal<{ modelVersionId: number }>({
-      modal: 'runStrategy',
-      title: <Text weight={700}>Generate images using this model now</Text>,
-      size: 600,
-      innerProps: {
-        modelVersionId,
-      },
-    });
+  const { openContext } = useRoutedContext();
 
   return (
     <Tooltip label="Run Model" withArrow position="bottom">
       <Button
-        onClick={handleClick}
+        onClick={() => openContext('runStrategy', { modelVersionId })}
         color="green"
         {...props}
         sx={{

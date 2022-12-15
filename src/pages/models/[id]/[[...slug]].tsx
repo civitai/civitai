@@ -16,11 +16,12 @@ import {
   Text,
   Title,
   useMantineTheme,
-  Modal,
   Alert,
   ThemeIcon,
   Tooltip,
   Rating,
+  Card,
+  AspectRatio,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
@@ -54,7 +55,7 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { EdgeImage, getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
@@ -68,7 +69,6 @@ import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { TrainingWordBadge } from '~/components/TrainingWordBadge/TrainingWordBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { useModalsContext } from '~/providers/CustomModalsProvider';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -80,8 +80,10 @@ import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { scrollToTop } from '~/utils/scroll-utils';
-import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { RunButton } from '~/components/RunStrategy/RunButton';
+import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { SFW } from '~/components/Media/SFW';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 
@@ -142,12 +144,13 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const theme = useMantineTheme();
   const router = useRouter();
   const { data: session } = useSession();
-  const { openModal } = useModalsContext();
   const { classes } = useStyles();
   const mobile = useIsMobile();
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();
-  const { openImageLightbox } = useImageLightbox();
+  const { openContext } = useRoutedContext();
+
+  // useEffect(() => console.log({ router }), [router]);
 
   const { id, slug } = props;
   const { edit } = router.query;
@@ -676,36 +679,84 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             })}
           >
             <Stack>
-              <Carousel
-                slideSize="50%"
-                breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
-                slideGap="xl"
-                align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
-                slidesToScroll={mobile ? 1 : 2}
-                withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
-                loop
-              >
-                {latestVersion?.images.map(({ image }, index) => (
-                  <Carousel.Slide key={image.id}>
-                    <Center style={{ height: '100%' }}>
-                      <ImagePreview
-                        image={image}
-                        edgeImageProps={{ width: 400 }}
-                        nsfw={nsfw}
-                        radius="md"
-                        onClick={() =>
-                          openImageLightbox({
-                            initialSlide: index,
-                            images: latestVersion.images.map((x) => x.image),
-                          })
-                        }
-                        style={{ width: '100%' }}
-                        withMeta
-                      />
-                    </Center>
-                  </Carousel.Slide>
-                ))}
-              </Carousel>
+              <SFW type="model" id={model.id} nsfw={model.nsfw}>
+                {({ nsfw, showNsfw }) => (
+                  <>
+                    <SFW.Placeholder>
+                      <Card
+                        p="md"
+                        radius="sm"
+                        withBorder
+                        sx={{
+                          position: 'absolute',
+                          top: '50%',
+                          left: '50%',
+                          transform: 'translate(-50%,-50%)',
+                          zIndex: 10,
+                        }}
+                      >
+                        <Stack>
+                          <Text>This model has been marked NSFW</Text>
+                          <SFW.Toggle>
+                            <Button>Click to view</Button>
+                          </SFW.Toggle>
+                        </Stack>
+                      </Card>
+                    </SFW.Placeholder>
+                    <Carousel
+                      slideSize="50%"
+                      breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
+                      slideGap="xl"
+                      align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
+                      slidesToScroll={mobile ? 1 : 2}
+                      withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+                      loop
+                    >
+                      {latestVersion?.images.map(({ image }, index) => (
+                        <Carousel.Slide key={image.id}>
+                          <Center style={{ height: '100%' }}>
+                            {/* <Media.Placeholder>
+                              <AspectRatio
+                                ratio={(image?.width ?? 1) / (image?.height ?? 1)}
+                                style={{ height: 400 }}
+                              >
+                                <MediaHash
+                                  {...image}
+                                  style={{ height: '300px', width: '300px', position: 'relative' }}
+                                />
+                              </AspectRatio>
+                            </Media.Placeholder>
+                            <Media.Content>
+                              <EdgeImage
+                                src={image.url}
+                                alt={image.name ?? undefined}
+                                width={450}
+                                placeholder="empty"
+                                style={{ width: '100%', zIndex: 2, position: 'relative' }}
+                              />
+                            </Media.Content> */}
+                            <ImagePreview
+                              image={image}
+                              edgeImageProps={{ width: 400 }}
+                              nsfw={nsfw && !showNsfw}
+                              radius="md"
+                              onClick={() =>
+                                openContext('modelVersionLightbox', {
+                                  modelVersionId: latestVersion.id,
+                                  initialSlide: index,
+                                })
+                              }
+                              style={{ width: '100%' }}
+                              withMeta
+                            />
+                          </Center>
+                        </Carousel.Slide>
+                      ))}
+                    </Carousel>
+                  </>
+                )}
+              </SFW>
+
               {model.description ? (
                 <ContentClamp maxHeight={300}>
                   <RenderHtml html={model.description} />
@@ -721,7 +772,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               <ModelVersions
                 items={model.modelVersions}
                 initialTab={latestVersion?.id.toString()}
-                nsfw={nsfw}
+                nsfw={model.nsfw}
               />
             </Stack>
           </Grid.Col>
@@ -737,23 +788,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       variant="outline"
                       fullWidth={mobile}
                       size="xs"
-                      onClick={() => {
-                        return openModal({
-                          modal: 'reviewEdit',
-                          title: `Reviewing ${model.name}`,
-                          closeOnClickOutside: false,
-                          innerProps: {
-                            review: {
-                              modelId: model.id,
-                              images: [],
-                              modelVersionId:
-                                model.modelVersions.length === 1
-                                  ? model.modelVersions[0].id
-                                  : undefined,
-                            },
-                          },
-                        });
-                      }}
+                      onClick={() => openContext('reviewEdit', {})}
                     >
                       Add Review
                     </Button>
@@ -763,15 +798,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       leftIcon={<IconMessage size={16} />}
                       variant="outline"
                       fullWidth={mobile}
-                      onClick={() => {
-                        return openModal({
-                          modal: 'commentEdit',
-                          title: `Add a comment`,
-                          innerProps: {
-                            comment: { modelId: model.id },
-                          },
-                        });
-                      }}
+                      onClick={() => openContext('commentEdit', {})}
                       size="xs"
                     >
                       Add Comment
@@ -812,40 +839,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
           </Grid.Col>
         </Grid>
       </Container>
-      <Modal
-        opened={nsfw}
-        onClose={() => router.push('/')}
-        centered
-        withCloseButton={false}
-        padding={30}
-      >
-        <Stack spacing="xl">
-          <Text align="center">The content of this model has been marked NSFW</Text>
-          <Group position="center">
-            <Button variant="default" onClick={() => router.push('/')}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                const [route, queryString] = router.asPath.split('?');
-                const query = QS.parse(queryString);
-                router.replace(
-                  {
-                    pathname: route,
-                    query: { ...query, showNsfw: true },
-                  },
-                  router.asPath,
-                  {
-                    shallow: true,
-                  }
-                );
-              }}
-            >
-              Click to view NSFW
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
     </>
   );
 }

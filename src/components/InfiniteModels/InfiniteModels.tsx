@@ -14,8 +14,9 @@ import {
   Text,
   ThemeIcon,
   useMantineTheme,
+  AspectRatio,
 } from '@mantine/core';
-import { ModelStatus, ModelType } from '@prisma/client';
+import { ModelStatus } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
 import { IconCloudOff, IconDownload, IconHeart, IconMessageCircle2, IconStar } from '@tabler/icons';
 import dayjs from 'dayjs';
@@ -38,7 +39,7 @@ import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
-import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
+import { SFW } from '~/components/Media/SFW';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -202,9 +203,7 @@ const MasonryItem = ({
   const theme = useMantineTheme();
 
   const { id, image, name, rank, nsfw } = data ?? {};
-  const blurNsfw = session?.user?.blurNsfw ?? true;
 
-  const [showingNsfw, setShowingNsfw] = useState(!blurNsfw);
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
 
@@ -330,28 +329,10 @@ const MasonryItem = ({
     </Group>
   );
 
-  const PreviewImage = (
-    <EdgeImage
-      src={image.url}
-      alt={image.name ?? undefined}
-      width={450}
-      placeholder="empty"
-      style={{ width: '100%', zIndex: 2, position: 'relative' }}
-    />
-  );
-
-  const modelLink = `/models/${id}/${slugit(name)}`;
   const hasNewVersion = data.lastVersionCreatedAt > aDayAgo && data.createdAt < aDayAgo;
 
   return (
-    <Link
-      href={{
-        pathname: modelLink,
-        query: showingNsfw ? { showNsfw: true } : undefined,
-      }}
-      as={modelLink}
-      passHref
-    >
+    <Link href={`/models/${id}/${slugit(name)}`} passHref>
       <a>
         <Indicator
           disabled={!hasNewVersion}
@@ -373,26 +354,26 @@ const MasonryItem = ({
               if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
             }}
           >
-            <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
             {inView && (
               <>
-                <MediaHash
-                  hash={image.hash}
-                  width={image.width}
-                  height={image.height}
-                  style={{ bottom: onTwoLines ? 66 : 33, height: 'auto' }}
-                />
-                {nsfw ? (
-                  <SensitiveContent
-                    placeholder={<MediaHash {...image} />}
-                    style={{ height: '100%' }}
-                    onToggleClick={(value) => setShowingNsfw(value)}
-                  >
-                    {PreviewImage}
-                  </SensitiveContent>
-                ) : (
-                  PreviewImage
-                )}
+                <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
+                <SFW type="model" id={id} nsfw={nsfw} sx={{ height: '100%', width: '100%' }}>
+                  <SFW.ToggleNsfw />
+                  <SFW.Placeholder>
+                    <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                      <MediaHash {...image} />
+                    </AspectRatio>
+                  </SFW.Placeholder>
+                  <SFW.Content>
+                    <EdgeImage
+                      src={image.url}
+                      alt={image.name ?? undefined}
+                      width={450}
+                      placeholder="empty"
+                      style={{ width: '100%', zIndex: 2, position: 'relative' }}
+                    />
+                  </SFW.Content>
+                </SFW>
                 <Box p="xs" className={classes.content}>
                   {onTwoLines ? twoLine : oneLine}
                 </Box>

@@ -7,13 +7,13 @@ import { trpc } from '~/utils/trpc';
 export function BlurToggle({ children, iconProps = {} }: BlurToggleProps) {
   const { data: session } = useSession();
   const user = session?.user;
-  const utils = trpc.useContext();
+  // const utils = trpc.useContext();
   if (!user) return null;
 
   const { mutate } = trpc.user.update.useMutation({
     async onSuccess() {
-      await utils.model.getAll.invalidate();
-      await utils.review.getAll.invalidate();
+      // await utils.model.getAll.invalidate();
+      // await utils.review.getAll.invalidate();
       await reloadSession();
     },
   });

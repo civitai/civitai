@@ -30,3 +30,13 @@ export const imageSchema = z.object({
 
 export type ImageUploadProps = z.infer<typeof imageSchema>;
 export type ImageMetaProps = z.infer<typeof imageMetaSchema> & Record<string, unknown>;
+
+export type GetModelVersionImagesSchema = z.infer<typeof getModelVersionImageSchema>;
+export const getModelVersionImageSchema = z.object({
+  modelVersionId: z.number(),
+});
+
+export type GetReviewImagesSchema = z.infer<typeof getReviewImagesSchema>;
+export const getReviewImagesSchema = z.object({
+  reviewId: z.number(),
+});

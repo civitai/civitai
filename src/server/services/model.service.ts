@@ -105,6 +105,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
 export const getModelVersionsMicro = ({ id }: { id: number }) => {
   return prisma.modelVersion.findMany({
     where: { modelId: id },
+    orderBy: { index: 'asc' },
     select: { id: true, name: true },
   });
 };

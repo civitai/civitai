@@ -58,7 +58,10 @@ export function ImagePreview({
     </ImageMetaPopover>
   );
 
-  const edgeImageStyle: CSSProperties = {};
+  const edgeImageStyle: CSSProperties = {
+    maxHeight: '100%',
+    maxWidth: '100%',
+  };
   if (onClick) edgeImageStyle.cursor = 'pointer';
   if (style?.height || style?.maxHeight) edgeImageStyle.maxHeight = '100%';
   const Image = nsfw ? (

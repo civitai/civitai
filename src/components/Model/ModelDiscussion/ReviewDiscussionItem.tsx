@@ -2,7 +2,6 @@ import { Carousel } from '@mantine/carousel';
 import {
   ActionIcon,
   AspectRatio,
-  Badge,
   Button,
   Card,
   Group,
@@ -16,18 +15,15 @@ import { showNotification, hideNotification } from '@mantine/notifications';
 import { ReportReason, ReviewReactions } from '@prisma/client';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconMessageCircle2 } from '@tabler/icons';
 import { useSession } from 'next-auth/react';
-import { useState } from 'react';
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { SFW } from '~/components/Media/SFW';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
-import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useImageLightbox } from '~/hooks/useImageLightbox';
-import { useIsMobile } from '~/hooks/useIsMobile';
-import { useModalsContext } from '~/providers/CustomModalsProvider';
+import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReactionDetails } from '~/server/selectors/review.selector';
 import { ReviewGetAllItem } from '~/types/router';
 import { daysFromNow } from '~/utils/date-helpers';
@@ -36,15 +32,11 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ReviewDiscussionItem({ review }: Props) {
-  const mobile = useIsMobile({ breakpoint: 'md' });
-  const { openModal } = useModalsContext();
+  const { openContext } = useRoutedContext();
   const { data: session } = useSession();
   const currentUser = session?.user;
   const isOwner = currentUser?.id === review.user.id;
   const isMod = currentUser?.isModerator ?? false;
-  const { openImageLightbox } = useImageLightbox();
-
-  const [showNsfw, setShowNsfw] = useState(false);
 
   const { data: reactions = [] } = trpc.review.getReactions.useQuery({ reviewId: review.id });
 
@@ -170,9 +162,9 @@ export function ReviewDiscussionItem({ review }: Props) {
             edgeImageProps={{ width: 400 }}
             aspectRatio={1}
             onClick={() =>
-              openImageLightbox({
+              openContext('reviewLightbox', {
                 initialSlide: index,
-                images: review.images.map((image) => image),
+                reviewId: review.id,
               })
             }
             withMeta
@@ -209,14 +201,7 @@ export function ReviewDiscussionItem({ review }: Props) {
                   </Menu.Item>
                   <Menu.Item
                     icon={<IconEdit size={14} stroke={1.5} />}
-                    onClick={() =>
-                      openModal({
-                        modal: 'reviewEdit',
-                        title: `Editing review`,
-                        closeOnClickOutside: false,
-                        innerProps: { review },
-                      })
-                    }
+                    onClick={() => openContext('reviewEdit', { reviewId: review.id })}
                   >
                     Edit review
                   </Menu.Item>
@@ -255,33 +240,15 @@ export function ReviewDiscussionItem({ review }: Props) {
       </Stack>
       {hasImages && (
         <Card.Section mb="sm" style={{ position: 'relative' }}>
-          {review.nsfw ? (
-            <SensitiveContent
-              controls={<SensitiveContent.Toggle my="xs" mx="md" />}
+          <SFW type="review" id={review.id} nsfw={review.nsfw}>
+            <SFW.ToggleNsfw
               placeholder={
                 <AspectRatio ratio={1}>{firstImage && <MediaHash {...firstImage} />}</AspectRatio>
               }
-              onToggleClick={(value) => setShowNsfw(value)}
-            >
-              {carousel}
-            </SensitiveContent>
-          ) : (
-            carousel
-          )}
-          {hasMultipleImages && (
-            <Badge
-              variant="filled"
-              color="gray"
-              size="sm"
-              sx={(theme) => ({
-                position: 'absolute',
-                top: theme.spacing.xs,
-                right: theme.spacing.md,
-              })}
-            >
-              {review.images.length}
-            </Badge>
-          )}
+            />
+            <SFW.Count count={review.images.length} />
+            <SFW.Content>{carousel}</SFW.Content>
+          </SFW>
         </Card.Section>
       )}
 
@@ -299,25 +266,7 @@ export function ReviewDiscussionItem({ review }: Props) {
           size="xs"
           radius="xl"
           variant="subtle"
-          onClick={() =>
-            openModal({
-              modal: 'reviewThread',
-              innerProps: { review, showNsfw },
-              size: mobile ? '100%' : '50%',
-              title: (
-                <Group spacing="xs" align="center">
-                  <UserAvatar
-                    user={review.user}
-                    subText={daysFromNow(review.createdAt)}
-                    size="lg"
-                    spacing="xs"
-                    withUsername
-                  />
-                  <Rating value={review.rating} fractions={2} readOnly />
-                </Group>
-              ),
-            })
-          }
+          onClick={() => openContext('reviewThread', { reviewId: review.id })}
           compact
         >
           <Group spacing={2} noWrap>
