@@ -34,7 +34,10 @@ export const sendWebhooksJob = createJob(
               new Promise((res) => {
                 fetch(webhook.url, {
                   method: 'POST',
-                  body: JSON.stringify(item),
+                  body: JSON.stringify({
+                    event: type,
+                    data: item,
+                  }),
                   headers: { 'Content-Type': 'application/json' },
                 }).then(res);
               })
