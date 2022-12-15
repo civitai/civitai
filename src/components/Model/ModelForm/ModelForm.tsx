@@ -7,7 +7,6 @@ import {
   Group,
   Paper,
   Stack,
-  Switch,
   Title,
   Alert,
   ThemeIcon,
@@ -40,6 +39,7 @@ import {
   InputNumber,
   InputRTE,
   InputSelect,
+  InputSwitch,
   InputText,
   useForm,
 } from '~/libs/form';
@@ -48,21 +48,27 @@ import { ModelFileInput, modelFileSchema } from '~/server/schema/model-file.sche
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ModelById } from '~/types/router';
+import { showErrorNotification } from '~/utils/notifications';
 import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { showErrorNotification } from '~/utils/notifications';
 
 const schema = modelSchema.extend({
   tagsOnModels: z.string().array(),
   modelVersions: z
     .array(
-      modelVersionUpsertSchema.extend({
-        files: z.preprocess((val) => {
-          const list = val as ModelFileInput[];
-          return list.filter((file) => file.url);
-        }, z.array(modelFileSchema).min(1, 'At least one model file must be uploaded')),
-      })
+      modelVersionUpsertSchema
+        .extend({
+          files: z.preprocess((val) => {
+            const list = val as ModelFileInput[];
+            return list.filter((file) => file.url);
+          }, z.array(modelFileSchema).min(1, 'At least one model file must be uploaded')),
+          skipTrainedWords: z.boolean().default(false),
+        })
+        .refine((data) => (!data.skipTrainedWords ? data.trainedWords.length > 0 : true), {
+          message: 'You need to specify at least one trained word',
+          path: ['trainedWords'],
+        })
     )
     .min(1, 'At least one model version is required.'),
 });
@@ -84,7 +90,6 @@ export function ModelForm({ model }: Props) {
   const addMutation = trpc.model.add.useMutation();
   const updateMutation = trpc.model.update.useMutation();
   const [uploading, setUploading] = useState(false);
-  const [hasTrainingWords, setHasTrainingWords] = useState(true);
 
   const defaultModelFile = {
     name: '',
@@ -94,12 +99,13 @@ export function ModelForm({ model }: Props) {
     primary: true,
   };
 
-  const defaultModelVersion: z.infer<typeof modelVersionUpsertSchema> = {
+  const defaultModelVersion: z.infer<typeof schema>['modelVersions'][number] = {
     name: '',
     description: '',
     epochs: null,
     steps: null,
     trainedWords: [],
+    skipTrainedWords: false,
     images: [],
     files: [defaultModelFile],
   };
@@ -112,15 +118,16 @@ export function ModelForm({ model }: Props) {
     tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
     modelVersions: model?.modelVersions.map(({ trainedWords, images, files, ...version }) => ({
       ...version,
-      trainedWords: trainedWords ?? [],
+      trainedWords: trainedWords,
+      skipTrainedWords: !trainedWords.length,
       // HOTFIX: Casting image.meta type issue with generated prisma schema
       images: images.map(({ image }) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
-      files: files ? files : [defaultModelFile],
+      files: files,
     })) ?? [defaultModelVersion],
   };
 
   const form = useForm({
-    schema: schema,
+    schema,
     shouldUnregister: false,
     mode: 'onChange',
     defaultValues,
@@ -228,6 +235,9 @@ export function ModelForm({ model }: Props) {
               {/* Model Versions */}
               {fields.map((version, index) => {
                 const trainedWords = form.watch(`modelVersions.${index}.trainedWords`) ?? [];
+                const skipTrainedWords =
+                  form.watch(`modelVersions.${index}.skipTrainedWords`) ?? false;
+
                 return (
                   <Paper
                     data-version-index={index}
@@ -287,7 +297,7 @@ export function ModelForm({ model }: Props) {
                           />
                         </Grid.Col>
                         <Grid.Col span={12}>
-                          {hasTrainingWords && (
+                          {!skipTrainedWords && (
                             <InputMultiSelect
                               name={`modelVersions.${index}.trainedWords`}
                               label="Trigger Words"
@@ -301,9 +311,9 @@ export function ModelForm({ model }: Props) {
                               required
                             />
                           )}
-                          <Switch
-                            label="This model doesn't require any trigger words"
-                            onChange={() => setHasTrainingWords((x) => !x)}
+                          <InputSwitch
+                            name={`modelVersions.${index}.skipTrainedWords`}
+                            label="This version doesn't require any trigger words"
                           />
                         </Grid.Col>
                         <Grid.Col span={6}>

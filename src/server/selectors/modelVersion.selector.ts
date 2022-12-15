@@ -1,4 +1,5 @@
-import { ModelFileType, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+
 import { imageSelectWithoutId } from '~/server/selectors/image.selector';
 
 export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersionSelect>()({
