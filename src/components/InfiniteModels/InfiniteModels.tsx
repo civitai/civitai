@@ -203,7 +203,6 @@ const MasonryItem = ({
   const theme = useMantineTheme();
 
   const { id, image, name, rank, nsfw } = data ?? {};
-  const blurNsfw = session?.user?.blurNsfw ?? true;
 
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
