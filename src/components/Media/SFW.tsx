@@ -26,7 +26,7 @@ export function SFW({
   sx = {},
   ...props
 }: SFWProps & Omit<BoxProps, 'children'>) {
-  const { data: session } = useSession();
+  const user = useCurrentUser();
   const shouldBlur = session?.user?.blurNsfw ?? true;
 
   const showNsfw = useSfwStore(
