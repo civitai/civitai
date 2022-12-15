@@ -11,6 +11,6 @@ interface SfwContextInterface {
 export const SfwCtx = createContext<SfwContextInterface>({} as any);
 export const useSfwContext = () => {
   const context = useContext(SfwCtx);
-  if (!context) throw new Error('useMediaContext can only be used inside Media');
+  if (!context) throw new Error('useSfwContext can only be used inside SfwCtx');
   return context;
 };
