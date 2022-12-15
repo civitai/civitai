@@ -23,8 +23,8 @@ import { useState, useRef } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
-import { Media } from '~/components/Media/Media';
-import { MediaTypes } from '~/components/Media/mediaContext';
+import { SFW } from '~/components/Media/SFW';
+import { MediaTypes } from '~/components/Media/sfwContext';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageModel } from '~/server/selectors/image.selector';
 
@@ -91,13 +91,13 @@ export function Lightbox({
               <Loader />
             </Center>
           ) : (
-            <Media
+            <SFW
               type={type}
               id={id}
               nsfw={nsfw}
               sx={{ width: '100%', height: '100%', display: 'flex' }}
             >
-              <Media.Placeholder>
+              <SFW.Placeholder>
                 <Card
                   p="md"
                   radius="sm"
@@ -112,12 +112,12 @@ export function Lightbox({
                 >
                   <Stack>
                     <Text>{`This ${type}  has been marked NSFW`}</Text>
-                    <Media.Target>
+                    <SFW.Toggle>
                       <Button>Click to view</Button>
-                    </Media.Target>
+                    </SFW.Toggle>
                   </Stack>
                 </Card>
-              </Media.Placeholder>
+              </SFW.Placeholder>
               <Carousel
                 height="100%"
                 sx={{ flex: 1 }}
@@ -153,7 +153,7 @@ export function Lightbox({
                           bottom: 0,
                         }}
                       >
-                        <Media.Placeholder>
+                        <SFW.Placeholder>
                           <AspectRatio
                             ratio={width / height}
                             sx={{
@@ -165,15 +165,15 @@ export function Lightbox({
                           >
                             <MediaHash {...image} />
                           </AspectRatio>
-                        </Media.Placeholder>
-                        <Media.Content>
+                        </SFW.Placeholder>
+                        <SFW.Content>
                           <EdgeImage
                             src={image.url}
                             alt={image.name ?? undefined}
                             style={{ maxHeight: '100%', maxWidth: '100%' }}
                             width={width}
                           />
-                        </Media.Content>
+                        </SFW.Content>
                       </Center>
                     </Carousel.Slide>
                   );
@@ -198,7 +198,7 @@ export function Lightbox({
                   </Stack>
                 </Paper>
               )}
-            </Media>
+            </SFW>
           )}
         </Box>
       </MantineProvider>

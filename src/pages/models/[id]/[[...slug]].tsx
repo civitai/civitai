@@ -82,7 +82,7 @@ import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { scrollToTop } from '~/utils/scroll-utils';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
-import { Media } from '~/components/Media/Media';
+import { SFW } from '~/components/Media/SFW';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 //TODO - Break model query into multiple queries
@@ -440,39 +440,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   ];
   const published = model.status === ModelStatus.Published;
 
-  const carousel = (
-    <Carousel
-      slideSize="50%"
-      breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
-      slideGap="xl"
-      align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
-      slidesToScroll={mobile ? 1 : 2}
-      withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
-      loop
-    >
-      {latestVersion?.images.map(({ image }, index) => (
-        <Carousel.Slide key={image.id}>
-          <Center style={{ height: '100%' }}>
-            <ImagePreview
-              image={image}
-              edgeImageProps={{ width: 400 }}
-              // nsfw={nsfw}
-              radius="md"
-              onClick={() =>
-                openContext('modelVersionLightbox', {
-                  modelVersionId: latestVersion.id,
-                  initialSlide: index,
-                })
-              }
-              style={{ width: '100%' }}
-              withMeta
-            />
-          </Center>
-        </Carousel.Slide>
-      ))}
-    </Carousel>
-  );
-
   return (
     <>
       {meta}
@@ -686,10 +653,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             })}
           >
             <Stack>
-              <Media type="model" id={model.id} nsfw={model.nsfw}>
+              <SFW type="model" id={model.id} nsfw={model.nsfw}>
                 {({ nsfw, showNsfw }) => (
                   <>
-                    <Media.Placeholder>
+                    <SFW.Placeholder>
                       <Card
                         p="md"
                         radius="sm"
@@ -704,12 +671,12 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       >
                         <Stack>
                           <Text>This model has been marked NSFW</Text>
-                          <Media.Target>
+                          <SFW.Toggle>
                             <Button>Click to view</Button>
-                          </Media.Target>
+                          </SFW.Toggle>
                         </Stack>
                       </Card>
-                    </Media.Placeholder>
+                    </SFW.Placeholder>
                     <Carousel
                       slideSize="50%"
                       breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
@@ -727,7 +694,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                                 ratio={(image?.width ?? 1) / (image?.height ?? 1)}
                                 style={{ height: 400 }}
                               >
-                                <MediaHash {...image} style={{ height: '100%', width: '100%' }} />
+                                <MediaHash
+                                  {...image}
+                                  style={{ height: '300px', width: '300px', position: 'relative' }}
+                                />
                               </AspectRatio>
                             </Media.Placeholder>
                             <Media.Content>
@@ -759,7 +729,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     </Carousel>
                   </>
                 )}
-              </Media>
+              </SFW>
 
               {model.description ? (
                 <ContentClamp maxHeight={300}>

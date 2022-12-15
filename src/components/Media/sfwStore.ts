@@ -1,14 +1,14 @@
 import create from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
-type NsfwStore = {
+type SfwStore = {
   showReviews: Record<string, boolean>;
   showModels: Record<string, boolean>;
   toggleReview: (id: number) => void;
   toggleModel: (id: number) => void;
 };
 
-export const useNsfwStore = create<NsfwStore>()(
+export const useSfwStore = create<SfwStore>()(
   immer((set) => ({
     showReviews: {},
     showModels: {},

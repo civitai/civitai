@@ -20,7 +20,7 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { Media } from '~/components/Media/Media';
+import { SFW } from '~/components/Media/SFW';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
@@ -240,15 +240,15 @@ export function ReviewDiscussionItem({ review }: Props) {
       </Stack>
       {hasImages && (
         <Card.Section mb="sm" style={{ position: 'relative' }}>
-          <Media type="review" id={review.id} nsfw={review.nsfw}>
-            <Media.ToggleNsfw
+          <SFW type="review" id={review.id} nsfw={review.nsfw}>
+            <SFW.ToggleNsfw
               placeholder={
                 <AspectRatio ratio={1}>{firstImage && <MediaHash {...firstImage} />}</AspectRatio>
               }
             />
-            <Media.Count count={review.images.length} />
-            <Media.Content>{carousel}</Media.Content>
-          </Media>
+            <SFW.Count count={review.images.length} />
+            <SFW.Content>{carousel}</SFW.Content>
+          </SFW>
         </Card.Section>
       )}
 

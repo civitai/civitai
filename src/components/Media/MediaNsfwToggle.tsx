@@ -2,15 +2,15 @@ import { Badge, BadgeProps, Stack, Text } from '@mantine/core';
 
 import { IconEyeOff } from '@tabler/icons';
 import React from 'react';
-import { useMediaContext } from '~/components/Media/mediaContext';
-import { MediaPlaceholder } from '~/components/Media/MediaPlaceholder';
-import { MediaTarget } from '~/components/Media/MediaTarget';
+import { useSfwContext } from '~/components/Media/sfwContext';
+import { SfwPlaceholder } from '~/components/Media/SfwPlaceholder';
+import { SfwToggle } from '~/components/Media/SfwToggle';
 
 export function MediaNsfwToggle({
   placeholder,
   ...badgeProps
-}: { placeholder: React.ReactElement } & Omit<BadgeProps, 'children'>) {
-  const { nsfw, showNsfw } = useMediaContext();
+}: { placeholder?: React.ReactElement } & Omit<BadgeProps, 'children'>) {
+  const { nsfw, showNsfw } = useSfwContext();
 
   const badge = (
     <Badge
@@ -35,7 +35,7 @@ export function MediaNsfwToggle({
   if (!nsfw) return null;
   return (
     <>
-      <MediaPlaceholder>
+      <SfwPlaceholder>
         {placeholder}
         <Stack
           align="center"
@@ -53,8 +53,8 @@ export function MediaNsfwToggle({
             This is marked as NSFW
           </Text>
         </Stack>
-      </MediaPlaceholder>
-      <MediaTarget>{badge}</MediaTarget>
+      </SfwPlaceholder>
+      <SfwToggle>{badge}</SfwToggle>
     </>
   );
 }

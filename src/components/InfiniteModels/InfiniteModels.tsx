@@ -39,7 +39,7 @@ import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
-import { Media } from '~/components/Media/Media';
+import { SFW } from '~/components/Media/SFW';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -356,15 +356,14 @@ const MasonryItem = ({
             {inView && (
               <>
                 <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
-                <Media type="model" id={id} nsfw={nsfw} sx={{ height: '100%', width: '100%' }}>
-                  <Media.ToggleNsfw
-                    placeholder={
-                      <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
-                        <MediaHash {...image} />
-                      </AspectRatio>
-                    }
-                  />
-                  <Media.Content>
+                <SFW type="model" id={id} nsfw={nsfw} sx={{ height: '100%', width: '100%' }}>
+                  <SFW.ToggleNsfw />
+                  <SFW.Placeholder>
+                    <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                      <MediaHash {...image} />
+                    </AspectRatio>
+                  </SFW.Placeholder>
+                  <SFW.Content>
                     <EdgeImage
                       src={image.url}
                       alt={image.name ?? undefined}
@@ -372,8 +371,8 @@ const MasonryItem = ({
                       placeholder="empty"
                       style={{ width: '100%', zIndex: 2, position: 'relative' }}
                     />
-                  </Media.Content>
-                </Media>
+                  </SFW.Content>
+                </SFW>
                 <Box p="xs" className={classes.content}>
                   {onTwoLines ? twoLine : oneLine}
                 </Box>

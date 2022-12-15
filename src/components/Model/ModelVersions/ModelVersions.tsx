@@ -8,7 +8,7 @@ import {
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { Media } from '~/components/Media/Media';
+import { SFW } from '~/components/Media/SFW';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { TrainingWordBadge } from '~/components/TrainingWordBadge/TrainingWordBadge';
@@ -151,7 +151,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
         </Stack>
       </Grid.Col>
       <Grid.Col xs={12} md={8} orderMd={1}>
-        <Media type="model" id={modelId} nsfw={nsfw}>
+        <SFW type="model" id={modelId} nsfw={nsfw}>
           {({ nsfw, showNsfw }) => (
             <>
               {nsfw && !showNsfw && (
@@ -169,9 +169,9 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 >
                   <Stack>
                     <Text>This model has been marked NSFW</Text>
-                    <Media.Target>
+                    <SFW.Toggle>
                       <Button>Click to view</Button>
-                    </Media.Target>
+                    </SFW.Toggle>
                   </Stack>
                 </Card>
               )}
@@ -230,7 +230,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
               </SimpleGrid>
             </>
           )}
-        </Media>
+        </SFW>
       </Grid.Col>
     </Grid>
   );

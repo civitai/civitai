@@ -5,17 +5,17 @@ import { IconLock } from '@tabler/icons';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import React from 'react';
-import { useMediaContext } from './mediaContext';
-import { useNsfwStore } from './mediaStore';
+import { useSfwContext } from './sfwContext';
+import { useSfwStore } from './sfwStore';
 
-export function MediaTarget({ children }: { children: React.ReactElement }) {
-  const { nsfw, showNsfw, type, id } = useMediaContext();
+export function SfwToggle({ children }: { children: React.ReactElement }) {
+  const { nsfw, type, id } = useSfwContext();
   const { data: session } = useSession();
   const [opened, { close, open }] = useDisclosure(false);
   const isAuthenticated = !!session?.user;
   const router = useRouter();
 
-  const toggleShow = useNsfwStore(
+  const toggleShow = useSfwStore(
     (state) => state[type === 'model' ? 'toggleModel' : 'toggleReview']
   );
 

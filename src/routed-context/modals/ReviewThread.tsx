@@ -17,7 +17,7 @@ import { z } from 'zod';
 import CommentSection from '~/components/CommentSection/CommentSection';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { Media } from '~/components/Media/Media';
+import { SFW } from '~/components/Media/SFW';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { daysFromNow } from '~/utils/date-helpers';
@@ -101,8 +101,8 @@ export default createRoutedContext({
                 </Grid.Col>
                 {hasImages ? (
                   <Grid.Col span={12} sx={{ position: 'relative' }}>
-                    <Media type="review" id={review.id} nsfw={review.nsfw}>
-                      <Media.ToggleNsfw
+                    <SFW type="review" id={review.id} nsfw={review.nsfw}>
+                      <SFW.ToggleNsfw
                         placeholder={
                           <AspectRatio ratio={16 / 9} style={{ height: 400 }}>
                             {firstImage && (
@@ -111,9 +111,9 @@ export default createRoutedContext({
                           </AspectRatio>
                         }
                       />
-                      <Media.Count count={review.images.length} />
-                      <Media.Content>{carousel}</Media.Content>
-                    </Media>
+                      <SFW.Count count={review.images.length} />
+                      <SFW.Content>{carousel}</SFW.Content>
+                    </SFW>
                   </Grid.Col>
                 ) : null}
                 {isLoading ? (
