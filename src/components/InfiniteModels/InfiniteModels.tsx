@@ -329,16 +329,6 @@ const MasonryItem = ({
     </Group>
   );
 
-  const PreviewImage = (
-    <EdgeImage
-      src={image.url}
-      alt={image.name ?? undefined}
-      width={450}
-      placeholder="empty"
-      style={{ width: '100%', zIndex: 2, position: 'relative' }}
-    />
-  );
-
   const hasNewVersion = data.lastVersionCreatedAt > aDayAgo && data.createdAt < aDayAgo;
 
   return (
@@ -374,7 +364,15 @@ const MasonryItem = ({
                       </AspectRatio>
                     }
                   />
-                  <Media.Content>{PreviewImage}</Media.Content>
+                  <Media.Content>
+                    <EdgeImage
+                      src={image.url}
+                      alt={image.name ?? undefined}
+                      width={450}
+                      placeholder="empty"
+                      style={{ width: '100%', zIndex: 2, position: 'relative' }}
+                    />
+                  </Media.Content>
                 </Media>
                 <Box p="xs" className={classes.content}>
                   {onTwoLines ? twoLine : oneLine}

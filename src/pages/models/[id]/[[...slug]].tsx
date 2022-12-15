@@ -22,6 +22,7 @@ import {
   Tooltip,
   Rating,
   Card,
+  AspectRatio,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
@@ -54,7 +55,7 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { EdgeImage, getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
@@ -82,6 +83,7 @@ import { scrollToTop } from '~/utils/scroll-utils';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { Media } from '~/components/Media/Media';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 //TODO - Break model query into multiple queries
 /*
@@ -720,6 +722,23 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       {latestVersion?.images.map(({ image }, index) => (
                         <Carousel.Slide key={image.id}>
                           <Center style={{ height: '100%' }}>
+                            {/* <Media.Placeholder>
+                              <AspectRatio
+                                ratio={(image?.width ?? 1) / (image?.height ?? 1)}
+                                style={{ height: 400 }}
+                              >
+                                <MediaHash {...image} style={{ height: '100%', width: '100%' }} />
+                              </AspectRatio>
+                            </Media.Placeholder>
+                            <Media.Content>
+                              <EdgeImage
+                                src={image.url}
+                                alt={image.name ?? undefined}
+                                width={450}
+                                placeholder="empty"
+                                style={{ width: '100%', zIndex: 2, position: 'relative' }}
+                              />
+                            </Media.Content> */}
                             <ImagePreview
                               image={image}
                               edgeImageProps={{ width: 400 }}

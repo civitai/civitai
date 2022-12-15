@@ -23,11 +23,14 @@ export function Media({
   type,
   id,
   children,
-  sx,
+  sx = {},
   ...props
 }: MediaProps & Omit<BoxProps, 'children'>) {
   const { data: session } = useSession();
   const shouldBlur = session?.user?.blurNsfw ?? true;
+
+  console.log({ shouldBlur, nsfw: nsfw && shouldBlur });
+
   const showNsfw = useNsfwStore(
     (state) => state[type === 'model' ? 'showModels' : 'showReviews'][id.toString()] ?? false
   );
@@ -38,7 +41,9 @@ export function Media({
         sx={(theme) => ({ position: 'relative', ...(typeof sx === 'function' ? sx(theme) : sx) })}
         {...props}
       >
-        {typeof children === 'function' ? children({ nsfw, showNsfw }) : children}
+        {typeof children === 'function'
+          ? children({ nsfw: nsfw && shouldBlur, showNsfw })
+          : children}
       </Box>
     </MediaCtx.Provider>
   );
