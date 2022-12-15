@@ -29,8 +29,6 @@ export function Media({
   const { data: session } = useSession();
   const shouldBlur = session?.user?.blurNsfw ?? true;
 
-  console.log({ shouldBlur, nsfw: nsfw && shouldBlur });
-
   const showNsfw = useNsfwStore(
     (state) => state[type === 'model' ? 'showModels' : 'showReviews'][id.toString()] ?? false
   );
@@ -38,7 +36,9 @@ export function Media({
   return (
     <MediaCtx.Provider value={{ nsfw: nsfw && shouldBlur, showNsfw, type, id }}>
       <Box
-        sx={(theme) => ({ position: 'relative', ...(typeof sx === 'function' ? sx(theme) : sx) })}
+        sx={(theme) =>
+          ({ position: 'relative', ...(typeof sx === 'function' ? sx(theme) : sx) } as any)
+        }
         {...props}
       >
         {typeof children === 'function'
