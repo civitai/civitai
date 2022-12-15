@@ -125,6 +125,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
                   <Menu.Item
                     key={index}
                     component="a"
+                    py={4}
                     icon={<VerifiedText file={file} iconOnly />}
                     href={createModelFileDownloadUrl({
                       versionId: version.id,
