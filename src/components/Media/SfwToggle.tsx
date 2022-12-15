@@ -2,9 +2,9 @@ import { Popover, Stack, Group, ThemeIcon, Button, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons';
-import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import React from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useSfwContext } from './sfwContext';
 import { useSfwStore } from './sfwStore';
 
@@ -12,7 +12,7 @@ export function SfwToggle({ children }: { children: React.ReactElement }) {
   const { nsfw, type, id } = useSfwContext();
   const user = useCurrentUser();
   const [opened, { close, open }] = useDisclosure(false);
-  const isAuthenticated = !!session?.user;
+  const isAuthenticated = !!user;
   const router = useRouter();
 
   const toggleShow = useSfwStore(

@@ -1,5 +1,4 @@
 import { Box, BoxProps } from '@mantine/core';
-import { useSession } from 'next-auth/react';
 import React from 'react';
 import { MediaCount } from './MediaCount';
 import { SfwCtx, MediaTypes } from './sfwContext';
@@ -8,6 +7,7 @@ import { MediaNsfwToggle } from './MediaNsfwToggle';
 import { SfwContent } from './sfwContent';
 import { SfwToggle } from './SfwToggle';
 import { SfwPlaceholder } from './SfwPlaceholder';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type SFWProps = {
   nsfw?: boolean;
@@ -27,7 +27,7 @@ export function SFW({
   ...props
 }: SFWProps & Omit<BoxProps, 'children'>) {
   const user = useCurrentUser();
-  const shouldBlur = session?.user?.blurNsfw ?? true;
+  const shouldBlur = user?.blurNsfw ?? true;
 
   const showNsfw = useSfwStore(
     (state) => state[type === 'model' ? 'showModels' : 'showReviews'][id.toString()] ?? false
