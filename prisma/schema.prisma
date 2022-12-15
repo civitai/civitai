@@ -229,33 +229,39 @@ enum ScanResultCode {
 
 enum ModelFileType {
   Model
+  PrunedModel
   TrainingData
+  VAE
+  Config
 }
 
 enum ModelFileFormat {
   PickleTensor
   SafeTensor
+  Other
 }
 
 model ModelFile {
+  id                Int             @id @default(autoincrement())
   name              String
   url               String
   sizeKB            Float
-  createdAt         DateTime         @default(now())
+  createdAt         DateTime        @default(now())
   type              ModelFileType
-  format            ModelFileFormat?
+  format            ModelFileFormat @default(Other)
   modelVersionId    Int
-  modelVersion      ModelVersion     @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-  pickleScanResult  ScanResultCode   @default(Pending)
+  modelVersion      ModelVersion    @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  pickleScanResult  ScanResultCode  @default(Pending)
   exists            Boolean?
   pickleScanMessage String?
-  virusScanResult   ScanResultCode   @default(Pending)
+  virusScanResult   ScanResultCode  @default(Pending)
   virusScanMessage  String?
   scannedAt         DateTime?
   scanRequestedAt   DateTime?
   rawScanResult     Json?
+  primary           Boolean         @default(false)
 
-  @@id([modelVersionId, type])
+  @@unique([modelVersionId, type, format])
 }
 
 enum MetricTimeframe {

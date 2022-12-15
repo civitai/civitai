@@ -1,11 +1,12 @@
-import { ModelFileType } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
-import { prisma } from '~/server/db/client';
-import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { z } from 'zod';
-import { env } from '~/env/server.mjs';
+
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { env } from '~/env/server.mjs';
+import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import { prisma } from '~/server/db/client';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
+import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({ id: z.preprocess((val) => Number(val), z.number()) });
 
@@ -36,18 +37,29 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   );
 
   const { images, files, model, ...version } = modelVersion;
-
-  const modelFiles = files.filter((x) => x.type === ModelFileType.Model);
-  if (modelFiles.length === 0) return res.status(404).json({ error: 'Missing model file' });
+  const hasPrimary = files.findIndex((file) => file.primary) > -1;
+  if (!hasPrimary) return res.status(404).json({ error: 'Missing model file' });
 
   res.status(200).json({
     ...version,
     model,
-    files: modelFiles.map(({ type, ...file }) => ({ ...file })),
+    files: files.map(({ primary, ...file }) => ({
+      ...file,
+      primary: primary === true ? primary : undefined,
+      downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
+        versionId: version.id,
+        type: file.type,
+        format: file.format,
+        primary,
+      })}`,
+    })),
     images: images.map(({ image: { url, ...image } }) => ({
       url: getEdgeUrl(url, { width: 450 }),
       ...image,
     })),
-    downloadUrl: `${baseUrl.origin}/api/download/models/${version.id}`,
+    downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
+      versionId: version.id,
+      primary: true,
+    })}`,
   });
 });

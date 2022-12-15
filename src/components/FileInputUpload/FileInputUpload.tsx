@@ -1,4 +1,13 @@
-import { Stack, FileInput, Progress, FileInputProps, Group, Text } from '@mantine/core';
+import {
+  Stack,
+  FileInput,
+  Progress,
+  FileInputProps,
+  Group,
+  Text,
+  createStyles,
+  Box,
+} from '@mantine/core';
 import { IconUpload, IconCircleCheck, IconBan } from '@tabler/icons';
 import { useMemo, useState } from 'react';
 import { useS3Upload } from '~/hooks/useS3Upload';
@@ -10,7 +19,7 @@ import { useDidUpdate } from '@mantine/hooks';
 import isEqual from 'lodash/isEqual';
 import { ModelFileType } from '@prisma/client';
 import { bytesToKB } from '~/utils/number-helpers';
-import { ModelFileProps } from '~/server/schema/model-file.schema';
+import { ModelFileInput } from '~/server/schema/model-file.schema';
 
 export function FileInputUpload({
   uploadType = 'Model',
@@ -19,10 +28,12 @@ export function FileInputUpload({
   value,
   error,
   fileName = value?.name,
+  grow = false,
+  stackUploadProgress = false,
   ...props
 }: Props) {
   const isClient = useIsClient();
-  const [state, setState] = useState<ModelFileProps | undefined>(value);
+  const [state, setState] = useState<ModelFileInput | undefined>(value);
   const { files, uploadToS3, resetFiles } = useS3Upload();
   const { file, progress, speed, timeRemaining, status, abort } = files[0] ?? {
     file: null,
@@ -33,6 +44,7 @@ export function FileInputUpload({
   };
 
   const [fileTypeError, setFileTypeError] = useState('');
+  const { classes } = useStyles();
 
   useDidUpdate(() => {
     const shouldUpdate = !isEqual(value, state);
@@ -61,15 +73,16 @@ export function FileInputUpload({
         // TODO Upload Bug: when upload is aborted or errored, we aren't clearing this...
         if (!url) {
           setState(undefined);
-          onChange?.(undefined);
+          onLoading?.(false);
           return;
         }
         onLoading?.(false);
-        const value: ModelFileProps = {
+        const value: ModelFileInput = {
           sizeKB: file.size ? bytesToKB(file.size) : 0,
           type: uploadType,
           url,
           name: file.name,
+          primary: state?.primary ?? false,
         };
         setState(value);
         onChange?.(value);
@@ -90,7 +103,7 @@ export function FileInputUpload({
   );
 
   return (
-    <Stack>
+    <Stack sx={grow ? { flexGrow: 1 } : undefined} className={classes.stackedProgress}>
       <FileInput
         {...props}
         error={error ?? fileTypeError}
@@ -115,23 +128,52 @@ export function FileInputUpload({
       />
       {file && (
         <>
-          {status === 'uploading' && (
-            <Stack spacing={2}>
-              <Progress
-                sx={{ width: '100%' }}
-                size="xl"
-                value={progress}
-                label={`${Math.floor(progress)}%`}
-                color={progress < 100 ? 'blue' : 'green'}
-                striped
-                animate
-              />
-              <Group position="apart">
-                <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text>
-                <Text size="xs" color="dimmed">{`${formatSeconds(timeRemaining)} remaining`}</Text>
-              </Group>
-            </Stack>
-          )}
+          {status === 'uploading' &&
+            (stackUploadProgress ? (
+              <Box className={classes.stackedProgressProgress}>
+                <Progress
+                  sx={{ width: '100%' }}
+                  size="xl"
+                  radius="xs"
+                  value={progress}
+                  label={`${Math.floor(progress)}%`}
+                  color={progress < 100 ? 'blue' : 'green'}
+                  styles={{
+                    root: { height: '100%', borderTopRightRadius: 0, borderBottomRightRadius: 0 },
+                    bar: { alignItems: 'flex-start', paddingTop: 6, textShadow: '0 0 2px #000' },
+                  }}
+                  className={classes.stackedProgressBar}
+                  striped
+                  animate
+                />
+                <Group position="apart" className={classes.stackedProgressStatus}>
+                  <Text className={classes.stackedProgressStatusText}>{`${formatBytes(
+                    speed
+                  )}/s`}</Text>
+                  <Text className={classes.stackedProgressStatusText}>{`${formatSeconds(
+                    timeRemaining
+                  )} remaining`}</Text>
+                </Group>
+              </Box>
+            ) : (
+              <Stack spacing={2}>
+                <Progress
+                  sx={{ width: '100%' }}
+                  size="xl"
+                  value={progress}
+                  label={`${Math.floor(progress)}%`}
+                  color={progress < 100 ? 'blue' : 'green'}
+                  striped
+                  animate
+                />
+                <Group position="apart">
+                  <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text>
+                  <Text size="xs" color="dimmed">{`${formatSeconds(
+                    timeRemaining
+                  )} remaining`}</Text>
+                </Group>
+              </Stack>
+            ))}
           {status === 'error' && (
             <Text size="xs" color="red">
               Error uploading file
@@ -144,9 +186,47 @@ export function FileInputUpload({
 }
 
 type Props = Omit<FileInputProps, 'icon' | 'onChange' | 'value'> & {
-  value?: ModelFileProps;
-  onChange?: (value?: ModelFileProps) => void;
+  value?: ModelFileInput;
+  onChange?: (value?: ModelFileInput) => void;
   onLoading?: (loading: boolean) => void;
   uploadType?: ModelFileType;
   fileName?: string;
+  grow?: boolean;
+  stackUploadProgress?: boolean;
 };
+
+const useStyles = createStyles(() => ({
+  stackedProgress: {
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  stackedProgressProgress: {
+    position: 'absolute',
+    top: 1,
+    left: 1,
+    bottom: 1,
+    width: 'calc(100% - 32px)',
+    zIndex: 2,
+    opacity: 1,
+  },
+  stackedProgressBar: {
+    position: 'absolute',
+    top: '0',
+    width: '100%',
+  },
+  stackedProgressStatus: {
+    position: 'absolute',
+    bottom: '0',
+    width: '100%',
+    marginBottom: 0,
+    paddingLeft: 12,
+    paddingRight: 12,
+    zIndex: 3,
+  },
+  stackedProgressStatusText: {
+    fontSize: 10,
+    color: '#fff',
+    textShadow: '0 0 2px #000',
+    fontWeight: 500,
+  },
+}));

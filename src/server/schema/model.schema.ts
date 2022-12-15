@@ -48,3 +48,4 @@ export const modelSchema = z.object({
     .array(modelVersionUpsertSchema)
     .min(1, 'At least one model version is required.'),
 });
+export type ModelInput = z.infer<typeof modelSchema>;

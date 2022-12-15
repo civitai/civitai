@@ -30,6 +30,7 @@ import {
   IconArrowsSort,
   IconBan,
   IconDotsVertical,
+  IconDownload,
   IconEdit,
   IconExclamationMark,
   IconFilter,
@@ -81,6 +82,8 @@ import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { scrollToTop } from '~/utils/scroll-utils';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { RunButton } from '~/components/RunStrategy/RunButton';
+import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
+import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 
 //TODO - Break model query into multiple queries
 /*
@@ -282,6 +285,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model?.modelVersions[0];
+  const secondaryFiles = latestVersion?.files?.filter((file) => !file.primary) ?? [];
+  const primaryFile = latestVersion?.files?.find((file) => file.primary === true);
   const inaccurate = model?.modelVersions.some((version) => version.inaccurate);
 
   if (loadingModel)
@@ -579,22 +584,44 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
             <Stack>
               {latestVersion && (
-                <Group spacing="xs" style={{ alignItems: 'flex-start' }} noWrap>
+                <Group spacing="xs" style={{ alignItems: 'flex-start' }}>
                   <Stack sx={{ flex: 1 }} spacing={4}>
-                    <Button
+                    <MultiActionButton
                       component="a"
-                      href={`/api/download/models/${latestVersion?.id}`}
+                      href={createModelFileDownloadUrl({
+                        versionId: latestVersion.id,
+                        primary: true,
+                      })}
+                      leftIcon={<IconDownload size={16} />}
+                      menuItems={secondaryFiles.map((file, index) => (
+                        <Menu.Item
+                          key={index}
+                          component="a"
+                          py={4}
+                          icon={<VerifiedText file={file} iconOnly />}
+                          href={createModelFileDownloadUrl({
+                            versionId: latestVersion.id,
+                            type: file.type,
+                            format: file.format,
+                          })}
+                          download
+                        >
+                          {`${startCase(file.type)}${
+                            ['Model', 'PrunedModel'].includes(file.type) ? ' ' + file.format : ''
+                          } (${formatKBytes(file.sizeKB)})`}
+                        </Menu.Item>
+                      ))}
                       download
                     >
                       <Text align="center">
-                        {`Download Latest (${formatKBytes(latestVersion?.modelFile?.sizeKB ?? 0)})`}
+                        {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
                       </Text>
-                    </Button>
-                    {latestVersion.modelFile && (
+                    </MultiActionButton>
+                    {primaryFile && (
                       <Group position="apart">
-                        <VerifiedText file={latestVersion.modelFile} />
+                        <VerifiedText file={primaryFile} />
                         <Text size="xs" color="dimmed">
-                          {latestVersion.modelFile.format}
+                          {primaryFile.format}
                         </Text>
                       </Group>
                     )}
