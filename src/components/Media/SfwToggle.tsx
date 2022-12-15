@@ -10,7 +10,7 @@ import { useSfwStore } from './sfwStore';
 
 export function SfwToggle({ children }: { children: React.ReactElement }) {
   const { nsfw, type, id } = useSfwContext();
-  const { data: session } = useSession();
+  const user = useCurrentUser();
   const [opened, { close, open }] = useDisclosure(false);
   const isAuthenticated = !!session?.user;
   const router = useRouter();

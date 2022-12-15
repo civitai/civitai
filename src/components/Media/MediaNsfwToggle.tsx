@@ -14,7 +14,6 @@ export function MediaNsfwToggle({
 
   const badge = (
     <Badge
-      component="div"
       color="red"
       variant="filled"
       size="sm"
