@@ -3,8 +3,8 @@ import { TRPCError } from '@trpc/server';
 import { prisma } from '~/server/db/client';
 import {
   deleteUserReviewHandler,
-  getReviewComments as getReviewCommentsHandler,
-  getReviewDetails as getReviewDetailsHandler,
+  getReviewCommentsHandler,
+  getReviewDetailsHandler,
   getReviewReactionsHandler,
   getReviewsInfiniteHandler,
   reportReviewHandler,

@@ -153,8 +153,8 @@ export const toggleReactionHandler = async ({
   }
 };
 
-export type ReviewDetails = AsyncReturnType<typeof getReviewDetails>;
-export const getReviewDetails = async ({ input: { id } }: { input: GetByIdInput }) => {
+export type ReviewDetails = AsyncReturnType<typeof getReviewDetailsHandler>;
+export const getReviewDetailsHandler = async ({ input: { id } }: { input: GetByIdInput }) => {
   try {
     const result = await getReviewById({
       id,
@@ -173,7 +173,7 @@ export const getReviewDetails = async ({ input: { id } }: { input: GetByIdInput 
   }
 };
 
-export const getReviewComments = async ({ input }: { input: GetByIdInput }) => {
+export const getReviewCommentsHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     const review = await getReviewById({
       ...input,
