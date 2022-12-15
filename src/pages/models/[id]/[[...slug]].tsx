@@ -21,10 +21,7 @@ import {
   ThemeIcon,
   Tooltip,
   Rating,
-  AspectRatio,
-  Paper,
   Card,
-  Overlay,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
@@ -71,7 +68,6 @@ import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { TrainingWordBadge } from '~/components/TrainingWordBadge/TrainingWordBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { useModalsContext } from '~/providers/CustomModalsProvider';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -86,7 +82,6 @@ import { scrollToTop } from '~/utils/scroll-utils';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { Media } from '~/components/Media/Media';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 //TODO - Break model query into multiple queries
 /*
@@ -145,7 +140,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const theme = useMantineTheme();
   const router = useRouter();
   const { data: session } = useSession();
-  const { openModal } = useModalsContext();
   const { classes } = useStyles();
   const mobile = useIsMobile();
   const queryUtils = trpc.useContext();
@@ -693,7 +687,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               <Media type="model" id={model.id} nsfw={model.nsfw}>
                 {({ nsfw, showNsfw }) => (
                   <>
-                    {nsfw && !showNsfw && (
+                    <Media.Placeholder>
                       <Card
                         p="md"
                         radius="sm"
@@ -713,7 +707,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                           </Media.Target>
                         </Stack>
                       </Card>
-                    )}
+                    </Media.Placeholder>
                     <Carousel
                       slideSize="50%"
                       breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
@@ -789,15 +783,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       leftIcon={<IconMessage size={16} />}
                       variant="outline"
                       fullWidth={mobile}
-                      onClick={() => {
-                        return openModal({
-                          modal: 'commentEdit',
-                          title: `Add a comment`,
-                          innerProps: {
-                            comment: { modelId: model.id },
-                          },
-                        });
-                      }}
+                      onClick={() => openContext('commentEdit', {})}
                       size="xs"
                     >
                       Add Comment

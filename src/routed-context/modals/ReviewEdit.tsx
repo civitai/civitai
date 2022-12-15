@@ -72,7 +72,12 @@ export default createRoutedContext({
     };
 
     return (
-      <Modal title="Editing review" opened={context.opened} onClose={context.close} styles={{}}>
+      <Modal
+        title={reviewId ? 'Editing review' : 'Add a review'}
+        opened={context.opened}
+        onClose={context.close}
+        styles={{}}
+      >
         <LoadingOverlay visible={loadingReview} />
         <Form form={form} onSubmit={handleSubmit}>
           <Stack>

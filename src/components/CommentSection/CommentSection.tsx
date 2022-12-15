@@ -6,7 +6,6 @@ import {
   List,
   Menu,
   Overlay,
-  Select,
   Stack,
   Text,
   Textarea,
@@ -17,8 +16,8 @@ import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { showNotification, hideNotification } from '@mantine/notifications';
 import { ReportReason } from '@prisma/client';
-import { IconArrowsSort, IconDotsVertical, IconTrash, IconEdit, IconFlag } from '@tabler/icons';
-import { startCase } from 'lodash';
+import { IconDotsVertical, IconTrash, IconEdit, IconFlag } from '@tabler/icons';
+
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
@@ -27,7 +26,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { Form, InputTextArea, useForm } from '~/libs/form';
-import { ReviewSort } from '~/server/common/enums';
+
 import { commentUpsertInput } from '~/server/schema/comment.schema';
 import { ReactionDetails } from '~/server/selectors/review.selector';
 import { CommentGetById, ReviewGetById } from '~/types/router';
@@ -138,7 +137,9 @@ export default function CommentSection({ comments, modelId, reviewId, parentId }
   const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
     async onMutate({ id, reaction }) {
       const itemId = reviewId ?? parentId ?? 0;
-      const cachedQuery = reviewId ? queryUtils.review.getReviewComments : queryUtils.comment.getById;
+      const cachedQuery = reviewId
+        ? queryUtils.review.getReviewComments
+        : queryUtils.comment.getById;
 
       await cachedQuery.cancel({ id: itemId });
 
@@ -180,7 +181,8 @@ export default function CommentSection({ comments, modelId, reviewId, parentId }
       return { previousItem };
     },
     onError(_error, _variables, context) {
-      if (reviewId) queryUtils.review.getReviewComments.setData({ id: reviewId }, context?.previousItem);
+      if (reviewId)
+        queryUtils.review.getReviewComments.setData({ id: reviewId }, context?.previousItem);
       if (parentId) queryUtils.comment.getById.setData({ id: parentId }, context?.previousItem);
     },
     async onSettled() {

@@ -15,7 +15,6 @@ import { showNotification, hideNotification } from '@mantine/notifications';
 import { ReportReason, ReviewReactions } from '@prisma/client';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconMessageCircle2 } from '@tabler/icons';
 import { useSession } from 'next-auth/react';
-import { useState } from 'react';
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -24,7 +23,6 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Media } from '~/components/Media/Media';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReactionDetails } from '~/server/selectors/review.selector';
 import { ReviewGetAllItem } from '~/types/router';
@@ -39,7 +37,6 @@ export function ReviewDiscussionItem({ review }: Props) {
   const currentUser = session?.user;
   const isOwner = currentUser?.id === review.user.id;
   const isMod = currentUser?.isModerator ?? false;
-  const { openImageLightbox } = useImageLightbox();
 
   const { data: reactions = [] } = trpc.review.getReactions.useQuery({ reviewId: review.id });
 

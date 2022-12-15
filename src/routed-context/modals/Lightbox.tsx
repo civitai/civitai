@@ -23,7 +23,6 @@ import { useState, useRef } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
-import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Media } from '~/components/Media/Media';
 import { MediaTypes } from '~/components/Media/mediaContext';
 import { ImageMetaProps } from '~/server/schema/image.schema';

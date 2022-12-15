@@ -28,11 +28,10 @@ const DynamicReviewThreadModal = dynamic(
 
 const modals = {
   // still in use by review items
-  imageLightbox: DynamicLightboxImageCarousel,
+  // imageLightbox: DynamicLightboxImageCarousel,
   onboarding: DynamicOnboardingModal,
-  commentEdit: DynamicCommentEditModal,
-  commentThread: DynamicCommentThreadModal,
-  reviewThread: DynamicReviewThreadModal,
+  // commentEdit: DynamicCommentEditModal,
+  // commentThread: DynamicCommentThreadModal,
 };
 
 type OpenContextModalProps<CustomProps extends Record<string, unknown>> =
