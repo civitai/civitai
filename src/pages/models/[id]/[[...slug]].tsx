@@ -21,6 +21,10 @@ import {
   ThemeIcon,
   Tooltip,
   Rating,
+  AspectRatio,
+  Paper,
+  Card,
+  Overlay,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
@@ -81,6 +85,8 @@ import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { scrollToTop } from '~/utils/scroll-utils';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { Media } from '~/components/Media/Media';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 //TODO - Break model query into multiple queries
 /*
@@ -438,6 +444,39 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   ];
   const published = model.status === ModelStatus.Published;
 
+  const carousel = (
+    <Carousel
+      slideSize="50%"
+      breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
+      slideGap="xl"
+      align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
+      slidesToScroll={mobile ? 1 : 2}
+      withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+      loop
+    >
+      {latestVersion?.images.map(({ image }, index) => (
+        <Carousel.Slide key={image.id}>
+          <Center style={{ height: '100%' }}>
+            <ImagePreview
+              image={image}
+              edgeImageProps={{ width: 400 }}
+              // nsfw={nsfw}
+              radius="md"
+              onClick={() =>
+                openContext('modelVersionLightbox', {
+                  modelVersionId: latestVersion.id,
+                  initialSlide: index,
+                })
+              }
+              style={{ width: '100%' }}
+              withMeta
+            />
+          </Center>
+        </Carousel.Slide>
+      ))}
+    </Carousel>
+  );
+
   return (
     <>
       {meta}
@@ -651,36 +690,64 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             })}
           >
             <Stack>
-              <Carousel
-                slideSize="50%"
-                breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
-                slideGap="xl"
-                align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
-                slidesToScroll={mobile ? 1 : 2}
-                withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
-                loop
-              >
-                {latestVersion?.images.map(({ image }, index) => (
-                  <Carousel.Slide key={image.id}>
-                    <Center style={{ height: '100%' }}>
-                      <ImagePreview
-                        image={image}
-                        edgeImageProps={{ width: 400 }}
-                        nsfw={nsfw}
-                        radius="md"
-                        onClick={() =>
-                          openContext('modelVersionLightbox', {
-                            modelVersionId: latestVersion.id,
-                            initialSlide: index,
-                          })
-                        }
-                        style={{ width: '100%' }}
-                        withMeta
-                      />
-                    </Center>
-                  </Carousel.Slide>
-                ))}
-              </Carousel>
+              <Media type="model" id={model.id} nsfw={model.nsfw}>
+                {({ nsfw, showNsfw }) => (
+                  <>
+                    {nsfw && !showNsfw && (
+                      <Card
+                        p="md"
+                        radius="sm"
+                        withBorder
+                        sx={{
+                          position: 'absolute',
+                          top: '50%',
+                          left: '50%',
+                          transform: 'translate(-50%,-50%)',
+                          zIndex: 10,
+                        }}
+                      >
+                        <Stack>
+                          <Text>This model has been marked NSFW</Text>
+                          <Media.Target>
+                            <Button>Click to view</Button>
+                          </Media.Target>
+                        </Stack>
+                      </Card>
+                    )}
+                    <Carousel
+                      slideSize="50%"
+                      breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
+                      slideGap="xl"
+                      align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
+                      slidesToScroll={mobile ? 1 : 2}
+                      withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+                      loop
+                    >
+                      {latestVersion?.images.map(({ image }, index) => (
+                        <Carousel.Slide key={image.id}>
+                          <Center style={{ height: '100%' }}>
+                            <ImagePreview
+                              image={image}
+                              edgeImageProps={{ width: 400 }}
+                              nsfw={nsfw && !showNsfw}
+                              radius="md"
+                              onClick={() =>
+                                openContext('modelVersionLightbox', {
+                                  modelVersionId: latestVersion.id,
+                                  initialSlide: index,
+                                })
+                              }
+                              style={{ width: '100%' }}
+                              withMeta
+                            />
+                          </Center>
+                        </Carousel.Slide>
+                      ))}
+                    </Carousel>
+                  </>
+                )}
+              </Media>
+
               {model.description ? (
                 <ContentClamp maxHeight={300}>
                   <RenderHtml html={model.description} />
@@ -771,7 +838,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
           </Grid.Col>
         </Grid>
       </Container>
-      <Modal
+      {/* <Modal
         opened={nsfw}
         onClose={() => router.push('/')}
         centered
@@ -803,7 +870,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             </Button>
           </Group>
         </Stack>
-      </Modal>
+      </Modal> */}
     </>
   );
 }

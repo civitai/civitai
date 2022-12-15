@@ -12,7 +12,7 @@ const ReviewThread = dynamic(() => import('~/routed-context/modals/ReviewThread'
 
 const dictionary = {
   modelVersionLightbox: ModelVersionLightbox,
-  // reviewLightbox: ReviewLightbox,
+  reviewLightbox: ReviewLightbox,
   reviewEdit: ReviewEdit,
   runStrategy: RunStrategy,
   reviewThread: ReviewThread,

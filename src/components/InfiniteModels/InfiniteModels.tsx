@@ -13,8 +13,9 @@ import {
   Text,
   ThemeIcon,
   useMantineTheme,
+  AspectRatio,
 } from '@mantine/core';
-import { ModelStatus, ModelType } from '@prisma/client';
+import { ModelStatus } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
 import { IconCloudOff, IconDownload, IconHeart, IconMessageCircle2, IconStar } from '@tabler/icons';
 import {
@@ -36,7 +37,7 @@ import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
-import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
+import { Media } from '~/components/Media/Media';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -200,7 +201,6 @@ const MasonryItem = ({
   const { id, image, name, rank, nsfw } = data ?? {};
   const blurNsfw = session?.user?.blurNsfw ?? true;
 
-  const [showingNsfw, setShowingNsfw] = useState(!blurNsfw);
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
 
@@ -336,17 +336,8 @@ const MasonryItem = ({
     />
   );
 
-  const modelLink = `/models/${id}/${slugit(name)}`;
-
   return (
-    <Link
-      href={{
-        pathname: modelLink,
-        query: showingNsfw ? { showNsfw: true } : undefined,
-      }}
-      as={modelLink}
-      passHref
-    >
+    <Link href={`/models/${id}/${slugit(name)}`} passHref>
       <a>
         <Card
           ref={ref}
@@ -359,26 +350,19 @@ const MasonryItem = ({
             if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
           }}
         >
-          <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
           {inView && (
             <>
-              <MediaHash
-                hash={image.hash}
-                width={image.width}
-                height={image.height}
-                style={{ bottom: onTwoLines ? 66 : 33, height: 'auto' }}
-              />
-              {nsfw ? (
-                <SensitiveContent
-                  placeholder={<MediaHash {...image} />}
-                  style={{ height: '100%' }}
-                  onToggleClick={(value) => setShowingNsfw(value)}
-                >
-                  {PreviewImage}
-                </SensitiveContent>
-              ) : (
-                PreviewImage
-              )}
+              <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
+              <Media type="model" id={id} nsfw={nsfw}>
+                <Media.ToggleNsfw
+                  placeholder={
+                    <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
+                      <MediaHash {...image} />
+                    </AspectRatio>
+                  }
+                />
+                <Media.Content>{PreviewImage}</Media.Content>
+              </Media>
               <Box p="xs" className={classes.content}>
                 {onTwoLines ? twoLine : oneLine}
               </Box>

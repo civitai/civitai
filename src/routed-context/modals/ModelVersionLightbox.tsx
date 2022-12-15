@@ -12,15 +12,16 @@ export default createRoutedContext({
   Element: ({ context, props: { modelVersionId, initialSlide } }) => {
     const router = useRouter();
     const id = Number(router.query.id);
-    const { showNsfw } = router.query;
     // this should be ok to do once we update the model detail page
     // TODO - have this use a different query: trpc.modelVersion.getById.useQuery({id: modelVersionId})
     const { data } = trpc.model.getById.useQuery({ id });
     const modelVersion = data?.modelVersions.find((x) => x.id === modelVersionId);
-    const nsfw = !showNsfw && data?.nsfw;
+
     return (
       <Lightbox
-        nsfw={nsfw}
+        id={id}
+        type="model"
+        nsfw={data?.nsfw}
         opened={context.opened}
         onClose={context.close}
         initialSlide={initialSlide}

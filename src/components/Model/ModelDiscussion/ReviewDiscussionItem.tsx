@@ -2,7 +2,6 @@ import { Carousel } from '@mantine/carousel';
 import {
   ActionIcon,
   AspectRatio,
-  Badge,
   Button,
   Card,
   Group,
@@ -22,8 +21,8 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { Media } from '~/components/Media/Media';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
-import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
@@ -41,8 +40,6 @@ export function ReviewDiscussionItem({ review }: Props) {
   const isOwner = currentUser?.id === review.user.id;
   const isMod = currentUser?.isModerator ?? false;
   const { openImageLightbox } = useImageLightbox();
-
-  const [showNsfw, setShowNsfw] = useState(false);
 
   const { data: reactions = [] } = trpc.review.getReactions.useQuery({ reviewId: review.id });
 
@@ -168,9 +165,9 @@ export function ReviewDiscussionItem({ review }: Props) {
             edgeImageProps={{ width: 400 }}
             aspectRatio={1}
             onClick={() =>
-              openImageLightbox({
+              openContext('reviewLightbox', {
                 initialSlide: index,
-                images: review.images.map((image) => image),
+                reviewId: review.id,
               })
             }
             withMeta
@@ -207,15 +204,7 @@ export function ReviewDiscussionItem({ review }: Props) {
                   </Menu.Item>
                   <Menu.Item
                     icon={<IconEdit size={14} stroke={1.5} />}
-                    onClick={
-                      () => openContext('reviewEdit', { reviewId: review.id })
-                      // openModal({
-                      //   modal: 'reviewEdit',
-                      //   title: `Editing review`,
-                      //   closeOnClickOutside: false,
-                      //   innerProps: { review },
-                      // })
-                    }
+                    onClick={() => openContext('reviewEdit', { reviewId: review.id })}
                   >
                     Edit review
                   </Menu.Item>
@@ -254,33 +243,15 @@ export function ReviewDiscussionItem({ review }: Props) {
       </Stack>
       {hasImages && (
         <Card.Section mb="sm" style={{ position: 'relative' }}>
-          {review.nsfw ? (
-            <SensitiveContent
-              controls={<SensitiveContent.Toggle my="xs" mx="md" />}
+          <Media type="review" id={review.id} nsfw={review.nsfw}>
+            <Media.ToggleNsfw
               placeholder={
                 <AspectRatio ratio={1}>{firstImage && <MediaHash {...firstImage} />}</AspectRatio>
               }
-              onToggleClick={(value) => setShowNsfw(value)}
-            >
-              {carousel}
-            </SensitiveContent>
-          ) : (
-            carousel
-          )}
-          {hasMultipleImages && (
-            <Badge
-              variant="filled"
-              color="gray"
-              size="sm"
-              sx={(theme) => ({
-                position: 'absolute',
-                top: theme.spacing.xs,
-                right: theme.spacing.md,
-              })}
-            >
-              {review.images.length}
-            </Badge>
-          )}
+            />
+            <Media.Count count={review.images.length} />
+            <Media.Content>{carousel}</Media.Content>
+          </Media>
         </Card.Section>
       )}
 

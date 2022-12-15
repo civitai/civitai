@@ -12,13 +12,12 @@ import {
   Stack,
   CloseButton,
 } from '@mantine/core';
-import { useRouter } from 'next/router';
 import { useRef } from 'react';
 import { z } from 'zod';
 import CommentSection from '~/components/CommentSection/CommentSection';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
+import { Media } from '~/components/Media/Media';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { daysFromNow } from '~/utils/date-helpers';
@@ -31,9 +30,6 @@ export default createRoutedContext({
     reviewId: z.number(),
   }),
   Element: ({ context, props: { reviewId } }) => {
-    const router = useRouter();
-    const { showNsfw } = router.query;
-
     const { data: review, isLoading: reviewLoading } = trpc.review.getDetail.useQuery({
       id: reviewId,
     });
@@ -105,38 +101,19 @@ export default createRoutedContext({
                 </Grid.Col>
                 {hasImages ? (
                   <Grid.Col span={12} sx={{ position: 'relative' }}>
-                    {review.nsfw && !showNsfw ? (
-                      <SensitiveContent
-                        controls={<SensitiveContent.Toggle my="xs" mx="md" />}
+                    <Media type="review" id={review.id} nsfw={review.nsfw}>
+                      <Media.ToggleNsfw
                         placeholder={
-                          <>
-                            <AspectRatio ratio={16 / 9} style={{ height: 400 }}>
-                              {firstImage && (
-                                <MediaHash {...firstImage} style={{ borderRadius: 8 }} />
-                              )}
-                            </AspectRatio>
-                            {hasMultipleImages && (
-                              <Badge
-                                variant="filled"
-                                color="gray"
-                                size="sm"
-                                sx={(theme) => ({
-                                  position: 'absolute',
-                                  top: theme.spacing.xs,
-                                  right: theme.spacing.md,
-                                })}
-                              >
-                                {review.images.length}
-                              </Badge>
+                          <AspectRatio ratio={16 / 9} style={{ height: 400 }}>
+                            {firstImage && (
+                              <MediaHash {...firstImage} style={{ borderRadius: 8 }} />
                             )}
-                          </>
+                          </AspectRatio>
                         }
-                      >
-                        {carousel}
-                      </SensitiveContent>
-                    ) : (
-                      carousel
-                    )}
+                      />
+                      <Media.Count count={review.images.length} />
+                      <Media.Content>{carousel}</Media.Content>
+                    </Media>
                   </Grid.Col>
                 ) : null}
                 {isLoading ? (
