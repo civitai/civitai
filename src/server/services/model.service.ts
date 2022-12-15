@@ -155,6 +155,7 @@ export const createModel = async ({
   return prisma.model.create({
     data: {
       ...data,
+      publishedAt: data.status === ModelStatus.Published ? new Date() : null,
       userId,
       modelVersions: {
         create: modelVersions.map(({ images, files, ...version }, versionIndex) => ({
@@ -226,12 +227,20 @@ export const updateModel = async ({
           })
         )
       );
+      const currentModel = await prisma.model.findUnique({
+        where: { id },
+        select: { status: true },
+      });
 
       return tx.model.update({
         where: { id },
         data: {
           ...data,
           status: data.status,
+          publishedAt:
+            data.status === ModelStatus.Published && currentModel?.status !== ModelStatus.Published
+              ? new Date()
+              : null,
           modelVersions: {
             deleteMany: versionIds.length > 0 ? { id: { notIn: versionIds } } : undefined,
             upsert: modelVersions.map(
