@@ -104,7 +104,7 @@ enum ModelType {
   TextualInversion
   Hypernetwork
   AestheticGradient
-  VAE
+  LORA
 }
 
 enum ImportStatus {
