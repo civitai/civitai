@@ -1,4 +1,4 @@
-import { ActionIcon, Button, Group, Input, InputWrapperProps, Stack, Tooltip } from '@mantine/core';
+import { ActionIcon, Button, Group, Input, InputWrapperProps, Tooltip } from '@mantine/core';
 import { ModelFileFormat, ModelFileType } from '@prisma/client';
 import { IconPlus, IconStar, IconTrash } from '@tabler/icons';
 import get from 'lodash/get';

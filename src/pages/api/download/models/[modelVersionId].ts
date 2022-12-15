@@ -1,17 +1,18 @@
-import { NextApiRequest, NextApiResponse } from 'next';
-import { getGetUrl } from '~/utils/s3-utils';
 import {
-  ModelFile,
   ModelFileFormat,
   ModelFileType,
   ModelType,
+  Prisma,
   UserActivityType,
 } from '@prisma/client';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { prisma } from '~/server/db/client';
-import { filenamize } from '~/utils/string-helpers';
+import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
+
 import { env } from '~/env/server.mjs';
+import { prisma } from '~/server/db/client';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { filenamize } from '~/utils/string-helpers';
+import { getGetUrl } from '~/utils/s3-utils';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -19,7 +20,7 @@ const schema = z.object({
   format: z.nativeEnum(ModelFileFormat).optional(),
 });
 
-// /api/download/train-data/[modelVersionId]  => /api/download/models/[modelVersionId]?type=TrainingData
+// /api/download/train-data/[modelVersionId] => /api/download/models/[modelVersionId]?type=TrainingData
 // /api/download/models/[modelVersionId] (returns primary file)
 // /api/download/models/[modelVersionId]?type=TrainingData
 // /api/download/models/[modelVersionId]?type=Model&format=SafeTensors
@@ -34,11 +35,10 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
   const { type, modelVersionId, format } = results.data;
   if (!modelVersionId) return res.status(400).json({ error: 'Missing modelVersionId' });
 
-  // TODO Fix Type: @Manuel
-  const fileWhere: any = {};
+  const fileWhere: Prisma.ModelFileWhereInput = {};
   if (type) fileWhere.type = type;
   if (format) fileWhere.format = format;
-  if (!type && !format) fileWhere.isPrimary = true;
+  if (!type && !format) fileWhere.primary = true;
 
   const modelVersion = await prisma.modelVersion.findFirst({
     where: { id: modelVersionId },

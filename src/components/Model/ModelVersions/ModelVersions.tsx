@@ -16,6 +16,7 @@ import { TrainingWordBadge } from '~/components/TrainingWordBadge/TrainingWordBa
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -119,15 +120,17 @@ function TabContent({ version, nsfw }: TabContentProps) {
               <MultiActionButton
                 variant="light"
                 component="a"
-                href={`/api/download/models/${version.id}`}
+                href={createModelFileDownloadUrl({ versionId: version.id, primary: true })}
                 menuItems={secondaryFiles.map((file, index) => (
                   <Menu.Item
                     key={index}
                     component="a"
                     icon={<VerifiedText file={file} iconOnly />}
-                    href={`/api/download/${
-                      file.type === 'TrainingData' ? 'training-data' : 'models'
-                    }/${version.id}`}
+                    href={createModelFileDownloadUrl({
+                      versionId: version.id,
+                      type: file.type,
+                      format: file.format,
+                    })}
                     download
                   >
                     {`${startCase(file.type)} (${formatKBytes(file.sizeKB)})`}

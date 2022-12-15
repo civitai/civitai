@@ -83,6 +83,7 @@ import { scrollToTop } from '~/utils/scroll-utils';
 import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
+import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 
 //TODO - Break model query into multiple queries
 /*
@@ -587,17 +588,21 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   <Stack sx={{ flex: 1 }} spacing={4}>
                     <MultiActionButton
                       component="a"
-                      href={`/api/download/models/${latestVersion?.id}`}
+                      href={createModelFileDownloadUrl({
+                        versionId: latestVersion.id,
+                        primary: true,
+                      })}
                       leftIcon={<IconDownload size={16} />}
                       menuItems={secondaryFiles.map((file, index) => (
                         <Menu.Item
                           key={index}
                           component="a"
                           icon={<VerifiedText file={file} iconOnly />}
-                          // TODO: Update href when the other download endpoints are available
-                          href={`/api/download/${
-                            file.type === 'TrainingData' ? 'training-data' : 'models'
-                          }/${latestVersion?.id}`}
+                          href={createModelFileDownloadUrl({
+                            versionId: latestVersion.id,
+                            type: file.type,
+                            format: file.format,
+                          })}
                           download
                         >
                           {`${startCase(file.type)}${

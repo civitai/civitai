@@ -20,6 +20,7 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   },
   files: {
     select: {
+      id: true,
       sizeKB: true,
       type: true,
       format: true,
@@ -27,7 +28,8 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
       pickleScanMessage: true,
       virusScanResult: true,
       scannedAt: true,
+      primary: true,
     },
-    where: { type: ModelFileType.Model },
+    orderBy: { primary: 'desc' },
   },
 });

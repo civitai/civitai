@@ -39,7 +39,7 @@ export const serverSchema = z.object({
   WEBHOOK_TOKEN: z.string(),
   SCANNING_ENDPOINT: z.string(),
   SCANNING_TOKEN: z.string(),
-  UNAUTHENTICATED_DOWNLOAD: z.boolean(),
+  UNAUTHENTICATED_DOWNLOAD: z.preprocess((val) => val === true || val === 'true', z.boolean()),
 });
 
 /**
