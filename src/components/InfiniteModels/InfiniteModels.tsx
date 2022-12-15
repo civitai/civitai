@@ -6,6 +6,7 @@ import {
   createStyles,
   DefaultMantineColor,
   Group,
+  Indicator,
   Loader,
   LoadingOverlay,
   Rating,
@@ -18,6 +19,7 @@ import {
 import { ModelStatus } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
 import { IconCloudOff, IconDownload, IconHeart, IconMessageCircle2, IconStar } from '@tabler/icons';
+import dayjs from 'dayjs';
 import {
   useContainerPosition,
   useMasonry,
@@ -56,6 +58,8 @@ const filterSchema = z.object({
   tag: z.string().optional(),
   favorites: z.preprocess((val) => val === true || val === 'true', z.boolean().optional()),
 });
+
+const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
 export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
   const router = useRouter();
@@ -230,7 +234,7 @@ const MasonryItem = ({
   const modelBadges = (
     <>
       {data.status !== ModelStatus.Published && (
-        <Badge color="yellow" radius="sm">
+        <Badge color="yellow" radius="sm" size="xs">
           {data.status}
         </Badge>
       )}
@@ -336,39 +340,50 @@ const MasonryItem = ({
     />
   );
 
+  const hasNewVersion = data.lastVersionCreatedAt > aDayAgo && data.createdAt < aDayAgo;
+
   return (
     <Link href={`/models/${id}/${slugit(name)}`} passHref>
       <a>
-        <Card
-          ref={ref}
+        <Indicator
+          disabled={!hasNewVersion}
+          processing
           withBorder
-          shadow="sm"
-          className={classes.card}
-          style={{ height: `${height}px` }}
-          p={0}
-          onClick={(e: React.MouseEvent<HTMLDivElement>) => {
-            if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
-          }}
+          size={14}
+          color="red"
+          title="Updated"
         >
-          {inView && (
-            <>
-              <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
-              <Media type="model" id={id} nsfw={nsfw}>
-                <Media.ToggleNsfw
-                  placeholder={
-                    <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
-                      <MediaHash {...image} />
-                    </AspectRatio>
-                  }
-                />
-                <Media.Content>{PreviewImage}</Media.Content>
-              </Media>
-              <Box p="xs" className={classes.content}>
-                {onTwoLines ? twoLine : oneLine}
-              </Box>
-            </>
-          )}
-        </Card>
+          <Card
+            ref={ref}
+            withBorder
+            shadow="sm"
+            className={classes.card}
+            style={{ height: `${height}px` }}
+            p={0}
+            onClick={(e: React.MouseEvent<HTMLDivElement>) => {
+              if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
+            }}
+          >
+            {inView && (
+              <>
+                <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
+                <Media type="model" id={id} nsfw={nsfw} sx={{ height: '100%', width: '100%' }}>
+                  <Media.ToggleNsfw
+                    placeholder={
+                      <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                        <MediaHash {...image} />
+                      </AspectRatio>
+                    }
+                  />
+                  <Media.Content>{PreviewImage}</Media.Content>
+                </Media>
+                <Box p="xs" className={classes.content}>
+                  {onTwoLines ? twoLine : oneLine}
+                </Box>
+              </>
+            )}
+          </Card>
+        </Indicator>
       </a>
     </Link>
   );

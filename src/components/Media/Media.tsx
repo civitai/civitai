@@ -23,7 +23,7 @@ export function Media({
   type,
   id,
   children,
-  style,
+  sx,
   ...props
 }: MediaProps & Omit<BoxProps, 'children'>) {
   const { data: session } = useSession();
@@ -34,7 +34,10 @@ export function Media({
 
   return (
     <MediaCtx.Provider value={{ nsfw: nsfw && shouldBlur, showNsfw, type, id }}>
-      <Box style={{ position: 'relative', ...style }} {...props}>
+      <Box
+        sx={(theme) => ({ position: 'relative', ...(typeof sx === 'function' ? sx(theme) : sx) })}
+        {...props}
+      >
         {typeof children === 'function' ? children({ nsfw, showNsfw }) : children}
       </Box>
     </MediaCtx.Provider>
