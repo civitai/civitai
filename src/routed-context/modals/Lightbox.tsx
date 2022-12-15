@@ -92,100 +92,94 @@ export function Lightbox({
               <Loader />
             </Center>
           ) : (
-            <>
-              <Media
-                type={type}
-                id={id}
-                nsfw={nsfw}
-                sx={{ width: '100%', height: '100%', display: 'flex' }}
+            <Media
+              type={type}
+              id={id}
+              nsfw={nsfw}
+              sx={{ width: '100%', height: '100%', display: 'flex' }}
+            >
+              <Media.Placeholder>
+                <Card
+                  p="md"
+                  radius="sm"
+                  withBorder
+                  sx={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%,-50%)',
+                    zIndex: 10,
+                  }}
+                >
+                  <Stack>
+                    <Text>{`This ${type}  has been marked NSFW`}</Text>
+                    <Media.Target>
+                      <Button>Click to view</Button>
+                    </Media.Target>
+                  </Stack>
+                </Card>
+              </Media.Placeholder>
+              <Carousel
+                height="100%"
+                sx={{ flex: 1 }}
+                initialSlide={initialSlide}
+                withIndicators
+                loop
+                onSlideChange={(index) => setIndex(index)}
+                withKeyboardEvents={false}
+                getEmblaApi={(embla) => {
+                  emblaRef.current = embla;
+                }}
+                styles={{
+                  control: {
+                    zIndex: 100,
+                    '&[data-inactive]': {
+                      opacity: 0,
+                      cursor: 'default',
+                    },
+                  },
+                }}
               >
-                {({ nsfw, showNsfw }) => (
-                  <>
-                    {nsfw && !showNsfw && (
-                      <Card
-                        p="md"
-                        radius="sm"
-                        withBorder
+                {images.map((image) => {
+                  const width = image?.width ?? 1200;
+                  const height = image?.height ?? 1200;
+                  return (
+                    <Carousel.Slide key={image.url}>
+                      <Center
                         sx={{
                           position: 'absolute',
-                          top: '50%',
-                          left: '50%',
-                          transform: 'translate(-50%,-50%)',
-                          zIndex: 10,
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
                         }}
                       >
-                        <Stack>
-                          <Text>This model has been marked NSFW</Text>
-                          <Media.Target>
-                            <Button>Click to view</Button>
-                          </Media.Target>
-                        </Stack>
-                      </Card>
-                    )}
-                    <Carousel
-                      height="100%"
-                      sx={{ flex: 1 }}
-                      initialSlide={initialSlide}
-                      withIndicators
-                      loop
-                      onSlideChange={(index) => setIndex(index)}
-                      withKeyboardEvents={false}
-                      getEmblaApi={(embla) => {
-                        emblaRef.current = embla;
-                      }}
-                      styles={{
-                        control: {
-                          zIndex: 100,
-                          '&[data-inactive]': {
-                            opacity: 0,
-                            cursor: 'default',
-                          },
-                        },
-                      }}
-                    >
-                      {images.map((image) => {
-                        const width = image?.width ?? 1200;
-                        const height = image?.height ?? 1200;
-                        return (
-                          <Carousel.Slide key={image.url}>
-                            <Center
-                              sx={{
-                                position: 'absolute',
-                                top: 0,
-                                left: 0,
-                                right: 0,
-                                bottom: 0,
-                              }}
-                            >
-                              {nsfw && !showNsfw ? (
-                                <AspectRatio
-                                  ratio={width / height}
-                                  sx={{
-                                    maxHeight: '100%',
-                                    maxWidth: '100%',
-                                    height,
-                                    width,
-                                  }}
-                                >
-                                  <MediaHash {...image} />
-                                </AspectRatio>
-                              ) : (
-                                <EdgeImage
-                                  src={image.url}
-                                  alt={image.name ?? undefined}
-                                  style={{ maxHeight: '100%', maxWidth: '100%' }}
-                                  width={width}
-                                />
-                              )}
-                            </Center>
-                          </Carousel.Slide>
-                        );
-                      })}
-                    </Carousel>
-                  </>
-                )}
-              </Media>
-
+                        <Media.Placeholder>
+                          <AspectRatio
+                            ratio={width / height}
+                            sx={{
+                              maxHeight: '100%',
+                              maxWidth: '100%',
+                              height,
+                              width,
+                            }}
+                          >
+                            <MediaHash {...image} />
+                          </AspectRatio>
+                        </Media.Placeholder>
+                        <Media.Content>
+                          <EdgeImage
+                            src={image.url}
+                            alt={image.name ?? undefined}
+                            style={{ maxHeight: '100%', maxWidth: '100%' }}
+                            width={width}
+                          />
+                        </Media.Content>
+                      </Center>
+                    </Carousel.Slide>
+                  );
+                })}
+              </Carousel>
               {images[index]?.meta && (
                 <Paper
                   className={cx(classes.meta, { [classes.metaActive]: show })}
@@ -205,7 +199,7 @@ export function Lightbox({
                   </Stack>
                 </Paper>
               )}
-            </>
+            </Media>
           )}
         </Box>
       </MantineProvider>

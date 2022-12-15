@@ -763,7 +763,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               <ModelVersions
                 items={model.modelVersions}
                 initialTab={latestVersion?.id.toString()}
-                nsfw={nsfw}
+                nsfw={model.nsfw}
               />
             </Stack>
           </Grid.Col>
