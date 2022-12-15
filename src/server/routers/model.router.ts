@@ -1,4 +1,4 @@
-import { ModelFile, ModelFileType, Prisma, ScanResultCode } from '@prisma/client';
+import { ModelFile, ModelFileType, ModelStatus, Prisma, ScanResultCode } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
@@ -118,6 +118,7 @@ export const modelRouter = router({
       const createdModels = await prisma.model.create({
         data: {
           ...data,
+          publishedAt: data.status === ModelStatus.Published ? new Date() : null,
           userId,
           modelVersions: {
             create: modelVersions.map(
@@ -214,6 +215,10 @@ export const modelRouter = router({
           where: { modelId: id },
           select: { id: true, files: { select: { type: true, url: true } } },
         });
+        const currentModel = await prisma.model.findUnique({
+          where: { id },
+          select: { status: true },
+        });
         const versionIds = modelVersions.map((version) => version.id).filter(Boolean);
         const versionsToDelete = currentVersions
           .filter((version) => !versionIds.includes(version.id))
@@ -242,6 +247,11 @@ export const modelRouter = router({
                 poi,
                 nsfw,
                 status: data.status,
+                publishedAt:
+                  data.status === ModelStatus.Published &&
+                  currentModel?.status !== ModelStatus.Published
+                    ? new Date()
+                    : null,
                 modelVersions: {
                   deleteMany:
                     versionsToDelete.length > 0 ? { id: { in: versionsToDelete } } : undefined,

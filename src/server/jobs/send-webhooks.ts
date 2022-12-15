@@ -3,7 +3,7 @@ import { prisma } from '~/server/db/client';
 import { webhookProcessors } from '~/server/webhooks/utils.webhooks';
 
 const WEBHOOKS_LAST_SENT_KEY = 'last-sent-webhooks';
-export const sendNotificationsJob = createJob(
+export const sendWebhooksJob = createJob(
   'send-webhooks',
   '*/1 * * * *',
   async () => {
@@ -45,7 +45,7 @@ export const sendNotificationsJob = createJob(
 
       if (promises.length > 0) {
         await Promise.all(promises);
-        console.log('sent webhooks');
+        console.log(`sent ${promises.length} webhooks`);
       }
     }
 
