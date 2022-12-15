@@ -75,6 +75,7 @@ model User {
   commentReports       CommentReport[]
   notifications        Notification[]
   notificationSettings UserNotificationSettings[]
+  webhooks             Webhook[]
 }
 
 enum LinkType {
@@ -152,6 +153,7 @@ model Model {
   userId       Int
   user         User        @relation(fields: [userId], references: [id])
   status       ModelStatus @default(Draft)
+  publishedAt  DateTime?
   fromImport   Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId Int?        @unique
 
@@ -573,6 +575,19 @@ model UserNotificationSettings {
   @@unique([userId, type])
 }
 
+model Webhook {
+  id        Int      @id @default(autoincrement())
+  url       String
+  notifyOn  String[] // Manually specified and managed since Prisma enums are not supported in arrays
+  active    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([url, userId])
+}
+
 /// @view
 model ModelRank {
   model                    Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
@@ -627,6 +642,7 @@ model ModelRank {
   commentCountMonthRank    Int
   commentCountYearRank     Int
   commentCountAllTimeRank  Int
+  newRank                  Int
 }
 
 /// @view
