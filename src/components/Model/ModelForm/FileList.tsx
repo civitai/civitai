@@ -1,10 +1,9 @@
 import { ActionIcon, Button, Group, Input, InputWrapperProps, Tooltip } from '@mantine/core';
-import { ModelFileFormat, ModelFileType } from '@prisma/client';
+import { ModelFileFormat, ModelFileType, ModelType } from '@prisma/client';
 import { IconPlus, IconStar, IconTrash } from '@tabler/icons';
-import get from 'lodash/get';
 import startCase from 'lodash/startCase';
 import { useState } from 'react';
-import { Control, useFieldArray } from 'react-hook-form';
+import { useFieldArray, UseFormReturn } from 'react-hook-form';
 
 import { InputFileUpload, InputSelect } from '~/libs/form';
 import { ModelFileInput } from '~/server/schema/model-file.schema';
@@ -18,9 +17,9 @@ const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   VAE: '.pt',
 };
 
-export function FileList<TControl extends Control<any>>({ parentIndex, control }: Props<TControl>) {
+export function FileList({ parentIndex, form }: Props) {
   const { fields, append, remove, update } = useFieldArray({
-    control,
+    control: form.control,
     name: `modelVersions.${parentIndex}.files`,
     rules: {
       minLength: 1,
@@ -29,18 +28,19 @@ export function FileList<TControl extends Control<any>>({ parentIndex, control }
     },
   });
 
+  const files = form.watch(`modelVersions.${parentIndex}.files`) as ModelFileInput[];
+  const modelType = form.watch('type') as ModelType;
+
   const handlePrimaryClick = (index: number) => {
     fields.map(({ id, ...field }, i) => {
-      const matchingFile: ModelFileInput = get(
-        control._formValues,
-        `modelVersions.${parentIndex}.files.${i}`
-      );
+      const matchingFile = files[i];
       update(i, { ...matchingFile, ...field, primary: index === i });
     });
   };
 
   const handleTypeChange = (index: number, type: ModelFileInput['type']) => {
-    update(index, { type, primary: false, sizeKB: 0, name: '', url: '' });
+    const matchingFile = files[index];
+    update(index, { ...matchingFile, type, sizeKB: 0, name: '', url: '' });
   };
 
   return (
@@ -83,6 +83,7 @@ export function FileList<TControl extends Control<any>>({ parentIndex, control }
             onRemoveClick={(index) => remove(index)}
             onPrimaryClick={handlePrimaryClick}
             onTypeChange={handleTypeChange}
+            modelType={modelType}
             {...file}
           />
         );
@@ -91,9 +92,10 @@ export function FileList<TControl extends Control<any>>({ parentIndex, control }
   );
 }
 
-type Props<TControl extends Control<any>> = Omit<InputWrapperProps, 'children' | 'onChange'> & {
+type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   parentIndex: number;
-  control: TControl;
+  form: UseFormReturn<any>;
+  onLoading?: (loading: boolean) => void;
 };
 
 function FileItem({
@@ -101,32 +103,39 @@ function FileItem({
   type,
   parentIndex,
   index,
+  modelType,
   onRemoveClick,
   onPrimaryClick,
   onTypeChange,
 }: FileItemProps) {
   const [selectedType, setSelectedType] = useState<ModelFileType>(type);
+  const [uploading, setUploading] = useState(false);
   const isModelType = ['Model', 'PrunedModel'].includes(selectedType);
+  const isCheckpointModel = modelType === 'Checkpoint';
 
   return (
     <Group my={5} spacing={8} noWrap>
       <InputSelect
         name={`modelVersions.${parentIndex}.files.${index}.type`}
-        data={Object.values(ModelFileType).map((type) => ({
-          label: startCase(type),
-          value: type,
-          disabled: primary && !['Model', 'PrunedModel'].includes(type),
-        }))}
+        data={Object.values(ModelFileType)
+          .filter((type) => (!isCheckpointModel ? type !== 'PrunedModel' : true))
+          .map((type) => ({
+            label: type === 'Model' && !isCheckpointModel ? startCase(modelType) : startCase(type),
+            value: type,
+            disabled: primary && !['Model', 'PrunedModel'].includes(type),
+          }))}
         onChange={(value: ModelFileType) => {
           setSelectedType(value);
           onTypeChange(index, value);
         }}
+        disabled={uploading}
       />
       <InputFileUpload
         name={`modelVersions.${parentIndex}.files.${index}`}
         placeholder="Pick a file"
         uploadType={type}
         accept={mapFileTypeAcceptedFileType[type]}
+        onLoading={setUploading}
         grow
         stackUploadProgress
       />
@@ -137,6 +146,7 @@ function FileItem({
           sx={{
             visibility: isModelType ? 'visible' : 'hidden',
           }}
+          disabled={uploading}
         >
           <IconStar
             color={primary ? 'gold' : undefined}
@@ -150,6 +160,7 @@ function FileItem({
           color="red"
           onClick={() => onRemoveClick(index)}
           sx={{ visibility: !primary ? 'visible' : 'hidden' }}
+          disabled={uploading}
         >
           <IconTrash />
         </ActionIcon>
@@ -164,4 +175,6 @@ type FileItemProps = ModelFileInput & {
   onRemoveClick: (index: number) => void;
   onPrimaryClick: (index: number) => void;
   onTypeChange: (index: number, type: ModelFileType) => void;
+  modelType: ModelType;
+  onLoading?: (index: number, loading: boolean) => void;
 };

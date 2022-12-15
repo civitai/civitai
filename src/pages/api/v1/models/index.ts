@@ -27,16 +27,16 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
             const hasPrimary = files.findIndex((file) => file.primary) > -1;
             if (!hasPrimary) return null;
 
-            const secondaryFiles = files.filter((x) => !x.primary);
-
             return {
               ...version,
-              files: secondaryFiles.map(({ primary, ...file }) => ({
+              files: files.map(({ primary, ...file }) => ({
                 ...file,
+                primary: primary === true ? primary : undefined,
                 downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,
                   format: file.format,
+                  primary,
                 })}`,
               })),
               images: images.map(({ image: { url, ...image } }) => ({

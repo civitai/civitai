@@ -335,7 +335,7 @@ export function ModelForm({ model }: Props) {
                           />
                         </Grid.Col>
                         <Grid.Col span={12}>
-                          <FileList parentIndex={index} control={form.control} />
+                          <FileList parentIndex={index} form={form} />
                         </Grid.Col>
                         <Grid.Col span={12}>
                           <InputImageUpload

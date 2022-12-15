@@ -73,7 +73,7 @@ export function FileInputUpload({
         // TODO Upload Bug: when upload is aborted or errored, we aren't clearing this...
         if (!url) {
           setState(undefined);
-          onChange?.(undefined);
+          onLoading?.(false);
           return;
         }
         onLoading?.(false);
@@ -142,7 +142,7 @@ export function FileInputUpload({
                     root: { height: '100%', borderTopRightRadius: 0, borderBottomRightRadius: 0 },
                     bar: { alignItems: 'flex-start', paddingTop: 6, textShadow: '0 0 2px #000' },
                   }}
-                  className={classes.stackedProgressProgressBar}
+                  className={classes.stackedProgressBar}
                   striped
                   animate
                 />
@@ -195,7 +195,7 @@ type Props = Omit<FileInputProps, 'icon' | 'onChange' | 'value'> & {
   stackUploadProgress?: boolean;
 };
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   stackedProgress: {
     position: 'relative',
     overflow: 'hidden',

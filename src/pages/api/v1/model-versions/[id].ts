@@ -40,17 +40,17 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   const hasPrimary = files.findIndex((file) => file.primary) > -1;
   if (!hasPrimary) return res.status(404).json({ error: 'Missing model file' });
 
-  const secondaryFiles = files.filter((x) => !x.primary);
-
   res.status(200).json({
     ...version,
     model,
-    files: secondaryFiles.map(({ primary, ...file }) => ({
+    files: files.map(({ primary, ...file }) => ({
       ...file,
+      primary: primary === true ? primary : undefined,
       downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
         versionId: version.id,
         type: file.type,
         format: file.format,
+        primary,
       })}`,
     })),
     images: images.map(({ image: { url, ...image } }) => ({
