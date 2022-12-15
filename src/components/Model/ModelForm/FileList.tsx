@@ -109,7 +109,7 @@ function FileItem({
   const isModelType = ['Model', 'PrunedModel'].includes(selectedType);
 
   return (
-    <Group my={5} spacing={8}>
+    <Group my={5} spacing={8} noWrap>
       <InputSelect
         name={`modelVersions.${parentIndex}.files.${index}.type`}
         data={Object.values(ModelFileType).map((type) => ({
@@ -128,6 +128,7 @@ function FileItem({
         uploadType={type}
         accept={mapFileTypeAcceptedFileType[type]}
         grow
+        stackUploadProgress
       />
       <Tooltip label="Mark as primary">
         <ActionIcon

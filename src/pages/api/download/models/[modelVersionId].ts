@@ -83,7 +83,7 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
     fileName = `${filenamize(modelVersion.model.name)}_${filenamize(
       modelVersion.name
     )}_trainingData.zip`;
-  } else {
+  } else if (modelFile.type !== ModelFileType.VAE) {
     let fileSuffix = '';
     if (fileName.includes('-inpainting')) fileSuffix = '-inpainting';
 
