@@ -153,6 +153,7 @@ model Model {
   userId       Int
   user         User        @relation(fields: [userId], references: [id])
   status       ModelStatus @default(Draft)
+  publishedAt  DateTime?
   fromImport   Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId Int?        @unique
 
@@ -641,6 +642,7 @@ model ModelRank {
   commentCountMonthRank    Int
   commentCountYearRank     Int
   commentCountAllTimeRank  Int
+  newRank                  Int
 }
 
 /// @view

@@ -89,7 +89,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       ...(sort === ModelSort.MostDiscussed
         ? [{ rank: { [`commentCount${period}Rank`]: 'asc' } }]
         : []),
-      { createdAt: 'desc' },
+      { rank: { newRank: 'asc' } },
     ],
     select,
   });

@@ -6,6 +6,7 @@ import {
   createStyles,
   DefaultMantineColor,
   Group,
+  Indicator,
   Loader,
   LoadingOverlay,
   Rating,
@@ -17,6 +18,7 @@ import {
 import { ModelStatus, ModelType } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
 import { IconCloudOff, IconDownload, IconHeart, IconMessageCircle2, IconStar } from '@tabler/icons';
+import dayjs from 'dayjs';
 import {
   useContainerPosition,
   useMasonry,
@@ -55,6 +57,8 @@ const filterSchema = z.object({
   tag: z.string().optional(),
   favorites: z.preprocess((val) => val === true || val === 'true', z.boolean().optional()),
 });
+
+const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
 export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
   const router = useRouter();
@@ -230,7 +234,7 @@ const MasonryItem = ({
   const modelBadges = (
     <>
       {data.status !== ModelStatus.Published && (
-        <Badge color="yellow" radius="sm">
+        <Badge color="yellow" radius="sm" size="xs">
           {data.status}
         </Badge>
       )}
@@ -337,6 +341,7 @@ const MasonryItem = ({
   );
 
   const modelLink = `/models/${id}/${slugit(name)}`;
+  const hasNewVersion = data.lastVersionCreatedAt > aDayAgo && data.createdAt < aDayAgo;
 
   return (
     <Link
@@ -348,43 +353,52 @@ const MasonryItem = ({
       passHref
     >
       <a>
-        <Card
-          ref={ref}
+        <Indicator
+          disabled={!hasNewVersion}
+          processing
           withBorder
-          shadow="sm"
-          className={classes.card}
-          style={{ height: `${height}px` }}
-          p={0}
-          onClick={(e: React.MouseEvent<HTMLDivElement>) => {
-            if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
-          }}
+          size={14}
+          color="red"
+          title="Updated"
         >
-          <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
-          {inView && (
-            <>
-              <MediaHash
-                hash={image.hash}
-                width={image.width}
-                height={image.height}
-                style={{ bottom: onTwoLines ? 66 : 33, height: 'auto' }}
-              />
-              {nsfw ? (
-                <SensitiveContent
-                  placeholder={<MediaHash {...image} />}
-                  style={{ height: '100%' }}
-                  onToggleClick={(value) => setShowingNsfw(value)}
-                >
-                  {PreviewImage}
-                </SensitiveContent>
-              ) : (
-                PreviewImage
-              )}
-              <Box p="xs" className={classes.content}>
-                {onTwoLines ? twoLine : oneLine}
-              </Box>
-            </>
-          )}
-        </Card>
+          <Card
+            ref={ref}
+            withBorder
+            shadow="sm"
+            className={classes.card}
+            style={{ height: `${height}px` }}
+            p={0}
+            onClick={(e: React.MouseEvent<HTMLDivElement>) => {
+              if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
+            }}
+          >
+            <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
+            {inView && (
+              <>
+                <MediaHash
+                  hash={image.hash}
+                  width={image.width}
+                  height={image.height}
+                  style={{ bottom: onTwoLines ? 66 : 33, height: 'auto' }}
+                />
+                {nsfw ? (
+                  <SensitiveContent
+                    placeholder={<MediaHash {...image} />}
+                    style={{ height: '100%' }}
+                    onToggleClick={(value) => setShowingNsfw(value)}
+                  >
+                    {PreviewImage}
+                  </SensitiveContent>
+                ) : (
+                  PreviewImage
+                )}
+                <Box p="xs" className={classes.content}>
+                  {onTwoLines ? twoLine : oneLine}
+                </Box>
+              </>
+            )}
+          </Card>
+        </Indicator>
       </a>
     </Link>
   );
