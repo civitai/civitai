@@ -21,7 +21,6 @@ import {
   Tooltip,
   Rating,
   Card,
-  AspectRatio,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
@@ -55,7 +54,7 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
-import { EdgeImage, getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
@@ -83,7 +82,6 @@ import { scrollToTop } from '~/utils/scroll-utils';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { SFW } from '~/components/Media/SFW';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 
@@ -149,8 +147,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();
   const { openContext } = useRoutedContext();
-
-  // useEffect(() => console.log({ router }), [router]);
 
   const { id, slug } = props;
   const { edit } = router.query;
@@ -291,6 +287,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const secondaryFiles = latestVersion?.files?.filter((file) => !file.primary) ?? [];
   const primaryFile = latestVersion?.files?.find((file) => file.primary === true);
   const inaccurate = model?.modelVersions.some((version) => version.inaccurate);
+  const hasPendingClaimReport = model?.reportStats && model.reportStats.ownershipPending > 0;
 
   if (loadingModel)
     return (
@@ -356,10 +353,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       ...current,
       sort: value,
     }));
-  };
-
-  const handleReportModel = (reason: ReportReason) => {
-    reportModelMutation.mutate({ id, reason });
   };
 
   const handleUnpublishModel = () => {
@@ -536,7 +529,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     <LoginRedirect reason="report-model">
                       <Menu.Item
                         icon={<IconFlag size={14} stroke={1.5} />}
-                        onClick={() => handleReportModel(ReportReason.NSFW)}
+                        onClick={() =>
+                          reportModelMutation.mutate({ id, reason: ReportReason.NSFW })
+                        }
                         disabled={reportModelMutation.isLoading}
                       >
                         Report as NSFW
@@ -545,10 +540,21 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     <LoginRedirect reason="report-model">
                       <Menu.Item
                         icon={<IconFlag size={14} stroke={1.5} />}
-                        onClick={() => handleReportModel(ReportReason.TOSViolation)}
+                        onClick={() =>
+                          reportModelMutation.mutate({ id, reason: ReportReason.TOSViolation })
+                        }
                         disabled={reportModelMutation.isLoading}
                       >
                         Report as Terms Violation
+                      </Menu.Item>
+                    </LoginRedirect>
+                    <LoginRedirect reason="report-model">
+                      <Menu.Item
+                        icon={<IconFlag size={14} stroke={1.5} />}
+                        onClick={() => openContext('report', {})}
+                        disabled={!!model.reportStats?.ownershipPending}
+                      >
+                        Report Ownership
                       </Menu.Item>
                     </LoginRedirect>
                   </>
@@ -578,6 +584,19 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 <Text size="md">
                   The images on this {splitUppercase(model.type).toLowerCase()} are inaccurate.
                   Please submit reviews with images so that we can improve this page.
+                </Text>
+              </Group>
+            </Alert>
+          )}
+          {hasPendingClaimReport && (
+            <Alert color="yellow">
+              <Group spacing="xs" noWrap align="flex-start">
+                <ThemeIcon color="yellow">
+                  <IconExclamationMark />
+                </ThemeIcon>
+                <Text size="md">
+                  {/* wrapping in {``} to avoid apostrophe (') warning */}
+                  {`Someone has submitted a claim that this uses their art in it's training data and this claim is pending review`}
                 </Text>
               </Group>
             </Alert>

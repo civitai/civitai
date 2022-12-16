@@ -98,7 +98,11 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
           <Loader size="xl" />
         </Center>
       ) : !!models.length ? (
-        <MasonryList columnWidth={300} data={models} filters={{ ...filters, ...router.query }} />
+        <MasonryList
+          columnWidth={columnWidth}
+          data={models}
+          filters={{ ...filters, ...router.query }}
+        />
       ) : (
         <Stack align="center">
           <ThemeIcon size={128} radius={100}>
@@ -331,17 +335,18 @@ const MasonryItem = ({
 
   const isNew = data.createdAt > aDayAgo;
   const isUpdated = !isNew && data.lastVersionAt && data.lastVersionAt > aDayAgo;
+  const hasPendingClaimReports = data.pendingClaim;
 
   return (
     <Link href={`/models/${id}/${slugit(name)}`} passHref>
       <a>
         <Indicator
-          disabled={!isNew && !isUpdated}
+          disabled={!isNew && !isUpdated && !hasPendingClaimReports}
           withBorder
           size={24}
           radius="sm"
-          label={isNew ? 'New' : 'Updated'}
-          color="red"
+          label={hasPendingClaimReports ? 'Under review' : isNew ? 'New' : 'Updated'}
+          color={hasPendingClaimReports ? 'yellow' : 'red'}
           styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
         >
           <Card

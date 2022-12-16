@@ -14,11 +14,12 @@ export type RoutedContextProps<TSchema extends z.AnyZodObject> = {
   props: z.infer<TSchema>;
 };
 
+// TODO - handle optional schema/schema props that would make the Element props optional
 export function createRoutedContext<TSchema extends z.AnyZodObject>({
   schema,
   Element: BaseComponent,
 }: {
-  schema: TSchema;
+  schema?: TSchema;
   Element:
     | React.ForwardRefExoticComponent<RoutedContextProps<TSchema>>
     | ((props: RoutedContextProps<TSchema>) => JSX.Element);
@@ -26,7 +27,7 @@ export function createRoutedContext<TSchema extends z.AnyZodObject>({
   function RoutedContext(props: z.infer<TSchema>) {
     const router = useRouter();
     // const [opened, setOpened] = useState(false);
-    const result = schema.safeParse(props);
+    const result = schema?.safeParse(props) ?? { success: true, data: {} };
     const { closeContext } = useRoutedContext();
 
     // useEffect(() => {
@@ -56,7 +57,7 @@ export function createRoutedContext<TSchema extends z.AnyZodObject>({
 
     if (!result.success) return null;
 
-    return <BaseComponent context={{ opened: true, close: closeContext }} props={result.data} />;
+    return <BaseComponent context={{ opened: true, close: closeContext }} props={result?.data} />;
   }
 
   return RoutedContext;

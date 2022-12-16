@@ -14,12 +14,13 @@ import {
   updateModelHandler,
 } from '~/server/controllers/model.controller';
 import { prisma } from '~/server/db/client';
-import { getByIdSchema, reportInputSchema } from '~/server/schema/base.schema';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import { getAllModelsSchema, ModelInput, modelSchema } from '~/server/schema/model.schema';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { checkFileExists, getS3Client } from '~/utils/s3-utils';
 import { prepareFile } from '~/utils/file-helpers';
+import { modelReportInputSchema } from '~/server/schema/report.schema';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -86,7 +87,7 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteModelHandler),
-  report: protectedProcedure.input(reportInputSchema).mutation(reportModelHandler),
+  report: protectedProcedure.input(modelReportInputSchema).mutation(reportModelHandler),
   unpublish: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
