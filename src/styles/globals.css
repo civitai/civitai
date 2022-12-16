@@ -37,3 +37,21 @@ a {
   margin-bottom: 0;
   padding-bottom: 0;
 }
+
+.markdown-content hr {
+  border-width: 2px;
+  border-style: solid;
+  margin: 30px 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .markdown-content hr {
+    border-color: #777;
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  .markdown-content hr {
+    border-color: #444;
+  }
+}
