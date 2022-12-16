@@ -1,14 +1,15 @@
 import { ActionIcon, Button, Group, Input, InputWrapperProps, Tooltip } from '@mantine/core';
-import { ModelFileFormat, ModelFileType, ModelType } from '@prisma/client';
+import { ModelFileType, ModelType } from '@prisma/client';
 import { IconPlus, IconStar, IconTrash } from '@tabler/icons';
 import startCase from 'lodash/startCase';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useFieldArray, UseFormReturn } from 'react-hook-form';
 
 import { InputFileUpload, InputSelect } from '~/libs/form';
 import { ModelFileInput } from '~/server/schema/model-file.schema';
 
-const fileTypeCount = Object.values(ModelFileType).length + Object.values(ModelFileFormat).length;
+const fileTypes = Object.values(ModelFileType);
+const fileTypeCount = Object.values(ModelFileType).length;
 const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   Model: '.ckpt,.pt,.safetensors',
   PrunedModel: '.ckpt,.pt,.safetensors',
@@ -18,18 +19,23 @@ const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
 };
 
 export function FileList({ parentIndex, form }: Props) {
+  const files = form.watch(`modelVersions.${parentIndex}.files`) as ModelFileInput[];
+  const modelType = form.watch('type') as ModelType;
+  const isCheckpointType = modelType === 'Checkpoint';
+  const maxLength = isCheckpointType ? fileTypeCount : fileTypeCount - 1;
+  const availableFileTypes = isCheckpointType
+    ? fileTypes
+    : fileTypes.filter((type) => type !== 'PrunedModel');
+
   const { fields, append, remove, update } = useFieldArray({
     control: form.control,
     name: `modelVersions.${parentIndex}.files`,
     rules: {
+      maxLength,
       minLength: 1,
-      maxLength: fileTypeCount,
       required: true,
     },
   });
-
-  const files = form.watch(`modelVersions.${parentIndex}.files`) as ModelFileInput[];
-  const modelType = form.watch('type') as ModelType;
 
   const handlePrimaryClick = (index: number) => {
     fields.map(({ id, ...field }, i) => {
@@ -42,6 +48,16 @@ export function FileList({ parentIndex, form }: Props) {
     const matchingFile = files[index];
     update(index, { ...matchingFile, type, sizeKB: 0, name: '', url: '' });
   };
+
+  const selectedTypes = files.map(({ type }) => type);
+  const remainingTypes = availableFileTypes.filter((type) => !selectedTypes.includes(type));
+
+  useEffect(() => {
+    if (!isCheckpointType) {
+      const prunedModelIndex = files.findIndex((file) => file.type === 'PrunedModel');
+      if (prunedModelIndex > -1) remove(prunedModelIndex);
+    }
+  }, [files, isCheckpointType, remove]);
 
   return (
     <Input.Wrapper
@@ -56,7 +72,7 @@ export function FileList({ parentIndex, form }: Props) {
             onClick={() =>
               fields.length < fileTypeCount
                 ? append({
-                    type: ModelFileType.Model,
+                    type: remainingTypes[0],
                     url: '',
                     name: '',
                     sizeKB: 0,
@@ -64,7 +80,7 @@ export function FileList({ parentIndex, form }: Props) {
                   })
                 : undefined
             }
-            disabled={fields.length >= fileTypeCount}
+            disabled={fields.length >= maxLength}
             compact
           >
             Add File
@@ -84,6 +100,7 @@ export function FileList({ parentIndex, form }: Props) {
             onPrimaryClick={handlePrimaryClick}
             onTypeChange={handleTypeChange}
             modelType={modelType}
+            selectedTypes={selectedTypes}
             {...file}
           />
         );
@@ -104,6 +121,7 @@ function FileItem({
   parentIndex,
   index,
   modelType,
+  selectedTypes,
   onRemoveClick,
   onPrimaryClick,
   onTypeChange,
@@ -122,7 +140,8 @@ function FileItem({
           .map((type) => ({
             label: type === 'Model' && !isCheckpointModel ? startCase(modelType) : startCase(type),
             value: type,
-            disabled: primary && !['Model', 'PrunedModel'].includes(type),
+            disabled:
+              (primary && !['Model', 'PrunedModel'].includes(type)) || selectedTypes.includes(type),
           }))}
         onChange={(value: ModelFileType) => {
           setSelectedType(value);
@@ -176,5 +195,6 @@ type FileItemProps = ModelFileInput & {
   onPrimaryClick: (index: number) => void;
   onTypeChange: (index: number, type: ModelFileType) => void;
   modelType: ModelType;
+  selectedTypes: ModelFileType[];
   onLoading?: (index: number, loading: boolean) => void;
 };
