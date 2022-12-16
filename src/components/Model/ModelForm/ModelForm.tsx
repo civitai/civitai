@@ -349,7 +349,6 @@ export function ModelForm({ model }: Props) {
                             name={`modelVersions.${index}.images`}
                             label="Example Images"
                             max={20}
-                            loading={uploading}
                             hasPrimaryImage
                             withAsterisk
                             onChange={(values) => setUploading(values.some((x) => x.file))}

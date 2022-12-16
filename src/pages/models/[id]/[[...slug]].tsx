@@ -287,8 +287,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const secondaryFiles = latestVersion?.files?.filter((file) => !file.primary) ?? [];
   const primaryFile = latestVersion?.files?.find((file) => file.primary === true);
   const inaccurate = model?.modelVersions.some((version) => version.inaccurate);
-  // TODO ModelReports view: hardcoded logic, update when modelReports views are available
-  const hasPendingClaimReport = model && model.rank && model.rank.favoriteCountAllTime > 100;
+  const hasPendingClaimReport = model?.reportStats && model.reportStats.ownershipPending > 0;
 
   if (loadingModel)
     return (
