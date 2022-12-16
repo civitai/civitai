@@ -5,7 +5,7 @@ export const commentNotifications = createNotificationProcessor({
     displayName: 'New Comments on your Models',
     prepareMessage: ({ details }) => ({
       message: `${details.username} just commented on your ${details.modelName} model`,
-      url: `/models/${details.modelId}?modal=comment&commentId=${details.commentId}`,
+      url: `/models/${details.modelId}?modal=commentThread&commentId=${details.commentId}`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH new_comments AS (
@@ -41,7 +41,7 @@ export const commentNotifications = createNotificationProcessor({
     displayName: 'New Comment Responses',
     prepareMessage: ({ details }) => ({
       message: `${details.username} has responded to your comment on the ${details.modelName} model`,
-      url: `/models/${details.modelId}?modal=comment&commentId=${details.commentId}`,
+      url: `/models/${details.modelId}?modal=commentThread&commentId=${details.commentId}`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH new_comment_response AS (

@@ -8,7 +8,7 @@ export const reactionNotifications = createNotificationProcessor({
     displayName: 'Comment Reaction Milestones',
     prepareMessage: ({ details }) => ({
       message: `Your comment on ${details.modelName} has recieved ${details.reactionCount} reactions`,
-      url: `/models/${details.modelId}?modal=comment&commentId=${details.rootCommentId}`,
+      url: `/models/${details.modelId}?modal=commentThread&commentId=${details.rootCommentId}`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH milestones AS (
@@ -65,7 +65,7 @@ export const reactionNotifications = createNotificationProcessor({
     displayName: 'Review Reaction Milestones',
     prepareMessage: ({ details }) => ({
       message: `Your review on ${details.modelName} has recieved ${details.reactionCount} reactions`,
-      url: `/models/${details.modelId}?modal=review&reviewId=${details.reviewId}`,
+      url: `/models/${details.modelId}?modal=reviewThread&reviewId=${details.reviewId}`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH milestones AS (

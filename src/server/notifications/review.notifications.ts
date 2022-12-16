@@ -5,7 +5,7 @@ export const reviewNotifications = createNotificationProcessor({
     displayName: 'New Reviews',
     prepareMessage: ({ details }) => ({
       message: `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`,
-      url: `/models/${details.modelId}?modal=review&reviewId=${details.reviewId}`,
+      url: `/models/${details.modelId}?modal=reviewThread&reviewId=${details.reviewId}`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH new_reviews AS (
