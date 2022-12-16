@@ -15,10 +15,19 @@ import {
   ThemeIcon,
   useMantineTheme,
   AspectRatio,
+  Button,
+  Menu,
 } from '@mantine/core';
 import { ModelStatus } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
-import { IconCloudOff, IconDownload, IconHeart, IconMessageCircle2, IconStar } from '@tabler/icons';
+import {
+  IconCloudOff,
+  IconDotsVertical,
+  IconDownload,
+  IconHeart,
+  IconMessageCircle2,
+  IconStar,
+} from '@tabler/icons';
 import dayjs from 'dayjs';
 import {
   useContainerPosition,
@@ -28,7 +37,6 @@ import {
   useScroller,
   useScrollToIndex,
 } from 'masonic';
-import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useMemo, useState } from 'react';
@@ -36,10 +44,12 @@ import { useInView } from 'react-intersection-observer';
 import { z } from 'zod';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { SFW } from '~/components/Media/SFW';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -48,6 +58,7 @@ import { trpc } from '~/utils/trpc';
 
 type InfiniteModelsProps = {
   columnWidth?: number;
+  showHidden?: boolean;
 };
 
 const filterSchema = z.object({
@@ -61,7 +72,7 @@ const filterSchema = z.object({
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
-export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
+export function InfiniteModels({ columnWidth = 300, showHidden = false }: InfiniteModelsProps) {
   const router = useRouter();
   const filters = useInfiniteModelsFilters();
   const result = filterSchema.safeParse(router.query);
@@ -82,6 +93,12 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
     }
   );
+  const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
+    enabled: !showHidden,
+    cacheTime: Infinity,
+    staleTime: Infinity,
+  });
+  const hiddenUserIds = useMemo(() => hidden.map((item) => item.id), [hidden]);
 
   useEffect(() => {
     if (inView) {
@@ -89,7 +106,13 @@ export function InfiniteModels({ columnWidth = 300 }: InfiniteModelsProps) {
     }
   }, [fetchNextPage, inView]);
 
-  const models = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
+  const models = useMemo(
+    () =>
+      data?.pages
+        .flatMap((x) => (!!x ? x.items : []))
+        .filter((item) => !hiddenUserIds.includes(item.user.id)) ?? [],
+    [data, hiddenUserIds]
+  );
 
   return (
     <>
@@ -198,17 +221,17 @@ const MasonryItem = ({
   data: GetModelsInfiniteReturnType[0];
   width: number;
 }) => {
-  const { data: session } = useSession();
+  const currentUser = useCurrentUser();
   const { classes } = useStyles();
   const theme = useMantineTheme();
 
-  const { id, image, name, rank, nsfw } = data ?? {};
+  const { id, image, name, rank, nsfw, user } = data ?? {};
 
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
 
   const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery(undefined, {
-    enabled: !!session,
+    enabled: !!currentUser,
     cacheTime: Infinity,
     staleTime: Infinity,
   });
@@ -360,6 +383,28 @@ const MasonryItem = ({
                 <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
                 <SFW type="model" id={id} nsfw={nsfw} sx={{ height: '100%', width: '100%' }}>
                   <SFW.ToggleNsfw />
+                  <Menu>
+                    <Menu.Target>
+                      <Button
+                        variant="subtle"
+                        size="xs"
+                        px={4}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                        sx={(theme) => ({
+                          position: 'absolute',
+                          bottom: 75,
+                          right: theme.spacing.xs,
+                          zIndex: 200,
+                        })}
+                      >
+                        <IconDotsVertical size={16} />
+                      </Button>
+                    </Menu.Target>
+                    <Menu.Dropdown>{currentUser && <HideUserButton user={user} />}</Menu.Dropdown>
+                  </Menu>
                   <SFW.Placeholder>
                     <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                       <MediaHash {...image} />

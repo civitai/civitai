@@ -21,7 +21,6 @@ import {
   Tooltip,
   Rating,
   Card,
-  AspectRatio,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
@@ -55,7 +54,7 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
-import { EdgeImage, getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
@@ -83,9 +82,9 @@ import { scrollToTop } from '~/utils/scroll-utils';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { SFW } from '~/components/Media/SFW';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 
 //TODO - Break model query into multiple queries
 /*
@@ -502,6 +501,16 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Menu.Target>
 
               <Menu.Dropdown>
+                {session && isOwner && published ? (
+                  <Menu.Item
+                    icon={<IconBan size={14} stroke={1.5} />}
+                    color="yellow"
+                    onClick={handleUnpublishModel}
+                    disabled={unpublishModelMutation.isLoading}
+                  >
+                    Unpublish
+                  </Menu.Item>
+                ) : null}
                 {session && isOwner ? (
                   <>
                     <Menu.Item
@@ -520,16 +529,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       Edit Model
                     </Menu.Item>
                   </>
-                ) : null}
-                {session && isOwner && published ? (
-                  <Menu.Item
-                    icon={<IconBan size={14} stroke={1.5} />}
-                    color="yellow"
-                    onClick={handleUnpublishModel}
-                    disabled={unpublishModelMutation.isLoading}
-                  >
-                    Unpublish
-                  </Menu.Item>
                 ) : null}
                 {!session || !isOwner || isModerator ? (
                   <>
@@ -553,6 +552,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     </LoginRedirect>
                   </>
                 ) : null}
+                {session ? <HideUserButton user={model.user} /> : null}
               </Menu.Dropdown>
             </Menu>
           </Group>

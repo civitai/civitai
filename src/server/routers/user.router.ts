@@ -2,6 +2,10 @@ import {
   checkUserNotificationsHandler,
   getNotificationSettingsHandler,
   getUserCreatorHandler,
+  getUserFollowingListHandler,
+  getUserHiddenListHandler,
+  toggleFollowUserHandler,
+  toggleHideUserHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -17,6 +21,7 @@ import {
   getAllUsersInput,
   getUserByUsernameSchema,
   toggleFavoriteModelInput,
+  toggleFollowUserSchema,
   userUpsertSchema,
 } from '~/server/schema/user.schema';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -26,6 +31,8 @@ export const userRouter = router({
   getAll: publicProcedure.input(getAllUsersInput).query(getAllUsersHandler),
   getById: publicProcedure.input(getByIdSchema).query(getUserByIdHandler),
   getFavoriteModels: protectedProcedure.query(getUserFavoriteModelsHandler),
+  getFollowingUsers: protectedProcedure.query(getUserFollowingListHandler),
+  getHiddenUsers: protectedProcedure.query(getUserHiddenListHandler),
   getCreators: publicProcedure.input(getAllQuerySchema.partial()).query(getCreatorsHandler),
   getNotificationSettings: protectedProcedure.query(getNotificationSettingsHandler),
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
@@ -33,6 +40,7 @@ export const userRouter = router({
   delete: protectedProcedure.input(getByIdSchema).mutation(deleteUserHandler),
   toggleFavorite: protectedProcedure
     .input(toggleFavoriteModelInput)
-    // .use(isOwner)
     .mutation(toggleFavoriteModelHandler),
+  toggleFollow: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleFollowUserHandler),
+  toggleHide: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleHideUserHandler),
 });

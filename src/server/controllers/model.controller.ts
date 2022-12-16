@@ -9,6 +9,7 @@ import {
   getAllModelsWithVersionsSelect,
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
 import {
   createModel,
   deleteModelById,
@@ -88,6 +89,7 @@ export const getModelsInfiniteHandler = async ({
           [`rating${input.period}`]: true,
         },
       },
+      user: { select: simpleUserSelect },
     },
   });
 
