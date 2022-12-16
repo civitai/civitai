@@ -80,6 +80,11 @@ export const getModelsInfiniteHandler = async ({
           },
         },
       },
+      reportStats: {
+        select: {
+          ownershipPending: true,
+        },
+      },
       rank: {
         select: {
           [`downloadCount${input.period}`]: true,
@@ -100,7 +105,7 @@ export const getModelsInfiniteHandler = async ({
 
   return {
     nextCursor,
-    items: items.map(({ modelVersions, ...model }) => {
+    items: items.map(({ modelVersions, reportStats, ...model }) => {
       const rank = model.rank as Record<string, number>;
       return {
         ...model,
@@ -112,8 +117,7 @@ export const getModelsInfiniteHandler = async ({
           rating: rank[`rating${input.period}`],
         },
         image: modelVersions[0]?.images[0]?.image ?? {},
-        // TODO ModelReports view: hardcoded logic, update when modelReports views are available
-        pendingClaim: rank[`favoriteCount${input.period}`] > 100,
+        pendingClaim: reportStats && reportStats.ownershipPending > 0,
       };
     }),
   };
