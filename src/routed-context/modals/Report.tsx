@@ -1,19 +1,10 @@
 import { Button, Group, Modal, Radio, Stack, Text, Alert } from '@mantine/core';
 import { showNotification, hideNotification } from '@mantine/notifications';
 import { ReportReason } from '@prisma/client';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { z } from 'zod';
-import {
-  Form,
-  InputCheckbox,
-  InputImageUpload,
-  InputRadioGroup,
-  InputRTE,
-  InputText,
-  useForm,
-} from '~/libs/form';
+import { Form, InputImageUpload, InputRadioGroup, InputRTE, InputText, useForm } from '~/libs/form';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { imageSchema } from '~/server/schema/image.schema';
 import { reportOwnershipDetailsSchema } from '~/server/schema/report.schema';
