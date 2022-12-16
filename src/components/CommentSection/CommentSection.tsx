@@ -29,7 +29,7 @@ import { Form, InputTextArea, useForm } from '~/libs/form';
 
 import { commentUpsertInput } from '~/server/schema/comment.schema';
 import { ReactionDetails } from '~/server/selectors/review.selector';
-import { CommentGetById, ReviewGetById } from '~/types/router';
+import { CommentGetById, ReviewGetCommentsById } from '~/types/router';
 import { daysFromNow } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -51,7 +51,7 @@ export default function CommentSection({ comments, modelId, reviewId, parentId }
 
   const saveCommentMutation = trpc.comment.upsert.useMutation({
     async onSuccess() {
-      if (reviewId) await queryUtils.review.getReviewComments.invalidate({ id: reviewId });
+      if (reviewId) await queryUtils.review.getCommentsById.invalidate({ id: reviewId });
       if (parentId) await queryUtils.comment.getById.invalidate({ id: parentId });
 
       await queryUtils.review.getAll.invalidate({ modelId });
@@ -70,7 +70,7 @@ export default function CommentSection({ comments, modelId, reviewId, parentId }
   });
   const deleteMutation = trpc.comment.delete.useMutation({
     async onSuccess() {
-      if (reviewId) await queryUtils.review.getReviewComments.invalidate({ id: reviewId });
+      if (reviewId) await queryUtils.review.getCommentsById.invalidate({ id: reviewId });
       if (parentId) await queryUtils.comment.getById.invalidate({ id: parentId });
 
       await queryUtils.review.getAll.invalidate({ modelId });
@@ -112,7 +112,7 @@ export default function CommentSection({ comments, modelId, reviewId, parentId }
       });
     },
     async onSuccess() {
-      if (reviewId) await queryUtils.review.getReviewComments.invalidate({ id: reviewId });
+      if (reviewId) await queryUtils.review.getCommentsById.invalidate({ id: reviewId });
       if (parentId) await queryUtils.comment.getById.invalidate({ id: parentId });
       showSuccessNotification({
         title: 'Comment reported',
@@ -137,13 +137,18 @@ export default function CommentSection({ comments, modelId, reviewId, parentId }
   const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
     async onMutate({ id, reaction }) {
       const itemId = reviewId ?? parentId ?? 0;
-      const cachedQuery = reviewId
-        ? queryUtils.review.getReviewComments
-        : queryUtils.comment.getById;
+      const cachedQuery = reviewId ? queryUtils.review.getCommentsById : queryUtils.comment.getById;
 
       await cachedQuery.cancel({ id: itemId });
 
       const previousItem = cachedQuery.getData({ id: itemId });
+      const prevReviewComments = reviewId
+        ? queryUtils.review.getCommentsById.getData({ id: reviewId })
+        : undefined;
+      const prevCommentData = parentId
+        ? queryUtils.comment.getById.getData({ id: parentId })
+        : undefined;
+
       const updatedComments =
         previousItem?.comments.map((comment) => {
           if (comment.id === id) {
@@ -176,17 +181,22 @@ export default function CommentSection({ comments, modelId, reviewId, parentId }
           return comment;
         }) ?? [];
 
-      cachedQuery.setData({ id: itemId }, (old) => ({ ...old, comments: updatedComments }));
+      // TODO: Temp any until we modify the way we fetch comments reactions
+      cachedQuery.setData({ id: itemId }, (old: any) => {
+        if (reviewId) return { ...prevReviewComments, comments: updatedComments };
+        else if (parentId) return { ...prevCommentData, comments: updatedComments };
+        return old;
+      });
 
-      return { previousItem };
+      return { prevCommentData, prevReviewComments };
     },
     onError(_error, _variables, context) {
       if (reviewId)
-        queryUtils.review.getReviewComments.setData({ id: reviewId }, context?.previousItem);
-      if (parentId) queryUtils.comment.getById.setData({ id: parentId }, context?.previousItem);
+        queryUtils.review.getCommentsById.setData({ id: reviewId }, context?.prevReviewComments);
+      if (parentId) queryUtils.comment.getById.setData({ id: parentId }, context?.prevCommentData);
     },
     async onSettled() {
-      if (reviewId) await queryUtils.review.getReviewComments.invalidate({ id: reviewId });
+      if (reviewId) await queryUtils.review.getCommentsById.invalidate({ id: reviewId });
       if (parentId) await queryUtils.comment.getById.invalidate({ id: parentId });
     },
   });
@@ -381,7 +391,7 @@ export default function CommentSection({ comments, modelId, reviewId, parentId }
 }
 
 type Props = {
-  comments: ReviewGetById['comments'] | CommentGetById['comments'];
+  comments: ReviewGetCommentsById['comments'] | CommentGetById['comments'];
   modelId: number;
   reviewId?: number;
   parentId?: number;

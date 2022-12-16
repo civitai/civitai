@@ -11,7 +11,7 @@ export type ModelGetAll = ModelRouter['getAll'];
 type ReviewRouter = RouterOutput['review'];
 export type ReviewGetAll = ReviewRouter['getAll'];
 export type ReviewGetAllItem = ReviewGetAll['reviews'][number];
-export type ReviewGetById = ReviewRouter['getById'];
+export type ReviewGetCommentsById = ReviewRouter['getCommentsById'];
 export type ReviewGetReactions = ReviewRouter['getReactions'];
 
 type CommentRouter = RouterOutput['comment'];

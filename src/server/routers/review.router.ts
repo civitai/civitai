@@ -49,7 +49,7 @@ export const reviewRouter = router({
   getAll: publicProcedure.input(getAllReviewSchema).query(getReviewsInfiniteHandler),
   getReactions: publicProcedure.input(getReviewReactionsSchema).query(getReviewReactionsHandler),
   getDetail: publicProcedure.input(getByIdSchema).query(getReviewDetailsHandler),
-  getReviewComments: publicProcedure.input(getByIdSchema).query(getReviewCommentsHandler),
+  getCommentsById: publicProcedure.input(getByIdSchema).query(getReviewCommentsHandler),
   upsert: protectedProcedure
     .input(reviewUpsertSchema)
     .use(isOwnerOrModerator)

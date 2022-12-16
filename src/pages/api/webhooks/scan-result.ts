@@ -1,16 +1,24 @@
-import { ModelFileType, ModelStatus, Prisma, ScanResultCode } from '@prisma/client';
+import {
+  ModelFileFormat,
+  ModelFileType,
+  ModelStatus,
+  Prisma,
+  ScanResultCode,
+} from '@prisma/client';
 import { z } from 'zod';
+
 import { env } from '~/env/server.mjs';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { prisma } from '~/server/db/client';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  const { modelVersionId: modelVersionIdString, type } = querySchema.parse(req.query);
-  const modelVersionId = parseInt(modelVersionIdString);
+  const { modelVersionId, type, format } = querySchema.parse(req.query);
   const scanResult: ScanResult = req.body;
 
-  const where = { modelVersionId_type: { modelVersionId, type } };
+  const where: Prisma.ModelFileFindUniqueArgs['where'] = {
+    modelVersionId_type_format: { modelVersionId, type, format },
+  };
   const { url } = (await prisma.modelFile.findUnique({ where })) ?? {};
   if (!url) return res.status(404).json({ error: 'File not found' });
 
@@ -98,8 +106,9 @@ type ScanResult = {
 };
 
 const querySchema = z.object({
-  modelVersionId: z.string(),
+  modelVersionId: z.preprocess((val) => Number(val), z.number()),
   type: z.nativeEnum(ModelFileType),
+  format: z.nativeEnum(ModelFileFormat),
 });
 
 function processImport(importStr: string) {

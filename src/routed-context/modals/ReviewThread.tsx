@@ -33,7 +33,7 @@ export default createRoutedContext({
     const { data: review, isLoading: reviewLoading } = trpc.review.getDetail.useQuery({
       id: reviewId,
     });
-    const { data: comments, isLoading: commentsLoading } = trpc.review.getReviewComments.useQuery({
+    const { data: comments, isLoading: commentsLoading } = trpc.review.getCommentsById.useQuery({
       id: reviewId,
     });
 
