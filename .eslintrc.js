@@ -31,7 +31,9 @@ module.exports = {
     "no-use-before-define": "off",
     "@typescript-eslint/no-use-before-define": "off",
     // allows ignoring ts checks
-    "@typescript-eslint/ban-ts-comment": "off"
+    "@typescript-eslint/ban-ts-comment": "off",
+    // allows destructuring to ignore fields
+    "@typescript-eslint/no-unused-vars": ["warn", { "ignoreRestSiblings": true }]
   },
   // settings: {
   //   'import/parsers': {

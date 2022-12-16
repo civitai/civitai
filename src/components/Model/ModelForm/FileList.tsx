@@ -2,13 +2,15 @@ import { ActionIcon, Button, Group, Input, InputWrapperProps, Tooltip } from '@m
 import { ModelFileFormat, ModelFileType, ModelType } from '@prisma/client';
 import { IconPlus, IconStar, IconTrash } from '@tabler/icons';
 import startCase from 'lodash/startCase';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useFieldArray, UseFormReturn } from 'react-hook-form';
 
 import { InputFileUpload, InputSelect } from '~/libs/form';
 import { ModelFileInput } from '~/server/schema/model-file.schema';
 
-const fileTypeCount = Object.values(ModelFileType).length + Object.values(ModelFileFormat).length;
+const fileTypes = Object.values(ModelFileType);
+const fileFormats = Object.values(ModelFileFormat).filter((type) => type !== 'Other');
+const fileFormatCount = fileFormats.length;
 const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   Model: '.ckpt,.pt,.safetensors',
   PrunedModel: '.ckpt,.pt,.safetensors',
@@ -17,19 +19,26 @@ const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   VAE: '.pt',
 };
 
-export function FileList({ parentIndex, form }: Props) {
+export function FileList({ parentIndex, form, ...wrapperProps }: Props) {
+  const files = form.watch(`modelVersions.${parentIndex}.files`) as ModelFileInput[];
+  const modelType = form.watch('type') as ModelType;
+  const isCheckpointModel = modelType === 'Checkpoint';
+  const availableFileTypes = isCheckpointModel
+    ? fileTypes
+    : fileTypes.filter((type) => type !== 'PrunedModel');
+  const fileTypeCount = availableFileTypes.length;
+  // We reduce by 2 when is not checkpoint cause we don't need prunedModel
+  const maxLength = fileTypeCount + fileFormatCount - (isCheckpointModel ? 0 : 2);
+
   const { fields, append, remove, update } = useFieldArray({
     control: form.control,
     name: `modelVersions.${parentIndex}.files`,
     rules: {
+      maxLength,
       minLength: 1,
-      maxLength: fileTypeCount,
       required: true,
     },
   });
-
-  const files = form.watch(`modelVersions.${parentIndex}.files`) as ModelFileInput[];
-  const modelType = form.watch('type') as ModelType;
 
   const handlePrimaryClick = (index: number) => {
     fields.map(({ id, ...field }, i) => {
@@ -43,8 +52,27 @@ export function FileList({ parentIndex, form }: Props) {
     update(index, { ...matchingFile, type, sizeKB: 0, name: '', url: '' });
   };
 
+  // We only want to check for files that are not model or prunedModel
+  // to prevented the user from selecting the same file type
+  const selectedTypes = files
+    .map(({ type }) => type)
+    .filter((type) => !['Model', 'PrunedModel'].includes(type));
+
+  // Check if user changed model type to remove prunedModel files
+  useEffect(() => {
+    if (!isCheckpointModel) {
+      for (let i = 0; i < files.length; i++) {
+        const isPruned = files[i].type === 'PrunedModel';
+        if (!isPruned) continue;
+
+        remove(i);
+      }
+    }
+  }, [files, isCheckpointModel, remove]);
+
   return (
     <Input.Wrapper
+      {...wrapperProps}
       styles={{ label: { width: '100%' } }}
       label={
         <Group position="apart">
@@ -54,7 +82,7 @@ export function FileList({ parentIndex, form }: Props) {
             leftIcon={<IconPlus size={16} />}
             variant="outline"
             onClick={() =>
-              fields.length < fileTypeCount
+              fields.length < maxLength
                 ? append({
                     type: ModelFileType.Model,
                     url: '',
@@ -64,14 +92,14 @@ export function FileList({ parentIndex, form }: Props) {
                   })
                 : undefined
             }
-            disabled={fields.length >= fileTypeCount}
+            disabled={fields.length >= maxLength}
             compact
           >
             Add File
           </Button>
         </Group>
       }
-      description="Add multiple files for this version"
+      description={`Add multiple files for this version (${fields.length}/${maxLength})`}
     >
       {fields.map(({ id, ...item }, index) => {
         const file = item as ModelFileInput;
@@ -84,6 +112,7 @@ export function FileList({ parentIndex, form }: Props) {
             onPrimaryClick={handlePrimaryClick}
             onTypeChange={handleTypeChange}
             modelType={modelType}
+            selectedTypes={selectedTypes}
             {...file}
           />
         );
@@ -104,6 +133,7 @@ function FileItem({
   parentIndex,
   index,
   modelType,
+  selectedTypes,
   onRemoveClick,
   onPrimaryClick,
   onTypeChange,
@@ -122,7 +152,8 @@ function FileItem({
           .map((type) => ({
             label: type === 'Model' && !isCheckpointModel ? startCase(modelType) : startCase(type),
             value: type,
-            disabled: primary && !['Model', 'PrunedModel'].includes(type),
+            disabled:
+              (primary && !['Model', 'PrunedModel'].includes(type)) || selectedTypes.includes(type),
           }))}
         onChange={(value: ModelFileType) => {
           setSelectedType(value);
@@ -176,5 +207,6 @@ type FileItemProps = ModelFileInput & {
   onPrimaryClick: (index: number) => void;
   onTypeChange: (index: number, type: ModelFileType) => void;
   modelType: ModelType;
+  selectedTypes: ModelFileType[];
   onLoading?: (index: number, loading: boolean) => void;
 };
