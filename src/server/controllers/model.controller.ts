@@ -2,7 +2,7 @@ import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
-import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
 import { ModelReportOutput } from '~/server/schema/report.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -112,6 +112,8 @@ export const getModelsInfiniteHandler = async ({
           rating: rank[`rating${input.period}`],
         },
         image: modelVersions[0]?.images[0]?.image ?? {},
+        // TODO ModelReports view: hardcoded logic, update when modelReports views are available
+        pendingClaim: rank[`favoriteCount${input.period}`] > 100,
       };
     }),
   };

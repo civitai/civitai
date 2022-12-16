@@ -1,9 +1,9 @@
-import { MetricTimeframe, ModelReport, ModelStatus, Prisma, ReportReason } from '@prisma/client';
+import { MetricTimeframe, ModelStatus, Prisma, ReportReason } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 
 import { ModelSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
-import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
 import { prepareFile } from '~/utils/file-helpers';
 import { ModelReportOutput } from '~/server/schema/report.schema';
