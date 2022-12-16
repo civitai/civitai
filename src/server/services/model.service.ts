@@ -157,6 +157,7 @@ export const createModel = async ({
     data: {
       ...data,
       publishedAt: data.status === ModelStatus.Published ? new Date() : null,
+      lastVersionAt: new Date(),
       userId,
       modelVersions: {
         create: modelVersions.map(({ images, files, ...version }, versionIndex) => ({
@@ -213,6 +214,7 @@ export const updateModel = async ({
   ) ?? { tagsToCreate: [], tagsToUpdate: [] };
 
   const versionIds = modelVersions.map((version) => version.id).filter(Boolean) as number[];
+  const hasNewVersions = modelVersions.some((x) => !x.id);
 
   const model = await prisma.$transaction(
     async (tx) => {
@@ -242,6 +244,7 @@ export const updateModel = async ({
             data.status === ModelStatus.Published && currentModel?.status !== ModelStatus.Published
               ? new Date()
               : null,
+          lastVersionAt: hasNewVersions ? new Date() : undefined,
           modelVersions: {
             deleteMany: versionIds.length > 0 ? { id: { notIn: versionIds } } : undefined,
             upsert: modelVersions.map(

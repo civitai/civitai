@@ -329,19 +329,20 @@ const MasonryItem = ({
     </Group>
   );
 
-  const hasNewVersion = data.lastVersionCreatedAt > aDayAgo && data.createdAt < aDayAgo;
+  const isNew = data.createdAt > aDayAgo;
+  const isUpdated = !isNew && data.lastVersionAt && data.lastVersionAt > aDayAgo;
 
   return (
     <Link href={`/models/${id}/${slugit(name)}`} passHref>
       <a>
         <Indicator
-          disabled={!hasNewVersion}
-          processing
+          disabled={!isNew && !isUpdated}
           withBorder
-          size={14}
+          size={24}
+          radius="sm"
+          label={isNew ? 'New' : 'Updated'}
           color="red"
-          title="Updated"
-          sx={{ zIndex: 10 }}
+          styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
         >
           <Card
             ref={ref}

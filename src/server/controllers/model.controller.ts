@@ -61,11 +61,11 @@ export const getModelsInfiniteHandler = async ({
       nsfw: true,
       status: true,
       createdAt: true,
+      lastVersionAt: true,
       modelVersions: {
         orderBy: { index: 'asc' },
         take: 1,
         select: {
-          createdAt: true,
           images: {
             orderBy: {
               index: 'asc',
