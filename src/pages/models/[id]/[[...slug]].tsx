@@ -358,10 +358,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     }));
   };
 
-  const handleReportModel = (reason: ReportReason) => {
-    reportModelMutation.mutate({ id, reason });
-  };
-
   const handleUnpublishModel = () => {
     unpublishModelMutation.mutate({ id });
   };
@@ -536,7 +532,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     <LoginRedirect reason="report-model">
                       <Menu.Item
                         icon={<IconFlag size={14} stroke={1.5} />}
-                        onClick={() => handleReportModel(ReportReason.NSFW)}
+                        onClick={() =>
+                          reportModelMutation.mutate({ id, reason: ReportReason.NSFW })
+                        }
                         disabled={reportModelMutation.isLoading}
                       >
                         Report as NSFW
@@ -545,7 +543,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     <LoginRedirect reason="report-model">
                       <Menu.Item
                         icon={<IconFlag size={14} stroke={1.5} />}
-                        onClick={() => handleReportModel(ReportReason.TOSViolation)}
+                        onClick={() =>
+                          reportModelMutation.mutate({ id, reason: ReportReason.TOSViolation })
+                        }
                         disabled={reportModelMutation.isLoading}
                       >
                         Report as Terms Violation

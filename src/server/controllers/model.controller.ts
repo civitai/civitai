@@ -4,6 +4,7 @@ import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
+import { ModelReportOutput } from '~/server/schema/report.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   getAllModelsWithVersionsSelect,
@@ -213,7 +214,7 @@ export const reportModelHandler = async ({
   input,
   ctx,
 }: {
-  input: ReportInput;
+  input: ModelReportOutput;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
