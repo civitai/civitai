@@ -115,22 +115,6 @@ export default createRoutedContext({
                 <Radio value="no" label="$#!% off!" />
               </InputRadioGroup>
             </Stack>
-            {/* <InputCheckbox
-              name="establishInterest"
-              label="I'm interested in having an official model created of my art style and attributed to me."
-              description={
-                <Text>
-                  You would receive 70% of any proceeds made from the use of your model on Civitai.{' '}
-                  <Text
-                    variant="link"
-                    component={Link}
-                    href="/content/art-and-ai#monetizing-your-art"
-                  >
-                    Learn more
-                  </Text>
-                </Text>
-              }
-            /> */}
             <Group grow>
               <Button variant="default" onClick={context.close}>
                 Cancel
