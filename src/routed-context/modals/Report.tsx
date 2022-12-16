@@ -1,9 +1,18 @@
-import { Button, Group, Modal, Stack } from '@mantine/core';
+import { Button, Group, Modal, Radio, Stack, Text, Alert } from '@mantine/core';
 import { showNotification, hideNotification } from '@mantine/notifications';
 import { ReportReason } from '@prisma/client';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { z } from 'zod';
-import { Form, InputCheckbox, InputImageUpload, InputRTE, InputText, useForm } from '~/libs/form';
+import {
+  Form,
+  InputCheckbox,
+  InputImageUpload,
+  InputRadioGroup,
+  InputRTE,
+  InputText,
+  useForm,
+} from '~/libs/form';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { imageSchema } from '~/server/schema/image.schema';
 import { ownershipReportInputSchema } from '~/server/schema/report.schema';
@@ -11,6 +20,7 @@ import { showSuccessNotification, showErrorNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 
 export const schema = ownershipReportInputSchema.extend({
+  establishInterest: z.string().transform((x) => (x === 'yes' ? true : false)),
   images: imageSchema
     .array()
     .optional()
@@ -67,15 +77,44 @@ export default createRoutedContext({
     };
 
     return (
-      <Modal opened={context.opened} onClose={context.close} title="Report Ownership">
+      <Modal opened={context.opened} onClose={context.close} title="Report this uses my art">
         <Form form={form} onSubmit={handleSubmit}>
           <Stack>
+            <Alert>
+              If you believe that this model may have been trained using your art, please complete
+              the form below for review
+            </Alert>
             <InputText name="name" label="Name" withAsterisk clearable={false} />
             <InputText name="email" label="Email" withAsterisk clearable={false} />
             <InputText name="phone" label="Phone" clearable={false} />
             <InputRTE name="comment" label="Comment" />
-            <InputImageUpload name="images" label="Images" withMeta={false} />
-            <InputCheckbox name="establishInterest" label="Establish interest" />
+            <InputImageUpload name="images" label="Images for comparison" withMeta={false} />
+            <Stack spacing={4}>
+              <InputRadioGroup
+                name="establishInterest"
+                withAsterisk
+                label="Are you interested in having an official model of your art style created and
+                attributed to you?"
+                description={
+                  <Text>
+                    You would receive 70% of any proceeds made from the use of your model on
+                    Civitai.{' '}
+                    <Text
+                      variant="link"
+                      component="a"
+                      href="/content/art-and-ai#monetizing-your-art"
+                      target="_blank"
+                    >
+                      Learn more
+                    </Text>
+                  </Text>
+                }
+              >
+                <Radio value="yes" label="I'm interested" />
+                {/* <Radio value="no" label="Not interested" /> */}
+                <Radio value="no" label="$#!% off!" />
+              </InputRadioGroup>
+            </Stack>
             <Group grow>
               <Button variant="default" onClick={context.close}>
                 Cancel
