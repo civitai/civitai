@@ -551,6 +551,14 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                         Report as Terms Violation
                       </Menu.Item>
                     </LoginRedirect>
+                    <LoginRedirect reason="report-model">
+                      <Menu.Item
+                        icon={<IconFlag size={14} stroke={1.5} />}
+                        onClick={() => openContext('report', {})}
+                      >
+                        Report Ownership
+                      </Menu.Item>
+                    </LoginRedirect>
                   </>
                 ) : null}
               </Menu.Dropdown>

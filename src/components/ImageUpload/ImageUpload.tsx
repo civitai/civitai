@@ -45,6 +45,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: Array<CustomFile>;
   onChange?: (value: Array<CustomFile>) => void;
   loading?: boolean;
+  withMeta?: boolean;
 };
 
 //TODO File Safety: Limit to the specific file extensions we want to allow
@@ -55,6 +56,7 @@ export function ImageUpload({
   max = 10,
   hasPrimaryImage,
   loading = false,
+  withMeta = true,
   ...inputWrapperProps
 }: Props) {
   const { classes, theme, cx } = useStyles();
@@ -223,19 +225,23 @@ export function ImageUpload({
                           p={4}
                           spacing={4}
                         >
-                          <ImageMetaPopover
-                            meta={image.meta}
-                            onSubmit={(meta) => filesHandlers.setItem(index, { ...image, meta })}
-                          >
-                            <ActionIcon
-                              variant="outline"
-                              color={
-                                image.meta && Object.keys(image.meta).length ? 'primary' : undefined
-                              }
+                          {withMeta && (
+                            <ImageMetaPopover
+                              meta={image.meta}
+                              onSubmit={(meta) => filesHandlers.setItem(index, { ...image, meta })}
                             >
-                              <IconPencil />
-                            </ActionIcon>
-                          </ImageMetaPopover>
+                              <ActionIcon
+                                variant="outline"
+                                color={
+                                  image.meta && Object.keys(image.meta).length
+                                    ? 'primary'
+                                    : undefined
+                                }
+                              >
+                                <IconPencil />
+                              </ActionIcon>
+                            </ImageMetaPopover>
+                          )}
                           <ActionIcon
                             color="red"
                             variant="outline"
