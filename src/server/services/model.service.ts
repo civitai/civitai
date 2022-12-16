@@ -6,7 +6,7 @@ import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
 import { prepareFile } from '~/utils/file-helpers';
-import { ModelReportOutput } from '~/server/schema/report.schema';
+import { ModelReportInput } from '~/server/schema/report.schema';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   input: { id },
@@ -122,7 +122,7 @@ export const reportModelById = async ({
   id,
   userId,
   ...data
-}: ModelReportOutput & { userId: number }) => {
+}: ModelReportInput & { userId: number }) => {
   const nsfw = data.reason === ReportReason.NSFW;
   const tosViolation = data.reason === ReportReason.TOSViolation;
 

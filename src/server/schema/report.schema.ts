@@ -1,7 +1,19 @@
-import { Prisma, ReportReason } from '@prisma/client';
+import { Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { z } from 'zod';
 
-export const ownershipReportInputSchema = z.object({
+const baseSchema = z.object({ id: z.number() });
+
+export const reportNsfwSchema = baseSchema.extend({
+  reason: z.literal(ReportReason.NSFW),
+  status: z.nativeEnum(ReportStatus).default(ReportStatus.Valid),
+});
+
+export const reportTOSViolationSchema = baseSchema.extend({
+  reason: z.literal(ReportReason.TOSViolation),
+  status: z.nativeEnum(ReportStatus).default(ReportStatus.Pending),
+});
+
+export const reportOwnershipDetailsSchema = z.object({
   name: z.string(),
   email: z.string().email(),
   phone: z.string().optional(),
@@ -10,16 +22,25 @@ export const ownershipReportInputSchema = z.object({
   establishInterest: z.boolean().optional(),
 });
 
-// TODO - figure out if it's possible to do a merge (duplicate props)
+export const reportOwnershipSchema = baseSchema.extend({
+  reason: z.literal(ReportReason.Ownership),
+  status: z.nativeEnum(ReportStatus).default(ReportStatus.Pending),
+  details: reportOwnershipDetailsSchema,
+});
+
+export type ModelReportInput = z.infer<typeof modelReportInputSchema>;
 export const modelReportInputSchema = z.discriminatedUnion('reason', [
-  z.object({ reason: z.literal(ReportReason.NSFW), id: z.number() }),
-  z.object({ reason: z.literal(ReportReason.TOSViolation), id: z.number() }),
-  z.object({
-    reason: z.literal(ReportReason.Ownership),
-    id: z.number(),
-    details: ownershipReportInputSchema,
-    // .transform((arg) => arg as Prisma.JsonObject),
-  }),
+  reportNsfwSchema,
+  reportTOSViolationSchema,
+  reportOwnershipSchema,
 ]);
-export type ModelReportInput = z.input<typeof modelReportInputSchema>;
-export type ModelReportOutput = z.infer<typeof modelReportInputSchema>;
+
+export const reviewReportInputSchema = z.discriminatedUnion('reason', [
+  reportNsfwSchema,
+  reportTOSViolationSchema,
+]);
+
+export const commentReportInputSchema = z.discriminatedUnion('reason', [
+  reportNsfwSchema,
+  reportTOSViolationSchema,
+]);

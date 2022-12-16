@@ -1,4 +1,4 @@
-import { ReportReason } from '@prisma/client';
+import { ReportReason, ReportStatus } from '@prisma/client';
 import { z } from 'zod';
 
 export const getByIdSchema = z.object({ id: z.number() });

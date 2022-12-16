@@ -15,11 +15,11 @@ import {
 } from '~/libs/form';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { imageSchema } from '~/server/schema/image.schema';
-import { ownershipReportInputSchema } from '~/server/schema/report.schema';
+import { reportOwnershipDetailsSchema } from '~/server/schema/report.schema';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export const schema = ownershipReportInputSchema.extend({
+export const schema = reportOwnershipDetailsSchema.extend({
   establishInterest: z.string().transform((x) => (x === 'yes' ? true : false)),
   images: imageSchema
     .array()
