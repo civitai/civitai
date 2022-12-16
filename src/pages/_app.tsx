@@ -72,7 +72,11 @@ function MyApp(props: CustomAppProps) {
                   Popover: { styles: { dropdown: { maxWidth: '100vw' } } },
                   Rating: { styles: { symbolBody: { cursor: 'pointer' } } },
                   Switch: {
-                    styles: { track: { cursor: 'pointer' }, label: { cursor: 'pointer' } },
+                    styles: {
+                      body: { verticalAlign: 'top' },
+                      track: { cursor: 'pointer' },
+                      label: { cursor: 'pointer' },
+                    },
                   },
                   Badge: {
                     styles: { leftSection: { lineHeight: 1 } },

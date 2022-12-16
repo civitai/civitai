@@ -1,4 +1,4 @@
-import { InputWrapperProps, LoadingOverlay, Stack, Text, Input, Paper } from '@mantine/core';
+import { InputWrapperProps, LoadingOverlay, Stack, Text, Input, Paper, Group } from '@mantine/core';
 import { Dropzone, FileWithPath, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
 import produce from 'immer';
@@ -40,22 +40,7 @@ export function ProfileImageUpload({ value, onChange, ...props }: SimpleImageUpl
 
   return (
     <Input.Wrapper {...props}>
-      <Stack>
-        <Dropzone
-          onDrop={handleDrop}
-          accept={IMAGE_MIME_TYPE}
-          maxFiles={1}
-          styles={(theme) => ({
-            root: !!props.error
-              ? {
-                  borderColor: theme.colors.red[6],
-                  marginBottom: theme.spacing.xs / 2,
-                }
-              : undefined,
-          })}
-        >
-          <Text>Drop image here</Text>
-        </Dropzone>
+      <Group style={{ alignItems: 'stretch' }}>
         {files.map((image, index) => {
           const match = imageFiles.find((file) => image.file === file.file);
           const { progress } = match ?? { progress: 0 };
@@ -76,7 +61,28 @@ export function ProfileImageUpload({ value, onChange, ...props }: SimpleImageUpl
             </div>
           );
         })}
-      </Stack>
+        <Dropzone
+          onDrop={handleDrop}
+          accept={IMAGE_MIME_TYPE}
+          maxFiles={1}
+          sx={{
+            flex: 1,
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+          styles={(theme) => ({
+            root: !!props.error
+              ? {
+                  borderColor: theme.colors.red[6],
+                  marginBottom: theme.spacing.xs / 2,
+                }
+              : undefined,
+          })}
+        >
+          <Text color="dimmed">Drop image here</Text>
+        </Dropzone>
+      </Group>
     </Input.Wrapper>
   );
 }

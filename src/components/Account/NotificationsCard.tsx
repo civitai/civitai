@@ -46,7 +46,7 @@ export function NotificationsCard() {
   };
 
   return (
-    <Card>
+    <Card withBorder>
       <Stack>
         <Title id="notification-settings" order={2}>
           Notifications Settings
