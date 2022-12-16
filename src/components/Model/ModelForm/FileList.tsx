@@ -1,5 +1,5 @@
 import { ActionIcon, Button, Group, Input, InputWrapperProps, Tooltip } from '@mantine/core';
-import { ModelFileType, ModelType } from '@prisma/client';
+import { ModelFileFormat, ModelFileType, ModelType } from '@prisma/client';
 import { IconPlus, IconStar, IconTrash } from '@tabler/icons';
 import startCase from 'lodash/startCase';
 import { useEffect, useState } from 'react';
@@ -9,7 +9,8 @@ import { InputFileUpload, InputSelect } from '~/libs/form';
 import { ModelFileInput } from '~/server/schema/model-file.schema';
 
 const fileTypes = Object.values(ModelFileType);
-const fileTypeCount = Object.values(ModelFileType).length;
+const fileFormats = Object.values(ModelFileFormat).filter((type) => type !== 'Other');
+const fileFormatCount = fileFormats.length;
 const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   Model: '.ckpt,.pt,.safetensors',
   PrunedModel: '.ckpt,.pt,.safetensors',
@@ -18,14 +19,16 @@ const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   VAE: '.pt',
 };
 
-export function FileList({ parentIndex, form }: Props) {
+export function FileList({ parentIndex, form, ...wrapperProps }: Props) {
   const files = form.watch(`modelVersions.${parentIndex}.files`) as ModelFileInput[];
   const modelType = form.watch('type') as ModelType;
-  const isCheckpointType = modelType === 'Checkpoint';
-  const maxLength = isCheckpointType ? fileTypeCount : fileTypeCount - 1;
-  const availableFileTypes = isCheckpointType
+  const isCheckpointModel = modelType === 'Checkpoint';
+  const availableFileTypes = isCheckpointModel
     ? fileTypes
     : fileTypes.filter((type) => type !== 'PrunedModel');
+  const fileTypeCount = availableFileTypes.length;
+  // We reduce by 2 when is not checkpoint cause we don't need prunedModel
+  const maxLength = fileTypeCount + fileFormatCount - (isCheckpointModel ? 0 : 2);
 
   const { fields, append, remove, update } = useFieldArray({
     control: form.control,
@@ -49,18 +52,27 @@ export function FileList({ parentIndex, form }: Props) {
     update(index, { ...matchingFile, type, sizeKB: 0, name: '', url: '' });
   };
 
-  const selectedTypes = files.map(({ type }) => type);
-  const remainingTypes = availableFileTypes.filter((type) => !selectedTypes.includes(type));
+  // We only want to check for files that are not model or prunedModel
+  // to prevented the user from selecting the same file type
+  const selectedTypes = files
+    .map(({ type }) => type)
+    .filter((type) => !['Model', 'PrunedModel'].includes(type));
 
+  // Check if user changed model type to remove prunedModel files
   useEffect(() => {
-    if (!isCheckpointType) {
-      const prunedModelIndex = files.findIndex((file) => file.type === 'PrunedModel');
-      if (prunedModelIndex > -1) remove(prunedModelIndex);
+    if (!isCheckpointModel) {
+      for (let i = 0; i < files.length; i++) {
+        const isPruned = files[i].type === 'PrunedModel';
+        if (!isPruned) continue;
+
+        remove(i);
+      }
     }
-  }, [files, isCheckpointType, remove]);
+  }, [files, isCheckpointModel, remove]);
 
   return (
     <Input.Wrapper
+      {...wrapperProps}
       styles={{ label: { width: '100%' } }}
       label={
         <Group position="apart">
@@ -70,9 +82,9 @@ export function FileList({ parentIndex, form }: Props) {
             leftIcon={<IconPlus size={16} />}
             variant="outline"
             onClick={() =>
-              fields.length < fileTypeCount
+              fields.length < maxLength
                 ? append({
-                    type: remainingTypes[0],
+                    type: ModelFileType.Model,
                     url: '',
                     name: '',
                     sizeKB: 0,
@@ -87,7 +99,7 @@ export function FileList({ parentIndex, form }: Props) {
           </Button>
         </Group>
       }
-      description="Add multiple files for this version"
+      description={`Add multiple files for this version (${fields.length}/${maxLength})`}
     >
       {fields.map(({ id, ...item }, index) => {
         const file = item as ModelFileInput;

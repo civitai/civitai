@@ -34,6 +34,7 @@ import { FileList } from '~/components/Model/ModelForm/FileList';
 import {
   Form,
   InputCheckbox,
+  InputFileList,
   InputImageUpload,
   InputMultiSelect,
   InputNumber,
@@ -297,24 +298,26 @@ export function ModelForm({ model }: Props) {
                           />
                         </Grid.Col>
                         <Grid.Col span={12}>
-                          {!skipTrainedWords && (
-                            <InputMultiSelect
-                              name={`modelVersions.${index}.trainedWords`}
-                              label="Trigger Words"
-                              placeholder="e.g.: Master Chief"
-                              description="Please input the words you have trained your model with"
-                              data={trainedWords}
-                              creatable
-                              getCreateLabel={(query) => `+ Create ${query}`}
-                              clearable
-                              searchable
-                              required
+                          <Stack spacing="xs">
+                            {!skipTrainedWords && (
+                              <InputMultiSelect
+                                name={`modelVersions.${index}.trainedWords`}
+                                label="Trigger Words"
+                                placeholder="e.g.: Master Chief"
+                                description="Please input the words you have trained your model with"
+                                data={trainedWords}
+                                creatable
+                                getCreateLabel={(query) => `+ Create ${query}`}
+                                clearable
+                                searchable
+                                required
+                              />
+                            )}
+                            <InputSwitch
+                              name={`modelVersions.${index}.skipTrainedWords`}
+                              label="This version doesn't require any trigger words"
                             />
-                          )}
-                          <InputSwitch
-                            name={`modelVersions.${index}.skipTrainedWords`}
-                            label="This version doesn't require any trigger words"
-                          />
+                          </Stack>
                         </Grid.Col>
                         <Grid.Col span={6}>
                           <InputNumber
@@ -335,7 +338,11 @@ export function ModelForm({ model }: Props) {
                           />
                         </Grid.Col>
                         <Grid.Col span={12}>
-                          <FileList parentIndex={index} form={form} />
+                          <InputFileList
+                            name={`modelVersions.${index}.files`}
+                            parentIndex={index}
+                            form={form}
+                          />
                         </Grid.Col>
                         <Grid.Col span={12}>
                           <InputImageUpload
