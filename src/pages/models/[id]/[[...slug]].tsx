@@ -552,6 +552,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       <Menu.Item
                         icon={<IconFlag size={14} stroke={1.5} />}
                         onClick={() => openContext('report', {})}
+                        disabled={!!model.reportStats?.ownershipPending}
                       >
                         Report Ownership
                       </Menu.Item>

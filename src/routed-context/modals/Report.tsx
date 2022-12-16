@@ -3,6 +3,7 @@ import { showNotification, hideNotification } from '@mantine/notifications';
 import { ReportReason } from '@prisma/client';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { useState } from 'react';
 import { z } from 'zod';
 import {
   Form,
@@ -31,6 +32,9 @@ export default createRoutedContext({
   Element: ({ context, props }) => {
     const router = useRouter();
     const modelId = Number(router.query.id);
+
+    const [uploading, setUploading] = useState(false);
+
     const form = useForm({
       schema: schema,
       shouldUnregister: false,
@@ -88,7 +92,12 @@ export default createRoutedContext({
             <InputText name="email" label="Email" withAsterisk clearable={false} />
             <InputText name="phone" label="Phone" clearable={false} />
             <InputRTE name="comment" label="Comment" />
-            <InputImageUpload name="images" label="Images for comparison" withMeta={false} />
+            <InputImageUpload
+              name="images"
+              label="Images for comparison"
+              withMeta={false}
+              onChange={(values) => setUploading(values.some((x) => x.file))}
+            />
             <Stack spacing={4}>
               <InputRadioGroup
                 name="establishInterest"
@@ -111,7 +120,6 @@ export default createRoutedContext({
                 }
               >
                 <Radio value="yes" label="I'm interested" />
-                {/* <Radio value="no" label="Not interested" /> */}
                 <Radio value="no" label="$#!% off!" />
               </InputRadioGroup>
             </Stack>
@@ -119,7 +127,7 @@ export default createRoutedContext({
               <Button variant="default" onClick={context.close}>
                 Cancel
               </Button>
-              <Button type="submit" loading={isLoading}>
+              <Button type="submit" loading={isLoading} disabled={uploading}>
                 Submit
               </Button>
             </Group>
