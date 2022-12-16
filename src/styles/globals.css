@@ -39,19 +39,32 @@ a {
 }
 
 .markdown-content hr {
-  border-width: 2px;
-  border-style: solid;
+  border-width: 0;
+  border-top: 4px solid #777;
   margin: 30px 0;
 }
 
-@media (prefers-color-scheme: dark) {
-  .markdown-content hr {
-    border-color: #777;
-  }
+.markdown-content h2 {
+  line-height: 1.1;
+  margin-bottom: 0.25em;
 }
 
-@media (prefers-color-scheme: light) {
-  .markdown-content hr {
-    border-color: #444;
-  }
+.markdown-content h2+p {
+  margin-top: 0;
+}
+
+.markdown-content blockquote {
+  margin: 20px 0;
+  background: #222;
+  padding: 30px;
+  border-top: 4px solid #333;
+}
+
+.markdown-content blockquote *:last-child {
+  margin-bottom: 0;
+}
+
+.theme-light .markdown-content blockquote {
+  background: #eee;
+  border-top: 4px solid #ddd;
 }
