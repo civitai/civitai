@@ -1,24 +1,26 @@
-import { createJob } from './job';
-import { prisma } from '~/server/db/client';
-import { ModelFileType, ScanResultCode } from '@prisma/client';
-import dayjs from 'dayjs';
-import { env } from '~/env/server.mjs';
-import { checkFileExists, getGetUrl, getS3Client } from '~/utils/s3-utils';
+import { ModelFileFormat, ModelFileType, Prisma, ScanResultCode } from '@prisma/client';
 import { S3Client } from '@aws-sdk/client-s3';
+import dayjs from 'dayjs';
+
+import { env } from '~/env/server.mjs';
+import { prisma } from '~/server/db/client';
+import { getGetUrl, getS3Client } from '~/utils/s3-utils';
+
+import { createJob } from './job';
 
 export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
   const scanCutOff = dayjs().subtract(1, 'day').toDate();
-  const where = {
+  const where: Prisma.ModelFileWhereInput = {
     virusScanResult: ScanResultCode.Pending,
     OR: [{ scanRequestedAt: null }, { scanRequestedAt: { lt: scanCutOff } }],
   };
 
   const files = await prisma.modelFile.findMany({
     where,
-    select: { modelVersionId: true, type: true, url: true },
+    select: { modelVersionId: true, type: true, url: true, format: true },
   });
 
-  const s3 = await getS3Client();
+  const s3 = getS3Client();
   for (const file of files) await requestFileScan(file, s3);
 
   await prisma.modelFile.updateMany({
@@ -30,14 +32,15 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
 });
 
 async function requestFileScan(
-  { modelVersionId, type, url: s3Url }: FileScanRequest,
+  { modelVersionId, type, format, url: s3Url }: FileScanRequest,
   s3: S3Client
 ) {
   const callbackUrl =
     `${env.NEXTAUTH_URL}/api/webhooks/scan-result?` +
     new URLSearchParams({
       modelVersionId: modelVersionId.toString(),
-      type: type.toString(),
+      type,
+      format,
       token: env.WEBHOOK_TOKEN,
     });
 
@@ -66,5 +69,6 @@ async function requestFileScan(
 type FileScanRequest = {
   modelVersionId: number;
   type: ModelFileType;
+  format: ModelFileFormat;
   url: string;
 };
