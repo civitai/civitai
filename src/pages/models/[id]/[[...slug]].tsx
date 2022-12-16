@@ -554,7 +554,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                         onClick={() => openContext('report', {})}
                         disabled={!!model.reportStats?.ownershipPending}
                       >
-                        Report Ownership
+                        Report this uses my art
                       </Menu.Item>
                     </LoginRedirect>
                   </>
