@@ -18,7 +18,7 @@ export const reportOwnershipDetailsSchema = z.object({
   email: z.string().email(),
   phone: z.string().optional(),
   comment: z.string().optional(),
-  images: z.string().array().optional(),
+  images: z.string().array(),
   establishInterest: z.boolean().optional(),
 });
 

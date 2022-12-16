@@ -13,10 +13,7 @@ import { trpc } from '~/utils/trpc';
 
 export const schema = reportOwnershipDetailsSchema.extend({
   establishInterest: z.string().transform((x) => (x === 'yes' ? true : false)),
-  images: imageSchema
-    .array()
-    .optional()
-    .transform((images) => images?.map((x) => x.url)),
+  images: imageSchema.array().transform((images) => images?.map((x) => x.url)),
 });
 
 export default createRoutedContext({
@@ -88,6 +85,7 @@ export default createRoutedContext({
               label="Images for comparison"
               withMeta={false}
               onChange={(values) => setUploading(values.some((x) => x.file))}
+              withAsterisk
             />
             <Stack spacing={4}>
               <InputRadioGroup
