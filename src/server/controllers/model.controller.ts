@@ -62,11 +62,11 @@ export const getModelsInfiniteHandler = async ({
       nsfw: true,
       status: true,
       createdAt: true,
+      lastVersionAt: true,
       modelVersions: {
         orderBy: { index: 'asc' },
         take: 1,
         select: {
-          createdAt: true,
           images: {
             orderBy: {
               index: 'asc',
@@ -112,7 +112,6 @@ export const getModelsInfiniteHandler = async ({
           rating: rank[`rating${input.period}`],
         },
         image: modelVersions[0]?.images[0]?.image ?? {},
-        lastVersionCreatedAt: modelVersions[0]?.createdAt,
       };
     }),
   };

@@ -143,21 +143,22 @@ enum ModelStatus {
 }
 
 model Model {
-  id           Int         @id @default(autoincrement())
-  name         String
-  description  String?
-  type         ModelType
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  nsfw         Boolean     @default(false)
-  tosViolation Boolean     @default(false)
-  poi          Boolean     @default(false)
-  userId       Int
-  user         User        @relation(fields: [userId], references: [id])
-  status       ModelStatus @default(Draft)
-  publishedAt  DateTime?
-  fromImport   Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
-  fromImportId Int?        @unique
+  id            Int         @id @default(autoincrement())
+  name          String
+  description   String?
+  type          ModelType
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  lastVersionAt DateTime?
+  nsfw          Boolean     @default(false)
+  tosViolation  Boolean     @default(false)
+  poi           Boolean     @default(false)
+  userId        Int
+  user          User        @relation(fields: [userId], references: [id])
+  status        ModelStatus @default(Draft)
+  publishedAt   DateTime?
+  fromImport    Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImportId  Int?        @unique
 
   modelVersions  ModelVersion[]
   reviews        Review[]

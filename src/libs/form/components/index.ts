@@ -26,6 +26,7 @@ import { FileInputUpload } from '~/components/FileInputUpload/FileInputUpload';
 import { ProfileImageUpload } from '~/components/ProfileImageUpload/ProfileImageUpload';
 import { withWatcher } from '~/libs/form/hoc/withWatcher';
 import { RatingWrapper } from '~/libs/form/components/RatingWrapper';
+import { FileList } from '~/components/Model/ModelForm/FileList';
 
 export * from './Form';
 
@@ -52,6 +53,7 @@ export const InputRTE = withWatcher(withController(RichTextEditor));
 export const InputImageUpload = withWatcher(withController(ImageUpload));
 export const InputFileUpload = withWatcher(withController(FileInputUpload));
 export const InputProfileImageUpload = withWatcher(withController(ProfileImageUpload));
+export const InputFileList = withWatcher(withController(FileList));
 
 export const InputSwitch = withWatcher(
   withController(Switch, ({ field }) => ({
