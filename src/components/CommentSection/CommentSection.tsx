@@ -137,6 +137,7 @@ export default function CommentSection({ comments, modelId, reviewId, parentId }
   const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
     async onMutate({ id, reaction }) {
       const itemId = reviewId ?? parentId ?? 0;
+      // TODO Briant/Manuel: these have to different types now and this is causing issues below...
       const cachedQuery = reviewId
         ? queryUtils.review.getReviewComments
         : queryUtils.comment.getById;
@@ -176,7 +177,8 @@ export default function CommentSection({ comments, modelId, reviewId, parentId }
           return comment;
         }) ?? [];
 
-      cachedQuery.setData({ id: itemId }, (old) => ({ ...old, comments: updatedComments }));
+      // TODO Type fix: What is supposed to be here so this doesn't complain?
+      cachedQuery.setData({ id: itemId }, (old: any) => ({ ...old, comments: updatedComments }));
 
       return { previousItem };
     },
