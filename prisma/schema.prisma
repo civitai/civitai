@@ -331,6 +331,8 @@ enum ReportReason {
   TOSViolation
   NSFW
   Ownership
+  AdminAttention
+  SecurityConcern
 }
 
 model ModelReport {
