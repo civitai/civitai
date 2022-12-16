@@ -166,6 +166,7 @@ model Model {
   metrics        ModelMetric[]
   saves          SavedModel[]
   rank           ModelRank?
+  reportCount    ModelReportCount?
   reports        ModelReport[]
   favoriteModels FavoriteModel[]
   comments       Comment[]
@@ -675,6 +676,27 @@ model ModelRank {
   commentCountYearRank     Int
   commentCountAllTimeRank  Int
   newRank                  Int
+}
+
+/// @view
+model ModelReportCount {
+  model                  Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
+  modelId                Int   @id
+  TOSViolationPending    Int
+  TOSViolationValid      Int
+  TOSViolationInvalid    Int
+  NSFWPending            Int
+  NSFWValid              Int
+  NSFWInvalid            Int
+  OwnershipPending       Int
+  OwnershipValid         Int
+  OwnershipInvalid       Int
+  AdminAttentionPending  Int
+  AdminAttentionValid    Int
+  AdminAttentionInvalid  Int
+  SecurityConcernPending Int
+  SecurityConcernValid   Int
+  SecurityConcernInvalid Int
 }
 
 /// @view
