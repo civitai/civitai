@@ -338,11 +338,7 @@ export function ModelForm({ model }: Props) {
                           />
                         </Grid.Col>
                         <Grid.Col span={12}>
-                          <InputFileList
-                            name={`modelVersions.${index}.files`}
-                            parentIndex={index}
-                            form={form}
-                          />
+                          <FileList parentIndex={index} form={form} />
                         </Grid.Col>
                         <Grid.Col span={12}>
                           <InputImageUpload

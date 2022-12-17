@@ -123,8 +123,8 @@ export const reportModelById = async ({
   userId,
   ...data
 }: ModelReportInput & { userId: number }) => {
-  const nsfw = data.reason === ReportReason.NSFW;
-  const tosViolation = data.reason === ReportReason.TOSViolation;
+  const nsfw = data.reason === ReportReason.NSFW ? true : undefined;
+  const tosViolation = data.reason === ReportReason.TOSViolation ? true : undefined;
 
   return await prisma.$transaction(async (tx) => {
     if (nsfw || tosViolation) {
@@ -132,10 +132,10 @@ export const reportModelById = async ({
     }
     await prisma.modelReport.create({
       data: {
-        status: 'Pending',
+        ...data,
+        status: nsfw ? 'Valid' : 'Pending',
         modelId: id,
         userId,
-        ...data,
       },
     });
   });
