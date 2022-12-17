@@ -77,6 +77,36 @@ model User {
   notificationSettings UserNotificationSettings[]
   webhooks             Webhook[]
   interests            ModelInterest[]
+  engagingUsers        UserEngagement[]           @relation("engagingUsers")
+  engagedUsers         UserEngagement[]           @relation("engagedUsers")
+  metrics              UserMetric[]
+}
+
+enum UserEngagementType {
+  Follow
+  Hide
+}
+
+model UserEngagement {
+  userId       Int
+  user         User               @relation("engagingUsers", fields: [userId], references: [id])
+  targetUserId Int
+  targetUser   User               @relation("engagedUsers", fields: [targetUserId], references: [id])
+  type         UserEngagementType
+  createdAt    DateTime           @default(now())
+
+  @@id([userId, targetUserId])
+}
+
+model UserMetric {
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         Int
+  timeframe      MetricTimeframe
+  followingCount Int             @default(0)
+  followerCount  Int             @default(0)
+  hiddenCount    Int             @default(0)
+
+  @@id([userId, timeframe])
 }
 
 enum LinkType {
@@ -749,6 +779,21 @@ model UserRank {
   ratingCountMonth         Int
   ratingCountYear          Int
   ratingCountAllTime       Int
+  followingCountDay        Int
+  followingCountWeek       Int
+  followingCountMonth      Int
+  followingCountYear       Int
+  followingCountAllTime    Int
+  followerCountDay         Int
+  followerCountWeek        Int
+  followerCountMonth       Int
+  followerCountYear        Int
+  followerCountAllTime     Int
+  hiddenCountDay           Int
+  hiddenCountWeek          Int
+  hiddenCountMonth         Int
+  hiddenCountYear          Int
+  hiddenCountAllTime       Int
   ratingDay                Float
   ratingWeek               Float
   ratingMonth              Float
@@ -769,6 +814,11 @@ model UserRank {
   ratingCountMonthRank     Int
   ratingCountYearRank      Int
   ratingCountAllTimeRank   Int
+  followerCountDayRank     Int
+  followerCountWeekRank    Int
+  followerCountMonthRank   Int
+  followerCountYearRank    Int
+  followerCountAllTimeRank Int
   ratingDayRank            Int
   ratingWeekRank           Int
   ratingMonthRank          Int

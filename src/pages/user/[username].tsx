@@ -12,12 +12,13 @@ import {
   useMantineTheme,
   Card,
 } from '@mantine/core';
-import { IconDownload, IconHeart, IconStar, IconUpload } from '@tabler/icons';
+import { IconDownload, IconHeart, IconStar, IconUpload, IconUsers } from '@tabler/icons';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { GetServerSideProps } from 'next/types';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
 import {
@@ -50,7 +51,10 @@ export default function UserPage() {
 
   const { data: user } = trpc.user.getCreator.useQuery({ username });
 
-  const uploads = user?._count.models;
+  const { models: uploads, engagedUsers: followers } = user?._count ?? {
+    models: 0,
+    engagedUsers: 0,
+  };
   const rank = user?.rank;
 
   return (
@@ -79,10 +83,14 @@ export default function UserPage() {
                     </div>
                   )}
                   <Stack spacing="xs">
-                    <Title order={2}>{user.username}</Title>
+                    <Group position="apart">
+                      <Title order={2}>{user.username}</Title>
+                      <FollowUserButton userId={user.id} size="md" compact />
+                    </Group>
                     {rank && (
                       <Group spacing="xs">
                         <IconBadge
+                          tooltip="Average Rating"
                           sx={{ userSelect: 'none' }}
                           size="lg"
                           icon={
@@ -115,14 +123,25 @@ export default function UserPage() {
                           </Text>
                         </IconBadge>
                         <IconBadge
+                          tooltip="Uploads"
                           icon={<IconUpload size={16} />}
                           color="gray"
                           size="lg"
                           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                         >
-                          <Text size="sm">{abbreviateNumber(uploads ?? 0)}</Text>
+                          <Text size="sm">{abbreviateNumber(uploads)}</Text>
                         </IconBadge>
                         <IconBadge
+                          tooltip="Followers"
+                          icon={<IconUsers size={16} />}
+                          color="gray"
+                          size="lg"
+                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                        >
+                          <Text size="sm">{abbreviateNumber(followers)}</Text>
+                        </IconBadge>
+                        <IconBadge
+                          tooltip="Favorites"
                           icon={<IconHeart size={16} />}
                           color="gray"
                           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
@@ -131,6 +150,7 @@ export default function UserPage() {
                           <Text size="sm">{abbreviateNumber(rank.favoriteCountAllTime)}</Text>
                         </IconBadge>
                         <IconBadge
+                          tooltip="Downloads"
                           icon={<IconDownload size={16} />}
                           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                           size="lg"
@@ -170,7 +190,7 @@ export default function UserPage() {
               <InfiniteModelsFilter />
             </Group>
           </Group>
-          <InfiniteModels />
+          <InfiniteModels showHidden />
         </Stack>
       </Container>
     </>

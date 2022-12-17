@@ -1,7 +1,7 @@
-import { Badge, BadgeProps } from '@mantine/core';
+import { Badge, BadgeProps, Tooltip } from '@mantine/core';
 
-export function IconBadge({ icon, children, ...props }: IconBadgeProps) {
-  return (
+export function IconBadge({ icon, children, tooltip, ...props }: IconBadgeProps) {
+  const badge = (
     <Badge
       styles={{
         leftSection: { lineHeight: 1 },
@@ -15,9 +15,18 @@ export function IconBadge({ icon, children, ...props }: IconBadgeProps) {
       {children}
     </Badge>
   );
+
+  if (!tooltip) return badge;
+
+  return (
+    <Tooltip label={tooltip} position="top" color="dark" withArrow>
+      {badge}
+    </Tooltip>
+  );
 }
 
 type IconBadgeProps = {
   icon: React.ReactNode;
+  tooltip?: string;
   onClick?: React.MouseEventHandler<any> | undefined;
 } & Omit<BadgeProps, 'leftSection'>;

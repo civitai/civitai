@@ -84,6 +84,8 @@ import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { SFW } from '~/components/Media/SFW';
 import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
+import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 
 //TODO - Break model query into multiple queries
 /*
@@ -424,14 +426,17 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     {
       label: 'Uploaded By',
       value: model.user && (
-        <Link href={`/user/${model.user.username}`} passHref>
-          <Text size="sm" variant="link" component="a" style={{ cursor: 'pointer' }}>
-            <Group align="center" spacing={4}>
+        <Group align="center" position="apart" noWrap>
+          <Link href={`/user/${model.user.username}`} passHref>
+            <Group spacing={4}>
               <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
-              {model.user.username}
+              <Text size="sm" variant="link" component="a" style={{ cursor: 'pointer' }}>
+                {model.user.username}
+              </Text>
             </Group>
-          </Text>
-        </Link>
+          </Link>
+          <FollowUserButton userId={model.user.id} size="xs" compact />
+        </Group>
       ),
     },
   ];
@@ -495,6 +500,16 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Menu.Target>
 
               <Menu.Dropdown>
+                {session && isOwner && published ? (
+                  <Menu.Item
+                    icon={<IconBan size={14} stroke={1.5} />}
+                    color="yellow"
+                    onClick={handleUnpublishModel}
+                    disabled={unpublishModelMutation.isLoading}
+                  >
+                    Unpublish
+                  </Menu.Item>
+                ) : null}
                 {session && isOwner ? (
                   <>
                     <Menu.Item
@@ -513,16 +528,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       Edit Model
                     </Menu.Item>
                   </>
-                ) : null}
-                {session && isOwner && published ? (
-                  <Menu.Item
-                    icon={<IconBan size={14} stroke={1.5} />}
-                    color="yellow"
-                    onClick={handleUnpublishModel}
-                    disabled={unpublishModelMutation.isLoading}
-                  >
-                    Unpublish
-                  </Menu.Item>
                 ) : null}
                 {!session || !isOwner || isModerator ? (
                   <>
@@ -559,6 +564,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     </LoginRedirect>
                   </>
                 ) : null}
+                {session ? <HideUserButton user={model.user} /> : null}
               </Menu.Dropdown>
             </Menu>
           </Group>

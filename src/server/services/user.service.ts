@@ -28,6 +28,7 @@ export const getUserCreator = async ({ username }: { username: string }) => {
       _count: {
         select: {
           models: true,
+          engagedUsers: { where: { type: 'Follow' } },
         },
       },
     },
@@ -136,4 +137,64 @@ export const getUserUnreadNotificationsCount = ({ id }: { id: number }) => {
       },
     },
   });
+};
+
+export const toggleFollowUser = async ({
+  userId,
+  targetUserId,
+}: {
+  userId: number;
+  targetUserId: number;
+}) => {
+  const engagement = await prisma.userEngagement.findUnique({
+    where: { userId_targetUserId: { targetUserId, userId } },
+    select: { type: true },
+  });
+
+  if (engagement) {
+    if (engagement.type === 'Follow')
+      await prisma.userEngagement.delete({
+        where: { userId_targetUserId: { userId, targetUserId } },
+      });
+    else if (engagement.type === 'Hide')
+      await prisma.userEngagement.update({
+        where: { userId_targetUserId: { userId, targetUserId } },
+        data: { type: 'Follow' },
+      });
+
+    return;
+  }
+
+  await prisma.userEngagement.create({ data: { type: 'Follow', targetUserId, userId } });
+  return;
+};
+
+export const toggleHideUser = async ({
+  userId,
+  targetUserId,
+}: {
+  userId: number;
+  targetUserId: number;
+}) => {
+  const engagement = await prisma.userEngagement.findUnique({
+    where: { userId_targetUserId: { targetUserId, userId } },
+    select: { type: true },
+  });
+
+  if (engagement) {
+    if (engagement.type === 'Hide')
+      await prisma.userEngagement.delete({
+        where: { userId_targetUserId: { userId, targetUserId } },
+      });
+    else if (engagement.type === 'Follow')
+      await prisma.userEngagement.update({
+        where: { userId_targetUserId: { userId, targetUserId } },
+        data: { type: 'Hide' },
+      });
+
+    return;
+  }
+
+  await prisma.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
+  return;
 };

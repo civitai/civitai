@@ -6,15 +6,16 @@ const METRIC_LAST_UPDATED_KEY = 'last-metrics-update';
 export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async () => {
   // Get the last time this ran from the KeyValue store
   // --------------------------------------
-  const lastUpdate = new Date(
+  const lastUpdateDate = new Date(
     ((
       await prisma.keyValue.findUnique({
         where: { key: METRIC_LAST_UPDATED_KEY },
       })
     )?.value as number) ?? 0
   );
+  const lastUpdate = lastUpdateDate.toISOString();
 
-  const updateMetrics = async (target: 'models' | 'versions') => {
+  const updateModelMetrics = async (target: 'models' | 'versions') => {
     const [tableName, tableId, viewName, viewId] =
       target === 'models'
         ? ['ModelMetric', 'modelId', 'affected_models', 'model_id']
@@ -28,7 +29,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
             CAST(a.details ->> 'modelId' AS INT) AS model_id,
             CAST(a.details ->> 'modelVersionId' AS INT) AS model_version_id
           FROM "UserActivity" a
-          WHERE (a."createdAt" > '${lastUpdate.toISOString()}')
+          WHERE (a."createdAt" > '${lastUpdate}')
           AND (a.activity IN ('ModelDownload'))
 
         ),
@@ -39,7 +40,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
             r."modelId" AS model_id,
             r."modelVersionId" AS model_version_id
           FROM "Review" r
-          WHERE (r."createdAt" > '${lastUpdate.toISOString()}' OR r."updatedAt" > '${lastUpdate.toISOString()}')
+          WHERE (r."createdAt" > '${lastUpdate}' OR r."updatedAt" > '${lastUpdate}')
         ),
         -- Get all favorites that have been created since then
         recent_favorites AS
@@ -47,7 +48,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           SELECT
             "modelId" AS model_id
           FROM "FavoriteModel"
-          WHERE ("createdAt" > '${lastUpdate.toISOString()}')
+          WHERE ("createdAt" > '${lastUpdate}')
         ),
         -- Get all comments that have been created since then
         recent_comments AS
@@ -55,7 +56,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           SELECT
             "modelId" AS model_id
           FROM "Comment"
-          WHERE ("createdAt" > '${lastUpdate.toISOString()}')
+          WHERE ("createdAt" > '${lastUpdate}')
         ),
         -- Get all affected models
         affected_models AS
@@ -248,9 +249,118 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         `);
   };
 
+  const updateUserMetrics = async () => {
+    await prisma.$queryRawUnsafe(`
+      -- Get all user engagements that have happened since then that affect metrics
+      WITH recent_engagements AS
+      (
+        SELECT
+          a."userId" AS user_id
+        FROM "UserEngagement" a
+        WHERE (a."createdAt" > '${lastUpdate}')
+
+        UNION
+
+        SELECT
+          a."targetUserId" AS user_id
+        FROM "UserEngagement" a
+        WHERE (a."createdAt" > '${lastUpdate}')
+      ),
+      -- Get all affected users
+      affected_users AS
+      (
+          SELECT DISTINCT
+              r.user_id
+          FROM recent_engagements r
+          WHERE r.user_id IS NOT NULL
+      )
+
+      -- upsert metrics for all affected users
+      -- perform a one-pass table scan producing all metrics for all affected users
+      INSERT INTO "UserMetric" ("userId", timeframe, "followingCount", "followerCount", "hiddenCount")
+      SELECT
+        m.user_id,
+        tf.timeframe,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN following_count
+          WHEN tf.timeframe = 'Year' THEN year_following_count
+          WHEN tf.timeframe = 'Month' THEN month_following_count
+          WHEN tf.timeframe = 'Week' THEN week_following_count
+          WHEN tf.timeframe = 'Day' THEN day_following_count
+        END AS following_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN follower_count
+          WHEN tf.timeframe = 'Year' THEN year_follower_count
+          WHEN tf.timeframe = 'Month' THEN month_follower_count
+          WHEN tf.timeframe = 'Week' THEN week_follower_count
+          WHEN tf.timeframe = 'Day' THEN day_follower_count
+        END AS follower_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN hidden_count
+          WHEN tf.timeframe = 'Year' THEN year_hidden_count
+          WHEN tf.timeframe = 'Month' THEN month_hidden_count
+          WHEN tf.timeframe = 'Week' THEN week_hidden_count
+          WHEN tf.timeframe = 'Day' THEN day_hidden_count
+        END AS hidden_count
+      FROM
+      (
+        SELECT
+          m.user_id,
+          COALESCE(fs.following_count, 0) AS following_count,
+          COALESCE(fs.year_following_count, 0) AS year_following_count,
+          COALESCE(fs.month_following_count, 0) AS month_following_count,
+          COALESCE(fs.week_following_count, 0) AS week_following_count,
+          COALESCE(fs.day_following_count, 0) AS day_following_count,
+          COALESCE(ft.follower_count, 0) AS follower_count,
+          COALESCE(ft.year_follower_count, 0) AS year_follower_count,
+          COALESCE(ft.month_follower_count, 0) AS month_follower_count,
+          COALESCE(ft.week_follower_count, 0) AS week_follower_count,
+          COALESCE(ft.day_follower_count, 0) AS day_follower_count,
+          COALESCE(ft.hidden_count, 0) AS hidden_count,
+          COALESCE(ft.year_hidden_count, 0) AS year_hidden_count,
+          COALESCE(ft.month_hidden_count, 0) AS month_hidden_count,
+          COALESCE(ft.week_hidden_count, 0) AS week_hidden_count,
+          COALESCE(ft.day_hidden_count, 0) AS day_hidden_count
+        FROM affected_users m
+        LEFT JOIN (
+          SELECT
+            ue."userId" AS user_id,
+            SUM(IIF(ue.type = 'Follow', 1, 0)) AS following_count,
+            SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_following_count,
+            SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_following_count,
+            SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_following_count,
+            SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_following_count
+          FROM "UserEngagement" ue
+          GROUP BY ue."userId"
+        ) fs ON m.user_id = fs.user_id
+        LEFT JOIN (
+          SELECT
+            ue."targetUserId" AS user_id,
+            SUM(IIF(ue.type = 'Follow', 1, 0)) AS follower_count,
+            SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_follower_count,
+            SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_follower_count,
+            SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_follower_count,
+            SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_follower_count,
+            SUM(IIF(ue.type = 'Hide', 1, 0)) AS hidden_count,
+            SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_hidden_count,
+            SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_hidden_count,
+            SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_hidden_count,
+            SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_hidden_count
+          FROM "UserEngagement" ue
+          GROUP BY ue."targetUserId"
+        ) ft ON m.user_id = ft.user_id
+      ) m
+      CROSS JOIN (
+        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+      ) tf
+      ON CONFLICT ("userId", timeframe) DO UPDATE
+        SET "followerCount" = EXCLUDED."followerCount", "followingCount" = EXCLUDED."followingCount", "hiddenCount" = EXCLUDED."hiddenCount";
+    `);
+  };
+
   // If this is the first metric update of the day, reset the day metrics
   // -------------------------------------------------------------------
-  if (lastUpdate.getDate() !== new Date().getDate()) {
+  if (lastUpdateDate.getDate() !== new Date().getDate()) {
     await prisma?.modelMetric.updateMany({
       where: { timeframe: MetricTimeframe.Day },
       data: {
@@ -263,8 +373,9 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
 
   // Update all affected metrics
   // --------------------------------------------
-  await updateMetrics('models');
-  await updateMetrics('versions');
+  await updateModelMetrics('models');
+  await updateModelMetrics('versions');
+  await updateUserMetrics();
 
   // Update the last update time
   // --------------------------------------------

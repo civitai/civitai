@@ -5,6 +5,8 @@ import {
   getUserFavoriteModelByModelId,
   getUserFavoriteModels,
   getUserUnreadNotificationsCount,
+  toggleFollowUser,
+  toggleHideUser,
 } from '~/server/services/user.service';
 import { TRPCError } from '@trpc/server';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
@@ -13,6 +15,7 @@ import {
   UserUpsertInput,
   GetUserByUsernameSchema,
   ToggleFavoriteModelInput,
+  ToggleFollowUserSchema,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
@@ -155,7 +158,10 @@ export const getUserFavoriteModelsHandler = async ({ ctx }: { ctx: DeepNonNullab
 
   try {
     const user = await getUserFavoriteModels({ id });
-    return user?.favoriteModels ?? [];
+
+    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    return user.favoriteModels;
   } catch (error) {
     throwDbError(error);
   }
@@ -205,6 +211,81 @@ export const getCreatorsHandler = async ({ input }: { input: Partial<GetAllSchem
     });
 
     return getPagingData(results, take, page);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getUserFollowingListHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const { id: userId } = ctx.user;
+    const user = await getUserById({
+      id: userId,
+      select: {
+        engagingUsers: {
+          where: { type: 'Follow' },
+          select: { targetUser: { select: { id: true, username: true } } },
+        },
+      },
+    });
+
+    if (!user) throw throwNotFoundError(`No user with id ${userId}`);
+
+    return user.engagingUsers.map(({ targetUser }) => targetUser);
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const toggleFollowUserHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleFollowUserSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    await toggleFollowUser({ ...input, userId });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getUserHiddenListHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const { id: userId } = ctx.user;
+    //TODO CLEAN UP: Can this just be an array of ids?
+    const user = await getUserById({
+      id: userId,
+      select: {
+        engagingUsers: {
+          where: { type: 'Hide' },
+          select: { targetUser: { select: { id: true, username: true } } },
+        },
+      },
+    });
+
+    if (!user) throw throwNotFoundError(`No user with id ${userId}`);
+
+    return user.engagingUsers.map(({ targetUser }) => targetUser);
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const toggleHideUserHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleFollowUserSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    await toggleHideUser({ ...input, userId });
   } catch (error) {
     throw throwDbError(error);
   }
