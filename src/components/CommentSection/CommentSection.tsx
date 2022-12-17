@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Box,
   Button,
+  createStyles,
   Group,
   List,
   Menu,
@@ -34,11 +35,19 @@ import { daysFromNow } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export default function CommentSection({ comments, modelId, reviewId, parentId }: Props) {
+export default function CommentSection({
+  comments,
+  modelId,
+  reviewId,
+  parentId,
+  highlights,
+}: Props) {
   const { data: session } = useSession();
   const router = useRouter();
   const theme = useMantineTheme();
   const queryUtils = trpc.useContext();
+  const { classes } = useStyles();
+  highlights = highlights?.filter((x) => x);
   const form = useForm({
     schema: commentUpsertInput,
     shouldUnregister: false,
@@ -278,9 +287,13 @@ export default function CommentSection({ comments, modelId, reviewId, parentId }
         {comments.map((comment) => {
           const isEditing = editComment?.id === comment.id;
           const isOwner = currentUser?.id === comment.user.id;
+          const isHighlighted = highlights?.includes(comment.id);
 
           return (
-            <List.Item key={comment.id}>
+            <List.Item
+              key={comment.id}
+              className={isHighlighted ? classes.highlightedComment : undefined}
+            >
               <Group align="flex-start" position="apart" noWrap>
                 <Group align="flex-start" sx={{ flex: '1 1 0' }} noWrap>
                   <UserAvatar user={comment.user} size="md" />
@@ -395,4 +408,13 @@ type Props = {
   modelId: number;
   reviewId?: number;
   parentId?: number;
+  highlights?: number[];
 };
+
+const useStyles = createStyles((theme) => ({
+  highlightedComment: {
+    background: theme.fn.rgba(theme.colors.blue[5], 0.2),
+    margin: `-${theme.spacing.xs}px`,
+    padding: `${theme.spacing.xs}px`,
+  },
+}));

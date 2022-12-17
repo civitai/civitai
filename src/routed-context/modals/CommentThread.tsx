@@ -9,8 +9,9 @@ import { trpc } from '~/utils/trpc';
 export default createRoutedContext({
   schema: z.object({
     commentId: z.number(),
+    highlight: z.number().optional(),
   }),
-  Element: ({ context, props: { commentId } }) => {
+  Element: ({ context, props: { commentId, highlight } }) => {
     const { data, isLoading } = trpc.comment.getById.useQuery({ id: commentId });
 
     return (
@@ -39,6 +40,7 @@ export default createRoutedContext({
                 comments={data.comments ?? []}
                 modelId={data.modelId}
                 parentId={data.id}
+                highlights={[highlight]}
               />
             </Stack>
           </Stack>
