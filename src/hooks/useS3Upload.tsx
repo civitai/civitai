@@ -5,7 +5,7 @@ const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
 
 type FileInputProps = {
   onChange: (file: File[] | undefined, event: ChangeEvent<HTMLInputElement>) => void;
-  [index: string]: any; // Indexer to spread props
+  [index: string]: any; // Indexer to spread props //eslint-disable-line
 };
 
 // eslint-disable-next-line react/display-name
@@ -62,7 +62,7 @@ type UploadToS3 = (
 ) => Promise<UploadResult>;
 
 type UseS3UploadTools = {
-  FileInput: (props: any) => ReactElement<HTMLInputElement>;
+  FileInput: (props: any) => ReactElement<HTMLInputElement>; //eslint-disable-line
   openFileDialog: () => void;
   uploadToS3: UploadToS3;
   files: TrackedFile[];
@@ -261,7 +261,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
   };
 
   return {
-    FileInput: (props: any) => <FileInput {...props} ref={ref} style={{ display: 'none' }} />,
+    FileInput: (props: any) => <FileInput {...props} ref={ref} style={{ display: 'none' }} />, //eslint-disable-line
     openFileDialog,
     uploadToS3,
     files,

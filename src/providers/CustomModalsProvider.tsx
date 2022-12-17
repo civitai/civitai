@@ -15,7 +15,7 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
       modals={
         {
           onboarding: DynamicOnboardingModal,
-        } as Record<string, React.FC<ContextModalProps<any>>>
+        } as Record<string, React.FC<ContextModalProps<any>>> //eslint-disable-line
       }
     >
       {children}

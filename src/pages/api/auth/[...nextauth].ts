@@ -52,7 +52,7 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
         token.user = user;
       } else {
         // have to do this to be able to connect to other providers
-        token.sub = Number(token.sub) as any;
+        token.sub = Number(token.sub) as any; //eslint-disable-line
         if (user) {
           token.user = user;
         }

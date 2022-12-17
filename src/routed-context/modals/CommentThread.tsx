@@ -40,7 +40,7 @@ export default createRoutedContext({
                 comments={data.comments ?? []}
                 modelId={data.modelId}
                 parentId={data.id}
-                highlights={[highlight]}
+                highlights={highlight ? [highlight] : undefined}
               />
             </Stack>
           </Stack>

@@ -1,5 +1,5 @@
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { z } from 'zod';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { QS } from '~/utils/qs';
@@ -44,7 +44,7 @@ export function createRoutedContext<TSchema extends z.AnyZodObject>({
           const [pathname, query] = as.split('?');
           // spread out props I don't want to pass to my router replace
           const { modal, ...rest } = router.query;
-          router.replace({ pathname, query: { ...rest, ...(QS.parse(query) as any) } }, as, {
+          router.replace({ pathname, query: { ...rest, ...(QS.parse(query) as any) } }, as, { //eslint-disable-line
             shallow: true,
           });
           return false;

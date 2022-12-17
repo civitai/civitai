@@ -5,7 +5,6 @@ import { ModelSort } from '~/server/common/enums';
 import { QS } from '~/utils/qs';
 import { SetStateAction, useCallback, useMemo } from 'react';
 import { isDefined } from '~/utils/type-guards';
-import _ from 'lodash';
 
 const filterSchema = z.object({
   types: z
@@ -28,7 +27,7 @@ export function useModelFilters() {
   const router = useRouter();
 
   const filters = useMemo(() => {
-    const queryProps = Object.entries(router.query) as [string, any][];
+    const queryProps = Object.entries(router.query) as [string, any][]; //eslint-disable-line
     // TODO Briant: Make filters persist
     // if (queryProps.length === 0)
     //   queryProps = Object.entries(QS.parse(localStorage.getItem('defaultModelFilter') ?? ''));

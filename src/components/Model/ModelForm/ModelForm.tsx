@@ -34,7 +34,6 @@ import { FileList } from '~/components/Model/ModelForm/FileList';
 import {
   Form,
   InputCheckbox,
-  InputFileList,
   InputImageUpload,
   InputMultiSelect,
   InputNumber,

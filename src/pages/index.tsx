@@ -1,19 +1,8 @@
-import {
-  Group,
-  Stack,
-  Container,
-  Title,
-  Alert,
-  ThemeIcon,
-  Text,
-  createStyles,
-} from '@mantine/core';
+import { Group, Stack, Container, Title, Alert, Text, createStyles } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { IconInfoCircle } from '@tabler/icons';
 import { capitalize } from 'lodash';
 import { GetServerSideProps } from 'next';
 import { useSession } from 'next-auth/react';
-import Head from 'next/head';
 import { useRouter } from 'next/router';
 
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';

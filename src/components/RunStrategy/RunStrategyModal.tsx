@@ -2,7 +2,6 @@ import {
   Table,
   Group,
   Badge,
-  Box,
   Loader,
   Alert,
   Stack,
@@ -18,22 +17,11 @@ import {
   Divider,
 } from '@mantine/core';
 import { ContextModalProps } from '@mantine/modals';
-import {
-  IconArrowBigRight,
-  IconArrowRight,
-  IconBan,
-  IconCloud,
-  IconInfoCircle,
-  IconPhoto,
-  IconPlayerPlay,
-  IconRefresh,
-} from '@tabler/icons';
+import { IconArrowBigRight, IconBan, IconInfoCircle, IconPhoto, IconRefresh } from '@tabler/icons';
 import { trpc } from '~/utils/trpc';
 import { QS } from '~/utils/qs';
 
 export default function RunStrategyModal({
-  context,
-  id,
   innerProps,
 }: ContextModalProps<{ modelVersionId: number }>) {
   const theme = useMantineTheme();

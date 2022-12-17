@@ -36,8 +36,9 @@ export function SFW({
   return (
     <SfwCtx.Provider value={{ nsfw: nsfw && shouldBlur, showNsfw, type, id }}>
       <Box
-        sx={(theme) =>
-          ({ position: 'relative', ...(typeof sx === 'function' ? sx(theme) : sx) } as any)
+        sx={
+          (theme) =>
+          ({ position: 'relative', ...(typeof sx === 'function' ? sx(theme) : sx) } as any) //eslint-disable-line
         }
         {...props}
       >

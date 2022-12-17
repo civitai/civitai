@@ -5,7 +5,7 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 
 export const getModelVersion = async <TSelect extends Prisma.ModelVersionSelect>({
   input: { id },
-  user,
+  user,  //eslint-disable-line
   select,
 }: {
   input: GetByIdInput;

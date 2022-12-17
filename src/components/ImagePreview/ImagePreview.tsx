@@ -86,7 +86,7 @@ export function ImagePreview({
   );
 }
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   root: {
     position: 'relative',
     overflow: 'hidden',

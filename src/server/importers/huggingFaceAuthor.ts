@@ -1,7 +1,5 @@
-import { Import, ImportStatus } from '@prisma/client';
+import { ImportStatus } from '@prisma/client';
 import { createImporter } from '~/server/importers/importer';
-import { prisma } from '~/server/db/client';
-import { chunk } from 'lodash';
 
 // Find match for URL like: https://huggingface.co/nitrosocke/Arcane-Diffusion
 const hfAuthorRegex = /^https:\/\/huggingface\.co\/([\w\-]+)$/;
@@ -9,7 +7,7 @@ export const hfAuthorImporter = createImporter(
   (source) => {
     return hfAuthorRegex.test(source);
   },
-  async ({ id, source, userId }) => {
+  async ({ source }) => {
     // Get the author and model name from the URL
     const [, author] = hfAuthorRegex.exec(source) ?? [];
 

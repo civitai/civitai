@@ -21,6 +21,7 @@ export function IconBrandHuggingFace({
       fill={color}
       strokeLinecap="round"
       strokeLinejoin="round"
+      {...props}
     >
       <path
         className="st0"

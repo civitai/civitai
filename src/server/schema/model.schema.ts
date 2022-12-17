@@ -1,4 +1,4 @@
-import { ModelType, ModelStatus, MetricTimeframe, ReportReason } from '@prisma/client';
+import { ModelType, ModelStatus, MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
 
 import { ModelSort } from '~/server/common/enums';

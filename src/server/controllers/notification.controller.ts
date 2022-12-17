@@ -1,6 +1,5 @@
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
-import { getNotificationTypes } from '~/server/notifications/utils.notifications';
 import {
   GetUserNotificationsSchema,
   MarkReadNotificationInput,

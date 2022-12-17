@@ -18,7 +18,7 @@ export const useFilters = create<{
   setPeriod: (period?: MetricTimeframe) => void;
   setTypes: (types?: ModelType[]) => void;
 }>()(
-  immer((set, get) => ({
+  immer((set, get) => ({//eslint-disable-line
     filters: {},
     setSort: (sort) => {
       set((state) => {

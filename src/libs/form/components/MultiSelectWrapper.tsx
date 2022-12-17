@@ -80,7 +80,7 @@ export function MultiSelectWrapper<T extends string | number>({
 export const OverflowScrollArea = forwardRef<HTMLDivElement, ScrollAreaProps>(
   ({ style, ...others }: ScrollAreaProps, ref) => {
     const { limit } = useMultiSelectContext();
-    const itemCount = ((others.children as any)?.props?.children?.props.data ?? []).length;
+    const itemCount = ((others.children as any)?.props?.children?.props.data ?? []).length; //eslint-disable-line
     return (
       <ScrollArea {...others} style={{ width: '100%', ...style }} viewportRef={ref}>
         {others.children}

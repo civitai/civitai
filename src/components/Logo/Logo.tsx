@@ -1,7 +1,7 @@
 import { Box, BoxProps, createStyles } from '@mantine/core';
 
 export function Logo({ ...props }: LogoProps) {
-  const { classes, cx, theme } = useStyles();
+  const { classes } = useStyles();
 
   return (
     <Box className={classes.root} {...props}>

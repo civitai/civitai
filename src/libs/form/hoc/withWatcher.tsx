@@ -7,7 +7,7 @@ type WatcherBaseProps = {
 };
 
 export function withWatcher<
-  TComponentProps extends { onChange?: (...events: any[]) => void } & Record<string, any>
+  TComponentProps extends { onChange?: (...events: any[]) => void } & Record<string, any> //eslint-disable-line
 >(
   BaseComponent:
     | React.ForwardRefExoticComponent<TComponentProps>

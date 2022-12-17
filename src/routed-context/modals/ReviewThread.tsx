@@ -4,7 +4,6 @@ import {
   Modal,
   Center,
   AspectRatio,
-  Badge,
   Grid,
   Text,
   Group,
@@ -130,7 +129,7 @@ export default createRoutedContext({
                         comments={comments?.comments ?? []}
                         modelId={review.modelId}
                         reviewId={review.id}
-                        highlights={[commentId]}
+                        highlights={commentId ? [commentId] : undefined}
                       />
                     )}
                   </Grid.Col>

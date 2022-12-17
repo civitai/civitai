@@ -17,7 +17,7 @@ export const schema = reportOwnershipDetailsSchema.extend({
 });
 
 export default createRoutedContext({
-  Element: ({ context, props }) => {
+  Element: ({ context, props }) => { //eslint-disable-line
     const router = useRouter();
     const modelId = Number(router.query.id);
 

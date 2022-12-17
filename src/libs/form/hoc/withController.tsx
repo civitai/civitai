@@ -9,7 +9,7 @@ import {
 } from 'react-hook-form';
 
 export function withController<
-  TComponentProps extends { onChange?: (...events: any[]) => void } & Record<string, any>,
+  TComponentProps extends { onChange?: (...events: any[]) => void } & Record<string, any>, //eslint-disable-line
   TFieldValues extends FieldValues = FieldValues,
   TName extends FieldPath<TFieldValues> = FieldPath<TFieldValues>
 >(
@@ -35,9 +35,9 @@ export function withController<
         control={control}
         name={name}
         render={({ field, fieldState, formState }) => {
-          const mappedProps = mapper?.({ field, fieldState, formState, props: props as any });
+          const mappedProps = mapper?.({ field, fieldState, formState, props: props as any }); //eslint-disable-line
 
-          const handleChange = (...values: any) => {
+          const handleChange = (...values: any) => { //eslint-disable-line
             props.onChange?.(...values);
             field.onChange(...values);
           };

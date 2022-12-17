@@ -15,9 +15,8 @@ type Props = {
 } & React.ComponentPropsWithoutRef<'div'>;
 
 export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
-  ({ image, children, isPrimary, disabled, id, ...props }, ref) => {
+  ({ image, children, isPrimary, disabled, id, ...props }, ref) => { //eslint-disable-line
     const { classes } = useStyles({ isPrimary });
-    const { classes: imageClasses } = useImageStyles();
     const [ready, setReady] = useState(false);
 
     const sortable = useSortable({ id });
@@ -132,11 +131,3 @@ const useStyles = createStyles(
     },
   })
 );
-
-const useImageStyles = createStyles(() => ({
-  root: {
-    position: 'absolute',
-    left: '50%',
-    transform: 'translateX(-50%)',
-  },
-}));

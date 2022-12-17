@@ -123,7 +123,7 @@ export function FileList({ parentIndex, form, ...wrapperProps }: Props) {
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   parentIndex: number;
-  form: UseFormReturn<any>;
+  form: UseFormReturn<any>; //eslint-disable-line
   onLoading?: (loading: boolean) => void;
 };
 

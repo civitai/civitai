@@ -9,7 +9,7 @@ export function SocialLink({
   setSelected,
 }: {
   link: GetUserLinksResult[0];
-  setSelected: (data: any) => void;
+  setSelected: (data: GetUserLinksResult[0]) => void;
 }) {
   const utils = trpc.useContext();
 

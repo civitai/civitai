@@ -1,4 +1,4 @@
-import { InputWrapperProps, LoadingOverlay, Stack, Text, Input, Paper, Group } from '@mantine/core';
+import { InputWrapperProps, LoadingOverlay, Text, Input, Paper, Group } from '@mantine/core';
 import { Dropzone, FileWithPath, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
 import produce from 'immer';
@@ -16,7 +16,7 @@ export function ProfileImageUpload({ value, onChange, ...props }: SimpleImageUpl
 
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
     const toUpload = droppedFiles.map((file) => ({ url: URL.createObjectURL(file), file }));
-    filesHandlers.setState((current) => [...toUpload.map((x) => ({ url: x.url, file: x.file }))]);
+    filesHandlers.setState((current) => [...toUpload.map((x) => ({ url: x.url, file: x.file }))]);//eslint-disable-line
     await Promise.all(
       toUpload.map(async (image) => {
         const { id } = await uploadToCF(image.file);

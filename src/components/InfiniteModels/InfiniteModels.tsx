@@ -15,7 +15,6 @@ import {
   ThemeIcon,
   useMantineTheme,
   AspectRatio,
-  Button,
   Menu,
   ActionIcon,
 } from '@mantine/core';
@@ -40,7 +39,7 @@ import {
 } from 'masonic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import React, { useEffect, useRef, useMemo, useState, MouseEventHandler } from 'react';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { z } from 'zod';
 

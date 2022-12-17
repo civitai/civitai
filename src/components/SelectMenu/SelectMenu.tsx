@@ -44,7 +44,7 @@ export function SelectMenu<T extends string | number>({
   );
 }
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   target: {
     cursor: 'pointer',
   },

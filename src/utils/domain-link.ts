@@ -17,7 +17,7 @@ const sortArray = (Object.keys(domainLinks) as (string | undefined)[]).concat(un
 
 export function getDomainLinkType(url: string) {
   const { hostname } = new URL(url);
-  const key = Object.entries(domainLinks).find(([key, value]) => value.includes(hostname))?.[0] as
+  const key = Object.entries(domainLinks).find(([key, value]) => value.includes(hostname))?.[0] as  //eslint-disable-line
     | DomainLink
     | undefined;
   return key;

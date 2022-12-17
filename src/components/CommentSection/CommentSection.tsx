@@ -191,7 +191,7 @@ export default function CommentSection({
         }) ?? [];
 
       // TODO: Temp any until we modify the way we fetch comments reactions
-      cachedQuery.setData({ id: itemId }, (old: any) => {
+      cachedQuery.setData({ id: itemId }, (old: any) => { //eslint-disable-line
         if (reviewId) return { ...prevReviewComments, comments: updatedComments };
         else if (parentId) return { ...prevCommentData, comments: updatedComments };
         return old;

@@ -1,5 +1,4 @@
-import { Anchor, Stack, Text, List, MantineSize } from '@mantine/core';
-import Link from 'next/link';
+import { Stack, Text, List, MantineSize } from '@mantine/core';
 import { useRouter } from 'next/router';
 
 import { getNotificationMessage } from '~/server/notifications/utils.notifications';
@@ -34,7 +33,7 @@ export function NotificationList({
             console.log(1);
             router.push(notificationPathname).then(() =>
               router.push(
-                { pathname: notificationPathname, query: QS.parse(query) as any },
+                { pathname: notificationPathname, query: QS.parse(query) as any }, //eslint-disable-line
                 undefined,
                 {
                   shallow: true,

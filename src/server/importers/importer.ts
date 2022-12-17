@@ -1,4 +1,4 @@
-import { Import, ImportStatus } from '@prisma/client';
+import { ImportStatus } from '@prisma/client';
 
 type Importer = {
   canHandle: (source: string) => boolean;
