@@ -76,6 +76,7 @@ model User {
   notifications        Notification[]
   notificationSettings UserNotificationSettings[]
   webhooks             Webhook[]
+  interests            ModelInterest[]
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
   engagedUsers         UserEngagement[]           @relation("engagedUsers")
   metrics              UserMetric[]
@@ -168,6 +169,7 @@ enum ModelStatus {
   Draft
   Published
   Unpublished
+  GatherInterest
 }
 
 model Model {
@@ -194,9 +196,21 @@ model Model {
   metrics        ModelMetric[]
   saves          SavedModel[]
   rank           ModelRank?
+  reportStats    ModelReportStat?
   reports        ModelReport[]
   favoriteModels FavoriteModel[]
   comments       Comment[]
+  interests      ModelInterest[]
+}
+
+model ModelInterest {
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelId   Int
+  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, modelId])
 }
 
 model FavoriteModel {
@@ -348,16 +362,28 @@ model UserActivity {
 enum ReportReason {
   TOSViolation
   NSFW
+  Ownership
+  AdminAttention
+  SecurityConcern
 }
 
 model ModelReport {
-  id        Int          @id @default(autoincrement())
-  modelId   Int
-  model     Model        @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  userId    Int
-  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reason    ReportReason
-  createdAt DateTime     @default(now())
+  id         Int          @id @default(autoincrement())
+  modelId    Int
+  model      Model        @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  userId     Int
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason     ReportReason
+  createdAt  DateTime     @default(now())
+  details    Json?
+  status     ReportStatus
+  reviewedAt DateTime?
+}
+
+enum ReportStatus {
+  Pending
+  Valid
+  Invalid
 }
 
 model Review {
@@ -680,6 +706,27 @@ model ModelRank {
   commentCountYearRank     Int
   commentCountAllTimeRank  Int
   newRank                  Int
+}
+
+/// @view
+model ModelReportStat {
+  model                  Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
+  modelId                Int   @id
+  tosViolationPending    Int
+  tosViolationValid      Int
+  tosViolationInvalid    Int
+  nsfwPending            Int
+  nsfwValid              Int
+  nsfwInvalid            Int
+  ownershipPending       Int
+  ownershipValid         Int
+  ownershipInvalid       Int
+  adminAttentionPending  Int
+  adminAttentionValid    Int
+  adminAttentionInvalid  Int
+  securityConcernPending Int
+  securityConcernValid   Int
+  securityConcernInvalid Int
 }
 
 /// @view

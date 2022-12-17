@@ -2,8 +2,9 @@ import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
-import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
+import { ModelReportInput } from '~/server/schema/report.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   getAllModelsWithVersionsSelect,
@@ -80,6 +81,11 @@ export const getModelsInfiniteHandler = async ({
           },
         },
       },
+      reportStats: {
+        select: {
+          ownershipPending: true,
+        },
+      },
       rank: {
         select: {
           [`downloadCount${input.period}`]: true,
@@ -101,7 +107,7 @@ export const getModelsInfiniteHandler = async ({
 
   return {
     nextCursor,
-    items: items.map(({ modelVersions, ...model }) => {
+    items: items.map(({ modelVersions, reportStats, ...model }) => {
       const rank = model.rank as Record<string, number>;
       return {
         ...model,
@@ -113,6 +119,7 @@ export const getModelsInfiniteHandler = async ({
           rating: rank[`rating${input.period}`],
         },
         image: modelVersions[0]?.images[0]?.image ?? {},
+        pendingClaim: reportStats && reportStats.ownershipPending > 0,
       };
     }),
   };
@@ -214,7 +221,7 @@ export const reportModelHandler = async ({
   input,
   ctx,
 }: {
-  input: ReportInput;
+  input: ModelReportInput;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {

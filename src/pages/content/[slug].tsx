@@ -3,6 +3,7 @@ import matter from 'gray-matter';
 import { GetStaticPaths, GetStaticProps, InferGetStaticPropsType } from 'next';
 import { Container, Title } from '@mantine/core';
 import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
 
 const contentRoot = 'src/static-content';
 export const getStaticPaths: GetStaticPaths = async () => {
@@ -42,7 +43,9 @@ export default function ContentPage({
   return (
     <Container size="md">
       <Title order={1}>{frontmatter.title}</Title>
-      <ReactMarkdown>{content}</ReactMarkdown>
+      <ReactMarkdown rehypePlugins={[rehypeRaw]} className="markdown-content">
+        {content}
+      </ReactMarkdown>
     </Container>
   );
 }

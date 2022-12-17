@@ -3,9 +3,10 @@ import { SessionUser } from 'next-auth';
 
 import { ModelSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
-import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
 import { prepareFile } from '~/utils/file-helpers';
+import { ModelReportInput } from '~/server/schema/report.schema';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   input: { id },
@@ -117,20 +118,27 @@ export const updateModelById = ({ id, data }: { id: number; data: Prisma.ModelUp
   });
 };
 
-export const reportModelById = ({ id, reason, userId }: ReportInput & { userId: number }) => {
-  const data: Prisma.ModelUpdateInput =
-    reason === ReportReason.NSFW ? { nsfw: true } : { tosViolation: true };
+export const reportModelById = async ({
+  id,
+  userId,
+  ...data
+}: ModelReportInput & { userId: number }) => {
+  const nsfw = data.reason === ReportReason.NSFW;
+  const tosViolation = data.reason === ReportReason.TOSViolation;
 
-  return prisma.$transaction([
-    updateModelById({ id, data }),
-    prisma.modelReport.create({
+  return await prisma.$transaction(async (tx) => {
+    if (nsfw || tosViolation) {
+      await tx.model.update({ where: { id }, data: { nsfw, tosViolation } });
+    }
+    await prisma.modelReport.create({
       data: {
+        status: 'Pending',
         modelId: id,
-        reason,
         userId,
+        ...data,
       },
-    }),
-  ]);
+    });
+  });
 };
 
 export const deleteModelById = ({ id }: GetByIdInput) => {

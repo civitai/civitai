@@ -1,4 +1,4 @@
-import { Prisma, ReportReason, ReviewReactions } from '@prisma/client';
+import { Prisma, ReportReason, ReviewReactions, ReportStatus } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
@@ -155,6 +155,7 @@ export const reportReviewById = ({ id, reason, userId }: ReportInput & { userId:
         modelId: id,
         reason,
         userId,
+        status: reason === ReportReason.NSFW ? ReportStatus.Valid : ReportStatus.Pending,
       },
     }),
   ]);
