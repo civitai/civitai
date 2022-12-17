@@ -28,8 +28,9 @@ const TRANSITION_DURATION = 200;
 export default createRoutedContext({
   schema: z.object({
     reviewId: z.number(),
+    commentId: z.number().optional(),
   }),
-  Element: ({ context, props: { reviewId } }) => {
+  Element: ({ context, props: { reviewId, commentId } }) => {
     const { data: review, isLoading: reviewLoading } = trpc.review.getDetail.useQuery({
       id: reviewId,
     });
@@ -129,6 +130,7 @@ export default createRoutedContext({
                         comments={comments?.comments ?? []}
                         modelId={review.modelId}
                         reviewId={review.id}
+                        highlights={[commentId]}
                       />
                     )}
                   </Grid.Col>
