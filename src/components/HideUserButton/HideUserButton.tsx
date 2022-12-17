@@ -1,5 +1,6 @@
 import { Menu, MenuItemProps } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons';
+import { MouseEventHandler } from 'react';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SimpleUser } from '~/server/selectors/user.selector';
@@ -39,10 +40,11 @@ export function HideUserButton({ user, onToggleHide, ...props }: Props) {
     async onSettled() {
       await queryUtils.user.getHiddenUsers.invalidate();
       await queryUtils.user.getCreator.invalidate();
-      await queryUtils.model.getAll.invalidate();
     },
   });
-  const handleHideClick = () => {
+  const handleHideClick: MouseEventHandler<HTMLElement> = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     toggleHideMutation.mutate({ targetUserId: user.id });
     onToggleHide?.();
   };
@@ -51,7 +53,7 @@ export function HideUserButton({ user, onToggleHide, ...props }: Props) {
 
   return (
     <Menu.Item
-      onClick={() => handleHideClick()}
+      onClick={handleHideClick}
       icon={
         alreadyHiding ? <IconEye size={16} stroke={1.5} /> : <IconEyeOff size={16} stroke={1.5} />
       }

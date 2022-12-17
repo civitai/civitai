@@ -17,6 +17,7 @@ import {
   AspectRatio,
   Button,
   Menu,
+  ActionIcon,
 } from '@mantine/core';
 import { ModelStatus } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
@@ -111,7 +112,7 @@ export function InfiniteModels({ columnWidth = 300, showHidden = false }: Infini
       data?.pages
         .flatMap((x) => (!!x ? x.items : []))
         .filter((item) => !hiddenUserIds.includes(item.user.id)) ?? [],
-    [data, hiddenUserIds]
+    [data] //eslint-disable-line
   );
 
   return (
@@ -236,6 +237,11 @@ const MasonryItem = ({
     staleTime: Infinity,
   });
   const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
+  const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
+    cacheTime: Infinity,
+    staleTime: Infinity,
+  });
+  const isHidden = hidden.find(({ id }) => id === user.id);
 
   const onTwoLines = true;
   const height = useMemo(() => {
@@ -366,6 +372,7 @@ const MasonryItem = ({
           label={isNew ? 'New' : 'Updated'}
           color="red"
           styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
+          sx={{ opacity: isHidden ? 0.1 : undefined }}
         >
           <Card
             ref={ref}
@@ -380,28 +387,32 @@ const MasonryItem = ({
           >
             {inView && (
               <>
-                <LoadingOverlay visible={loading} zIndex={10} loaderProps={{ variant: 'dots' }} />
+                <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} />
                 <SFW type="model" id={id} nsfw={nsfw} sx={{ height: '100%', width: '100%' }}>
                   <SFW.ToggleNsfw />
                   <Menu>
                     <Menu.Target>
-                      <Button
-                        variant="subtle"
-                        size="xs"
-                        px={4}
+                      <ActionIcon
+                        variant="transparent"
+                        p={0}
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
                         }}
                         sx={(theme) => ({
+                          width: 30,
                           position: 'absolute',
-                          bottom: 75,
-                          right: theme.spacing.xs,
-                          zIndex: 200,
+                          top: 10,
+                          right: 4,
+                          zIndex: 8,
                         })}
                       >
-                        <IconDotsVertical size={16} />
-                      </Button>
+                        <IconDotsVertical
+                          size={24}
+                          color="#fff"
+                          style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                        />
+                      </ActionIcon>
                     </Menu.Target>
                     <Menu.Dropdown>{currentUser && <HideUserButton user={user} />}</Menu.Dropdown>
                   </Menu>

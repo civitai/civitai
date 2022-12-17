@@ -256,6 +256,7 @@ export const toggleFollowUserHandler = async ({
 export const getUserHiddenListHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
     const { id: userId } = ctx.user;
+    //TODO CLEAN UP: Can this just be an array of ids?
     const user = await getUserById({
       id: userId,
       select: {

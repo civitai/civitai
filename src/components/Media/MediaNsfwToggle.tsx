@@ -22,7 +22,7 @@ export function MediaNsfwToggle({
         userSelect: 'none',
         position: 'absolute',
         top: theme.spacing.xs,
-        left: theme.spacing.md,
+        left: theme.spacing.xs,
         zIndex: 10,
       })}
       {...badgeProps}
