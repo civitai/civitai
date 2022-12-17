@@ -85,7 +85,7 @@ export default function UserPage() {
                   <Stack spacing="xs">
                     <Group position="apart">
                       <Title order={2}>{user.username}</Title>
-                      <FollowUserButton user={user} size="md" compact />
+                      <FollowUserButton userId={user.id} size="md" compact />
                     </Group>
                     {rank && (
                       <Group spacing="xs">

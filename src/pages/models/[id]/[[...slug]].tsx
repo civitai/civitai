@@ -85,6 +85,7 @@ import { SFW } from '~/components/Media/SFW';
 import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
+import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 
 //TODO - Break model query into multiple queries
 /*
@@ -430,14 +431,17 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     {
       label: 'Uploaded By',
       value: model.user && (
-        <Link href={`/user/${model.user.username}`} passHref>
-          <Text size="sm" variant="link" component="a" style={{ cursor: 'pointer' }}>
-            <Group align="center" spacing={4}>
+        <Group align="center" position="apart" noWrap>
+          <Link href={`/user/${model.user.username}`} passHref>
+            <Group spacing={4}>
               <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
-              {model.user.username}
+              <Text size="sm" variant="link" component="a" style={{ cursor: 'pointer' }}>
+                {model.user.username}
+              </Text>
             </Group>
-          </Text>
-        </Link>
+          </Link>
+          <FollowUserButton userId={model.user.id} size="xs" compact />
+        </Group>
       ),
     },
   ];

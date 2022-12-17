@@ -2,17 +2,16 @@ import { Button, ButtonProps } from '@mantine/core';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { SimpleUser } from '~/server/selectors/user.selector';
 import { trpc } from '~/utils/trpc';
 
-export function FollowUserButton({ user, onToggleFollow, ...props }: Props) {
+export function FollowUserButton({ userId, onToggleFollow, ...props }: Props) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
 
   const { data: following = [] } = trpc.user.getFollowingUsers.useQuery(undefined, {
     enabled: !!currentUser,
   });
-  const alreadyFollowing = following.some((user) => user.id == user.id);
+  const alreadyFollowing = following.some((user) => userId == user.id);
 
   const toggleFollowMutation = trpc.user.toggleFollow.useMutation({
     async onMutate() {
@@ -21,7 +20,9 @@ export function FollowUserButton({ user, onToggleFollow, ...props }: Props) {
       const prevFollowing = queryUtils.user.getFollowingUsers.getData();
 
       queryUtils.user.getFollowingUsers.setData(undefined, (old = []) =>
-        alreadyFollowing ? old.filter((item) => item.id !== user.id) : [...old, user]
+        alreadyFollowing
+          ? old.filter((item) => item.id !== userId)
+          : [...old, { id: userId, username: null }]
       );
 
       return { prevFollowing };
@@ -35,11 +36,11 @@ export function FollowUserButton({ user, onToggleFollow, ...props }: Props) {
     },
   });
   const handleFollowClick = () => {
-    toggleFollowMutation.mutate({ targetUserId: user.id });
+    toggleFollowMutation.mutate({ targetUserId: userId });
     onToggleFollow?.();
   };
 
-  if (user.id === currentUser?.id) return null;
+  if (userId === currentUser?.id) return null;
 
   return (
     <LoginRedirect reason="follow-user">
@@ -56,6 +57,6 @@ export function FollowUserButton({ user, onToggleFollow, ...props }: Props) {
 }
 
 type Props = Omit<ButtonProps, 'onClick'> & {
-  user: Omit<SimpleUser, 'name'>;
+  userId: number;
   onToggleFollow?: () => void;
 };
