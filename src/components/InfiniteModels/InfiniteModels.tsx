@@ -40,7 +40,7 @@ import {
 } from 'masonic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import React, { useEffect, useRef, useMemo, useState } from 'react';
+import React, { useEffect, useRef, useMemo, useState, MouseEventHandler } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { z } from 'zod';
 
@@ -400,17 +400,17 @@ const MasonryItem = ({
                       <ActionIcon
                         variant="transparent"
                         p={0}
-                        onClick={(e) => {
+                        onClick={(e: any) => { //eslint-disable-line
                           e.preventDefault();
                           e.stopPropagation();
                         }}
-                        sx={(theme) => ({
+                        sx={{
                           width: 30,
                           position: 'absolute',
                           top: 10,
                           right: 4,
                           zIndex: 8,
-                        })}
+                        }}
                       >
                         <IconDotsVertical
                           size={24}
