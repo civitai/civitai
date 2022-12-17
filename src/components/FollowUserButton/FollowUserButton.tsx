@@ -12,7 +12,7 @@ export function FollowUserButton({ user, onToggleFollow, ...props }: Props) {
   const { data: following = [] } = trpc.user.getFollowingUsers.useQuery(undefined, {
     enabled: !!currentUser,
   });
-  const alreadyFollowing = following.map((user) => user.id).includes(user.id);
+  const alreadyFollowing = following.some((user) => user.id == user.id);
 
   const toggleFollowMutation = trpc.user.toggleFollow.useMutation({
     async onMutate() {

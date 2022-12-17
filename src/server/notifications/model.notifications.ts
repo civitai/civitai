@@ -1,4 +1,5 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { splitUppercase } from '~/utils/string-helpers';
 
 const modelDownloadMilestones = [5, 10, 20, 50, 100, 500] as const;
 const modelLikeMilestones = [100, 500, 1000, 10000, 50000] as const;
@@ -142,6 +143,40 @@ export const modelNotifications = createNotificationProcessor({
         'new-model-version' "type",
         details
       FROM new_model_version
+      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
+      WHERE no."userId" IS NULL;
+    `,
+  },
+  'new-model-from-following': {
+    displayName: 'New Versions of Liked Models',
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} released a new ${splitUppercase(
+        details.modelType
+      ).toLowerCase()}: ${details.modelName}`,
+      url: `/models/${details.modelId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_model_from_following AS (
+        SELECT DISTINCT
+          ue."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'modelId', m."id",
+            'modelName', m.name,
+            'username', u.username,
+            'modelType', m.type
+          ) "details"
+        FROM "Model" m
+        JOIN "User" u ON u.id = m."userId"
+        JOIN "UserEngagement" ue ON ue."targetUserId" = m."userId" AND m."publishedAt" >= ue."createdAt"
+        WHERE m."publishedAt" > '${lastSent}'
+      )
+      INSERT INTO "Notification"("id", "userId", "type", "details")
+      SELECT
+        REPLACE(gen_random_uuid()::text, '-', ''),
+        "ownerId"    "userId",
+        'new-model-from-following' "type",
+        details
+      FROM new_model_from_following
       LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
       WHERE no."userId" IS NULL;
     `,
