@@ -23,12 +23,12 @@ export const getUserCreator = async ({ username }: { username: string }) => {
           ratingCountAllTime: true,
           downloadCountAllTime: true,
           favoriteCountAllTime: true,
+          followerCountAllTime: true,
         },
       },
       _count: {
         select: {
           models: true,
-          engagedUsers: { where: { type: 'Follow' } },
         },
       },
     },

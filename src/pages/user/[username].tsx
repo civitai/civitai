@@ -51,10 +51,7 @@ export default function UserPage() {
 
   const { data: user } = trpc.user.getCreator.useQuery({ username });
 
-  const { models: uploads, engagedUsers: followers } = user?._count ?? {
-    models: 0,
-    engagedUsers: 0,
-  };
+  const { models: uploads } = user?._count ?? { models: 0 };
   const rank = user?.rank;
 
   return (
@@ -138,7 +135,7 @@ export default function UserPage() {
                           size="lg"
                           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                         >
-                          <Text size="sm">{abbreviateNumber(followers)}</Text>
+                          <Text size="sm">{abbreviateNumber(rank.followerCountAllTime)}</Text>
                         </IconBadge>
                         <IconBadge
                           tooltip="Favorites"
