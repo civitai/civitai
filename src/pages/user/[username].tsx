@@ -90,6 +90,7 @@ export default function UserPage() {
                     {rank && (
                       <Group spacing="xs">
                         <IconBadge
+                          tooltip="Average Rating"
                           sx={{ userSelect: 'none' }}
                           size="lg"
                           icon={
@@ -122,6 +123,7 @@ export default function UserPage() {
                           </Text>
                         </IconBadge>
                         <IconBadge
+                          tooltip="Uploads"
                           icon={<IconUpload size={16} />}
                           color="gray"
                           size="lg"
@@ -130,6 +132,7 @@ export default function UserPage() {
                           <Text size="sm">{abbreviateNumber(uploads)}</Text>
                         </IconBadge>
                         <IconBadge
+                          tooltip="Followers"
                           icon={<IconUsers size={16} />}
                           color="gray"
                           size="lg"
@@ -138,6 +141,7 @@ export default function UserPage() {
                           <Text size="sm">{abbreviateNumber(followers)}</Text>
                         </IconBadge>
                         <IconBadge
+                          tooltip="Favorites"
                           icon={<IconHeart size={16} />}
                           color="gray"
                           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
@@ -146,6 +150,7 @@ export default function UserPage() {
                           <Text size="sm">{abbreviateNumber(rank.favoriteCountAllTime)}</Text>
                         </IconBadge>
                         <IconBadge
+                          tooltip="Downloads"
                           icon={<IconDownload size={16} />}
                           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                           size="lg"
