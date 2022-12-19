@@ -1,8 +1,11 @@
 import { Modal, Group, CloseButton, Alert, Center, Loader, Stack, Text } from '@mantine/core';
 import { z } from 'zod';
 import CommentSection from '~/components/CommentSection/CommentSection';
+import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
+import { ReactionDetails } from '~/server/selectors/review.selector';
 import { daysFromNow } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -12,22 +15,75 @@ export default createRoutedContext({
     highlight: z.number().optional(),
   }),
   Element: ({ context, props: { commentId, highlight } }) => {
-    const { data, isLoading } = trpc.comment.getById.useQuery({ id: commentId });
+    const queryUtils = trpc.useContext();
+    const currentUser = useCurrentUser();
+
+    const { data: comment, isLoading: commentLoading } = trpc.comment.getById.useQuery({
+      id: commentId,
+    });
+    const { data: comments = [], isLoading: commentsLoading } =
+      trpc.comment.getCommentsById.useQuery({
+        id: commentId,
+      });
+    const { data: reactions = [] } = trpc.comment.getReactions.useQuery({ commentId });
+
+    const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
+      async onMutate({ id, reaction }) {
+        await queryUtils.comment.getReactions.cancel({ commentId: id });
+
+        const previousReactions = queryUtils.comment.getReactions.getData({ commentId: id }) ?? [];
+        const latestReaction =
+          previousReactions.length > 0
+            ? previousReactions[previousReactions.length - 1]
+            : { id: 0 };
+
+        if (currentUser) {
+          const newReaction: ReactionDetails = {
+            id: latestReaction.id + 1,
+            reaction,
+            user: {
+              id: currentUser.id,
+              name: currentUser.name ?? '',
+              username: currentUser.username ?? '',
+              image: currentUser.image ?? '',
+            },
+          };
+          const reacted = previousReactions.find(
+            (r) => r.reaction === reaction && r.user.id === currentUser.id
+          );
+          queryUtils.comment.getReactions.setData({ commentId: id }, (old = []) =>
+            reacted
+              ? old.filter((oldReaction) => oldReaction.id !== reacted.id)
+              : [...old, newReaction]
+          );
+        }
+
+        return { previousReactions };
+      },
+      onError(_error, _variables, context) {
+        queryUtils.comment.getReactions.setData({ commentId }, context?.previousReactions);
+      },
+      async onSettled() {
+        await queryUtils.comment.getReactions.invalidate({ commentId });
+      },
+    });
+
+    const loading = commentLoading || commentsLoading;
 
     return (
       <Modal opened={context.opened} onClose={context.close} withCloseButton={false} size={800}>
-        {isLoading ? (
+        {loading ? (
           <Center p="xl" style={{ height: 300 }}>
             <Loader />
           </Center>
-        ) : !data ? (
+        ) : !comment ? (
           <Alert>Comment could not be found</Alert>
         ) : (
           <Stack>
             <Group position="apart" align="flex-start">
               <UserAvatar
-                user={data.user}
-                subText={daysFromNow(data.createdAt)}
+                user={comment.user}
+                subText={daysFromNow(comment.createdAt)}
                 size="lg"
                 spacing="xs"
                 withUsername
@@ -35,11 +91,15 @@ export default createRoutedContext({
               <CloseButton onClick={context.close} />
             </Group>
             <Stack spacing="xl">
-              <Text>{data.content}</Text>
+              <Text>{comment.content}</Text>
+              <ReactionPicker
+                reactions={reactions}
+                onSelect={(reaction) => toggleReactionMutation.mutate({ id: commentId, reaction })}
+              />
               <CommentSection
-                comments={data.comments ?? []}
-                modelId={data.modelId}
-                parentId={data.id}
+                comments={comments}
+                modelId={comment.modelId}
+                parentId={comment.id}
                 highlights={highlight ? [highlight] : undefined}
               />
             </Stack>

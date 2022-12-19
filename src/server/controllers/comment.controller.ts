@@ -179,3 +179,44 @@ export const getCommentHandler = async ({ input }: { input: GetByIdInput }) => {
     throw throwDbError(error);
   }
 };
+
+export const getCommentCommentsHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const comment = await getCommentById({
+      ...input,
+      select: {
+        comments: {
+          select: {
+            id: true,
+            content: true,
+            createdAt: true,
+            modelId: true,
+            reactions: { select: getReactionsSelect },
+            user: { select: simpleUserSelect },
+          },
+        },
+      },
+    });
+    if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
+
+    return comment.comments;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getCommentCommentsCountHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const comment = await getCommentById({
+      ...input,
+      select: {
+        _count: { select: { comments: true } },
+      },
+    });
+    if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
+
+    return comment._count.comments;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};

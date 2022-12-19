@@ -4,6 +4,7 @@ import { prisma } from '~/server/db/client';
 import {
   deleteUserReviewHandler,
   getReviewCommentsHandler,
+  getReviewCommentsCountHandler,
   getReviewDetailsHandler,
   getReviewReactionsHandler,
   getReviewsInfiniteHandler,
@@ -50,6 +51,7 @@ export const reviewRouter = router({
   getReactions: publicProcedure.input(getReviewReactionsSchema).query(getReviewReactionsHandler),
   getDetail: publicProcedure.input(getByIdSchema).query(getReviewDetailsHandler),
   getCommentsById: publicProcedure.input(getByIdSchema).query(getReviewCommentsHandler),
+  getCommentsCount: publicProcedure.input(getByIdSchema).query(getReviewCommentsCountHandler),
   upsert: protectedProcedure
     .input(reviewUpsertSchema)
     .use(isOwnerOrModerator)

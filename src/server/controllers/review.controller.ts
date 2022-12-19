@@ -1,5 +1,5 @@
-import { reviewDetailSelect } from './../selectors/review.selector';
 import { TRPCError } from '@trpc/server';
+
 import { Context } from '~/server/createContext';
 import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
 import {
@@ -8,7 +8,11 @@ import {
   ReviewUpsertInput,
   ToggleReacionInput,
 } from '~/server/schema/review.schema';
-import { getAllReviewsSelect, getReactionsSelect } from '~/server/selectors/review.selector';
+import {
+  getAllReviewsSelect,
+  getReactionsSelect,
+  reviewDetailSelect,
+} from '~/server/selectors/review.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import {
   getReviewReactions,
@@ -183,16 +187,32 @@ export const getReviewCommentsHandler = async ({ input }: { input: GetByIdInput 
             id: true,
             content: true,
             createdAt: true,
+            modelId: true,
             reactions: { select: getReactionsSelect },
             user: { select: simpleUserSelect },
           },
         },
       },
     });
-
     if (!review) throw throwNotFoundError(`No review with id ${input.id}`);
 
-    return review;
+    return review.comments;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getReviewCommentsCountHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const review = await getReviewById({
+      ...input,
+      select: {
+        _count: { select: { comments: true } },
+      },
+    });
+    if (!review) throw throwNotFoundError(`No review with id ${input.id}`);
+
+    return review._count.comments;
   } catch (error) {
     throw throwDbError(error);
   }

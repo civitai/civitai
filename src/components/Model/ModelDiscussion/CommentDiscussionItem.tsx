@@ -25,6 +25,7 @@ export function CommentDiscussionItem({ comment }: Props) {
   const isMod = currentUser?.isModerator ?? false;
 
   const { data: reactions = [] } = trpc.comment.getReactions.useQuery({ commentId: comment.id });
+  const { data: commentCount = 0 } = trpc.comment.getCommentsCount.useQuery({ id: comment.id });
 
   const queryUtils = trpc.useContext();
   const deleteMutation = trpc.comment.delete.useMutation({
@@ -210,7 +211,7 @@ export function CommentDiscussionItem({ comment }: Props) {
         >
           <Group spacing={2} noWrap>
             <IconMessageCircle2 size={14} />
-            <Text>{abbreviateNumber(comment._count.comments)}</Text>
+            <Text>{abbreviateNumber(commentCount)}</Text>
           </Group>
         </Button>
       </Group>

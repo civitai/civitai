@@ -39,6 +39,7 @@ export function ReviewDiscussionItem({ review }: Props) {
   const isMod = currentUser?.isModerator ?? false;
 
   const { data: reactions = [] } = trpc.review.getReactions.useQuery({ reviewId: review.id });
+  const { data: commentCount = 0 } = trpc.review.getCommentsCount.useQuery({ id: review.id });
 
   const queryUtils = trpc.useContext();
   const deleteMutation = trpc.review.delete.useMutation({
@@ -271,7 +272,7 @@ export function ReviewDiscussionItem({ review }: Props) {
         >
           <Group spacing={2} noWrap>
             <IconMessageCircle2 size={14} />
-            <Text>{abbreviateNumber(review._count.comments)}</Text>
+            <Text>{abbreviateNumber(commentCount)}</Text>
           </Group>
         </Button>
       </Group>

@@ -15,5 +15,4 @@ export const commentDetailSelect = Prisma.validator<Prisma.CommentSelect>()({
 
 export const getAllCommentsSelect = Prisma.validator<Prisma.CommentSelect>()({
   ...commentDetailSelect,
-  _count: { select: { comments: true } },
 });
