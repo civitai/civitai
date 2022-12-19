@@ -3,7 +3,7 @@
 
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = ["filteredRelationCount", "orderByNulls", "interactiveTransactions"]
+  previewFeatures = ["filteredRelationCount", "orderByNulls"]
 }
 
 datasource db {
@@ -63,16 +63,13 @@ model User {
   models               Model[]
   activities           UserActivity[]
   saves                SavedModel[]
-  modelReports         ModelReport[]
-  reviewReports        ReviewReport[]
-  Import               Import[]
+  imports              Import[]
   keys                 ApiKey[]
   favoriteModels       FavoriteModel[]
   links                UserLink[]
   rank                 UserRank?
   comments             Comment[]
   commentReactions     CommentReaction[]
-  commentReports       CommentReport[]
   notifications        Notification[]
   notificationSettings UserNotificationSettings[]
   webhooks             Webhook[]
@@ -80,6 +77,7 @@ model User {
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
   engagedUsers         UserEngagement[]           @relation("engagedUsers")
   metrics              UserMetric[]
+  reports              Report[]
 }
 
 enum UserEngagementType {
@@ -364,26 +362,53 @@ enum ReportReason {
   NSFW
   Ownership
   AdminAttention
-  SecurityConcern
-}
-
-model ModelReport {
-  id         Int          @id @default(autoincrement())
-  modelId    Int
-  model      Model        @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  userId     Int
-  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reason     ReportReason
-  createdAt  DateTime     @default(now())
-  details    Json?
-  status     ReportStatus
-  reviewedAt DateTime?
+  Claim
 }
 
 enum ReportStatus {
   Pending
   Valid
   Invalid
+}
+
+model Report {
+  id        Int            @id @default(autoincrement())
+  userId    Int
+  user      User           @relation(fields: [userId], references: [id])
+  reason    ReportReason
+  createdAt DateTime
+  details   Json?
+  status    ReportStatus
+  model     ModelReport?
+  review    ReviewReport?
+  comment   CommentReport?
+}
+
+model ModelReport {
+  modelId  Int
+  model    Model  @relation(fields: [modelId], references: [id])
+  reportId Int    @unique
+  report   Report @relation(fields: [reportId], references: [id])
+
+  @@id([reportId, modelId])
+}
+
+model ReviewReport {
+  reviewId Int
+  review   Review @relation(fields: [reviewId], references: [id])
+  reportId Int    @unique
+  report   Report @relation(fields: [reportId], references: [id])
+
+  @@id([reportId, reviewId])
+}
+
+model CommentReport {
+  commentId Int
+  comment   Comment @relation(fields: [commentId], references: [id])
+  reportId  Int     @unique
+  report    Report  @relation(fields: [reportId], references: [id])
+
+  @@id([reportId, commentId])
 }
 
 model Review {
@@ -405,16 +430,6 @@ model Review {
   imagesOnReviews ImagesOnReviews[]
   reports         ReviewReport[]
   comments        Comment[]
-}
-
-model ReviewReport {
-  id        Int          @id @default(autoincrement())
-  reviewId  Int
-  review    Review       @relation(fields: [reviewId], references: [id], onDelete: Cascade)
-  userId    Int
-  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reason    ReportReason
-  createdAt DateTime     @default(now())
 }
 
 enum ReviewReactions {
@@ -599,16 +614,6 @@ model CommentReaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([commentId, userId, reaction])
-}
-
-model CommentReport {
-  id        Int          @id @default(autoincrement())
-  commentId Int
-  comment   Comment      @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  userId    Int
-  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reason    ReportReason
-  createdAt DateTime     @default(now())
 }
 
 model Log {
