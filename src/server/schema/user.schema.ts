@@ -26,3 +26,8 @@ export type ToggleFavoriteModelInput = z.infer<typeof toggleFavoriteModelInput>;
 
 export const toggleFollowUserSchema = z.object({ targetUserId: z.number() });
 export type ToggleFollowUserSchema = z.infer<typeof toggleFollowUserSchema>;
+
+export const getByUsernameSchema = z.object({
+  username: z.string(),
+});
+export type GetByUsernameSchema = z.infer<typeof getByUsernameSchema>;

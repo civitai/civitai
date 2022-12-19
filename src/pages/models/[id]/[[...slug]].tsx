@@ -564,7 +564,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     </LoginRedirect>
                   </>
                 ) : null}
-                {session ? <HideUserButton user={model.user} /> : null}
+                {session ? <HideUserButton as="menu-item" userId={model.user.id} /> : null}
               </Menu.Dropdown>
             </Menu>
           </Group>
