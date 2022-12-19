@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { env } from '~/env/server.mjs';
+import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { prisma } from '~/server/db/client';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
@@ -45,6 +46,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     model,
     files: files.map(({ primary, ...file }) => ({
       ...file,
+      name: getDownloadFilename({ model, modelVersion: version, file }),
       primary: primary === true ? primary : undefined,
       downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
         versionId: version.id,
