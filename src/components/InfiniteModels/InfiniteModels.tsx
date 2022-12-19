@@ -418,7 +418,9 @@ const MasonryItem = ({
                         />
                       </ActionIcon>
                     </Menu.Target>
-                    <Menu.Dropdown>{currentUser && <HideUserButton user={user} />}</Menu.Dropdown>
+                    <Menu.Dropdown>
+                      {currentUser && <HideUserButton as="menu-item" userId={user.id} />}
+                    </Menu.Dropdown>
                   </Menu>
                   <SFW.Placeholder>
                     <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>

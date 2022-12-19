@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetAllUsersInput } from '~/server/schema/user.schema';
+import { GetAllUsersInput, GetByUsernameSchema } from '~/server/schema/user.schema';
 
 export const getUserCreator = async ({ username }: { username: string }) => {
   return prisma.user.findFirst({
@@ -62,6 +62,16 @@ export const getUserById = <TSelect extends Prisma.UserSelect = Prisma.UserSelec
 }: GetByIdInput & { select: TSelect }) => {
   return prisma.user.findUnique({
     where: { id },
+    select,
+  });
+};
+
+export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>({
+  username,
+  select,
+}: GetByUsernameSchema & { select: TSelect }) => {
+  return prisma.user.findUnique({
+    where: { username },
     select,
   });
 };
