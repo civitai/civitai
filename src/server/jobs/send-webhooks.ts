@@ -21,9 +21,9 @@ export const sendWebhooksJob = createJob(
       select: { notifyOn: true, url: true },
     });
 
+    const promises: Promise<unknown>[] = [];
     if (registeredWebhooks.length > 0) {
       // Enqueue webhook requests
-      const promises: Promise<unknown>[] = [];
       for (const [type, { getData }] of Object.entries(webhookProcessors)) {
         const data = await getData?.({ lastSent, prisma });
         if (!data) continue;
@@ -45,11 +45,6 @@ export const sendWebhooksJob = createJob(
           }
         }
       }
-
-      if (promises.length > 0) {
-        await Promise.all(promises);
-        console.log(`sent ${promises.length} webhooks`);
-      }
     }
 
     // Update the last sent time
@@ -59,6 +54,13 @@ export const sendWebhooksJob = createJob(
       create: { key: WEBHOOKS_LAST_SENT_KEY, value: new Date().getTime() },
       update: { value: new Date().getTime() },
     });
+
+    // Send webhooks
+    // --------------------------------------------
+    if (promises.length > 0) {
+      await Promise.all(promises);
+      console.log(`sent ${promises.length} webhooks`);
+    }
   },
   {
     shouldWait: false,

@@ -22,6 +22,7 @@ export async function getMetadata(file: FileWithPath) {
   } else if (exif?.parameters) {
     generationDetails = exif.parameters;
   }
+  console.log(generationDetails);
 
   const metadata = parseMetadata(generationDetails);
   const result = imageMetaSchema.safeParse(metadata);
@@ -31,7 +32,7 @@ export async function getMetadata(file: FileWithPath) {
 // #region [infra]
 function parseMetadata(meta: string): Record<string, unknown> {
   if (!meta) return {};
-
+  meta = meta.replace('UNICODE', '');
   const { parse } = parsers.find((x) => x.canHandle(meta)) ?? {};
   if (!parse) return {};
 
@@ -75,6 +76,7 @@ const automaticSDParser = createMetadataParser(
         ?.split(',')
         .map((x) => x.split(':')) ?? [];
     for (const [k, v] of fineDetails) {
+      if (!v) continue;
       const propKey = automaticSDKeyMap.get(k.trim()) ?? k.trim();
       metadata[propKey] = v.trim();
     }
