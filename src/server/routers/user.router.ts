@@ -4,6 +4,7 @@ import {
   getUserCreatorHandler,
   getUserFollowingListHandler,
   getUserHiddenListHandler,
+  getUserListsHandler,
   toggleFollowUserHandler,
   toggleHideUserHandler,
 } from '~/server/controllers/user.controller';
@@ -20,6 +21,7 @@ import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   getAllUsersInput,
   getUserByUsernameSchema,
+  getByUsernameSchema,
   toggleFavoriteModelInput,
   toggleFollowUserSchema,
   userUpsertSchema,
@@ -35,6 +37,7 @@ export const userRouter = router({
   getHiddenUsers: protectedProcedure.query(getUserHiddenListHandler),
   getCreators: publicProcedure.input(getAllQuerySchema.partial()).query(getCreatorsHandler),
   getNotificationSettings: protectedProcedure.query(getNotificationSettingsHandler),
+  getLists: publicProcedure.input(getByUsernameSchema).query(getUserListsHandler),
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
   update: protectedProcedure.input(userUpsertSchema.partial()).mutation(updateUserHandler),
   delete: protectedProcedure.input(getByIdSchema).mutation(deleteUserHandler),

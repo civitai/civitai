@@ -3,6 +3,7 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
 
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
@@ -31,6 +32,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
               ...version,
               files: files.map(({ primary, ...file }) => ({
                 ...file,
+                name: getDownloadFilename({ model, modelVersion: version, file }),
                 primary: primary === true ? primary : undefined,
                 downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
                   versionId: version.id,

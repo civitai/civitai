@@ -20,11 +20,6 @@ const schema = z.object({
   format: z.nativeEnum(ModelFileFormat).optional(),
 });
 
-// /api/download/train-data/[modelVersionId] => /api/download/models/[modelVersionId]?type=TrainingData
-// /api/download/models/[modelVersionId] (returns primary file)
-// /api/download/models/[modelVersionId]?type=TrainingData
-// /api/download/models/[modelVersionId]?type=Model&format=SafeTensors
-
 export default async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
   const results = schema.safeParse(req.query);
   if (!results.success)
@@ -74,25 +69,33 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
     return res.status(500).json({ error: 'Invalid database operation', cause: error });
   }
 
-  const [modelFile] = modelVersion.files;
-  let fileName = modelFile.name;
-  if (modelVersion.model.type === ModelType.TextualInversion) {
+  const [file] = modelVersion.files;
+  const fileName = getDownloadFilename({ model: modelVersion.model, modelVersion, file });
+  const { url } = await getGetUrl(file.url, { fileName });
+  res.redirect(url);
+}
+
+export function getDownloadFilename({
+  model,
+  modelVersion,
+  file,
+}: {
+  model: { name: string; type: ModelType };
+  modelVersion: { name: string; trainedWords: string[] };
+  file: { name: string; type: ModelFileType };
+}) {
+  let fileName = file.name;
+  if (model.type === ModelType.TextualInversion) {
     const trainedWord = modelVersion.trainedWords[0];
     if (trainedWord) fileName = `${trainedWord}.pt`;
-  } else if (modelFile.type === ModelFileType.TrainingData) {
-    fileName = `${filenamize(modelVersion.model.name)}_${filenamize(
-      modelVersion.name
-    )}_trainingData.zip`;
-  } else if (modelFile.type !== ModelFileType.VAE) {
+  } else if (file.type === ModelFileType.TrainingData) {
+    fileName = `${filenamize(model.name)}_${filenamize(modelVersion.name)}_trainingData.zip`;
+  } else if (file.type !== ModelFileType.VAE) {
     let fileSuffix = '';
     if (fileName.includes('-inpainting')) fileSuffix = '-inpainting';
 
-    const ext = modelFile.name.split('.').pop();
-    fileName = `${filenamize(modelVersion.model.name)}_${filenamize(
-      modelVersion.name
-    )}${fileSuffix}.${ext}`;
+    const ext = file.name.split('.').pop();
+    fileName = `${filenamize(model.name)}_${filenamize(modelVersion.name)}${fileSuffix}.${ext}`;
   }
-
-  const { url } = await getGetUrl(modelFile.url, { fileName });
-  res.redirect(url);
+  return fileName;
 }

@@ -24,11 +24,13 @@ import {
   IconSettings,
   IconUpload,
   IconUserCircle,
+  IconUsers,
 } from '@tabler/icons';
 import { signOut, useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
+
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
@@ -215,6 +217,24 @@ export function AppHeader({ links }: Props) {
               </Group>
             </Anchor>
           </Link>,
+          <Link
+            key="your-following-menu-item"
+            href={`/user/${session.user.username}/following`}
+            passHref
+          >
+            <Anchor
+              className={cx(classes.link, {
+                [classes.linkActive]: router.asPath.includes(`/following`),
+              })}
+              variant="text"
+              onClick={() => closeBurger()}
+            >
+              <Group align="center" spacing="xs">
+                <IconUsers stroke={1.5} />
+                Creators you follow
+              </Group>
+            </Anchor>
+          </Link>,
         ]
       : [
           <Link key="sign-in-menu-item" href={`/login?returnUrl=${router.asPath}`} passHref>
@@ -368,6 +388,13 @@ export function AppHeader({ links }: Props) {
                       href={`/?favorites=true`}
                     >
                       Liked models
+                    </Menu.Item>
+                    <Menu.Item
+                      icon={<IconUsers size={14} stroke={1.5} />}
+                      component={NextLink}
+                      href={`/user/${session.user.username}/following`}
+                    >
+                      Creators you follow
                     </Menu.Item>
                   </>
                 ) : (

@@ -1,4 +1,5 @@
 import { Button, ButtonProps } from '@mantine/core';
+import { MouseEventHandler } from 'react';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -22,7 +23,7 @@ export function FollowUserButton({ userId, onToggleFollow, ...props }: Props) {
       queryUtils.user.getFollowingUsers.setData(undefined, (old = []) =>
         alreadyFollowing
           ? old.filter((item) => item.id !== userId)
-          : [...old, { id: userId, username: null }]
+          : [...old, { id: userId, username: null, image: null, name: null }]
       );
 
       return { prevFollowing };
@@ -33,9 +34,12 @@ export function FollowUserButton({ userId, onToggleFollow, ...props }: Props) {
     async onSettled() {
       await queryUtils.user.getFollowingUsers.invalidate();
       await queryUtils.user.getCreator.invalidate();
+      await queryUtils.user.getLists.invalidate();
     },
   });
-  const handleFollowClick = () => {
+  const handleFollowClick: MouseEventHandler<HTMLButtonElement> = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     toggleFollowMutation.mutate({ targetUserId: userId });
     onToggleFollow?.();
   };
@@ -46,7 +50,7 @@ export function FollowUserButton({ userId, onToggleFollow, ...props }: Props) {
     <LoginRedirect reason="follow-user">
       <Button
         variant={alreadyFollowing ? 'outline' : 'filled'}
-        onClick={() => handleFollowClick()}
+        onClick={handleFollowClick}
         loading={toggleFollowMutation.isLoading}
         {...props}
       >

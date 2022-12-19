@@ -22,7 +22,6 @@ export async function getMetadata(file: FileWithPath) {
   } else if (exif?.parameters) {
     generationDetails = exif.parameters;
   }
-  console.log(generationDetails);
 
   const metadata = parseMetadata(generationDetails);
   const result = imageMetaSchema.safeParse(metadata);
