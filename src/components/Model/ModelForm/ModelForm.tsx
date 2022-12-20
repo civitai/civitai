@@ -14,6 +14,7 @@ import {
 import { showNotification } from '@mantine/notifications';
 import { Model, ModelFileType, ModelStatus, ModelType } from '@prisma/client';
 import {
+  IconAlertTriangle,
   IconArrowDown,
   IconArrowLeft,
   IconArrowUp,
@@ -52,6 +53,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { openConfirmModal } from '@mantine/modals';
 
 const schema = modelSchema.extend({
   tagsOnModels: z.string().array(),
@@ -62,7 +64,7 @@ const schema = modelSchema.extend({
           files: z.preprocess((val) => {
             const list = val as ModelFileInput[];
             return list.filter((file) => file.url);
-          }, z.array(modelFileSchema).min(1, 'At least one model file must be uploaded')),
+          }, z.array(modelFileSchema)),
           skipTrainedWords: z.boolean().default(false),
         })
         .refine((data) => (!data.skipTrainedWords ? data.trainedWords.length > 0 : true), {
@@ -122,7 +124,7 @@ export function ModelForm({ model }: Props) {
       skipTrainedWords: !trainedWords.length,
       // HOTFIX: Casting image.meta type issue with generated prisma schema
       images: images.map(({ image }) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
-      files: files,
+      files: files.length > 0 ? files : [defaultModelFile],
     })) ?? [defaultModelVersion],
   };
 
@@ -149,44 +151,84 @@ export function ModelForm({ model }: Props) {
   const poiNsfw = poi && nsfw;
 
   const handleSubmit = (values: z.infer<typeof schema>) => {
-    const commonOptions = {
-      async onSuccess(results: Model | undefined, input: { id?: number }) {
-        const modelLink = `/models/${results?.id}/${slugit(results?.name ?? '')}`;
+    function runMutation(options = { asDraft: false }) {
+      const { asDraft } = options;
 
-        showNotification({
-          title: 'Your model was saved',
-          message: `Successfully ${editing ? 'updated' : 'created'} the model.`,
-          color: 'teal',
-          icon: <IconCheck size={18} />,
-        });
-        await queryUtils.model.invalidate();
-        await queryUtils.tag.invalidate();
-        router.push({ pathname: modelLink, query: { showNsfw: true } }, modelLink, {
-          shallow: !!input.id,
-        });
-      },
-      onError(error: TRPCClientErrorBase<DefaultErrorShape>) {
-        const message = error.message;
+      const commonOptions = {
+        async onSuccess(results: Model | undefined, input: { id?: number }) {
+          const modelLink = `/models/${results?.id}/${slugit(results?.name ?? '')}`;
 
-        showNotification({
-          title: 'Could not save model',
-          message: `An error occurred while saving the model: ${message}`,
-          color: 'red',
-          icon: <IconX size={18} />,
-        });
-      },
-    };
+          showNotification({
+            title: 'Your model was saved',
+            message: `Successfully ${editing ? 'updated' : 'created'} the model.`,
+            color: 'teal',
+            icon: <IconCheck size={18} />,
+          });
+          await queryUtils.model.invalidate();
+          await queryUtils.tag.invalidate();
+          router.push({ pathname: modelLink, query: { showNsfw: true } }, modelLink, {
+            shallow: !!input.id,
+          });
+        },
+        onError(error: TRPCClientErrorBase<DefaultErrorShape>) {
+          const message = error.message;
 
-    const data: CreateModelProps | UpdateModelProps = {
-      ...values,
-      tagsOnModels: values.tagsOnModels?.map((name) => {
-        const match = tags.find((x) => x.name === name);
-        return match ?? { name };
-      }),
-    };
+          showNotification({
+            title: 'Could not save model',
+            message: `An error occurred while saving the model: ${message}`,
+            color: 'red',
+            icon: <IconX size={18} />,
+          });
+        },
+      };
 
-    if (editing) updateMutation.mutate(data as UpdateModelProps, commonOptions);
-    else addMutation.mutate(data as CreateModelProps, commonOptions);
+      const data: CreateModelProps | UpdateModelProps = {
+        ...values,
+        status: asDraft ? ModelStatus.Draft : values.status,
+        tagsOnModels: values.tagsOnModels?.map((name) => {
+          const match = tags.find((x) => x.name === name);
+          return match ?? { name };
+        }),
+      };
+
+      if (editing) updateMutation.mutate(data as UpdateModelProps, commonOptions);
+      else addMutation.mutate(data as CreateModelProps, commonOptions);
+    }
+
+    const versionWithoutFile = values.modelVersions.find((version) => version.files.length === 0);
+    if (versionWithoutFile) {
+      return openConfirmModal({
+        title: (
+          <Group spacing="xs">
+            <IconAlertTriangle color="gold" />
+            Missing model file
+          </Group>
+        ),
+        centered: true,
+        children: editing ? (
+          `It appears that you've added a model without any files attached to it. Please upload the file or remove that version`
+        ) : (
+          <Text>
+            This model will be saved as{' '}
+            <Text span weight="bold">
+              draft
+            </Text>{' '}
+            because your version{' '}
+            <Text span weight="bold">
+              {`"${versionWithoutFile.name}"`}
+            </Text>{' '}
+            is missing a model file. Do you wish to continue?
+          </Text>
+        ),
+        labels: editing ? { confirm: 'Ok', cancel: 'Cancel' } : undefined,
+        onConfirm() {
+          if (editing) return;
+          runMutation({ asDraft: true });
+        },
+      });
+    }
+
+    runMutation();
   };
 
   return (
