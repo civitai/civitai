@@ -19,7 +19,7 @@ export function ListSearch({ onSearch }: Props) {
   } = useModelFilters();
   const inputRef = useRef<HTMLInputElement>(null);
   const [focused, setFocused] = useState(false);
-  const [value, setValue] = useDebouncedState('', 200);
+  const [value, setValue] = useDebouncedState('', 100);
 
   const form = useForm({
     initialValues: {
@@ -132,6 +132,7 @@ export function ListSearch({ onSearch }: Props) {
               onSearch?.(query);
             }}
             onClear={handleClear}
+            autoComplete="off"
             ref={inputRef}
           />
         </form>
