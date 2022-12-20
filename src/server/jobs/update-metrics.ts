@@ -21,7 +21,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         ? ['ModelMetric', 'modelId', 'affected_models', 'model_id']
         : ['ModelVersionMetric', 'modelVersionId', 'affected_versions', 'model_version_id'];
 
-    await prisma.$queryRawUnsafe(`
+    await prisma.$executeRawUnsafe(`
         -- Get all user activities that have happened since then that affect metrics
         WITH recent_activities AS
         (
@@ -214,6 +214,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
                 MAX(r.rating) rating,
                 MAX(r."createdAt") AS created_at
               FROM "Review" r
+              JOIN "Model" m ON m.id = r."modelId" AND m."userId" != r."userId"
               GROUP BY r."userId", r."${tableId}"
             ) r
             GROUP BY r.${viewId}
@@ -250,7 +251,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
   };
 
   const updateUserMetrics = async () => {
-    await prisma.$queryRawUnsafe(`
+    await prisma.$executeRawUnsafe(`
       -- Get all user engagements that have happened since then that affect metrics
       WITH recent_engagements AS
       (
@@ -358,6 +359,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
     `);
   };
 
+  const refreshModelRank = async () =>
+    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "ModelRank"');
+
+  const refreshUserRank = async () =>
+    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "UserRank"');
+
   // If this is the first metric update of the day, reset the day metrics
   // -------------------------------------------------------------------
   if (lastUpdateDate.getDate() !== new Date().getDate()) {
@@ -375,7 +382,9 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
   // --------------------------------------------
   await updateModelMetrics('models');
   await updateModelMetrics('versions');
+  await refreshModelRank();
   await updateUserMetrics();
+  await refreshUserRank();
 
   // Update the last update time
   // --------------------------------------------
