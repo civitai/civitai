@@ -8,11 +8,9 @@ import {
 } from '~/server/schema/comment.schema';
 import { ToggleReacionInput } from '~/server/schema/review.schema';
 import { commentDetailSelect, getAllCommentsSelect } from '~/server/selectors/comment.selector';
-import { getReactionsSelect } from '~/server/selectors/review.selector';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
 import {
   createOrUpdateComment,
-  deleteUserCommentById,
+  deleteCommentById,
   getCommentById,
   getCommentReactions,
   getComments,
@@ -95,16 +93,9 @@ export const reportCommentHandler = async ({
   }
 };
 
-export const deleteUserCommentHandler = async ({
-  ctx,
-  input,
-}: {
-  ctx: DeepNonNullable<Context>;
-  input: GetByIdInput;
-}) => {
+export const deleteUserCommentHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
-    const deleted = await deleteUserCommentById({ ...input, userId: ctx.user.id });
-
+    const deleted = await deleteCommentById({ ...input });
     if (!deleted) {
       throw throwNotFoundError(`No comment with id ${input.id}`);
     }
@@ -161,17 +152,10 @@ export const getCommentHandler = async ({ input }: { input: GetByIdInput }) => {
       select: {
         ...commentDetailSelect,
         comments: {
-          select: {
-            id: true,
-            content: true,
-            createdAt: true,
-            reactions: { select: getReactionsSelect },
-            user: { select: simpleUserSelect },
-          },
+          select: commentDetailSelect,
         },
       },
     });
-
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
 
     return comment;
@@ -186,14 +170,7 @@ export const getCommentCommentsHandler = async ({ input }: { input: GetByIdInput
       ...input,
       select: {
         comments: {
-          select: {
-            id: true,
-            content: true,
-            createdAt: true,
-            modelId: true,
-            reactions: { select: getReactionsSelect },
-            user: { select: simpleUserSelect },
-          },
+          select: commentDetailSelect,
         },
       },
     });

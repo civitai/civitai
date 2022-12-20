@@ -9,16 +9,11 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ReactionDetails } from '~/server/selectors/review.selector';
+import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { CommentGetCommentsById } from '~/types/router';
 import { daysFromNow } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-
-type Props = {
-  comment: CommentGetCommentsById[number];
-  modelId: number;
-};
 
 export function CommentSectionItem({ comment, modelId }: Props) {
   const currentUser = useCurrentUser();
@@ -26,14 +21,15 @@ export function CommentSectionItem({ comment, modelId }: Props) {
 
   const [editComment, setEditComment] = useState<Props['comment'] | null>(null);
 
-  const { data: reactions = [] } = trpc.comment.getReactions.useQuery({ commentId: comment.id });
+  const { data: reactions = [] } = trpc.comment.getReactions.useQuery(
+    { commentId: comment.id },
+    { initialData: comment.reactions }
+  );
 
   const saveCommentMutation = trpc.comment.upsert.useMutation({
     async onSuccess() {
       await queryUtils.review.getCommentsById.invalidate();
       await queryUtils.comment.getCommentsById.invalidate();
-      await queryUtils.review.getCommentsCount.invalidate();
-      await queryUtils.comment.getCommentsCount.invalidate();
       setEditComment(null);
     },
     onError(error) {
@@ -45,13 +41,43 @@ export function CommentSectionItem({ comment, modelId }: Props) {
   });
 
   const deleteMutation = trpc.comment.delete.useMutation({
+    async onMutate() {
+      await queryUtils.review.getCommentsCount.cancel();
+      await queryUtils.comment.getCommentsCount.cancel();
+      const { reviewId, parentId } = comment;
+
+      if (reviewId) {
+        const prevCount = queryUtils.review.getCommentsCount.getData({ id: reviewId }) ?? 0;
+        queryUtils.review.getCommentsCount.setData({ id: reviewId }, (old = 0) =>
+          old > 0 ? old - 1 : old
+        );
+
+        return { prevCount };
+      }
+
+      if (parentId) {
+        const prevCount = queryUtils.comment.getCommentsCount.getData({ id: parentId }) ?? 0;
+        queryUtils.comment.getCommentsCount.setData({ id: parentId }, (old = 0) =>
+          old > 0 ? old - 1 : old
+        );
+
+        return { prevCount };
+      }
+
+      return {};
+    },
     async onSuccess() {
       await queryUtils.review.getCommentsById.invalidate();
       await queryUtils.comment.getCommentsById.invalidate();
-      await queryUtils.review.getCommentsCount.invalidate();
-      await queryUtils.comment.getCommentsCount.invalidate();
     },
-    onError(error) {
+    onError(error, _variables, context) {
+      const { reviewId, parentId } = comment;
+
+      if (reviewId)
+        queryUtils.review.getCommentsCount.setData({ id: reviewId }, context?.prevCount);
+      if (parentId)
+        queryUtils.comment.getCommentsCount.setData({ id: parentId }, context?.prevCount);
+
       showErrorNotification({
         error: new Error(error.message),
         title: 'Could not delete comment',
@@ -147,9 +173,6 @@ export function CommentSectionItem({ comment, modelId }: Props) {
         { commentId: comment.id },
         context?.previousReactions
       );
-    },
-    async onSettled() {
-      await queryUtils.comment.getReactions.invalidate({ commentId: comment.id });
     },
   });
 
@@ -253,3 +276,8 @@ export function CommentSectionItem({ comment, modelId }: Props) {
     </Group>
   );
 }
+
+type Props = {
+  comment: CommentGetCommentsById[number];
+  modelId: number;
+};

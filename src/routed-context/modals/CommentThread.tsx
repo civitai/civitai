@@ -5,7 +5,7 @@ import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
-import { ReactionDetails } from '~/server/selectors/review.selector';
+import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { daysFromNow } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -25,7 +25,10 @@ export default createRoutedContext({
       trpc.comment.getCommentsById.useQuery({
         id: commentId,
       });
-    const { data: reactions = [] } = trpc.comment.getReactions.useQuery({ commentId });
+    const { data: reactions = [] } = trpc.comment.getReactions.useQuery(
+      { commentId },
+      { enabled: !!comment, initialData: comment?.reactions ?? [] }
+    );
 
     const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
       async onMutate({ id, reaction }) {
@@ -62,9 +65,6 @@ export default createRoutedContext({
       },
       onError(_error, _variables, context) {
         queryUtils.comment.getReactions.setData({ commentId }, context?.previousReactions);
-      },
-      async onSettled() {
-        await queryUtils.comment.getReactions.invalidate({ commentId });
       },
     });
 

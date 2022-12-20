@@ -9,7 +9,7 @@ import {
   GetCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
 import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
-import { getReactionsSelect } from '~/server/selectors/review.selector';
+import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 
 export const getComments = async <TSelect extends Prisma.CommentSelect>({
   input: { limit, page, cursor, modelId, userId, filterBy, sort },
@@ -112,9 +112,9 @@ export const reportCommentById = ({ id, reason, userId }: ReportInput & { userId
   ]);
 };
 
-export const deleteUserCommentById = ({ id, userId }: GetByIdInput & { userId: number }) => {
-  return prisma.comment.deleteMany({
-    where: { AND: { id, userId } },
+export const deleteCommentById = ({ id }: GetByIdInput) => {
+  return prisma.comment.delete({
+    where: { id },
   });
 };
 

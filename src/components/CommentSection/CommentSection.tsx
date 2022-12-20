@@ -49,16 +49,39 @@ export default function CommentSection({
   const [showCommentActions, setShowCommentActions] = useState(false);
 
   const saveCommentMutation = trpc.comment.upsert.useMutation({
+    async onMutate() {
+      await queryUtils.review.getCommentsCount.cancel();
+      await queryUtils.comment.getCommentsCount.cancel();
+
+      if (reviewId) {
+        const prevCount = queryUtils.review.getCommentsCount.getData({ id: reviewId }) ?? 0;
+        queryUtils.review.getCommentsCount.setData({ id: reviewId }, (old = 0) => old + 1);
+
+        return { prevCount };
+      }
+
+      if (parentId) {
+        const prevCount = queryUtils.comment.getCommentsCount.getData({ id: parentId }) ?? 0;
+        queryUtils.comment.getCommentsCount.setData({ id: parentId }, (old = 0) => old + 1);
+
+        return { prevCount };
+      }
+
+      return {};
+    },
     async onSuccess() {
       await queryUtils.review.getCommentsById.invalidate();
       await queryUtils.comment.getCommentsById.invalidate();
-      await queryUtils.review.getCommentsCount.invalidate();
-      await queryUtils.comment.getCommentsCount.invalidate();
 
       setShowCommentActions(false);
       form.reset();
     },
-    onError(error) {
+    onError(error, _variables, context) {
+      if (reviewId)
+        queryUtils.review.getCommentsCount.setData({ id: reviewId }, context?.prevCount);
+      if (parentId)
+        queryUtils.comment.getCommentsCount.setData({ id: parentId }, context?.prevCount);
+
       showErrorNotification({
         error: new Error(error.message),
         title: 'Could not save comment',

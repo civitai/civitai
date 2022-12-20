@@ -24,7 +24,7 @@ import { SFW } from '~/components/Media/SFW';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
-import { ReactionDetails } from '~/server/selectors/review.selector';
+import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { ReviewGetAllItem } from '~/types/router';
 import { daysFromNow } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -38,13 +38,19 @@ export function ReviewDiscussionItem({ review }: Props) {
   const isOwner = currentUser?.id === review.user.id;
   const isMod = currentUser?.isModerator ?? false;
 
-  const { data: reactions = [] } = trpc.review.getReactions.useQuery({ reviewId: review.id });
-  const { data: commentCount = 0 } = trpc.review.getCommentsCount.useQuery({ id: review.id });
+  const { data: reactions = [] } = trpc.review.getReactions.useQuery(
+    { reviewId: review.id },
+    { initialData: review.reactions }
+  );
+  const { data: commentCount = 0 } = trpc.review.getCommentsCount.useQuery(
+    { id: review.id },
+    { initialData: review._count.comments }
+  );
 
   const queryUtils = trpc.useContext();
   const deleteMutation = trpc.review.delete.useMutation({
     async onSuccess() {
-      await queryUtils.review.getAll.invalidate({ modelId: review.modelId });
+      await queryUtils.review.getAll.invalidate();
       closeAllModals();
     },
     onError(error) {
@@ -84,7 +90,7 @@ export function ReviewDiscussionItem({ review }: Props) {
       });
     },
     async onSuccess() {
-      await queryUtils.review.getAll.invalidate({ modelId: review.modelId });
+      await queryUtils.review.getAll.invalidate();
       showSuccessNotification({
         title: 'Review reported',
         message: 'Your request has been received',
@@ -141,9 +147,6 @@ export function ReviewDiscussionItem({ review }: Props) {
         { reviewId: variables.id },
         context?.previousReactions
       );
-    },
-    async onSettled() {
-      await queryUtils.review.getReactions.invalidate({ reviewId: review.id });
     },
   });
   const handleReactionClick = (reaction: ReviewReactions) => {

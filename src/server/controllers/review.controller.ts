@@ -8,18 +8,14 @@ import {
   ReviewUpsertInput,
   ToggleReacionInput,
 } from '~/server/schema/review.schema';
-import {
-  getAllReviewsSelect,
-  getReactionsSelect,
-  reviewDetailSelect,
-} from '~/server/selectors/review.selector';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { commentDetailSelect } from '~/server/selectors/comment.selector';
+import { getAllReviewsSelect, reviewDetailSelect } from '~/server/selectors/review.selector';
 import {
   getReviewReactions,
   getReviews,
   createOrUpdateReview,
   reportReviewById,
-  deleteUserReviewById,
+  deleteReviewById,
   getUserReactionByReviewId,
   updateReviewById,
   getReviewById,
@@ -80,7 +76,7 @@ export const upsertReviewHandler = async ({
 
     return review;
   } catch (error) {
-    throwDbError(error);
+    throw throwDbError(error);
   }
 };
 
@@ -98,16 +94,9 @@ export const reportReviewHandler = async ({
   }
 };
 
-export const deleteUserReviewHandler = async ({
-  ctx,
-  input,
-}: {
-  ctx: DeepNonNullable<Context>;
-  input: GetByIdInput;
-}) => {
+export const deleteUserReviewHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
-    const deleted = await deleteUserReviewById({ ...input, userId: ctx.user.id });
-
+    const deleted = await deleteReviewById({ ...input });
     if (!deleted) {
       throw throwNotFoundError(`No review with id ${input.id}`);
     }
@@ -183,14 +172,7 @@ export const getReviewCommentsHandler = async ({ input }: { input: GetByIdInput 
       ...input,
       select: {
         comments: {
-          select: {
-            id: true,
-            content: true,
-            createdAt: true,
-            modelId: true,
-            reactions: { select: getReactionsSelect },
-            user: { select: simpleUserSelect },
-          },
+          select: commentDetailSelect,
         },
       },
     });

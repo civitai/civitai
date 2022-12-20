@@ -11,7 +11,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
-import { ReactionDetails } from '~/server/selectors/review.selector';
+import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { CommentGetAllItem } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -24,13 +24,19 @@ export function CommentDiscussionItem({ comment }: Props) {
   const isOwner = currentUser?.id === comment.user.id;
   const isMod = currentUser?.isModerator ?? false;
 
-  const { data: reactions = [] } = trpc.comment.getReactions.useQuery({ commentId: comment.id });
-  const { data: commentCount = 0 } = trpc.comment.getCommentsCount.useQuery({ id: comment.id });
+  const { data: reactions = [] } = trpc.comment.getReactions.useQuery(
+    { commentId: comment.id },
+    { initialData: comment.reactions }
+  );
+  const { data: commentCount = 0 } = trpc.comment.getCommentsCount.useQuery(
+    { id: comment.id },
+    { initialData: comment._count.comments }
+  );
 
   const queryUtils = trpc.useContext();
   const deleteMutation = trpc.comment.delete.useMutation({
     async onSuccess() {
-      await queryUtils.comment.getAll.invalidate({ modelId: comment.modelId });
+      await queryUtils.comment.getAll.invalidate();
       closeAllModals();
     },
     onError(error) {
@@ -70,7 +76,7 @@ export function CommentDiscussionItem({ comment }: Props) {
       });
     },
     async onSuccess() {
-      await queryUtils.comment.getAll.invalidate({ modelId: comment.modelId });
+      await queryUtils.comment.getAll.invalidate();
       showSuccessNotification({
         title: 'Comment reported',
         message: 'Your request has been received',
@@ -127,9 +133,6 @@ export function CommentDiscussionItem({ comment }: Props) {
         { commentId: variables.id },
         context?.previousReactions
       );
-    },
-    async onSettled() {
-      await queryUtils.comment.getReactions.invalidate({ commentId: comment.id });
     },
   });
   const handleReactionClick = (reaction: ReviewReactions) => {
