@@ -1,5 +1,15 @@
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { Stack, Text, Code, Popover, PopoverProps, Group, SimpleGrid, Button } from '@mantine/core';
+import {
+  Stack,
+  Text,
+  Code,
+  Popover,
+  PopoverProps,
+  Group,
+  SimpleGrid,
+  Button,
+  Badge,
+} from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import { IconCheck, IconCopy } from '@tabler/icons';
 import { useMemo } from 'react';
@@ -31,7 +41,7 @@ export function ImageMeta({ meta }: Props) {
     for (const key of Object.keys(labelDictionary)) {
       const value = meta[key]?.toString();
       if (!value) continue;
-      (value.length > 15 ? long : short).push({
+      (value.length > 15 || key === 'prompt' ? long : short).push({
         label: labelDictionary[key],
         value,
       });
@@ -39,14 +49,26 @@ export function ImageMeta({ meta }: Props) {
     return { long, short };
   }, [meta]);
 
+  const type = useMemo(() => {
+    if (meta['Mask blur'] != null) return 'inpainting';
+    if (meta['Denoise strength'] != null && !meta['First pass strength']) return 'img2img';
+    if (meta['Denoise strength'] != null && meta['First pass strength']) return 'txt2img + hi-res';
+    return 'txt2img';
+  }, [meta]);
+
   return (
     <Stack spacing="xs">
       {metas.long.map(({ label, value }) => (
         <Stack key={label} spacing={0}>
           <Text size="sm" weight={500}>
-            {label}
+            {label}{' '}
+            {label === 'Prompt' && (
+              <Badge size="xs" radius="sm" ml={4}>
+                {type}
+              </Badge>
+            )}
           </Text>
-          <Code block sx={{ whiteSpace: 'normal' }}>
+          <Code block sx={{ whiteSpace: 'normal', maxHeight: 150, overflowY: 'auto' }}>
             {value}
           </Code>
         </Stack>
@@ -57,7 +79,9 @@ export function ImageMeta({ meta }: Props) {
             <Text size="sm" mr="xs" weight={500}>
               {label}
             </Text>
-            <Code sx={{ flex: '1', textAlign: 'right' }}>{value}</Code>
+            <Code sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+              {value}
+            </Code>
           </Group>
         ))}
       </SimpleGrid>
