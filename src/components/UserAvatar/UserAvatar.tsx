@@ -61,7 +61,7 @@ export function UserAvatar({
 }
 
 type Props = {
-  user?: Partial<User>;
+  user?: Partial<User> | null;
   withUsername?: boolean;
   withLink?: boolean;
   avatarProps?: AvatarProps;

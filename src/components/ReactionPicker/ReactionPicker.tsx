@@ -5,7 +5,7 @@ import groupBy from 'lodash/groupBy';
 import { Session } from 'next-auth';
 import { useSession } from 'next-auth/react';
 import { createContext, useContext, useMemo } from 'react';
-import { ReactionDetails } from '~/server/selectors/review.selector';
+import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { ReviewGetReactions } from '~/types/router';
 import { toStringList } from '~/utils/array-helpers';
 

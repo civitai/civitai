@@ -2,6 +2,8 @@ import { TRPCError } from '@trpc/server';
 
 import {
   deleteUserCommentHandler,
+  getCommentCommentsHandler,
+  getCommentCommentsCountHandler,
   getCommentHandler,
   getCommentReactionsHandler,
   getCommentsInfiniteHandler,
@@ -48,6 +50,8 @@ export const commentRouter = router({
   getAll: publicProcedure.input(getAllCommentsSchema).query(getCommentsInfiniteHandler),
   getById: publicProcedure.input(getByIdSchema).query(getCommentHandler),
   getReactions: publicProcedure.input(getCommentReactionsSchema).query(getCommentReactionsHandler),
+  getCommentsById: publicProcedure.input(getByIdSchema).query(getCommentCommentsHandler),
+  getCommentsCount: publicProcedure.input(getByIdSchema).query(getCommentCommentsCountHandler),
   upsert: protectedProcedure
     .input(commentUpsertInput)
     .use(isOwnerOrModerator)

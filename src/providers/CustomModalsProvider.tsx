@@ -17,6 +17,8 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
           onboarding: DynamicOnboardingModal,
         } as Record<string, React.FC<ContextModalProps<any>>> //eslint-disable-line
       }
+      // Setting zIndex so confirm modals popup above everything else
+      modalProps={{ zIndex: 300 }}
     >
       {children}
     </ModalsProvider>
