@@ -3,7 +3,7 @@
 
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = ["filteredRelationCount", "orderByNulls"]
+  previewFeatures = ["filteredRelationCount", "orderByNulls", "interactiveTransactions"]
 }
 
 datasource db {
@@ -376,7 +376,7 @@ model Report {
   userId    Int
   user      User           @relation(fields: [userId], references: [id])
   reason    ReportReason
-  createdAt DateTime
+  createdAt DateTime       @default(now())
   details   Json?
   status    ReportStatus
   model     ModelReport?

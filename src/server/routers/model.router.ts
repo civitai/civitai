@@ -20,7 +20,7 @@ import { middleware, protectedProcedure, publicProcedure, router } from '~/serve
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { checkFileExists, getS3Client } from '~/utils/s3-utils';
 import { prepareFile } from '~/utils/file-helpers';
-import { modelReportInputSchema } from '~/server/schema/report.schema';
+import { reportInputSchema } from '~/server/schema/report.schema';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -87,7 +87,7 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteModelHandler),
-  report: protectedProcedure.input(modelReportInputSchema).mutation(reportModelHandler),
+  report: protectedProcedure.input(reportInputSchema).mutation(reportModelHandler),
   unpublish: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)

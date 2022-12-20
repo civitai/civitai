@@ -1,5 +1,11 @@
-import { ReportReason, ReportStatus } from '@prisma/client';
+import { ReportReason } from '@prisma/client';
 import { z } from 'zod';
+
+export enum ReportEntity {
+  Model,
+  Review,
+  Comment,
+}
 
 // #region [report reason detail schemas]
 const baseDetailSchema = z.object({ comment: z.string().optional() });
@@ -29,24 +35,22 @@ export const reportAdminAttentionDetailsSchema = baseDetailSchema.extend({
 
 // #region [report reason schemas]
 const baseSchema = z.object({
+  type: z.nativeEnum(ReportEntity),
   id: z.number(),
   details: baseDetailSchema,
 });
 
 export const reportNsfwSchema = baseSchema.extend({
   reason: z.literal(ReportReason.NSFW),
-  status: z.nativeEnum(ReportStatus).default(ReportStatus.Valid), // TODO - remove
 });
 
 export const reportTOSViolationSchema = baseSchema.extend({
   reason: z.literal(ReportReason.TOSViolation),
-  status: z.nativeEnum(ReportStatus).default(ReportStatus.Pending), // TODO - remove
   details: reportTosViolationDetailsSchema,
 });
 
 export const reportOwnershipSchema = baseSchema.extend({
   reason: z.literal(ReportReason.Ownership),
-  status: z.nativeEnum(ReportStatus).default(ReportStatus.Pending), // TODO - remove
   details: reportOwnershipDetailsSchema,
 });
 
@@ -61,21 +65,11 @@ export const reportAdminAttentionSchema = baseSchema.extend({
 });
 // #endregion
 
-export type ModelReportInput = z.infer<typeof modelReportInputSchema>;
-export const modelReportInputSchema = z.discriminatedUnion('reason', [
+export type ReportInput = z.infer<typeof reportInputSchema>;
+export const reportInputSchema = z.discriminatedUnion('reason', [
   reportNsfwSchema,
   reportTOSViolationSchema,
   reportOwnershipSchema,
   reportClaimSchema,
   reportAdminAttentionSchema,
-]);
-
-export const reviewReportInputSchema = z.discriminatedUnion('reason', [
-  reportNsfwSchema,
-  reportTOSViolationSchema,
-]);
-
-export const commentReportInputSchema = z.discriminatedUnion('reason', [
-  reportNsfwSchema,
-  reportTOSViolationSchema,
 ]);
