@@ -715,23 +715,23 @@ model ModelRank {
 
 /// @view
 model ModelReportStat {
-  model                  Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
-  modelId                Int   @id
-  tosViolationPending    Int
-  tosViolationValid      Int
-  tosViolationInvalid    Int
-  nsfwPending            Int
-  nsfwValid              Int
-  nsfwInvalid            Int
-  ownershipPending       Int
-  ownershipValid         Int
-  ownershipInvalid       Int
-  adminAttentionPending  Int
-  adminAttentionValid    Int
-  adminAttentionInvalid  Int
-  securityConcernPending Int
-  securityConcernValid   Int
-  securityConcernInvalid Int
+  model                 Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
+  modelId               Int   @id
+  tosViolationPending   Int
+  tosViolationValid     Int
+  tosViolationInvalid   Int
+  nsfwPending           Int
+  nsfwValid             Int
+  nsfwInvalid           Int
+  ownershipPending      Int
+  ownershipValid        Int
+  ownershipInvalid      Int
+  adminAttentionPending Int
+  adminAttentionValid   Int
+  adminAttentionInvalid Int
+  claimPending          Int
+  claimValid            Int
+  claimInvalid          Int
 }
 
 /// @view
