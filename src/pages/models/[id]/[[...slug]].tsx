@@ -621,6 +621,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                         primary: true,
                       })}
                       leftIcon={<IconDownload size={16} />}
+                      disabled={!primaryFile}
                       menuItems={secondaryFiles.map((file, index) => (
                         <Menu.Item
                           key={index}
