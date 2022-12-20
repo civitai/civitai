@@ -1,5 +1,6 @@
 import { Prisma, ReportReason, ReportStatus, ReviewReactions } from '@prisma/client';
 import { SessionUser } from 'next-auth';
+import { env } from '~/env/server.mjs';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
@@ -22,7 +23,7 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
 }) => {
   const take = limit ?? 10;
   const skip = page && take ? (page - 1) * take : undefined;
-  const canViewNsfw = user?.showNsfw ?? true;
+  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 

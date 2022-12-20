@@ -1,5 +1,6 @@
 import { Prisma, ReportReason, ReviewReactions, ReportStatus } from '@prisma/client';
 import { SessionUser } from 'next-auth';
+import { env } from '~/env/server.mjs';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
@@ -23,7 +24,7 @@ export const getReviews = async <TSelect extends Prisma.ReviewSelect>({
 }) => {
   const take = limit ?? 10;
   const skip = page ? (page - 1) * take : undefined;
-  const canViewNsfw = user?.showNsfw ?? true;
+  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
 
   return await prisma.review.findMany({
     take,
