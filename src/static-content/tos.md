@@ -27,7 +27,7 @@ These rules apply to all Content posted on Civitai. Moderators consider context 
 
 - Sexual, provocative, disturbing, or violent content MUST be flagged Not Safe for Work (NSFW)
   - Not Safe for Work content displaying actual people (for example Tom Cruise or Tom Cruise as Maverick)
-- content displaying or clearly intented to be used for illegal or violent activity including, but not limited to:
+- Content displaying or clearly intented to be used for illegal or violent activity including, but not limited to:
   - child abuse and exploitation (includes photo, video, print, artwork)
   - rape and domestic abuse
   - sales of illegal substances or products requiring permits and/or licenses including pharmaceuticals, narcotics, pets, or firearms
@@ -37,6 +37,7 @@ These rules apply to all Content posted on Civitai. Moderators consider context 
   - graphic injuries
   - depictions of human death
   - graphic violence
+- Models intended for the photorealistic depiction of minors
 
   Will be removed.
 
