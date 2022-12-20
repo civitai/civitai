@@ -131,6 +131,7 @@ export default function UserPage() {
                         <IconBadge
                           tooltip="Followers"
                           icon={<IconUsers size={16} />}
+                          href={`${user.username}/followers`}
                           color="gray"
                           size="lg"
                           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}

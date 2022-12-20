@@ -1,20 +1,20 @@
-import { Menu, MenuItemProps } from '@mantine/core';
+import { Button, ButtonProps, Menu } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons';
 import { MouseEventHandler } from 'react';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { SimpleUser } from '~/server/selectors/user.selector';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export function HideUserButton({ user, onToggleHide, ...props }: Props) {
+export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }: Props) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
 
   const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
     enabled: !!currentUser,
   });
-  const alreadyHiding = hidden.map((user) => user.id).includes(user.id);
+  const alreadyHiding = hidden.map((user) => user.id).includes(userId);
 
   const toggleHideMutation = trpc.user.toggleHide.useMutation({
     async onMutate() {
@@ -23,7 +23,9 @@ export function HideUserButton({ user, onToggleHide, ...props }: Props) {
       const prevHidden = queryUtils.user.getHiddenUsers.getData();
 
       queryUtils.user.getHiddenUsers.setData(undefined, (old = []) =>
-        alreadyHiding ? old.filter((item) => item.id !== user.id) : [...old, user]
+        alreadyHiding
+          ? old.filter((item) => item.id !== userId)
+          : [...old, { id: userId, username: null, image: null, name: null }]
       );
 
       return { prevHidden };
@@ -40,31 +42,43 @@ export function HideUserButton({ user, onToggleHide, ...props }: Props) {
     async onSettled() {
       await queryUtils.user.getHiddenUsers.invalidate();
       await queryUtils.user.getCreator.invalidate();
+      await queryUtils.user.getLists.invalidate();
     },
   });
   const handleHideClick: MouseEventHandler<HTMLElement> = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    toggleHideMutation.mutate({ targetUserId: user.id });
+    toggleHideMutation.mutate({ targetUserId: userId });
     onToggleHide?.();
   };
 
-  if (user.id === currentUser?.id) return null;
+  if (userId === currentUser?.id) return null;
 
-  return (
+  return as === 'button' ? (
+    <LoginRedirect reason="hide-user">
+      <Button
+        variant={alreadyHiding ? 'outline' : 'filled'}
+        onClick={handleHideClick}
+        loading={toggleHideMutation.isLoading}
+        {...props}
+      >
+        {alreadyHiding ? 'Unhide' : 'Hide'}
+      </Button>
+    </LoginRedirect>
+  ) : (
     <Menu.Item
       onClick={handleHideClick}
       icon={
         alreadyHiding ? <IconEye size={16} stroke={1.5} /> : <IconEyeOff size={16} stroke={1.5} />
       }
-      {...props}
     >
       {alreadyHiding ? 'Unhide ' : 'Hide '}content from this user
     </Menu.Item>
   );
 }
 
-type Props = Omit<MenuItemProps, 'onClick'> & {
-  user: Omit<SimpleUser, 'name' | 'variant'>;
+type Props = Omit<ButtonProps, 'onClick'> & {
+  userId: number;
+  as?: 'menu-item' | 'button';
   onToggleHide?: () => void;
 };

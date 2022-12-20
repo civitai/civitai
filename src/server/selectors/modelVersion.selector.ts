@@ -21,6 +21,7 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   },
   files: {
     select: {
+      name: true,
       id: true,
       sizeKB: true,
       type: true,

@@ -1,6 +1,7 @@
 import { Context } from '~/server/createContext';
 import {
   getCreators,
+  getUserByUsername,
   getUserCreator,
   getUserFavoriteModelByModelId,
   getUserFavoriteModels,
@@ -16,6 +17,7 @@ import {
   GetUserByUsernameSchema,
   ToggleFavoriteModelInput,
   ToggleFollowUserSchema,
+  GetByUsernameSchema,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
@@ -224,7 +226,7 @@ export const getUserFollowingListHandler = async ({ ctx }: { ctx: DeepNonNullabl
       select: {
         engagingUsers: {
           where: { type: 'Follow' },
-          select: { targetUser: { select: { id: true, username: true } } },
+          select: { targetUser: { select: simpleUserSelect } },
         },
       },
     });
@@ -232,6 +234,60 @@ export const getUserFollowingListHandler = async ({ ctx }: { ctx: DeepNonNullabl
     if (!user) throw throwNotFoundError(`No user with id ${userId}`);
 
     return user.engagingUsers.map(({ targetUser }) => targetUser);
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchema }) => {
+  try {
+    const { username } = input;
+
+    const user = await getUserByUsername({ username, select: { createdAt: true } });
+    if (!user) throw throwNotFoundError(`No user with username ${username}`);
+
+    const [userFollowing, userFollowers, userHidden] = await Promise.all([
+      getUserByUsername({
+        username,
+        select: {
+          _count: { select: { engagingUsers: { where: { type: 'Follow' } } } },
+          engagingUsers: {
+            select: { targetUser: { select: simpleUserSelect } },
+            where: { type: 'Follow' },
+          },
+        },
+      }),
+      getUserByUsername({
+        username,
+        select: {
+          _count: { select: { engagedUsers: { where: { type: 'Follow' } } } },
+          engagedUsers: {
+            select: { user: { select: simpleUserSelect } },
+            where: { type: 'Follow' },
+          },
+        },
+      }),
+      getUserByUsername({
+        username,
+        select: {
+          _count: { select: { engagingUsers: { where: { type: 'Hide' } } } },
+          engagingUsers: {
+            select: { targetUser: { select: simpleUserSelect } },
+            where: { type: 'Hide' },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      following: userFollowing?.engagingUsers.map(({ targetUser }) => targetUser) ?? [],
+      followingCount: userFollowing?._count.engagingUsers ?? 0,
+      followers: userFollowers?.engagedUsers.map(({ user }) => user) ?? [],
+      followersCount: userFollowers?._count.engagedUsers ?? 0,
+      hidden: userHidden?.engagingUsers.map(({ targetUser }) => targetUser) ?? [],
+      hiddenCount: userHidden?._count.engagingUsers ?? 0,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -262,7 +318,7 @@ export const getUserHiddenListHandler = async ({ ctx }: { ctx: DeepNonNullable<C
       select: {
         engagingUsers: {
           where: { type: 'Hide' },
-          select: { targetUser: { select: { id: true, username: true } } },
+          select: { targetUser: { select: simpleUserSelect } },
         },
       },
     });
