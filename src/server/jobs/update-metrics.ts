@@ -360,10 +360,10 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
   };
 
   const refreshModelRank = async () =>
-    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "ModelRank"');
+    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelRank"');
 
   const refreshUserRank = async () =>
-    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "UserRank"');
+    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "UserRank"');
 
   // If this is the first metric update of the day, reset the day metrics
   // -------------------------------------------------------------------
