@@ -110,7 +110,7 @@ export function InfiniteModels({ columnWidth = 300, showHidden = false }: Infini
     () =>
       data?.pages
         .flatMap((x) => (!!x ? x.items : []))
-        .filter((item) => !hiddenUserIds.includes(item.userId)) ?? [],
+        .filter((item) => !hiddenUserIds.includes(item.user.id)) ?? [],
     [data] //eslint-disable-line
   );
 
@@ -229,7 +229,7 @@ const MasonryItem = ({
   const { classes } = useStyles();
   const theme = useMantineTheme();
 
-  const { id, image, name, rank, nsfw, userId } = data ?? {};
+  const { id, image, name, rank, nsfw, user } = data ?? {};
 
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
@@ -244,7 +244,7 @@ const MasonryItem = ({
     cacheTime: Infinity,
     staleTime: Infinity,
   });
-  const isHidden = hidden.find(({ id }) => id === userId);
+  const isHidden = hidden.find(({ id }) => id === user.id);
 
   const onTwoLines = true;
   const height = useMemo(() => {
@@ -419,7 +419,7 @@ const MasonryItem = ({
                       </ActionIcon>
                     </Menu.Target>
                     <Menu.Dropdown>
-                      {currentUser && <HideUserButton as="menu-item" userId={userId} />}
+                      {currentUser && <HideUserButton as="menu-item" userId={user.id} />}
                     </Menu.Dropdown>
                   </Menu>
                   <SFW.Placeholder>
