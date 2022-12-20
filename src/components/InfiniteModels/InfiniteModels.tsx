@@ -110,7 +110,7 @@ export function InfiniteModels({ columnWidth = 300, showHidden = false }: Infini
     () =>
       data?.pages
         .flatMap((x) => (!!x ? x.items : []))
-        .filter((item) => !hiddenUserIds.includes(item.user.id)) ?? [],
+        .filter((item) => !hiddenUserIds.includes(item.userId)) ?? [],
     [data] //eslint-disable-line
   );
 

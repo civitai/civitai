@@ -11,7 +11,7 @@ export async function processImport(input: ImportRunInput) {
   const { id, source } = input;
   const importer = importers.find((i) => i.canHandle(source));
 
-  const updateStatus = async (status: ImportStatus, data: any = null) => {
+  const updateStatus = async (status: ImportStatus, data: any = null) => { // eslint-disable-line
     await prisma.import.update({
       where: { id },
       data: { status, data: data ?? Prisma.JsonNull },
@@ -28,7 +28,7 @@ export async function processImport(input: ImportRunInput) {
     const { status, data, dependencies } = await importer.run(input);
     if (dependencies) await processDependencies(input, dependencies);
     return await updateStatus(status, data);
-  } catch (error: any) {
+  } catch (error: any) { // eslint-disable-line
     console.error(error);
     return await updateStatus(ImportStatus.Failed, { error: error.message, stack: error.stack });
   }

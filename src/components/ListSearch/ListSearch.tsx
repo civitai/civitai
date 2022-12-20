@@ -30,7 +30,7 @@ export function ListSearch({ onSearch }: Props) {
   useEffect(() => {
     setValue('');
     setFocused(false);
-  }, [router]);
+  }, [router]);  // eslint-disable-line
 
   useEffect(() => {
     form.setValues({
