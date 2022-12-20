@@ -229,7 +229,7 @@ const MasonryItem = ({
   const { classes } = useStyles();
   const theme = useMantineTheme();
 
-  const { id, image, name, rank, nsfw, user } = data ?? {};
+  const { id, image, name, rank, nsfw, userId } = data ?? {};
 
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
@@ -244,7 +244,7 @@ const MasonryItem = ({
     cacheTime: Infinity,
     staleTime: Infinity,
   });
-  const isHidden = hidden.find(({ id }) => id === user.id);
+  const isHidden = hidden.find(({ id }) => id === userId);
 
   const onTwoLines = true;
   const height = useMemo(() => {
@@ -419,7 +419,7 @@ const MasonryItem = ({
                       </ActionIcon>
                     </Menu.Target>
                     <Menu.Dropdown>
-                      {currentUser && <HideUserButton as="menu-item" userId={user.id} />}
+                      {currentUser && <HideUserButton as="menu-item" userId={userId} />}
                     </Menu.Dropdown>
                   </Menu>
                   <SFW.Placeholder>
