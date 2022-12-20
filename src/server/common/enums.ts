@@ -13,6 +13,7 @@ export enum ModelSort {
   MostLiked = 'Most Liked',
   MostDiscussed = 'Most Discussed',
   Newest = 'Newest',
+  Trending = 'Trending',
 }
 
 export enum ReviewSort {
