@@ -1,10 +1,10 @@
 import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { prisma } from '~/server/db/client';
 
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
-import { ModelReportInput } from '~/server/schema/report.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   getAllModelsWithVersionsSelect,
@@ -17,7 +17,6 @@ import {
   getModel,
   getModels,
   getModelVersionsMicro,
-  reportModelById,
   updateModel,
   updateModelById,
 } from '~/server/services/model.service';
@@ -217,20 +216,6 @@ export const unpublishModelHandler = async ({ input }: { input: GetByIdInput }) 
   }
 };
 
-export const reportModelHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ModelReportInput;
-  ctx: DeepNonNullable<Context>;
-}) => {
-  try {
-    await reportModelById({ ...input, userId: ctx.user.id });
-  } catch (error) {
-    throwDbError(error);
-  }
-};
-
 export const deleteModelHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     const { id } = input;
@@ -269,4 +254,14 @@ export const getModelsWithVersionsHandler = async ({
   } catch (error) {
     throw throwDbError(error);
   }
+};
+
+// TODO - TEMP HACK for reporting modal
+export const getModelReportDetailsHandler = async ({ input: { id } }: { input: GetByIdInput }) => {
+  try {
+    return await prisma.model.findUnique({
+      where: { id },
+      select: { userId: true, reportStats: { select: { ownershipPending: true } } },
+    });
+  } catch (error) {}
 };

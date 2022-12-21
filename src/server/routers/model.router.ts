@@ -1,3 +1,4 @@
+import { getModelReportDetailsHandler } from './../controllers/model.controller';
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
@@ -9,7 +10,6 @@ import {
   getModelsPagedSimpleHandler,
   getModelsWithVersionsHandler,
   getModelVersionsHandler,
-  reportModelHandler,
   unpublishModelHandler,
   updateModelHandler,
 } from '~/server/controllers/model.controller';
@@ -20,7 +20,6 @@ import { middleware, protectedProcedure, publicProcedure, router } from '~/serve
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { checkFileExists, getS3Client } from '~/utils/s3-utils';
 import { prepareFile } from '~/utils/file-helpers';
-import { modelReportInputSchema } from '~/server/schema/report.schema';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -87,9 +86,10 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteModelHandler),
-  report: protectedProcedure.input(modelReportInputSchema).mutation(reportModelHandler),
   unpublish: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(unpublishModelHandler),
+  // TODO - TEMP HACK for reporting modal
+  getModelReportDetails: publicProcedure.input(getByIdSchema).query(getModelReportDetailsHandler),
 });

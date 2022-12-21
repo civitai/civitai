@@ -11,8 +11,7 @@ import {
   Text,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import { showNotification, hideNotification } from '@mantine/notifications';
-import { ReportReason, ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '@prisma/client';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconMessageCircle2 } from '@tabler/icons';
 import { useSession } from 'next-auth/react';
 
@@ -25,9 +24,10 @@ import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
+import { ReportEntity } from '~/server/schema/report.schema';
 import { ReviewGetAllItem } from '~/types/router';
 import { daysFromNow } from '~/utils/date-helpers';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -77,38 +77,6 @@ export function ReviewDiscussionItem({ review }: Props) {
         deleteMutation.mutate({ id: review.id });
       },
     });
-  };
-
-  const reportMutation = trpc.review.report.useMutation({
-    onMutate() {
-      showNotification({
-        id: 'sending-review-report',
-        loading: true,
-        disallowClose: true,
-        autoClose: false,
-        message: 'Sending report...',
-      });
-    },
-    async onSuccess() {
-      await queryUtils.review.getAll.invalidate();
-      showSuccessNotification({
-        title: 'Review reported',
-        message: 'Your request has been received',
-      });
-    },
-    onError(error) {
-      showErrorNotification({
-        error: new Error(error.message),
-        title: 'Unable to send report',
-        reason: 'An unexpected error occurred, please try again',
-      });
-    },
-    onSettled() {
-      hideNotification('sending-review-report');
-    },
-  });
-  const handleReportReview = (reason: ReportReason) => {
-    reportMutation.mutate({ id: review.id, reason });
   };
 
   const toggleReactionMutation = trpc.review.toggleReaction.useMutation({
@@ -194,7 +162,7 @@ export function ReviewDiscussionItem({ review }: Props) {
               </ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
-              {isOwner || isMod ? (
+              {(isOwner || isMod) && (
                 <>
                   <Menu.Item
                     icon={<IconTrash size={14} stroke={1.5} />}
@@ -210,27 +178,19 @@ export function ReviewDiscussionItem({ review }: Props) {
                     Edit review
                   </Menu.Item>
                 </>
-              ) : null}
-              {!session || !isOwner ? (
-                <>
-                  <LoginRedirect reason="report-review">
-                    <Menu.Item
-                      icon={<IconFlag size={14} stroke={1.5} />}
-                      onClick={() => handleReportReview(ReportReason.NSFW)}
-                    >
-                      Report as NSFW
-                    </Menu.Item>
-                  </LoginRedirect>
-                  <LoginRedirect reason="report-review">
-                    <Menu.Item
-                      icon={<IconFlag size={14} stroke={1.5} />}
-                      onClick={() => handleReportReview(ReportReason.TOSViolation)}
-                    >
-                      Report as Terms Violation
-                    </Menu.Item>
-                  </LoginRedirect>
-                </>
-              ) : null}
+              )}
+              {(!session || !isOwner) && (
+                <LoginRedirect reason="report-model">
+                  <Menu.Item
+                    icon={<IconFlag size={14} stroke={1.5} />}
+                    onClick={() =>
+                      openContext('report', { type: ReportEntity.Review, entityId: review.id })
+                    }
+                  >
+                    Report
+                  </Menu.Item>
+                </LoginRedirect>
+              )}
             </Menu.Dropdown>
           </Menu>
         </Group>

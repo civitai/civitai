@@ -1,0 +1,8 @@
+{
+  "region_wrap": {
+    "scope": "javascript,typescript,html,typescriptreact,javascriptreact,react",
+    "prefix": "region",
+    "body": ["$LINE_COMMENT #region [${1}]", "$TM_SELECTED_TEXT", "$LINE_COMMENT #endregion", ""],
+    "description": "Wrap your selected block with a region"
+  }
+}

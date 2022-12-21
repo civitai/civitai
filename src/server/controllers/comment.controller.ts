@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
-import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CommentUpsertInput,
   GetAllCommentsSchema,
@@ -15,7 +15,6 @@ import {
   getCommentReactions,
   getComments,
   getUserReactionByCommentId,
-  reportCommentById,
   updateCommentById,
 } from '~/server/services/comment.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
@@ -79,21 +78,13 @@ export const upsertCommentHandler = async ({
   }
 };
 
-export const reportCommentHandler = async ({
-  input,
+export const deleteUserCommentHandler = async ({
   ctx,
+  input,
 }: {
-  input: ReportInput;
   ctx: DeepNonNullable<Context>;
+  input: GetByIdInput;
 }) => {
-  try {
-    await reportCommentById({ ...input, userId: ctx.user.id });
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
-export const deleteUserCommentHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     const deleted = await deleteCommentById({ ...input });
     if (!deleted) {
