@@ -372,7 +372,7 @@ const MasonryItem = ({
     <LoginRedirect reason="report-model">
       <Menu.Item
         icon={<IconFlag size={14} stroke={1.5} />}
-        onClick={(e) => {
+        onClick={(e: any) => {
           e.preventDefault();
           e.stopPropagation();
           openContext('report', { type: ReportEntity.Model, entityId: id });
