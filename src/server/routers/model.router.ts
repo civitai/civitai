@@ -1,3 +1,4 @@
+import { getModelReportDetailsHandler } from './../controllers/model.controller';
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
@@ -89,4 +90,6 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(unpublishModelHandler),
+  // TODO - TEMP HACK for reporting modal
+  getModelReportDetails: publicProcedure.input(getByIdSchema).query(getModelReportDetailsHandler),
 });

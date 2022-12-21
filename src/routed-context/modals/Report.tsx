@@ -1,4 +1,15 @@
-import { Button, Group, Modal, Radio, Stack, Text, CloseButton, ActionIcon } from '@mantine/core';
+import {
+  Button,
+  Group,
+  Modal,
+  Radio,
+  Stack,
+  Text,
+  CloseButton,
+  ActionIcon,
+  Loader,
+  Center,
+} from '@mantine/core';
 
 import { showNotification, hideNotification } from '@mantine/notifications';
 import { ReportReason } from '@prisma/client';
@@ -39,7 +50,7 @@ const reports = [
     reason: ReportReason.Claim,
     label: 'Claim imported model',
     Element: ClaimForm,
-    availableFor: [ReportEntity.Model],
+    availableFor: [ReportEntity.Model], // TODO only available if model creator/userId === -1
   },
   {
     reason: ReportReason.Ownership,
@@ -70,7 +81,11 @@ export default createRoutedContext({
     );
 
     const queryUtils = trpc.useContext();
-    const { mutate, isLoading } = trpc.report.create.useMutation({
+    const { data, isInitialLoading } = trpc.model.getModelReportDetails.useQuery(
+      { id: entityId },
+      { enabled: type === ReportEntity.Model }
+    );
+    const { mutate, isLoading: isLoading } = trpc.report.create.useMutation({
       onMutate() {
         showNotification({
           id: SEND_REPORT_ID,
@@ -104,11 +119,11 @@ export default createRoutedContext({
               await queryUtils.model.getAll.invalidate();
               break;
             case ReportEntity.Review:
-              await queryUtils.comment.getById.invalidate({ id: variables.id });
-              await queryUtils.comment.getAll.invalidate();
+              await queryUtils.review.getDetail.invalidate({ id: variables.id });
+              await queryUtils.review.getAll.invalidate();
               break;
             case ReportEntity.Comment:
-              await queryUtils.review.getDetail.invalidate({ id: variables.id });
+              await queryUtils.comment.getById.invalidate({ id: variables.id });
               await queryUtils.comment.getAll.invalidate();
               await queryUtils.comment.getCommentsById.invalidate();
               break;
@@ -154,20 +169,35 @@ export default createRoutedContext({
             </Group>
             <CloseButton onClick={context.close} />
           </Group>
-          {!reason && (
-            <Radio.Group
-              orientation="vertical"
-              value={reason}
-              onChange={(reason) => setReason(reason as ReportReason)}
-              // label="Report reason"
-              pb="xs"
-            >
-              {reports
-                .filter(({ availableFor }) => availableFor.includes(type))
-                .map(({ reason, label }, index) => (
-                  <Radio key={index} value={reason} label={label} />
-                ))}
-            </Radio.Group>
+          {isInitialLoading ? (
+            <Center p="xl">
+              <Loader />
+            </Center>
+          ) : (
+            !reason && (
+              <Radio.Group
+                orientation="vertical"
+                value={reason}
+                onChange={(reason) => setReason(reason as ReportReason)}
+                // label="Report reason"
+                pb="xs"
+              >
+                {reports
+                  .filter(({ availableFor }) => availableFor.includes(type))
+                  .filter((item) => {
+                    if (type === ReportEntity.Model) {
+                      if (item.reason === ReportReason.Claim) return data?.userId !== -1;
+                      if (item.reason === ReportReason.Ownership) {
+                        return !data?.reportStats?.ownershipPending;
+                      }
+                    }
+                    return true;
+                  }) // TEMP FIX
+                  .map(({ reason, label }, index) => (
+                    <Radio key={index} value={reason} label={label} />
+                  ))}
+              </Radio.Group>
+            )
           )}
           {ReportForm && (
             <ReportForm onSubmit={handleSubmit} setUploading={setUploading}>
