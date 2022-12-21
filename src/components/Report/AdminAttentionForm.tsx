@@ -4,7 +4,12 @@ import { InputRadioGroup, InputTextArea } from '~/libs/form';
 import { reportAdminAttentionDetailsSchema } from '~/server/schema/report.schema';
 import { Radio } from '@mantine/core';
 
-const reasons = ['security', 'bad', 'content', 'incorrect', 'data', 'other'];
+const reasons = [
+  'Potential security concern',
+  'Content that should be reviewed',
+  'Incorrect or misrepresented content',
+  'Other concern',
+];
 
 export const AdminAttentionForm = createReportForm({
   schema: reportAdminAttentionDetailsSchema,
