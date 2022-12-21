@@ -382,9 +382,10 @@ const MasonryItem = ({
       </Menu.Item>
     </LoginRedirect>
   );
-  const contextMenuItems: React.ReactNode[] = [reportOption];
+  const contextMenuItems: React.ReactNode[] = [];
   if (currentUser?.id != user.id)
-    contextMenuItems.unshift(<HideUserButton key="hide-button" as="menu-item" userId={user.id} />);
+    contextMenuItems.push(<HideUserButton key="hide-button" as="menu-item" userId={user.id} />);
+  if (currentUser?.id != user.id) contextMenuItems.push(reportOption);
 
   const isNew = data.createdAt > aDayAgo;
   const isUpdated = !isNew && data.lastVersionAt && data.lastVersionAt > aDayAgo;
