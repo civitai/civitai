@@ -8,11 +8,10 @@ import {
   getReviewDetailsHandler,
   getReviewReactionsHandler,
   getReviewsInfiniteHandler,
-  reportReviewHandler,
   toggleReactionHandler,
   upsertReviewHandler,
 } from '~/server/controllers/review.controller';
-import { getByIdSchema, reportInputSchema } from '~/server/schema/base.schema';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   getAllReviewSchema,
   getReviewReactionsSchema,
@@ -60,6 +59,5 @@ export const reviewRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteUserReviewHandler),
-  report: protectedProcedure.input(reportInputSchema).mutation(reportReviewHandler),
   toggleReaction: protectedProcedure.input(toggleReactionInput).mutation(toggleReactionHandler),
 });

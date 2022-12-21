@@ -1,46 +1,75 @@
-import { ReportReason, ReportStatus } from '@prisma/client';
+import { ReportReason } from '@prisma/client';
 import { z } from 'zod';
 
-const baseSchema = z.object({ id: z.number() });
+export enum ReportEntity {
+  Model = 'model',
+  Review = 'review',
+  Comment = 'comment',
+}
 
-export const reportNsfwSchema = baseSchema.extend({
-  reason: z.literal(ReportReason.NSFW),
-  status: z.nativeEnum(ReportStatus).default(ReportStatus.Valid),
-});
+// #region [report reason detail schemas]
+const baseDetailSchema = z.object({ comment: z.string().optional() });
 
-export const reportTOSViolationSchema = baseSchema.extend({
-  reason: z.literal(ReportReason.TOSViolation),
-  status: z.nativeEnum(ReportStatus).default(ReportStatus.Pending),
-});
+export const reportNsfwDetailsSchema = baseDetailSchema;
 
-export const reportOwnershipDetailsSchema = z.object({
+export const reportOwnershipDetailsSchema = baseDetailSchema.extend({
   name: z.string(),
   email: z.string().email(),
   phone: z.string().optional(),
-  comment: z.string().optional(),
   images: z.string().array(),
   establishInterest: z.boolean().optional(),
 });
 
+export const reportTosViolationDetailsSchema = baseDetailSchema.extend({
+  violation: z.string(),
+});
+
+export const reportClaimDetailsSchema = baseDetailSchema.extend({
+  email: z.string().email(),
+});
+
+export const reportAdminAttentionDetailsSchema = baseDetailSchema.extend({
+  reason: z.string(),
+});
+// #endregion
+
+// #region [report reason schemas]
+const baseSchema = z.object({
+  type: z.nativeEnum(ReportEntity),
+  id: z.number(),
+  details: baseDetailSchema,
+});
+
+export const reportNsfwSchema = baseSchema.extend({
+  reason: z.literal(ReportReason.NSFW),
+});
+
+export const reportTOSViolationSchema = baseSchema.extend({
+  reason: z.literal(ReportReason.TOSViolation),
+  details: reportTosViolationDetailsSchema,
+});
+
 export const reportOwnershipSchema = baseSchema.extend({
   reason: z.literal(ReportReason.Ownership),
-  status: z.nativeEnum(ReportStatus).default(ReportStatus.Pending),
   details: reportOwnershipDetailsSchema,
 });
 
-export type ModelReportInput = z.infer<typeof modelReportInputSchema>;
-export const modelReportInputSchema = z.discriminatedUnion('reason', [
+export const reportClaimSchema = baseSchema.extend({
+  reason: z.literal(ReportReason.Claim),
+  details: reportClaimDetailsSchema,
+});
+
+export const reportAdminAttentionSchema = baseSchema.extend({
+  reason: z.literal(ReportReason.AdminAttention),
+  details: reportAdminAttentionDetailsSchema,
+});
+// #endregion
+
+export type ReportInput = z.infer<typeof reportInputSchema>;
+export const reportInputSchema = z.discriminatedUnion('reason', [
   reportNsfwSchema,
   reportTOSViolationSchema,
   reportOwnershipSchema,
-]);
-
-export const reviewReportInputSchema = z.discriminatedUnion('reason', [
-  reportNsfwSchema,
-  reportTOSViolationSchema,
-]);
-
-export const commentReportInputSchema = z.discriminatedUnion('reason', [
-  reportNsfwSchema,
-  reportTOSViolationSchema,
+  reportClaimSchema,
+  reportAdminAttentionSchema,
 ]);

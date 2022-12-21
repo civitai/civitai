@@ -7,12 +7,11 @@ import {
   getCommentHandler,
   getCommentReactionsHandler,
   getCommentsInfiniteHandler,
-  reportCommentHandler,
   toggleReactionHandler,
   upsertCommentHandler,
 } from '~/server/controllers/comment.controller';
 import { prisma } from '~/server/db/client';
-import { getByIdSchema, reportInputSchema } from '~/server/schema/base.schema';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   commentUpsertInput,
   getAllCommentsSchema,
@@ -60,6 +59,5 @@ export const commentRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteUserCommentHandler),
-  report: protectedProcedure.input(reportInputSchema).mutation(reportCommentHandler),
   toggleReaction: protectedProcedure.input(toggleReactionInput).mutation(toggleReactionHandler),
 });
