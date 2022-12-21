@@ -16,7 +16,7 @@ export const AdminAttentionForm = createReportForm({
   Element: () => {
     return (
       <>
-        <InputRadioGroup name="violation" label="Violation" withAsterisk orientation="vertical">
+        <InputRadioGroup name="reason" label="Reason" withAsterisk orientation="vertical">
           {reasons.map((value, index) => (
             <Radio key={index} value={value} label={value} />
           ))}
