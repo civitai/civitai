@@ -36,7 +36,7 @@ type RoutedContext = {
   closeContext: () => void;
 };
 
-const RoutedCtx = createContext<RoutedContext>({} as any);
+const RoutedCtx = createContext<RoutedContext>({} as any);  // eslint-disable-line
 
 export const useRoutedContext = () => {
   const context = useContext(RoutedCtx);
@@ -92,7 +92,7 @@ export function RoutedContextProvider({ children }: { children: React.ReactEleme
     if (!modal || Array.isArray(modal)) return null;
     const Modal = dictionary[modal as keyof typeof dictionary];
     const [, query] = router.asPath.split('?');
-    return Modal ? <Modal {...(QS.parse(query) as any)} /> : null;
+    return Modal ? <Modal {...(QS.parse(query) as any)} /> : null;  // eslint-disable-line
   }
 
   return (

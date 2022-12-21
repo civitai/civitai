@@ -9,6 +9,7 @@ import { modelFilterSchema, useCookies } from '~/providers/CookiesProvider';
 import { Popover, ActionIcon, Stack, Checkbox, Indicator } from '@mantine/core';
 import { IconFilter } from '@tabler/icons';
 import { z } from 'zod';
+import { constants } from '~/server/common/constants';
 
 type FilterProps = z.input<typeof modelFilterSchema>;
 
@@ -42,7 +43,12 @@ export const useFilters = create<{
 );
 
 export const useInfiniteModelsFilters = () => {
-  const { sort, period, types } = useCookies();
+  const {
+    sort = constants.modelFilterDefaults.sort,
+    period = constants.modelFilterDefaults.period,
+    types,
+  } = useCookies();
+
   const filters = useFilters((state) => state.filters);
   return { limit: 100, sort, period, types, ...filters };
 };
@@ -51,7 +57,9 @@ const sortOptions = Object.values(ModelSort);
 export function InfiniteModelsSort() {
   const cookies = useCookies();
   const setSort = useFilters((state) => state.setSort);
-  const sort = useFilters((state) => state.filters.sort ?? cookies.sort ?? ModelSort.HighestRated);
+  const sort = useFilters(
+    (state) => state.filters.sort ?? cookies.sort ?? constants.modelFilterDefaults.sort
+  );
 
   return (
     <SelectMenu
@@ -68,7 +76,7 @@ export function InfiniteModelsPeriod() {
   const cookies = useCookies();
   const setPeriod = useFilters((state) => state.setPeriod);
   const period = useFilters(
-    (state) => state.filters.period ?? cookies.period ?? MetricTimeframe.AllTime
+    (state) => state.filters.period ?? cookies.period ?? constants.modelFilterDefaults.period
   );
 
   return (

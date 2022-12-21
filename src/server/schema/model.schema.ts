@@ -1,5 +1,6 @@
 import { ModelType, ModelStatus, MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
+import { constants } from '~/server/common/constants';
 
 import { ModelSort } from '~/server/common/enums';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
@@ -20,8 +21,8 @@ export const getAllModelsSchema = z.object({
     .optional()
     .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
     .optional(),
-  sort: z.nativeEnum(ModelSort).default(ModelSort.MostDownloaded),
-  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
+  sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
+  period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   rating: z
     .preprocess((val) => Number(val), z.number())
     .transform((val) => Math.floor(val))

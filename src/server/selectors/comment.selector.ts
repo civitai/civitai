@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 
+import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 
 export const commentDetailSelect = Prisma.validator<Prisma.CommentSelect>()({
@@ -8,12 +9,21 @@ export const commentDetailSelect = Prisma.validator<Prisma.CommentSelect>()({
   nsfw: true,
   content: true,
   modelId: true,
+  parentId: true,
+  reviewId: true,
   user: {
     select: simpleUserSelect,
+  },
+  reactions: {
+    select: getReactionsSelect,
   },
 });
 
 export const getAllCommentsSelect = Prisma.validator<Prisma.CommentSelect>()({
   ...commentDetailSelect,
-  _count: { select: { comments: true } },
+  _count: {
+    select: {
+      comments: true,
+    },
+  },
 });

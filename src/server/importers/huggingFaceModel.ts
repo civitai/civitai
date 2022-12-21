@@ -58,7 +58,7 @@ export async function importModelFromHuggingFace(
   // for each file in the model, create a modelVersion on the model
   const modelVersions: Prisma.ModelVersionUncheckedCreateInput[] = [];
   let type: ModelType = ModelType.Checkpoint;
-  let isPrimary;
+  let primary;
   for (const { name, url } of files) {
     // TODO Import: Improve this to handle models that aren't saved as `.ckpt` or `.safetensors`
     // Example: https://huggingface.co/sd-dreambooth-library/the-witcher-game-ciri/tree/main
@@ -84,13 +84,13 @@ export async function importModelFromHuggingFace(
             name,
             type: ModelFileType.Model,
             format: getModelFileFormat(name),
-            isPrimary,
+            primary,
           },
         ],
       },
     });
 
-    isPrimary = false;
+    primary = false;
   }
 
   // If there aren't versions, there's nothing for us to do...

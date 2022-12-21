@@ -51,7 +51,7 @@ export default createRoutedContext({
     });
 
     useEffect(() => {
-      if (review && !loadingReview) form.reset(review as any);
+      if (review && !loadingReview) form.reset(review as any);  // eslint-disable-line
     }, [review, loadingReview]) //eslint-disable-line
 
     const handleSubmit = (data: ReviewUpsertInput) => {

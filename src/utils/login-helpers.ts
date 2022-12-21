@@ -10,7 +10,7 @@ export const loginRedirectReasons = {
   'create-comment': 'You need to be logged in to add a comment',
   'report-comment': 'You need to be logged in to report this comment',
   'follow-user': 'You need to be logged in to follow a user',
-  'hide-user': 'You need to be logged in to hide a user content',
+  'hide-user': 'You need to be logged in to hide content',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;

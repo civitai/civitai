@@ -8,7 +8,7 @@ interface SfwContextInterface {
   id: number;
 }
 
-export const SfwCtx = createContext<SfwContextInterface>({} as any);
+export const SfwCtx = createContext<SfwContextInterface>({} as any); // eslint-disable-line
 export const useSfwContext = () => {
   const context = useContext(SfwCtx);
   if (!context) throw new Error('useSfwContext can only be used inside SfwCtx');

@@ -1,5 +1,6 @@
 import { Prisma, ReportReason, ReviewReactions, ReportStatus } from '@prisma/client';
 import { SessionUser } from 'next-auth';
+import { env } from '~/env/server.mjs';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
@@ -9,7 +10,8 @@ import {
   GetReviewReactionsInput,
   ReviewUpsertInput,
 } from '~/server/schema/review.schema';
-import { getAllReviewsSelect, getReactionsSelect } from '~/server/selectors/review.selector';
+import { getReactionsSelect } from '~/server/selectors/reaction.selector';
+import { getAllReviewsSelect } from '~/server/selectors/review.selector';
 
 export const getReviews = async <TSelect extends Prisma.ReviewSelect>({
   input: { limit, page, cursor, modelId, modelVersionId, userId, filterBy, sort },
@@ -22,7 +24,7 @@ export const getReviews = async <TSelect extends Prisma.ReviewSelect>({
 }) => {
   const take = limit ?? 10;
   const skip = page ? (page - 1) * take : undefined;
-  const canViewNsfw = user?.showNsfw ?? true;
+  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
 
   return await prisma.review.findMany({
     take,
@@ -161,9 +163,9 @@ export const reportReviewById = ({ id, reason, userId }: ReportInput & { userId:
   ]);
 };
 
-export const deleteUserReviewById = ({ id, userId }: GetByIdInput & { userId: number }) => {
-  return prisma.review.deleteMany({
-    where: { AND: { id, userId } },
+export const deleteReviewById = ({ id }: GetByIdInput) => {
+  return prisma.review.delete({
+    where: { id },
   });
 };
 

@@ -52,7 +52,7 @@ export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }
     onToggleHide?.();
   };
 
-  if (userId === currentUser?.id) return null;
+  if (currentUser != null && userId === currentUser.id) return null;
 
   return as === 'button' ? (
     <LoginRedirect reason="hide-user">
@@ -66,14 +66,16 @@ export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }
       </Button>
     </LoginRedirect>
   ) : (
-    <Menu.Item
-      onClick={handleHideClick}
-      icon={
-        alreadyHiding ? <IconEye size={16} stroke={1.5} /> : <IconEyeOff size={16} stroke={1.5} />
-      }
-    >
-      {alreadyHiding ? 'Unhide ' : 'Hide '}content from this user
-    </Menu.Item>
+    <LoginRedirect reason="hide-user">
+      <Menu.Item
+        onClick={handleHideClick}
+        icon={
+          alreadyHiding ? <IconEye size={16} stroke={1.5} /> : <IconEyeOff size={16} stroke={1.5} />
+        }
+      >
+        {alreadyHiding ? 'Unhide ' : 'Hide '}content from this user
+      </Menu.Item>
+    </LoginRedirect>
   );
 }
 

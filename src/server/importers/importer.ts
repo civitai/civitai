@@ -9,17 +9,17 @@ export type ImportRunInput = {
   id: number;
   source: string;
   userId?: number | null;
-  data?: any;
+  data?: any; // eslint-disable-line
 };
 
 export type ImportDependency = {
   source: string;
-  data?: any;
+  data?: any; // eslint-disable-line
 };
 
 type ImportResult = {
   status: ImportStatus;
-  data?: any;
+  data?: any; // eslint-disable-line
   dependencies?: ImportDependency[];
 };
 

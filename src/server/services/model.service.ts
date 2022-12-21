@@ -7,6 +7,7 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
 import { prepareFile } from '~/utils/file-helpers';
 import { ReportInput } from '~/server/schema/report.schema';
+import { env } from '~/env/server.mjs';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   input: { id },
@@ -53,7 +54,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   count?: boolean;
 }) => {
-  const canViewNsfw = sessionUser?.showNsfw ?? true;
+  const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
   const where: Prisma.ModelWhereInput = {
     name: query ? { contains: query, mode: 'insensitive' } : undefined,
     tagsOnModels:
@@ -90,6 +91,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       ...(sort === ModelSort.MostDiscussed
         ? [{ rank: { [`commentCount${period}Rank`]: 'asc' } }]
         : []),
+      ...(sort === ModelSort.Trending ? [{ rank: { trendRank: 'asc' } as const }] : []),
       { rank: { newRank: 'asc' } },
     ],
     select,

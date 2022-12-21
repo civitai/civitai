@@ -76,6 +76,7 @@ export function InfiniteModels({ columnWidth = 300, showHidden = false }: Infini
   const router = useRouter();
   const filters = useInfiniteModelsFilters();
   const result = filterSchema.safeParse(router.query);
+  const currentUser = useCurrentUser();
   const queryParams = result.success ? result.data : {};
 
   const { ref, inView } = useInView();
@@ -94,7 +95,7 @@ export function InfiniteModels({ columnWidth = 300, showHidden = false }: Infini
     }
   );
   const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
-    enabled: !showHidden,
+    enabled: !showHidden && !!currentUser,
     cacheTime: Infinity,
     staleTime: Infinity,
   });
@@ -241,6 +242,7 @@ const MasonryItem = ({
   });
   const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
   const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
+    enabled: !!currentUser,
     cacheTime: Infinity,
     staleTime: Infinity,
   });
@@ -419,7 +421,7 @@ const MasonryItem = ({
                       </ActionIcon>
                     </Menu.Target>
                     <Menu.Dropdown>
-                      {currentUser && <HideUserButton as="menu-item" userId={user.id} />}
+                      <HideUserButton as="menu-item" userId={user.id} />
                     </Menu.Dropdown>
                   </Menu>
                   <SFW.Placeholder>

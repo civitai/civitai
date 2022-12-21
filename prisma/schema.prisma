@@ -711,6 +711,7 @@ model ModelRank {
   commentCountYearRank     Int
   commentCountAllTimeRank  Int
   newRank                  Int
+  trendRank                Int
 }
 
 /// @view

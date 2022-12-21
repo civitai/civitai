@@ -5,6 +5,7 @@ import { ModelSort } from '~/server/common/enums';
 import { QS } from '~/utils/qs';
 import { SetStateAction, useCallback, useMemo } from 'react';
 import { isDefined } from '~/utils/type-guards';
+import { constants } from '~/server/common/constants';
 
 const filterSchema = z.object({
   types: z
@@ -28,9 +29,6 @@ export function useModelFilters() {
 
   const filters = useMemo(() => {
     const queryProps = Object.entries(router.query) as [string, any][]; //eslint-disable-line
-    // TODO Briant: Make filters persist
-    // if (queryProps.length === 0)
-    //   queryProps = Object.entries(QS.parse(localStorage.getItem('defaultModelFilter') ?? ''));
     return queryProps
       .map(([key, value]) => {
         const result = filterSchema.safeParse({ [key]: value });
@@ -39,8 +37,7 @@ export function useModelFilters() {
       })
       .filter(isDefined)
       .reduce<FilterState>((acc, value) => ({ ...acc, ...value }), {
-        period: MetricTimeframe.AllTime,
-        sort: ModelSort.HighestRated,
+        ...constants.modelFilterDefaults,
       });
   }, [router.query]);
 

@@ -3,12 +3,12 @@ import exifr from 'exifr';
 import { ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
 
 export async function getMetadata(file: FileWithPath) {
-  let exif: any;
+  let exif: any; //eslint-disable-line
   try {
     exif = await exifr.parse(file, {
       userComment: true,
     });
-  } catch (e: any) {
+  } catch (e: any) { //eslint-disable-line
     return {};
   }
   let generationDetails = null;

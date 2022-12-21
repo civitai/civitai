@@ -1,5 +1,6 @@
 import { Prisma, ReportReason, ReportStatus, ReviewReactions } from '@prisma/client';
 import { SessionUser } from 'next-auth';
+import { env } from '~/env/server.mjs';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
@@ -9,7 +10,7 @@ import {
   GetCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
 import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
-import { getReactionsSelect } from '~/server/selectors/review.selector';
+import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 
 export const getComments = async <TSelect extends Prisma.CommentSelect>({
   input: { limit, page, cursor, modelId, userId, filterBy, sort },
@@ -22,7 +23,7 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
 }) => {
   const take = limit ?? 10;
   const skip = page && take ? (page - 1) * take : undefined;
-  const canViewNsfw = user?.showNsfw ?? true;
+  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
@@ -112,9 +113,9 @@ export const reportCommentById = ({ id, reason, userId }: ReportInput & { userId
   ]);
 };
 
-export const deleteUserCommentById = ({ id, userId }: GetByIdInput & { userId: number }) => {
-  return prisma.comment.deleteMany({
-    where: { AND: { id, userId } },
+export const deleteCommentById = ({ id }: GetByIdInput) => {
+  return prisma.comment.delete({
+    where: { id },
   });
 };
 

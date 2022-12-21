@@ -5,7 +5,7 @@ const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
 
 type FileInputProps = {
   onChange: (file: File[] | undefined, event: ChangeEvent<HTMLInputElement>) => void;
-  [index: string]: any; // Indexer to spread props //eslint-disable-line
+  [index: string]: any; //eslint-disable-line
 };
 
 // eslint-disable-next-line react/display-name

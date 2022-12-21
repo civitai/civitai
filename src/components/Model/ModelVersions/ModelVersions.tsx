@@ -136,6 +136,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 variant="light"
                 component="a"
                 href={createModelFileDownloadUrl({ versionId: version.id, primary: true })}
+                disabled={!primaryFile}
                 menuItems={secondaryFiles.map((file, index) => (
                   <Menu.Item
                     key={index}
