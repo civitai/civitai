@@ -68,7 +68,7 @@ export async function getPutUrl(key: string, s3: S3Client | null = null) {
 
   const bucket = env.S3_UPLOAD_BUCKET;
   const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket: bucket, Key: key }), {
-    expiresIn: 60 * 60, // 1 hour
+    expiresIn: UPLOAD_EXPIRATION,
   });
   return { url, bucket, key };
 }
