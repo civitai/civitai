@@ -12,6 +12,7 @@ import { reviewRouter } from './review.router';
 import { tagRouter } from './tag.router';
 import { userRouter } from './user.router';
 import { imageRouter } from './image.router';
+import { reportRouter } from './report.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -27,6 +28,7 @@ export const appRouter = router({
   partner: partnerRouter,
   modelVersion: modelVersionRouter,
   image: imageRouter,
+  report: reportRouter,
 });
 
 // export type definition of API

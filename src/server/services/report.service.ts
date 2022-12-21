@@ -1,4 +1,4 @@
-import { ReportReason, ReportStatus } from '@prisma/client';
+import { Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { prisma } from '~/server/db/client';
 import { ReportEntity, ReportInput } from '~/server/schema/report.schema';
 
@@ -8,44 +8,58 @@ export const createReport = async ({
   id,
   ...data
 }: ReportInput & { userId: number }) => {
-  await prisma.$transaction(async (tx) => {
-    const report = await tx.report.create({
-      data: {
-        ...data,
-        userId,
-        status: data.reason === ReportReason.NSFW ? ReportStatus.Valid : ReportStatus.Pending,
-      },
-      select: { id: true },
-    });
+  const report: Prisma.ReportCreateNestedOneWithoutModelInput = {
+    create: {
+      ...data,
+      userId,
+      status: data.reason === ReportReason.NSFW ? ReportStatus.Valid : ReportStatus.Pending,
+    },
+  };
 
+  const toUpdate =
+    data.reason === ReportReason.NSFW
+      ? { nsfw: true }
+      : data.reason === ReportReason.TOSViolation
+      ? { tosViolation: true }
+      : undefined;
+
+  await prisma.$transaction(async (tx) => {
     switch (type) {
       case ReportEntity.Model:
-        await tx.modelReport.createMany({
-          data: [
-            {
-              modelId: id,
-              reportId: report.id,
-            },
-          ],
+        await tx.modelReport.create({
+          data: {
+            model: { connect: { id } },
+            report,
+          },
         });
+        if (toUpdate) {
+          await tx.model.update({ where: { id }, data: toUpdate });
+        }
+        break;
       case ReportEntity.Review:
-        await tx.reviewReport.createMany({
-          data: [
-            {
-              reviewId: id,
-              reportId: report.id,
-            },
-          ],
+        await prisma.reviewReport.create({
+          data: {
+            review: { connect: { id } },
+            report,
+          },
         });
+        if (toUpdate) {
+          await tx.review.update({ where: { id }, data: toUpdate });
+        }
+        break;
       case ReportEntity.Comment:
-        await tx.commentReport.createMany({
-          data: [
-            {
-              commentId: id,
-              reportId: report.id,
-            },
-          ],
+        console.log('_____CREATE COMMENT REPORT____');
+        console.log({ id, report });
+        await prisma.commentReport.create({
+          data: {
+            comment: { connect: { id } },
+            report,
+          },
         });
+        if (toUpdate) {
+          await tx.comment.update({ where: { id }, data: toUpdate });
+        }
+        break;
       default:
         throw new Error('unhandled report type');
     }

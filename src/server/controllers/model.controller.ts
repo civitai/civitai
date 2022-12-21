@@ -4,7 +4,6 @@ import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
-import { ReportInput } from '~/server/schema/report.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   getAllModelsWithVersionsSelect,
@@ -17,7 +16,6 @@ import {
   getModel,
   getModels,
   getModelVersionsMicro,
-  reportModelById,
   updateModel,
   updateModelById,
 } from '~/server/services/model.service';
@@ -214,20 +212,6 @@ export const unpublishModelHandler = async ({ input }: { input: GetByIdInput }) 
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
-  }
-};
-
-export const reportModelHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ReportInput;
-  ctx: DeepNonNullable<Context>;
-}) => {
-  try {
-    await reportModelById({ ...input, userId: ctx.user.id });
-  } catch (error) {
-    throwDbError(error);
   }
 };
 

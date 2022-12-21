@@ -78,6 +78,7 @@ export function InfiniteModels({ columnWidth = 300, showHidden = false }: Infini
   const result = filterSchema.safeParse(router.query);
   const currentUser = useCurrentUser();
   const queryParams = result.success ? result.data : {};
+  const queryUtils = trpc.useContext();
 
   const { ref, inView } = useInView();
   const {

@@ -13,6 +13,7 @@ export async function createReportHandler({
   try {
     return await createReport({ ...input, userId: ctx.user.id });
   } catch (e) {
+    console.log({ e });
     throw throwDbError(e);
   }
 }

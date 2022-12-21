@@ -33,7 +33,7 @@ CREATE TABLE "Report" (
     "id" SERIAL NOT NULL,
     "userId" INTEGER NOT NULL,
     "reason" "ReportReason" NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "details" JSONB,
     "status" "ReportStatus" NOT NULL,
 
@@ -41,18 +41,18 @@ CREATE TABLE "Report" (
 );
 
 -- Comment Report
-INSERT INTO "Report" ("id", "userId", "reason", "createdAt", "details", "status")
-SELECT "id", "userId", "reason", "createdAt", JSONB_BUILD_OBJECT('commentId', "commentId"), 'Valid'
+INSERT INTO "Report" ("userId", "reason", "createdAt", "details", "status")
+SELECT "userId", "reason", "createdAt", JSONB_BUILD_OBJECT('commentId', "commentId"), 'Valid'
 FROM "CommentReport";
 
 -- Model Report
-INSERT INTO "Report" ("id", "userId", "reason", "createdAt", "details", "status")
-SELECT "id", "userId", "reason", "createdAt", COALESCE("details",jsonb_build_object()) || JSONB_BUILD_OBJECT('modelId', "modelId"), "status"
+INSERT INTO "Report" ("userId", "reason", "createdAt", "details", "status")
+SELECT "userId", "reason", "createdAt", COALESCE("details",jsonb_build_object()) || JSONB_BUILD_OBJECT('modelId', "modelId"), "status"
 FROM "ModelReport";
 
 -- Review Report
-INSERT INTO "Report" ("id", "userId", "reason", "createdAt", "details", "status")
-SELECT "id", "userId", "reason", "createdAt", JSONB_BUILD_OBJECT('reviewId', "reviewId"), 'Valid'
+INSERT INTO "Report" ("userId", "reason", "createdAt", "details", "status")
+SELECT "userId", "reason", "createdAt", JSONB_BUILD_OBJECT('reviewId', "reviewId"), 'Valid'
 FROM "ReviewReport";
 
 -- AlterTable

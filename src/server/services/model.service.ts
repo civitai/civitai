@@ -120,29 +120,6 @@ export const updateModelById = ({ id, data }: { id: number; data: Prisma.ModelUp
   });
 };
 
-export const reportModelById = async ({
-  id,
-  userId,
-  ...data
-}: ReportInput & { userId: number }) => {
-  const nsfw = data.reason === ReportReason.NSFW ? true : undefined;
-  const tosViolation = data.reason === ReportReason.TOSViolation ? true : undefined;
-
-  return await prisma.$transaction(async (tx) => {
-    if (nsfw || tosViolation) {
-      await tx.model.update({ where: { id }, data: { nsfw, tosViolation } });
-    }
-    await prisma.modelReport.create({
-      data: {
-        ...data,
-        status: nsfw ? 'Valid' : 'Pending',
-        modelId: id,
-        userId,
-      },
-    });
-  });
-};
-
 export const deleteModelById = ({ id }: GetByIdInput) => {
   return prisma.model.delete({ where: { id } });
 };

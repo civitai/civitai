@@ -1,7 +1,6 @@
 import { ActionIcon, Button, Card, Group, Menu, Text } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import { showNotification, hideNotification } from '@mantine/notifications';
-import { ReportReason, ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '@prisma/client';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconMessageCircle2 } from '@tabler/icons';
 import dayjs from 'dayjs';
 import { useSession } from 'next-auth/react';
@@ -12,10 +11,12 @@ import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
-import { CommentGetAllItem } from '~/types/router';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { ReportEntity } from '~/server/schema/report.schema';
+
+import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { CommentGetAllItem } from '~/types/router';
 
 export function CommentDiscussionItem({ comment }: Props) {
   const { openContext } = useRoutedContext();
@@ -63,38 +64,6 @@ export function CommentDiscussionItem({ comment }: Props) {
         deleteMutation.mutate({ id: comment.id });
       },
     });
-  };
-
-  const reportMutation = trpc.comment.report.useMutation({
-    onMutate() {
-      showNotification({
-        id: 'sending-comment-report',
-        loading: true,
-        disallowClose: true,
-        autoClose: false,
-        message: 'Sending report...',
-      });
-    },
-    async onSuccess() {
-      await queryUtils.comment.getAll.invalidate();
-      showSuccessNotification({
-        title: 'Comment reported',
-        message: 'Your request has been received',
-      });
-    },
-    onError(error) {
-      showErrorNotification({
-        error: new Error(error.message),
-        title: 'Unable to send report',
-        reason: 'An unexpected error occurred, please try again',
-      });
-    },
-    onSettled() {
-      hideNotification('sending-comment-report');
-    },
-  });
-  const handleReportComment = (reason: ReportReason) => {
-    reportMutation.mutate({ id: comment.id, reason });
   };
 
   const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
@@ -154,7 +123,7 @@ export function CommentDiscussionItem({ comment }: Props) {
             </ActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
-            {isOwner || isMod ? (
+            {(isOwner || isMod) && (
               <>
                 <Menu.Item
                   icon={<IconTrash size={14} stroke={1.5} />}
@@ -170,27 +139,19 @@ export function CommentDiscussionItem({ comment }: Props) {
                   Edit comment
                 </Menu.Item>
               </>
-            ) : null}
-            {!session || !isOwner ? (
-              <>
-                <LoginRedirect reason="report-comment">
-                  <Menu.Item
-                    icon={<IconFlag size={14} stroke={1.5} />}
-                    onClick={() => handleReportComment(ReportReason.NSFW)}
-                  >
-                    Report as NSFW
-                  </Menu.Item>
-                </LoginRedirect>
-                <LoginRedirect reason="report-comment">
-                  <Menu.Item
-                    icon={<IconFlag size={14} stroke={1.5} />}
-                    onClick={() => handleReportComment(ReportReason.TOSViolation)}
-                  >
-                    Report as Terms Violation
-                  </Menu.Item>
-                </LoginRedirect>
-              </>
-            ) : null}
+            )}
+            {(!session || !isOwner) && (
+              <LoginRedirect reason="report-model">
+                <Menu.Item
+                  icon={<IconFlag size={14} stroke={1.5} />}
+                  onClick={() =>
+                    openContext('report', { type: ReportEntity.Comment, entityId: comment.id })
+                  }
+                >
+                  Report
+                </Menu.Item>
+              </LoginRedirect>
+            )}
           </Menu.Dropdown>
         </Menu>
       </Group>

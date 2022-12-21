@@ -1,9 +1,9 @@
-import { Prisma, ReportReason, ReportStatus, ReviewReactions } from '@prisma/client';
+import { Prisma, ReviewReactions } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
-import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CommentUpsertInput,
   GetAllCommentsSchema,
@@ -96,25 +96,8 @@ export const createOrUpdateComment = async ({
   });
 };
 
-export const reportCommentById = ({ id, reason, userId }: ReportInput & { userId: number }) => {
-  const data: Prisma.CommentUpdateInput =
-    reason === ReportReason.NSFW ? { nsfw: true } : { tosViolation: true };
-
-  return prisma.$transaction([
-    prisma.comment.update({ where: { id }, data }),
-    prisma.modelReport.create({
-      data: {
-        modelId: id,
-        reason,
-        userId,
-        status: reason === ReportReason.NSFW ? ReportStatus.Valid : ReportStatus.Pending,
-      },
-    }),
-  ]);
-};
-
-export const deleteCommentById = ({ id }: GetByIdInput) => {
-  return prisma.comment.delete({
+export const deleteCommentById = async ({ id }: GetByIdInput) => {
+  return await prisma.comment.delete({
     where: { id },
   });
 };

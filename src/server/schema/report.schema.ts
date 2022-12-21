@@ -2,9 +2,9 @@ import { ReportReason } from '@prisma/client';
 import { z } from 'zod';
 
 export enum ReportEntity {
-  Model,
-  Review,
-  Comment,
+  Model = 'model',
+  Review = 'review',
+  Comment = 'comment',
 }
 
 // #region [report reason detail schemas]
@@ -21,7 +21,7 @@ export const reportOwnershipDetailsSchema = baseDetailSchema.extend({
 });
 
 export const reportTosViolationDetailsSchema = baseDetailSchema.extend({
-  violation: z.string().array(),
+  violation: z.string(),
 });
 
 export const reportClaimDetailsSchema = baseDetailSchema.extend({

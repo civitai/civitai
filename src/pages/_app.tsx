@@ -78,6 +78,12 @@ function MyApp(props: CustomAppProps) {
                       label: { cursor: 'pointer' },
                     },
                   },
+                  Radio: {
+                    styles: {
+                      radio: { cursor: 'pointer' },
+                      label: { cursor: 'pointer' },
+                    },
+                  },
                   Badge: {
                     styles: { leftSection: { lineHeight: 1 } },
                   },
