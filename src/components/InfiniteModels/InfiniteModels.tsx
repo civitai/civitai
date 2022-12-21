@@ -363,6 +363,10 @@ const MasonryItem = ({
     </Group>
   );
 
+  const contextMenuItems: React.ReactNode[] = [];
+  if (currentUser?.id != user.id)
+    contextMenuItems.push(<HideUserButton key="hide-button" as="menu-item" userId={user.id} />);
+
   const isNew = data.createdAt > aDayAgo;
   const isUpdated = !isNew && data.lastVersionAt && data.lastVersionAt > aDayAgo;
   const hasPendingClaimReports = data.pendingClaim;
@@ -396,34 +400,34 @@ const MasonryItem = ({
                 <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} />
                 <SFW type="model" id={id} nsfw={nsfw} sx={{ height: '100%', width: '100%' }}>
                   <SFW.ToggleNsfw />
-                  <Menu>
-                    <Menu.Target>
-                      <ActionIcon
-                        variant="transparent"
-                        p={0}
+                  {contextMenuItems.length > 0 && (
+                    <Menu>
+                      <Menu.Target>
+                        <ActionIcon
+                          variant="transparent"
+                          p={0}
                         onClick={(e: any) => { //eslint-disable-line
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                        sx={{
-                          width: 30,
-                          position: 'absolute',
-                          top: 10,
-                          right: 4,
-                          zIndex: 8,
-                        }}
-                      >
-                        <IconDotsVertical
-                          size={24}
-                          color="#fff"
-                          style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                        />
-                      </ActionIcon>
-                    </Menu.Target>
-                    <Menu.Dropdown>
-                      <HideUserButton as="menu-item" userId={user.id} />
-                    </Menu.Dropdown>
-                  </Menu>
+                            e.preventDefault();
+                            e.stopPropagation();
+                          }}
+                          sx={{
+                            width: 30,
+                            position: 'absolute',
+                            top: 10,
+                            right: 4,
+                            zIndex: 8,
+                          }}
+                        >
+                          <IconDotsVertical
+                            size={24}
+                            color="#fff"
+                            style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                          />
+                        </ActionIcon>
+                      </Menu.Target>
+                      <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
+                    </Menu>
+                  )}
                   <SFW.Placeholder>
                     <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                       <MediaHash {...image} />
