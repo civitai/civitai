@@ -8,3 +8,5 @@ export const constants = {
   },
   baseModels: ['SD 1.4', 'SD 1.5', 'SD 2.0', 'SD 2.1', 'SD 2.0 768', 'Other'],
 } as const;
+
+export type BaseModel = typeof constants.baseModels[number];

@@ -15,6 +15,13 @@ const filterSchema = z.object({
       if (!rel) return undefined;
       return Array.isArray(rel) ? rel : [rel];
     }),
+  baseModels: z
+    .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
+    .optional()
+    .transform((rel) => {
+      if (!rel) return undefined;
+      return Array.isArray(rel) ? rel : [rel];
+    }),
   sort: z.nativeEnum(ModelSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
   query: z.string().optional(),

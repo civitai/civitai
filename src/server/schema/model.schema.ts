@@ -21,6 +21,13 @@ export const getAllModelsSchema = z.object({
     .optional()
     .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
     .optional(),
+  baseModels: z
+    .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
+    .optional()
+    .transform((rel) => {
+      if (!rel) return undefined;
+      return Array.isArray(rel) ? rel : [rel];
+    }),
   sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   rating: z

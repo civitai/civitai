@@ -1,12 +1,14 @@
 import { MetricTimeframe, ModelType } from '@prisma/client';
 import React, { createContext, useContext } from 'react';
 import { z } from 'zod';
+import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 
 export const modelFilterSchema = z.object({
   sort: z.nativeEnum(ModelSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
   types: z.nativeEnum(ModelType).array().optional(),
+  baseModels: z.enum(constants.baseModels).array().optional(),
 });
 
 // extend cookies context with additional types as needed
@@ -22,13 +24,14 @@ export const parseCookies = z
         sort: z.string(),
         period: z.string(),
         types: z.string(),
+        baseModels: z.string(),
       })
       .partial()
   )
-  .implement(({ types, ...args }) => ({
+  .implement(({ types, baseModels, ...args }) => ({
     ...args,
-    // types: !!types ? JSON.parse(types) : [],
     types: !!types ? JSON.parse(decodeURIComponent(types)) : [],
+    baseModels: !!baseModels ? JSON.parse(decodeURIComponent(baseModels)) : [],
   }));
 
 const CookiesCtx = createContext<CookiesContext>({});

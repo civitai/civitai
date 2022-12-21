@@ -111,6 +111,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     sort: cookies?.['f_sort'],
     period: cookies?.['f_period'],
     types: cookies?.['f_types'],
+    baseModels: cookies?.['f_baseModels'],
   });
 
   return {
