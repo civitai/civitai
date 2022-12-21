@@ -16,6 +16,7 @@ type ImagePreviewProps = {
   image: ImageModel;
   edgeImageProps?: Omit<EdgeImageProps, 'src'>;
   withMeta?: boolean;
+  modelVersionId?: number | null;
   onClick?: React.MouseEventHandler<HTMLImageElement>;
 } & Omit<PaperProps, 'component'>;
 
@@ -25,6 +26,7 @@ export function ImagePreview({
   nsfw,
   aspectRatio,
   withMeta,
+  modelVersionId,
   style,
   onClick,
   className,
@@ -47,7 +49,7 @@ export function ImagePreview({
   );
 
   const Meta = !nsfw && withMeta && meta && (
-    <ImageMetaPopover meta={meta as ImageMetaProps}>
+    <ImageMetaPopover meta={meta as ImageMetaProps} modelVersionId={modelVersionId}>
       <ActionIcon
         variant="transparent"
         style={{ position: 'absolute', bottom: '5px', right: '5px' }}

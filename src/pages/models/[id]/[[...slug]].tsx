@@ -773,6 +773,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                                 })
                               }
                               style={{ width: '100%' }}
+                              modelVersionId={latestVersion?.id}
                               withMeta
                             />
                           </Center>

@@ -115,6 +115,7 @@ export default createRoutedContext({
                   aspectRatio={0}
                   edgeImageProps={{ height: 400 }}
                   radius="md"
+                  modelVersionId={review?.modelVersionId}
                   withMeta
                 />
               </Center>

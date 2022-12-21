@@ -171,6 +171,7 @@ export function ReviewDiscussionItem({ review }: Props) {
                 reviewId: review.id,
               })
             }
+            modelVersionId={review.modelVersionId}
             withMeta
           />
         </Carousel.Slide>

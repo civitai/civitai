@@ -47,7 +47,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     files: files.map(({ primary, ...file }) => ({
       ...file,
       name: getDownloadFilename({ model, modelVersion: version, file }),
-      primary: primary === true ? primary : undefined,
+      primary,
       downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
         versionId: version.id,
         type: file.type,

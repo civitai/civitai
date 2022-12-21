@@ -34,7 +34,7 @@ export const modelWebhooks = createWebhookProcessor({
               ...version,
               files: files.map(({ primary, ...file }) => ({
                 ...file,
-                primary: primary === true ? primary : undefined,
+                primary,
                 downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,

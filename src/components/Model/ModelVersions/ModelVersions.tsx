@@ -228,6 +228,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
                         modelVersionId: version.id,
                       })
                     }
+                    modelVersionId={version.id}
                     withMeta
                     sx={{
                       height: '100%',

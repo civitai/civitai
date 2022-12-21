@@ -1,14 +1,27 @@
 import { Button, ButtonProps, Tooltip } from '@mantine/core';
 import { IconPlayerPlay } from '@tabler/icons';
+import { useAutomaticSDContext } from '~/hooks/useAutomaticSD';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 
-export function RunButton({ modelVersionId, ...props }: { modelVersionId: number } & ButtonProps) {
+type Props = { modelVersionId: number; generationParams?: string; label?: string } & ButtonProps;
+
+export function RunButton({
+  modelVersionId,
+  generationParams,
+  label = 'Run Model',
+  ...props
+}: Props) {
   const { openContext } = useRoutedContext();
+  const { connected, run } = useAutomaticSDContext();
+
+  const handleClick = connected
+    ? () => run(modelVersionId, { generationParams })
+    : () => openContext('runStrategy', { modelVersionId });
 
   return (
-    <Tooltip label="Run Model" withArrow position="bottom">
+    <Tooltip label={label} withArrow position="bottom">
       <Button
-        onClick={() => openContext('runStrategy', { modelVersionId })}
+        onClick={handleClick}
         color="green"
         {...props}
         sx={{
