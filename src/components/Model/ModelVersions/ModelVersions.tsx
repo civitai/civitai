@@ -91,6 +91,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
     },
     { label: 'Downloads', value: (version.rank?.downloadCountAllTime ?? 0).toLocaleString() },
     { label: 'Uploaded', value: formatDate(version.createdAt) },
+    { label: 'Base Model', value: version.baseModel },
     { label: 'Steps', value: version.steps?.toLocaleString() ?? 0, visible: !!version.steps },
     { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0, visible: !!version.epochs },
     {

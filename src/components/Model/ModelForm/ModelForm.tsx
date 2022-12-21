@@ -54,6 +54,7 @@ import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { openConfirmModal } from '@mantine/modals';
+import { constants } from '~/server/common/constants';
 
 const schema = modelSchema.extend({
   tagsOnModels: z.string().array(),
@@ -329,6 +330,18 @@ export function ModelForm({ model }: Props) {
                                 </ActionIcon>
                               </>
                             )}
+                          </Group>
+                        </Grid.Col>
+                        <Grid.Col span={12}>
+                          <Group noWrap align="flex-end" spacing="xs">
+                            <InputSelect
+                              name={`modelVersions.${index}.baseModel`}
+                              label="Base Model"
+                              placeholder="Base Model"
+                              withAsterisk
+                              style={{ flex: 1 }}
+                              data={constants.baseModels.map((x) => ({ value: x, label: x }))}
+                            />
                           </Group>
                         </Grid.Col>
                         <Grid.Col span={12}>
