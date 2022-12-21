@@ -612,7 +612,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
             <Stack>
               {latestVersion && (
-                <Group spacing="xs" style={{ alignItems: 'flex-start' }}>
+                <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
                   <Stack sx={{ flex: 1 }} spacing={4}>
                     <MultiActionButton
                       component="a"
