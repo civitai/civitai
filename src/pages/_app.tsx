@@ -21,6 +21,7 @@ import { CustomModalsProvider } from './../providers/CustomModalsProvider';
 import { TosProvider } from '~/providers/TosProvider';
 import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
 import { RoutedContextProvider } from '~/routed-context/routed-context.provider';
+import { AutomaticSDContextProvider } from '~/hooks/useAutomaticSD';
 
 dayjs.extend(duration);
 dayjs.extend(relativeTime);
@@ -89,7 +90,9 @@ function MyApp(props: CustomAppProps) {
               <CustomModalsProvider>
                 <NotificationsProvider>
                   <RoutedContextProvider>
-                    <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                    <AutomaticSDContextProvider>
+                      <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                    </AutomaticSDContextProvider>
                   </RoutedContextProvider>
                 </NotificationsProvider>
               </CustomModalsProvider>
