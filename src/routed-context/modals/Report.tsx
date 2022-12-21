@@ -26,6 +26,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const reports = [
   {
@@ -64,11 +65,13 @@ const invalidateReasons = [ReportReason.NSFW, ReportReason.Ownership];
 const SEND_REPORT_ID = 'sending-report';
 
 export default createRoutedContext({
+  authGuard: true,
   schema: z.object({
     type: z.nativeEnum(ReportEntity),
     entityId: z.number(),
   }),
   Element: ({ context, props: { type, entityId } }) => {
+    //TODO - redirect if no user is authenticated
     const [reason, setReason] = useState<ReportReason>();
     const [uploading, setUploading] = useState(false);
     const ReportForm = useMemo(
