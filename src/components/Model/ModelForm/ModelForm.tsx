@@ -54,6 +54,7 @@ import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { openConfirmModal } from '@mantine/modals';
+import { BaseModel, constants } from '~/server/common/constants';
 
 const schema = modelSchema.extend({
   tagsOnModels: z.string().array(),
@@ -108,6 +109,7 @@ export function ModelForm({ model }: Props) {
     steps: null,
     trainedWords: [],
     skipTrainedWords: false,
+    baseModel: 'SD 1.5',
     images: [],
     files: [defaultModelFile],
   };
@@ -118,14 +120,17 @@ export function ModelForm({ model }: Props) {
     type: model?.type ?? ModelType.Checkpoint,
     status: model?.status ?? ModelStatus.Published,
     tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
-    modelVersions: model?.modelVersions.map(({ trainedWords, images, files, ...version }) => ({
-      ...version,
-      trainedWords: trainedWords,
-      skipTrainedWords: !trainedWords.length,
-      // HOTFIX: Casting image.meta type issue with generated prisma schema
-      images: images.map(({ image }) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
-      files: files.length > 0 ? files : [defaultModelFile],
-    })) ?? [defaultModelVersion],
+    modelVersions: model?.modelVersions.map(
+      ({ trainedWords, images, files, baseModel, ...version }) => ({
+        ...version,
+        baseModel: (baseModel as BaseModel) ?? defaultModelVersion.baseModel,
+        trainedWords: trainedWords,
+        skipTrainedWords: !trainedWords.length,
+        // HOTFIX: Casting image.meta type issue with generated prisma schema
+        images: images.map(({ image }) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
+        files: files.length > 0 ? files : [defaultModelFile],
+      })
+    ) ?? [defaultModelVersion],
   };
 
   const form = useForm({
@@ -329,6 +334,18 @@ export function ModelForm({ model }: Props) {
                                 </ActionIcon>
                               </>
                             )}
+                          </Group>
+                        </Grid.Col>
+                        <Grid.Col span={12}>
+                          <Group noWrap align="flex-end" spacing="xs">
+                            <InputSelect
+                              name={`modelVersions.${index}.baseModel`}
+                              label="Base Model"
+                              placeholder="Base Model"
+                              withAsterisk
+                              style={{ flex: 1 }}
+                              data={constants.baseModels.map((x) => ({ value: x, label: x }))}
+                            />
                           </Group>
                         </Grid.Col>
                         <Grid.Col span={12}>

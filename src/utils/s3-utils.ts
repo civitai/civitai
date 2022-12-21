@@ -68,12 +68,12 @@ export async function getPutUrl(key: string, s3: S3Client | null = null) {
 
   const bucket = env.S3_UPLOAD_BUCKET;
   const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket: bucket, Key: key }), {
-    expiresIn: 60 * 60, // 1 hour
+    expiresIn: UPLOAD_EXPIRATION,
   });
   return { url, bucket, key };
 }
 
-const UPLOAD_EXPIRATION = 60 * 60 * 1; // 1 hour
+const UPLOAD_EXPIRATION = 60 * 60 * 3; // 3 hours
 const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
 export async function getMultipartPutUrl(key: string, size: number, s3: S3Client | null = null) {
   if (!s3) s3 = getS3Client();

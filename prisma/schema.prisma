@@ -187,6 +187,7 @@ model Model {
   publishedAt   DateTime?
   fromImport    Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId  Int?        @unique
+  meta          Json        @default("{}")
 
   modelVersions  ModelVersion[]
   reviews        Review[]
@@ -237,6 +238,8 @@ model ModelVersion {
   fromImport   Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId Int?
   inaccurate   Boolean     @default(false)
+  baseModel    String?
+  meta         Json        @default("{}")
 
   reviews       Review[]
   images        ImagesOnModels[]

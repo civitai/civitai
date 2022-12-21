@@ -8,6 +8,7 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   createdAt: true,
   updatedAt: true,
   trainedWords: true,
+  baseModel: true,
   images: {
     orderBy: {
       index: 'asc',

@@ -38,6 +38,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     tagname,
     user,
     username,
+    baseModels,
     types,
     sort,
     period = MetricTimeframe.AllTime,
@@ -72,6 +73,11 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       ? [{ status: ModelStatus.Published }, { user: { id: sessionUser?.id } }]
       : undefined,
     favoriteModels: favorites ? { some: { userId: sessionUser?.id } } : undefined,
+    modelVersions: {
+      some: {
+        baseModel: baseModels?.length ? { in: baseModels } : undefined,
+      },
+    },
   };
 
   const items = await prisma.model.findMany({

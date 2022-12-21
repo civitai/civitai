@@ -6,10 +6,10 @@ import { splitUppercase } from '~/utils/string-helpers';
 import { deleteCookie, setCookie } from 'cookies-next';
 import { immer } from 'zustand/middleware/immer';
 import { modelFilterSchema, useCookies } from '~/providers/CookiesProvider';
-import { Popover, ActionIcon, Stack, Checkbox, Indicator } from '@mantine/core';
+import { Popover, ActionIcon, Stack, Checkbox, Indicator, Divider } from '@mantine/core';
 import { IconFilter } from '@tabler/icons';
 import { z } from 'zod';
-import { constants } from '~/server/common/constants';
+import { BaseModel, constants } from '~/server/common/constants';
 
 type FilterProps = z.input<typeof modelFilterSchema>;
 
@@ -18,6 +18,7 @@ export const useFilters = create<{
   setSort: (sort?: ModelSort) => void;
   setPeriod: (period?: MetricTimeframe) => void;
   setTypes: (types?: ModelType[]) => void;
+  setBaseModels: (baseModels?: BaseModel[]) => void;
 }>()(
   immer((set, get) => ({//eslint-disable-line
     filters: {},
@@ -39,6 +40,12 @@ export const useFilters = create<{
         !!types?.length ? setCookie('f_types', types) : deleteCookie('f_types');
       });
     },
+    setBaseModels: (baseModels) => {
+      set((state) => {
+        state.filters.baseModels = baseModels;
+        !!baseModels?.length ? setCookie('f_baseModels', baseModels) : deleteCookie('f_baseModels');
+      });
+    },
   }))
 );
 
@@ -46,11 +53,12 @@ export const useInfiniteModelsFilters = () => {
   const {
     sort = constants.modelFilterDefaults.sort,
     period = constants.modelFilterDefaults.period,
+    baseModels,
     types,
   } = useCookies();
 
   const filters = useFilters((state) => state.filters);
-  return { limit: 100, sort, period, types, ...filters };
+  return { limit: 100, sort, period, types, baseModels, ...filters };
 };
 
 const sortOptions = Object.values(ModelSort);
@@ -93,13 +101,17 @@ export function InfiniteModelsFilter() {
   const cookies = useCookies();
   const setTypes = useFilters((state) => state.setTypes);
   const types = useFilters((state) => state.filters.types ?? cookies.types ?? []);
+  const setBaseModels = useFilters((state) => state.setBaseModels);
+  const baseModels = useFilters((state) => state.filters.baseModels ?? cookies.baseModels ?? []);
+
+  const filterLength = types.length + baseModels.length;
 
   return (
     <Popover withArrow>
       <Popover.Target>
         <Indicator
           offset={4}
-          label={types.length ? types.length : undefined}
+          label={filterLength ? filterLength : undefined}
           showZero={false}
           dot={false}
           size={16}
@@ -123,6 +135,19 @@ export function InfiniteModelsFilter() {
           >
             {Object.values(ModelType).map((type, index) => (
               <Checkbox key={index} value={type} label={splitUppercase(type)} />
+            ))}
+          </Checkbox.Group>
+          <Divider />
+          <Checkbox.Group
+            value={baseModels}
+            label="Base model"
+            orientation="vertical"
+            spacing="xs"
+            size="md"
+            onChange={(baseModels: BaseModel[]) => setBaseModels(baseModels)}
+          >
+            {constants.baseModels.map((baseModel, index) => (
+              <Checkbox key={index} value={baseModel} label={baseModel} />
             ))}
           </Checkbox.Group>
         </Stack>

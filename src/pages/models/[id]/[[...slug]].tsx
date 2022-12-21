@@ -524,8 +524,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   <IconExclamationMark />
                 </ThemeIcon>
                 <Text size="md">
-                  This model has been unpublished because it looks like the model file failed to
-                  upload. Please re-upload the file.
+                  This model has been unpublished and is not visible to the community.
                 </Text>
               </Group>
             </Alert>
@@ -561,7 +560,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
             <Stack>
               {latestVersion && (
-                <Group spacing="xs" style={{ alignItems: 'flex-start' }}>
+                <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
                   <Stack sx={{ flex: 1 }} spacing={4}>
                     <MultiActionButton
                       component="a"
