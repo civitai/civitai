@@ -17,7 +17,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { GetServerSideProps } from 'next/types';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeImage, getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
@@ -26,6 +26,7 @@ import {
   InfiniteModelsPeriod,
   InfiniteModelsFilter,
 } from '~/components/InfiniteModels/InfiniteModelsFilters';
+import { Meta } from '~/components/Meta/Meta';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -56,9 +57,24 @@ export default function UserPage() {
 
   return (
     <>
-      <Head>
-        <meta name="description" content="Community driven AI model sharing tool" />
-      </Head>
+      {user && rank ? (
+        <Meta
+          title={`${user.username} Creator Profile | Civitai`}
+          description={`Average Rating: ${rank.ratingAllTime.toFixed(1)} (${abbreviateNumber(
+            rank.ratingCountAllTime
+          )}), Models Uploaded: ${abbreviateNumber(uploads)}, Followers: ${abbreviateNumber(
+            rank.followerCountAllTime
+          )}, Total Likes Received: ${abbreviateNumber(
+            rank.favoriteCountAllTime
+          )}, Total Downloads Received: ${abbreviateNumber(rank.downloadCountAllTime)}. `}
+          image={!user.image ? undefined : getEdgeUrl(user.image, { width: 1200 })}
+        />
+      ) : (
+        <Meta
+          title={`Creator Profile | Civitai`}
+          description="Learn more about this awesome creator on Civitai."
+        />
+      )}
       {user && (
         <Box className={classes.banner} mb="md">
           <Container size="xl">
