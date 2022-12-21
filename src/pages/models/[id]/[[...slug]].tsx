@@ -575,8 +575,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   <IconExclamationMark />
                 </ThemeIcon>
                 <Text size="md">
-                  This model has been unpublished because it looks like the model file failed to
-                  upload. Please re-upload the file.
+                  This model has been unpublished and is not visible to the community.
                 </Text>
               </Group>
             </Alert>
