@@ -15,7 +15,6 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';
-import { useRouter } from 'next/router';
 
 const reports = [
   {
@@ -50,14 +49,15 @@ const reports = [
   },
 ];
 
+const invalidateReasons = [ReportReason.NSFW, ReportReason.Ownership];
+const SEND_REPORT_ID = 'sending-report';
+
 export default createRoutedContext({
   schema: z.object({
     type: z.nativeEnum(ReportEntity),
     entityId: z.number(),
-    modelId: z.number().optional(),
-    parentId: z.number().optional(),
   }),
-  Element: ({ context, props: { type, entityId, parentId } }) => {
+  Element: ({ context, props: { type, entityId } }) => {
     const [reason, setReason] = useState<ReportReason>();
     const [uploading, setUploading] = useState(false);
     const ReportForm = useMemo(
@@ -73,7 +73,7 @@ export default createRoutedContext({
     const { mutate, isLoading } = trpc.report.create.useMutation({
       onMutate() {
         showNotification({
-          id: 'sending-report',
+          id: SEND_REPORT_ID,
           loading: true,
           disallowClose: true,
           autoClose: false,
@@ -86,29 +86,35 @@ export default createRoutedContext({
           message: 'Your request has been received',
         });
         context.close();
-        switch (type) {
-          case ReportEntity.Model:
-            queryUtils.model.getById.setData(
-              { id: variables.id },
-              produce((old) => {
-                if (old) {
-                  if (variables.reason === ReportReason.NSFW) {
-                    old.nsfw = true;
-                  } else if (variables.reason === ReportReason.Ownership) {
-                    old.reportStats = { ...old.reportStats, ownershipPending: 1 };
+        if (invalidateReasons.some((reason) => reason === variables.reason)) {
+          switch (type) {
+            case ReportEntity.Model:
+              queryUtils.model.getById.setData(
+                { id: variables.id },
+                produce((old) => {
+                  if (old) {
+                    if (variables.reason === ReportReason.NSFW) {
+                      old.nsfw = true;
+                    } else if (variables.reason === ReportReason.Ownership) {
+                      old.reportStats = { ...old.reportStats, ownershipPending: 1 };
+                    }
                   }
-                }
-              })
-            );
-            break;
-          case ReportEntity.Review:
-            await queryUtils.comment.getById.invalidate({ id: variables.id });
-            break;
-          case ReportEntity.Comment:
-            await queryUtils.review.getDetail.invalidate({ id: variables.id });
-            break;
-          default:
-            break;
+                })
+              );
+              await queryUtils.model.getAll.invalidate();
+              break;
+            case ReportEntity.Review:
+              await queryUtils.comment.getById.invalidate({ id: variables.id });
+              await queryUtils.comment.getAll.invalidate();
+              break;
+            case ReportEntity.Comment:
+              await queryUtils.review.getDetail.invalidate({ id: variables.id });
+              await queryUtils.comment.getAll.invalidate();
+              await queryUtils.comment.getCommentsById.invalidate();
+              break;
+            default:
+              break;
+          }
         }
       },
       onError(error) {
@@ -119,7 +125,7 @@ export default createRoutedContext({
         });
       },
       onSettled() {
-        hideNotification('sending-report');
+        hideNotification(SEND_REPORT_ID);
       },
     });
 

@@ -24,6 +24,7 @@ import {
   IconCloudOff,
   IconDotsVertical,
   IconDownload,
+  IconFlag,
   IconHeart,
   IconMessageCircle2,
   IconStar,
@@ -48,9 +49,12 @@ import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { SFW } from '~/components/Media/SFW';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
+import { ReportEntity } from '~/server/schema/report.schema';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit, splitUppercase } from '~/utils/string-helpers';
@@ -78,7 +82,6 @@ export function InfiniteModels({ columnWidth = 300, showHidden = false }: Infini
   const result = filterSchema.safeParse(router.query);
   const currentUser = useCurrentUser();
   const queryParams = result.success ? result.data : {};
-  const queryUtils = trpc.useContext();
 
   const { ref, inView } = useInView();
   const {
@@ -126,7 +129,7 @@ export function InfiniteModels({ columnWidth = 300, showHidden = false }: Infini
         <MasonryList
           columnWidth={columnWidth}
           data={models}
-          filters={{ ...filters, ...router.query }}
+          filters={{ ...filters, ...queryParams }}
         />
       ) : (
         <Stack align="center">
@@ -235,6 +238,7 @@ const MasonryItem = ({
 
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
+  const { openContext } = useRoutedContext();
 
   const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery(undefined, {
     enabled: !!currentUser,
@@ -362,6 +366,21 @@ const MasonryItem = ({
         {modelDownloads}
       </Group>
     </Group>
+  );
+
+  const reportOption = (
+    <LoginRedirect reason="report-model">
+      <Menu.Item
+        icon={<IconFlag size={14} stroke={1.5} />}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openContext('report', { type: ReportEntity.Model, entityId: id });
+        }}
+      >
+        Report
+      </Menu.Item>
+    </LoginRedirect>
   );
 
   const isNew = data.createdAt > aDayAgo;

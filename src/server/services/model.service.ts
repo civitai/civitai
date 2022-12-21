@@ -1,4 +1,4 @@
-import { MetricTimeframe, ModelStatus, Prisma, ReportReason } from '@prisma/client';
+import { MetricTimeframe, ModelStatus, Prisma } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 
 import { ModelSort } from '~/server/common/enums';
@@ -6,7 +6,6 @@ import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
 import { prepareFile } from '~/utils/file-helpers';
-import { ReportInput } from '~/server/schema/report.schema';
 import { env } from '~/env/server.mjs';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
