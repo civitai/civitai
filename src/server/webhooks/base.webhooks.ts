@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 
 type WebhookProcessor = {
   displayName: string;
+  moderatorOnly?: boolean;
   getData: (context: WebhookProcessorRunContext) => Promise<MixedObject[]>;
 };
 
