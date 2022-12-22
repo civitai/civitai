@@ -364,6 +364,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       value: <Text>{model?.modelVersions.length}</Text>,
     },
     {
+      label: 'Base Model',
+      value: <Text>{latestVersion?.baseModel}</Text>,
+    },
+    {
       label: 'Tags',
       value: (
         <Group spacing={4}>

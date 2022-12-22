@@ -63,6 +63,7 @@ import { trpc } from '~/utils/trpc';
 type InfiniteModelsProps = {
   columnWidth?: number;
   showHidden?: boolean;
+  delayNsfw?: boolean;
 };
 
 const filterSchema = z.object({
@@ -76,7 +77,11 @@ const filterSchema = z.object({
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
-export function InfiniteModels({ columnWidth = 300, showHidden = false }: InfiniteModelsProps) {
+export function InfiniteModels({
+  columnWidth = 300,
+  showHidden = false,
+  delayNsfw = false,
+}: InfiniteModelsProps) {
   const router = useRouter();
   const filters = useInfiniteModelsFilters();
   const result = filterSchema.safeParse(router.query);
@@ -111,12 +116,36 @@ export function InfiniteModels({ columnWidth = 300, showHidden = false }: Infini
     }
   }, [fetchNextPage, inView]);
 
+  const isAuthenticated = !!currentUser;
   const models = useMemo(
-    () =>
-      data?.pages
-        .flatMap((x) => (!!x ? x.items : []))
-        .filter((item) => !hiddenUserIds.includes(item.user.id)) ?? [],
-    [data] //eslint-disable-line
+    () => {
+      const items =
+        data?.pages
+          .flatMap((x) => (!!x ? x.items : []))
+          .filter((item) => !hiddenUserIds.includes(item.user.id)) ?? [];
+
+      // If current user isn't authenticated make sure they aren't greeted with a blurry wall
+      if (delayNsfw && items.length > 0 && !isAuthenticated && items.length <= 100) {
+        let toPush = 4;
+        while (toPush > 0) {
+          let i = 0;
+          let item = items[0];
+          while (item) {
+            item = items[i];
+            if (!item || item.nsfw) break;
+            i++;
+          }
+          if (!item) break;
+          items.splice(i, 1);
+          items.splice(i + 4, 0, item);
+
+          toPush--;
+        }
+      }
+
+      return items;
+    },
+    [data, isAuthenticated] //eslint-disable-line
   );
 
   return (
@@ -369,7 +398,7 @@ const MasonryItem = ({
   );
 
   const reportOption = (
-    <LoginRedirect reason="report-model">
+    <LoginRedirect reason="report-model" key="report">
       <Menu.Item
         icon={<IconFlag size={14} stroke={1.5} />}
         onClick={(e: any) => {
