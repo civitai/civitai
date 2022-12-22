@@ -86,7 +86,7 @@ function Home() {
               <InfiniteModelsFilter />
             </Group>
           </Group>
-          <InfiniteModels />
+          <InfiniteModels delayNsfw />
         </Stack>
       </Container>
     </>
