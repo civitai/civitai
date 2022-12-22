@@ -1,4 +1,4 @@
-import { ImportStatus, ModelFileType, ModelType, Prisma } from '@prisma/client';
+import { ImportStatus, ModelType, Prisma } from '@prisma/client';
 import { createImporter } from '~/server/importers/importer';
 import { prisma } from '~/server/db/client';
 import { uploadViaUrl } from '~/utils/cf-images-utils';
@@ -82,7 +82,7 @@ export async function importModelFromHuggingFace(
             url,
             sizeKB: size,
             name,
-            type: ModelFileType.Model,
+            type: 'Model',
             format: getModelFileFormat(name),
             primary,
           },

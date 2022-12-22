@@ -1,4 +1,4 @@
-import { ModelFileFormat, ModelFileType, Prisma, ScanResultCode } from '@prisma/client';
+import { ModelFileFormat, Prisma, ScanResultCode } from '@prisma/client';
 import { ModelFileInput } from '~/server/schema/model-file.schema';
 
 export function getModelFileFormat(filename: string) {
@@ -24,7 +24,7 @@ export function prepareFile(file: ModelFileInput) {
     ...file,
     ...unscannedFile,
     format:
-      file.type === ModelFileType.Model || file.type === ModelFileType.PrunedModel
+      file.type === 'Model' || file.type === 'Pruned Model'
         ? getModelFileFormat(file.name)
         : ModelFileFormat.Other,
   };

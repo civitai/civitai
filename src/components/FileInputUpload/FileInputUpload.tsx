@@ -17,9 +17,9 @@ import { getFileExtension } from '~/utils/string-helpers';
 import { toStringList } from '~/utils/array-helpers';
 import { useDidUpdate } from '@mantine/hooks';
 import isEqual from 'lodash/isEqual';
-import { ModelFileType } from '@prisma/client';
 import { bytesToKB } from '~/utils/number-helpers';
 import { ModelFileInput } from '~/server/schema/model-file.schema';
+import { ModelFileType } from '~/server/common/constants';
 
 export function FileInputUpload({
   uploadType = 'Model',

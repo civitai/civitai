@@ -1,4 +1,5 @@
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { ModelFileType } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getAllModelsWithVersionsSelect } from '~/server/selectors/model.selector';
 import { getBaseUrl } from '~/server/utils/url-helpers';

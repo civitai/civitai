@@ -12,7 +12,7 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
-import { Model, ModelFileType, ModelStatus, ModelType } from '@prisma/client';
+import { Model, ModelStatus, ModelType } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconArrowDown,
@@ -54,7 +54,7 @@ import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { openConfirmModal } from '@mantine/modals';
-import { BaseModel, constants } from '~/server/common/constants';
+import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
 
 const schema = modelSchema.extend({
   tagsOnModels: z.string().array(),
@@ -98,7 +98,7 @@ export function ModelForm({ model }: Props) {
     name: '',
     url: '',
     sizeKB: 0,
-    type: ModelFileType.Model,
+    type: constants.modelFileTypes[0] as ModelFileType,
     primary: true,
   };
 
@@ -128,7 +128,8 @@ export function ModelForm({ model }: Props) {
         skipTrainedWords: !trainedWords.length,
         // HOTFIX: Casting image.meta type issue with generated prisma schema
         images: images.map(({ image }) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
-        files: files.length > 0 ? files : [defaultModelFile],
+        // HOTFIX: Casting files to defaultModelFile[] to avoid type confusion and accept room for error
+        files: files.length > 0 ? (files as typeof defaultModelFile[]) : [defaultModelFile],
       })
     ) ?? [defaultModelVersion],
   };

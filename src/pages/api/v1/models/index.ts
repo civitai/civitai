@@ -4,6 +4,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
+import { ModelFileType } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';

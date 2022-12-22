@@ -1,10 +1,4 @@
-import {
-  ModelFileFormat,
-  ModelFileType,
-  ModelType,
-  Prisma,
-  UserActivityType,
-} from '@prisma/client';
+import { ModelFileFormat, ModelType, Prisma, UserActivityType } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
@@ -14,10 +8,11 @@ import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { filenamize } from '~/utils/string-helpers';
 import { getGetUrl } from '~/utils/s3-utils';
 import requestIp from 'request-ip';
+import { constants, ModelFileType } from '~/server/common/constants';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
-  type: z.nativeEnum(ModelFileType).optional(),
+  type: z.enum(constants.modelFileTypes).optional(),
   format: z.nativeEnum(ModelFileFormat).optional(),
 });
 
@@ -100,15 +95,21 @@ export function getDownloadFilename({
 }: {
   model: { name: string; type: ModelType };
   modelVersion: { name: string; trainedWords: string[] };
-  file: { name: string; type: ModelFileType };
+  file: { name: string; type: ModelFileType | string };
 }) {
   let fileName = file.name;
+  if (!constants.modelFileTypes.includes(file.type as ModelFileType)) return file.name;
+  const fileType = file.type as ModelFileType;
+
   if (model.type === ModelType.TextualInversion) {
     const trainedWord = modelVersion.trainedWords[0];
-    if (trainedWord) fileName = `${trainedWord}.pt`;
-  } else if (file.type === ModelFileType.TrainingData) {
+    let fileSuffix = '';
+    if (fileType === 'Negative') fileSuffix = '-negative';
+
+    if (trainedWord) fileName = `${trainedWord}${fileSuffix}.pt`;
+  } else if (fileType === 'Training Data') {
     fileName = `${filenamize(model.name)}_${filenamize(modelVersion.name)}_trainingData.zip`;
-  } else if (file.type !== ModelFileType.VAE) {
+  } else if (fileType !== 'VAE') {
     let fileSuffix = '';
     if (fileName.includes('-inpainting')) fileSuffix = '-inpainting';
 
