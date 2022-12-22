@@ -13,6 +13,7 @@ import { prisma } from '~/server/db/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { filenamize } from '~/utils/string-helpers';
 import { getGetUrl } from '~/utils/s3-utils';
+import requestIp from 'request-ip';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -21,6 +22,13 @@ const schema = z.object({
 });
 
 export default async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
+  // Get ip so that we can block exploits we catch
+  const ip = requestIp.getClientIp(req);
+  const blacklist = (
+    ((await prisma.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ?? ''
+  ).split(',');
+  if (ip && blacklist.includes(ip)) return res.status(403).json({ error: 'Forbidden' });
+
   const results = schema.safeParse(req.query);
   if (!results.success)
     return res
@@ -62,7 +70,17 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
       data: {
         userId,
         activity: UserActivityType.ModelDownload,
-        details: { modelId: modelVersion.model.id, modelVersionId: modelVersion.id },
+        details: {
+          modelId: modelVersion.model.id,
+          modelVersionId: modelVersion.id,
+          // Just so we can catch exploits
+          ...(!userId
+            ? {
+                ip,
+                userAgent: req.headers['user-agent'],
+              }
+            : {}), // You'll notice we don't include this for authed users...
+        },
       },
     });
   } catch (error) {
