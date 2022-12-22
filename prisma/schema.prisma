@@ -78,6 +78,10 @@ model User {
   engagedUsers         UserEngagement[]           @relation("engagedUsers")
   metrics              UserMetric[]
   reports              Report[]
+  questions            Question[]
+  answers              Answer[]
+  commentsv2           CommentV2[]
+  reactions            Reaction[]
 }
 
 enum UserEngagementType {
@@ -507,7 +511,8 @@ model Tag {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  tagsOnModels TagsOnModels[]
+  tagsOnModels   TagsOnModels[]
+  TagsOnQuestion TagsOnQuestions[]
 }
 
 model TagsOnModels {
@@ -657,6 +662,213 @@ model Webhook {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([url, userId])
+}
+
+model Question {
+  id               Int      @id @default(autoincrement())
+  userId           Int
+  user             User     @relation(fields: [userId], references: [id])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  title            String
+  content          String
+  selectedAnswerId Int?     @unique
+  selectedAnswer   Answer?  @relation("SelectedAnswer", fields: [selectedAnswerId], references: [id])
+
+  tags         TagsOnQuestions[]
+  reactions    QuestionReaction[]
+  comments     QuestionComment[]
+  answers      Answer[]           @relation("Question")
+  metrics      QuestionMetric[]
+  QuestionRank QuestionRank?
+}
+
+model Answer {
+  id         Int      @id @default(autoincrement())
+  questionId Int
+  question   Question @relation("Question", fields: [questionId], references: [id], onDelete: Cascade)
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content    String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  reactions AnswerReaction[]
+  comments  AnswerComment[]
+  metrics   AnswerMetric[]
+  answerFor Question?        @relation("SelectedAnswer")
+  rank      AnswerRank?
+}
+
+model CommentV2 {
+  id           Int         @id @default(autoincrement())
+  content      String
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  nsfw         Boolean     @default(false)
+  tosViolation Boolean     @default(false)
+  parentId     Int?
+  parent       CommentV2?  @relation("ParentComments", fields: [parentId], references: [id], onDelete: Cascade)
+  userId       Int
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comments     CommentV2[] @relation("ParentComments")
+
+  question  QuestionComment?
+  answer    AnswerComment?
+  reactions CommentV2Reaction[]
+}
+
+model QuestionComment {
+  questionId Int
+  question   Question  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  commentId  Int       @unique
+  comment    CommentV2 @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, commentId])
+}
+
+model AnswerComment {
+  answerId  Int
+  answer    Answer    @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  commentId Int       @unique
+  comment   CommentV2 @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@id([answerId, commentId])
+}
+
+model TagsOnQuestions {
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  questionId Int
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId      Int
+
+  @@id([tagId, questionId])
+}
+
+model Reaction {
+  id      Int       @id @default(autoincrement())
+  userId  Int
+  user    User      @relation(fields: [userId], references: [id])
+  like    DateTime?
+  dislike DateTime?
+  laugh   DateTime?
+  cry     DateTime?
+  heart   DateTime?
+  check   DateTime?
+  cross   DateTime?
+
+  question QuestionReaction?
+  answer   AnswerReaction?
+  comment  CommentV2Reaction?
+}
+
+model QuestionReaction {
+  questionId Int
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  reactionId Int      @unique
+  reaction   Reaction @relation(fields: [reactionId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, reactionId])
+}
+
+model AnswerReaction {
+  answerId   Int
+  answer     Answer   @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  reactionId Int      @unique
+  reaction   Reaction @relation(fields: [reactionId], references: [id], onDelete: Cascade)
+
+  @@id([answerId, reactionId])
+}
+
+model CommentV2Reaction {
+  commentId  Int
+  comment    CommentV2 @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  reactionId Int       @unique
+  reaction   Reaction  @relation(fields: [reactionId], references: [id], onDelete: Cascade)
+
+  @@id([commentId, reactionId])
+}
+
+/// @view
+model QuestionRank {
+  questionId              Int      @id
+  question                Question @relation(fields: [questionId], references: [id], onDelete: NoAction)
+  answerCountDay          Int
+  answerCountWeek         Int
+  answerCountMonth        Int
+  answerCountYear         Int
+  answerCountAllTime      Int
+  heartCountDay           Int
+  heartCountWeek          Int
+  heartCountMonth         Int
+  heartCountYear          Int
+  heartCountAllTime       Int
+  commentCountDay         Int
+  commentCountWeek        Int
+  commentCountMonth       Int
+  commentCountYear        Int
+  commentCountAllTime     Int
+  answerCountDayRank      Int
+  answerCountWeekRank     Int
+  answerCountMonthRank    Int
+  answerCountYearRank     Int
+  answerCountAllTimeRank  Int
+  heartCountDayRank       Int
+  heartCountWeekRank      Int
+  heartCountMonthRank     Int
+  heartCountYearRank      Int
+  heartCountAllTimeRank   Int
+  commentCountDayRank     Int
+  commentCountWeekRank    Int
+  commentCountMonthRank   Int
+  commentCountYearRank    Int
+  commentCountAllTimeRank Int
+}
+
+/// @view
+model AnswerRank {
+  answerId                Int    @id
+  answer                  Answer @relation(fields: [answerId], references: [id], onDelete: NoAction)
+  checkCountDay           Int
+  checkCountWeek          Int
+  checkCountMonth         Int
+  checkCountYear          Int
+  checkCountAllTime       Int
+  crossCountDay           Int
+  crossCountWeek          Int
+  crossCountMonth         Int
+  crossCountYear          Int
+  crossCountAllTime       Int
+  heartCountDay           Int
+  heartCountWeek          Int
+  heartCountMonth         Int
+  heartCountYear          Int
+  heartCountAllTime       Int
+  commentCountDay         Int
+  commentCountWeek        Int
+  commentCountMonth       Int
+  commentCountYear        Int
+  commentCountAllTime     Int
+  checkCountDayRank       Int
+  checkCountWeekRank      Int
+  checkCountMonthRank     Int
+  checkCountYearRank      Int
+  checkCountAllTimeRank   Int
+  crossCountDayRank       Int
+  crossCountWeekRank      Int
+  crossCountMonthRank     Int
+  crossCountYearRank      Int
+  crossCountAllTimeRank   Int
+  heartCountDayRank       Int
+  heartCountWeekRank      Int
+  heartCountMonthRank     Int
+  heartCountYearRank      Int
+  heartCountAllTimeRank   Int
+  commentCountDayRank     Int
+  commentCountWeekRank    Int
+  commentCountMonthRank   Int
+  commentCountYearRank    Int
+  commentCountAllTimeRank Int
 }
 
 /// @view
@@ -838,4 +1050,51 @@ model UserRank {
   favoriteCountMonthRank   Int
   favoriteCountYearRank    Int
   favoriteCountAllTimeRank Int
+}
+
+/// @view
+model QuestionMetric {
+  questionId          Int      @id
+  question            Question @relation(fields: [questionId], references: [id], onDelete: NoAction)
+  heartCountDay       Int
+  heartCountWeek      Int
+  heartCountMonth     Int
+  heartCountYear      Int
+  heartCountAllTime   Int
+  commentCountDay     Int
+  commentCountWeek    Int
+  commentCountMonth   Int
+  commentCountYear    Int
+  commentCountAllTime Int
+  answerCountDay      Int
+  answerCountWeek     Int
+  answerCountMonth    Int
+  answerCountYear     Int
+  answerCountAllTime  Int
+}
+
+/// @view
+model AnswerMetric {
+  answerId            Int    @id
+  answer              Answer @relation(fields: [answerId], references: [id], onDelete: NoAction)
+  checkCountDay       Int
+  checkCountWeek      Int
+  checkCountMonth     Int
+  checkCountYear      Int
+  checkCountAllTime   Int
+  crossCountDay       Int
+  crossCountWeek      Int
+  crossCountMonth     Int
+  crossCountYear      Int
+  crossCountAllTime   Int
+  heartCountDay       Int
+  heartCountWeek      Int
+  heartCountMonth     Int
+  heartCountYear      Int
+  heartCountAllTime   Int
+  commentCountDay     Int
+  commentCountWeek    Int
+  commentCountMonth   Int
+  commentCountYear    Int
+  commentCountAllTime Int
 }

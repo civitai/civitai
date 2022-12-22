@@ -1,0 +1,13 @@
+import { number, z } from 'zod';
+
+export type GetAnswersInput = z.infer<typeof getAnswersSchema>;
+export const getAnswersSchema = z.object({
+  questionId: number(),
+});
+
+export type UpsertAnswerInput = z.infer<typeof upsertAnswerSchema>;
+export const upsertAnswerSchema = z.object({
+  id: z.number().optional(),
+  content: z.string(),
+  questionId: z.number(),
+});
