@@ -68,6 +68,7 @@ export default createRoutedContext({
               name="content"
               placeholder="Type your thoughts..."
               includeControls={['formatting', 'link']}
+              editorSize="xl"
             />
             <Group position="apart">
               <Button variant="default" onClick={handleClose}>

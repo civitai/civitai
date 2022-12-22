@@ -131,6 +131,7 @@ export default function CommentSection({
                 includeControls={['formatting', 'link']}
                 disabled={saveCommentMutation.isLoading}
                 onFocus={() => setShowCommentActions(true)}
+                hideToolbar
               />
             </Box>
             {showCommentActions ? (

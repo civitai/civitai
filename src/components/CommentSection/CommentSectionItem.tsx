@@ -176,6 +176,7 @@ export function CommentSectionItem({ comment, modelId }: Props) {
                 onChange={(value) =>
                   setEditComment((state) => (state ? { ...state, content: value } : state))
                 }
+                hideToolbar
               />
             )}
           </Stack>

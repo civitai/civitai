@@ -1,4 +1,4 @@
-import { Input, InputWrapperProps } from '@mantine/core';
+import { Input, InputWrapperProps, MantineSize } from '@mantine/core';
 import { Link, RichTextEditor as RTE, RichTextEditorProps } from '@mantine/tiptap';
 import Image from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -10,6 +10,13 @@ import { useEffect } from 'react';
 
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
+
+const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
+  sm: '60px',
+  md: '80px',
+  lg: '100px',
+  xl: '120px',
+};
 
 export function RichTextEditor({
   id,
@@ -23,6 +30,7 @@ export function RichTextEditor({
   includeControls = ['formatting'],
   disabled = false,
   hideToolbar = false,
+  editorSize = 'sm',
   ...props
 }: Props) {
   const addHeading = includeControls.includes('heading');
@@ -72,7 +80,20 @@ export function RichTextEditor({
       withAsterisk={withAsterisk}
       error={error}
     >
-      <RTE {...props} editor={editor} id={id} sx={{ marginTop: description ? 5 : undefined }}>
+      <RTE
+        {...props}
+        editor={editor}
+        id={id}
+        sx={(theme) => ({
+          marginTop: description ? 5 : undefined,
+
+          // Fixes gapcursor color for dark mode
+          '& .ProseMirror-gapcursor:after': {
+            borderTop: `1px solid ${theme.colorScheme === 'dark' ? 'white' : 'black'}`,
+          },
+        })}
+        styles={{ content: { minHeight: mapEditorSizeHeight[editorSize] } }}
+      >
         {!hideToolbar && (
           <RTE.Toolbar>
             {addHeading && (
@@ -146,4 +167,5 @@ type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
     onChange?: (value: string) => void;
     disabled?: boolean;
     hideToolbar?: boolean;
+    editorSize?: 'sm' | 'md' | 'lg' | 'xl';
   };
