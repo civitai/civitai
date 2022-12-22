@@ -679,7 +679,7 @@ model Question {
   reactions    QuestionReaction[]
   comments     QuestionComment[]
   answers      Answer[]           @relation("Question")
-  metrics      QuestionMetric[]
+  metrics      QuestionMetric?
   QuestionRank QuestionRank?
 }
 
@@ -695,7 +695,7 @@ model Answer {
 
   reactions AnswerReaction[]
   comments  AnswerComment[]
-  metrics   AnswerMetric[]
+  metrics   AnswerMetric?
   answerFor Question?        @relation("SelectedAnswer")
   rank      AnswerRank?
 }
