@@ -3,7 +3,7 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import { Context } from '~/server/createContext';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getAnswers } from '~/server/services/answer.service';
-import { throwDbError } from '~/server/utils/errorHandling';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { GetAnswersInput, UpsertAnswerInput } from './../schema/answer.schema';
 
 export const getAnswersHandler = async ({
@@ -14,7 +14,8 @@ export const getAnswersHandler = async ({
   input: GetAnswersInput;
 }) => {
   try {
-    return await getAnswers({
+    const userId = ctx.user?.id;
+    const items = await getAnswers({
       questionId,
       select: {
         id: true,
@@ -29,8 +30,28 @@ export const getAnswersHandler = async ({
             checkCountAllTime: true,
           },
         },
+        reactions: {
+          select: {
+            where: { reaction: { userId } },
+            take: 1,
+            reaction: {
+              select: {
+                id: true,
+                user: { select: simpleUserSelect },
+                heart: true,
+                cross: true,
+                check: true,
+              },
+            },
+          },
+        },
       },
     });
+    if (!items) throw throwNotFoundError();
+    return items.map((item) => ({
+      ...item,
+      userReaction: item.reactions.map((x) => x.reaction)[0],
+    }));
   } catch (error) {
     throw throwDbError(error);
   }
