@@ -5,7 +5,7 @@ import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
-import { sanitizedStringSchema } from '~/server/schema/utils.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export const getAllModelsSchema = z.object({
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).optional(),
@@ -39,7 +39,7 @@ export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;
 export const modelSchema = z.object({
   id: z.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
-  description: sanitizedStringSchema,
+  description: getSanitizedStringSchema(),
   type: z.nativeEnum(ModelType),
   status: z.nativeEnum(ModelStatus),
   tagsOnModels: z.array(tagSchema).nullish(),

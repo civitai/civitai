@@ -1,12 +1,12 @@
-import { TypographyStylesProvider } from '@mantine/core';
+import { TypographyStylesProvider, TypographyStylesProviderProps } from '@mantine/core';
 import React from 'react';
 
-export function RenderHtml({ html }: Props) {
+export function RenderHtml({ html, ...props }: Props) {
   return (
-    <TypographyStylesProvider>
+    <TypographyStylesProvider {...props}>
       <div dangerouslySetInnerHTML={{ __html: html }} />
     </TypographyStylesProvider>
   );
 }
 
-type Props = { html: string };
+type Props = Omit<TypographyStylesProviderProps, 'children'> & { html: string };

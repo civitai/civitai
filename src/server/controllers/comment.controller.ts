@@ -170,6 +170,7 @@ export const getCommentCommentsHandler = async ({ input }: { input: GetByIdInput
       ...input,
       select: {
         comments: {
+          orderBy: { createdAt: 'desc' },
           select: commentDetailSelect,
         },
       },

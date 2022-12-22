@@ -259,6 +259,7 @@ export function ModelForm({ model }: Props) {
                     name="description"
                     label="About your model"
                     description="Tell us what your model does"
+                    includeControls={['heading', 'formatting', 'list', 'link', 'media']}
                   />
                 </Stack>
               </Paper>
@@ -336,6 +337,7 @@ export function ModelForm({ model }: Props) {
                             name={`modelVersions.${index}.description`}
                             label="Version changes or notes"
                             description="Tell us about this version"
+                            includeControls={['formatting', 'list', 'link']}
                           />
                         </Grid.Col>
                         <Grid.Col span={12}>

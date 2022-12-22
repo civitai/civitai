@@ -1,7 +1,9 @@
-import { Modal, Group, CloseButton, Alert, Center, Loader, Stack, Text } from '@mantine/core';
+import { Modal, Group, CloseButton, Alert, Center, Loader, Stack } from '@mantine/core';
 import { z } from 'zod';
+
 import CommentSection from '~/components/CommentSection/CommentSection';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
@@ -27,7 +29,7 @@ export default createRoutedContext({
       });
     const { data: reactions = [] } = trpc.comment.getReactions.useQuery(
       { commentId },
-      { enabled: !!comment, initialData: comment?.reactions ?? [] }
+      { enabled: !!comment, initialData: comment?.reactions }
     );
 
     const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
@@ -91,7 +93,7 @@ export default createRoutedContext({
               <CloseButton onClick={context.close} />
             </Group>
             <Stack spacing="xl">
-              <Text>{comment.content}</Text>
+              <RenderHtml html={comment.content} />
               <ReactionPicker
                 reactions={reactions}
                 onSelect={(reaction) => toggleReactionMutation.mutate({ id: commentId, reaction })}
