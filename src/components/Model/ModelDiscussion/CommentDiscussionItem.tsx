@@ -14,10 +14,9 @@ import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CommentGetAllItem } from '~/types/router';
 import { daysFromNow } from '~/utils/date-helpers';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { CommentGetAllItem } from '~/types/router';
 
 export function CommentDiscussionItem({ comment }: Props) {
   const { openContext } = useRoutedContext();

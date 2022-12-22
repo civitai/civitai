@@ -164,7 +164,7 @@ export default createRoutedContext({
                   </SFW>
                 </Grid.Col>
               ) : null}
-              <Grid.Col span={12}>
+              <Grid.Col span={12} py={0}>
                 <ReactionPicker
                   reactions={reactions}
                   onSelect={(reaction) => toggleReactionMutation.mutate({ id: reviewId, reaction })}

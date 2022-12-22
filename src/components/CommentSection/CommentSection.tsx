@@ -105,7 +105,7 @@ export default function CommentSection({
           onSubmit={(data) => saveCommentMutation.mutate({ ...data })}
           style={{ flex: '1 1 0' }}
         >
-          <Stack spacing={4}>
+          <Stack spacing="xs">
             <Box sx={{ position: 'relative' }}>
               {!currentUser ? (
                 <Overlay color={theme.fn.rgba(theme.colors.gray[9], 0.6)} opacity={1} zIndex={5}>

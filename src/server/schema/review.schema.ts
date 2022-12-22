@@ -13,7 +13,7 @@ export const reviewUpsertSchema = z.object({
   rating: z.number(),
   text: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br'],
-  }),
+  }).nullish(),
   nsfw: z.boolean().optional(),
   images: z.array(imageSchema).max(10, 'You can only upload up to 10 images').optional(),
 });

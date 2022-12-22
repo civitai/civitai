@@ -46,7 +46,7 @@ export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;
 export const modelSchema = z.object({
   id: z.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
-  description: getSanitizedStringSchema(),
+  description: getSanitizedStringSchema().nullish(),
   type: z.nativeEnum(ModelType),
   status: z.nativeEnum(ModelStatus),
   tagsOnModels: z.array(tagSchema).nullish(),

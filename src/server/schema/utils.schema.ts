@@ -9,4 +9,4 @@ export const getSanitizedStringSchema = (options?: sanitize.IOptions) =>
 
     const str = String(val);
     return sanitizeHtml(str, options);
-  }, z.string().nullish());
+  }, z.string());

@@ -16,7 +16,7 @@ export const getAllCommentsSchema = z
   })
   .partial();
 
-export type CommentUpsertInput = z.input<typeof commentUpsertInput>;
+export type CommentUpsertInput = z.infer<typeof commentUpsertInput>;
 export const commentUpsertInput = z.object({
   id: z.number().optional(),
   modelId: z.number(),
