@@ -1,8 +1,10 @@
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { z } from 'zod';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { QS } from '~/utils/qs';
+import useIsClient from '~/hooks/useIsClient';
 
 export type RoutedContext = {
   opened: boolean;
@@ -16,16 +18,20 @@ export type RoutedContextProps<TSchema extends z.AnyZodObject> = {
 
 // TODO - handle optional schema/schema props that would make the Element props optional
 export function createRoutedContext<TSchema extends z.AnyZodObject>({
+  authGuard,
   schema,
   Element: BaseComponent,
 }: {
+  authGuard?: boolean;
   schema?: TSchema;
   Element:
     | React.ForwardRefExoticComponent<RoutedContextProps<TSchema>>
     | ((props: RoutedContextProps<TSchema>) => JSX.Element);
 }) {
   function RoutedContext(props: z.infer<TSchema>) {
+    const isClient = useIsClient();
     const router = useRouter();
+    const user = useCurrentUser();
     // const [opened, setOpened] = useState(false);
     const result = schema?.safeParse(props) ?? { success: true, data: {} };
     const { closeContext } = useRoutedContext();
@@ -56,6 +62,10 @@ export function createRoutedContext<TSchema extends z.AnyZodObject>({
     }, [router, router.query]);
 
     if (!result.success) return null;
+    if (!user && authGuard) {
+      if (isClient) closeContext();
+      return null;
+    }
 
     return <BaseComponent context={{ opened: true, close: closeContext }} props={result?.data} />;
   }

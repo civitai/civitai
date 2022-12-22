@@ -1,7 +1,5 @@
 import { Group, Stack, Text, Button, Menu, ActionIcon } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { showNotification, hideNotification } from '@mantine/notifications';
-import { ReportReason } from '@prisma/client';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag } from '@tabler/icons';
 import { useState } from 'react';
 
@@ -11,15 +9,18 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { ReportEntity } from '~/server/schema/report.schema';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { CommentGetCommentsById } from '~/types/router';
 import { daysFromNow } from '~/utils/date-helpers';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function CommentSectionItem({ comment, modelId }: Props) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
+  const { openContext } = useRoutedContext();
 
   const [editComment, setEditComment] = useState<Props['comment'] | null>(null);
 
@@ -102,40 +103,6 @@ export function CommentSectionItem({ comment, modelId }: Props) {
         deleteMutation.mutate({ id });
       },
     });
-  };
-
-  const reportMutation = trpc.comment.report.useMutation({
-    onMutate() {
-      showNotification({
-        id: 'sending-comment-report',
-        loading: true,
-        disallowClose: true,
-        autoClose: false,
-        message: 'Sending report...',
-      });
-    },
-    async onSuccess() {
-      await queryUtils.review.getCommentsById.invalidate();
-      await queryUtils.comment.getCommentsById.invalidate();
-
-      showSuccessNotification({
-        title: 'Comment reported',
-        message: 'Your request has been received',
-      });
-    },
-    onError(error) {
-      showErrorNotification({
-        error: new Error(error.message),
-        title: 'Unable to send report',
-        reason: 'An unexpected error occurred, please try again',
-      });
-    },
-    onSettled() {
-      hideNotification('sending-comment-report');
-    },
-  });
-  const handleReportComment = (id: number, reason: ReportReason) => {
-    reportMutation.mutate({ id, reason });
   };
 
   const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
@@ -257,26 +224,21 @@ export function CommentSectionItem({ comment, modelId }: Props) {
               </Menu.Item>
             </>
           ) : null}
-          {!currentUser || !isOwner ? (
-            <>
-              <LoginRedirect reason="report-comment">
-                <Menu.Item
-                  icon={<IconFlag size={14} stroke={1.5} />}
-                  onClick={() => handleReportComment(comment.id, ReportReason.NSFW)}
-                >
-                  Report as NSFW
-                </Menu.Item>
-              </LoginRedirect>
-              <LoginRedirect reason="report-comment">
-                <Menu.Item
-                  icon={<IconFlag size={14} stroke={1.5} />}
-                  onClick={() => handleReportComment(comment.id, ReportReason.TOSViolation)}
-                >
-                  Report as Terms Violation
-                </Menu.Item>
-              </LoginRedirect>
-            </>
-          ) : null}
+          {(!currentUser || !isOwner) && (
+            <LoginRedirect reason="report-model">
+              <Menu.Item
+                icon={<IconFlag size={14} stroke={1.5} />}
+                onClick={() =>
+                  openContext('report', {
+                    type: ReportEntity.Comment,
+                    entityId: comment.id,
+                  })
+                }
+              >
+                Report
+              </Menu.Item>
+            </LoginRedirect>
+          )}
         </Menu.Dropdown>
       </Menu>
     </Group>

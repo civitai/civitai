@@ -24,6 +24,7 @@ import {
   IconCloudOff,
   IconDotsVertical,
   IconDownload,
+  IconFlag,
   IconHeart,
   IconMessageCircle2,
   IconStar,
@@ -48,9 +49,12 @@ import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { SFW } from '~/components/Media/SFW';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
+import { ReportEntity } from '~/server/schema/report.schema';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit, splitUppercase } from '~/utils/string-helpers';
@@ -59,6 +63,7 @@ import { trpc } from '~/utils/trpc';
 type InfiniteModelsProps = {
   columnWidth?: number;
   showHidden?: boolean;
+  delayNsfw?: boolean;
 };
 
 const filterSchema = z.object({
@@ -72,7 +77,11 @@ const filterSchema = z.object({
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
-export function InfiniteModels({ columnWidth = 300, showHidden = false }: InfiniteModelsProps) {
+export function InfiniteModels({
+  columnWidth = 300,
+  showHidden = false,
+  delayNsfw = false,
+}: InfiniteModelsProps) {
   const router = useRouter();
   const filters = useInfiniteModelsFilters();
   const result = filterSchema.safeParse(router.query);
@@ -107,12 +116,36 @@ export function InfiniteModels({ columnWidth = 300, showHidden = false }: Infini
     }
   }, [fetchNextPage, inView]);
 
+  const isAuthenticated = !!currentUser;
   const models = useMemo(
-    () =>
-      data?.pages
-        .flatMap((x) => (!!x ? x.items : []))
-        .filter((item) => !hiddenUserIds.includes(item.user.id)) ?? [],
-    [data] //eslint-disable-line
+    () => {
+      const items =
+        data?.pages
+          .flatMap((x) => (!!x ? x.items : []))
+          .filter((item) => !hiddenUserIds.includes(item.user.id)) ?? [];
+
+      // If current user isn't authenticated make sure they aren't greeted with a blurry wall
+      if (delayNsfw && items.length > 0 && !isAuthenticated && items.length <= 100) {
+        let toPush = 4;
+        while (toPush > 0) {
+          let i = 0;
+          let item = items[0];
+          while (item) {
+            item = items[i];
+            if (!item || item.nsfw) break;
+            i++;
+          }
+          if (!item) break;
+          items.splice(i, 1);
+          items.splice(i + 4, 0, item);
+
+          toPush--;
+        }
+      }
+
+      return items;
+    },
+    [data, isAuthenticated] //eslint-disable-line
   );
 
   return (
@@ -125,7 +158,7 @@ export function InfiniteModels({ columnWidth = 300, showHidden = false }: Infini
         <MasonryList
           columnWidth={columnWidth}
           data={models}
-          filters={{ ...filters, ...router.query }}
+          filters={{ ...filters, ...queryParams }}
         />
       ) : (
         <Stack align="center">
@@ -234,6 +267,7 @@ const MasonryItem = ({
 
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
+  const { openContext } = useRoutedContext();
 
   const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery(undefined, {
     enabled: !!currentUser,
@@ -363,6 +397,25 @@ const MasonryItem = ({
     </Group>
   );
 
+  const reportOption = (
+    <LoginRedirect reason="report-model" key="report">
+      <Menu.Item
+        icon={<IconFlag size={14} stroke={1.5} />}
+        onClick={(e: any) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openContext('report', { type: ReportEntity.Model, entityId: id });
+        }}
+      >
+        Report
+      </Menu.Item>
+    </LoginRedirect>
+  );
+  const contextMenuItems: React.ReactNode[] = [];
+  if (currentUser?.id != user.id)
+    contextMenuItems.push(<HideUserButton key="hide-button" as="menu-item" userId={user.id} />);
+  if (currentUser?.id != user.id) contextMenuItems.push(reportOption);
+
   const isNew = data.createdAt > aDayAgo;
   const isUpdated = !isNew && data.lastVersionAt && data.lastVersionAt > aDayAgo;
   const hasPendingClaimReports = data.pendingClaim;
@@ -396,34 +449,34 @@ const MasonryItem = ({
                 <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} />
                 <SFW type="model" id={id} nsfw={nsfw} sx={{ height: '100%', width: '100%' }}>
                   <SFW.ToggleNsfw />
-                  <Menu>
-                    <Menu.Target>
-                      <ActionIcon
-                        variant="transparent"
-                        p={0}
+                  {contextMenuItems.length > 0 && (
+                    <Menu>
+                      <Menu.Target>
+                        <ActionIcon
+                          variant="transparent"
+                          p={0}
                         onClick={(e: any) => { //eslint-disable-line
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                        sx={{
-                          width: 30,
-                          position: 'absolute',
-                          top: 10,
-                          right: 4,
-                          zIndex: 8,
-                        }}
-                      >
-                        <IconDotsVertical
-                          size={24}
-                          color="#fff"
-                          style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                        />
-                      </ActionIcon>
-                    </Menu.Target>
-                    <Menu.Dropdown>
-                      <HideUserButton as="menu-item" userId={user.id} />
-                    </Menu.Dropdown>
-                  </Menu>
+                            e.preventDefault();
+                            e.stopPropagation();
+                          }}
+                          sx={{
+                            width: 30,
+                            position: 'absolute',
+                            top: 10,
+                            right: 4,
+                            zIndex: 8,
+                          }}
+                        >
+                          <IconDotsVertical
+                            size={24}
+                            color="#fff"
+                            style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                          />
+                        </ActionIcon>
+                      </Menu.Target>
+                      <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
+                    </Menu>
+                  )}
                   <SFW.Placeholder>
                     <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                       <MediaHash {...image} />

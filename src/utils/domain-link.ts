@@ -11,6 +11,7 @@ export const domainLinks = {
   patreon: ['www.patreon.com'],
   koFi: ['ko-fi.com'],
   coindrop: ['coindrop.to'],
+  discord: ['discord.gg'],
 };
 
 const sortArray = (Object.keys(domainLinks) as (string | undefined)[]).concat(undefined);

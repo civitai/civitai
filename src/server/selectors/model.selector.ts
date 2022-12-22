@@ -122,6 +122,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       updatedAt: true,
       trainedWords: true,
       inaccurate: true,
+      baseModel: true,
       images: {
         orderBy: {
           index: 'asc',

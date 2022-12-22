@@ -1,38 +1,97 @@
-import { Button, Group, Modal, Radio, Stack, Text, Alert } from '@mantine/core';
+import {
+  Button,
+  Group,
+  Modal,
+  Radio,
+  Stack,
+  Text,
+  CloseButton,
+  ActionIcon,
+  Loader,
+  Center,
+} from '@mantine/core';
+
 import { showNotification, hideNotification } from '@mantine/notifications';
 import { ReportReason } from '@prisma/client';
-import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { IconArrowLeft } from '@tabler/icons';
+import { useMemo, useState } from 'react';
 import { z } from 'zod';
-import { Form, InputImageUpload, InputRadioGroup, InputRTE, InputText, useForm } from '~/libs/form';
+import { AdminAttentionForm } from '~/components/Report/AdminAttentionForm';
+import { ClaimForm } from '~/components/Report/ClaimForm';
+import { NsfwForm } from '~/components/Report/NsfwForm';
+import { OwnershipForm } from '~/components/Report/OwnershipForm';
+import { TosViolationForm } from '~/components/Report/TosViolationForm';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
-import { imageSchema } from '~/server/schema/image.schema';
-import { reportOwnershipDetailsSchema } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/server/schema/report.schema';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import produce from 'immer';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
-export const schema = reportOwnershipDetailsSchema.extend({
-  establishInterest: z.string().transform((x) => (x === 'yes' ? true : false)),
-  images: imageSchema.array().transform((images) => images?.map((x) => x.url)),
-});
+const reports = [
+  {
+    reason: ReportReason.NSFW,
+    label: 'NSFW',
+    Element: NsfwForm,
+    availableFor: [ReportEntity.Model, ReportEntity.Review],
+  },
+  {
+    reason: ReportReason.TOSViolation,
+    label: 'TOS Violation',
+    Element: TosViolationForm,
+    availableFor: [ReportEntity.Model, ReportEntity.Review, ReportEntity.Comment],
+  },
+  {
+    reason: ReportReason.AdminAttention,
+    label: 'Needs Moderator Review',
+    Element: AdminAttentionForm,
+    availableFor: [ReportEntity.Model, ReportEntity.Review, ReportEntity.Comment],
+  },
+  {
+    reason: ReportReason.Claim,
+    label: 'Claim imported model',
+    Element: ClaimForm,
+    availableFor: [ReportEntity.Model], // TODO only available if model creator/userId === -1
+  },
+  {
+    reason: ReportReason.Ownership,
+    label: 'This uses my art',
+    Element: OwnershipForm,
+    availableFor: [ReportEntity.Model],
+  },
+];
+
+const invalidateReasons = [ReportReason.NSFW, ReportReason.Ownership];
+const SEND_REPORT_ID = 'sending-report';
 
 export default createRoutedContext({
-  Element: ({ context, props }) => { //eslint-disable-line
-    const router = useRouter();
-    const modelId = Number(router.query.id);
-
+  authGuard: true,
+  schema: z.object({
+    type: z.nativeEnum(ReportEntity),
+    entityId: z.number(),
+  }),
+  Element: ({ context, props: { type, entityId } }) => {
+    //TODO - redirect if no user is authenticated
+    const [reason, setReason] = useState<ReportReason>();
     const [uploading, setUploading] = useState(false);
-
-    const form = useForm({
-      schema: schema,
-      shouldUnregister: false,
-    });
+    const ReportForm = useMemo(
+      () => reports.find((x) => x.reason === reason)?.Element ?? null,
+      [reason]
+    );
+    const title = useMemo(
+      () => reports.find((x) => x.reason === reason)?.label ?? `Report ${type}`,
+      [reason, type]
+    );
 
     const queryUtils = trpc.useContext();
-    const { mutate, isLoading } = trpc.model.report.useMutation({
+    const { data, isInitialLoading } = trpc.model.getModelReportDetails.useQuery(
+      { id: entityId },
+      { enabled: type === ReportEntity.Model }
+    );
+    const { mutate, isLoading: isLoading } = trpc.report.create.useMutation({
       onMutate() {
         showNotification({
-          id: 'sending-report',
+          id: SEND_REPORT_ID,
           loading: true,
           disallowClose: true,
           autoClose: false,
@@ -45,7 +104,36 @@ export default createRoutedContext({
           message: 'Your request has been received',
         });
         context.close();
-        await queryUtils.model.getById.invalidate({ id: variables.id });
+        if (invalidateReasons.some((reason) => reason === variables.reason)) {
+          switch (type) {
+            case ReportEntity.Model:
+              queryUtils.model.getById.setData(
+                { id: variables.id },
+                produce((old) => {
+                  if (old) {
+                    if (variables.reason === ReportReason.NSFW) {
+                      old.nsfw = true;
+                    } else if (variables.reason === ReportReason.Ownership) {
+                      old.reportStats = { ...old.reportStats, ownershipPending: 1 };
+                    }
+                  }
+                })
+              );
+              await queryUtils.model.getAll.invalidate();
+              break;
+            case ReportEntity.Review:
+              await queryUtils.review.getDetail.invalidate({ id: variables.id });
+              await queryUtils.review.getAll.invalidate();
+              break;
+            case ReportEntity.Comment:
+              await queryUtils.comment.getById.invalidate({ id: variables.id });
+              await queryUtils.comment.getAll.invalidate();
+              await queryUtils.comment.getCommentsById.invalidate();
+              break;
+            default:
+              break;
+          }
+        }
       },
       onError(error) {
         showErrorNotification({
@@ -55,73 +143,78 @@ export default createRoutedContext({
         });
       },
       onSettled() {
-        hideNotification('sending-report');
+        hideNotification(SEND_REPORT_ID);
       },
     });
 
-    const handleSubmit = (details: z.infer<typeof schema>) => {
-      // console.log({ details });
+    const handleSubmit = (data: Record<string, unknown>) => {
+      const details: any = Object.fromEntries(Object.entries(data).filter(([_, v]) => v != null));
+      if (!reason) return;
       mutate({
-        reason: ReportReason.Ownership,
-        id: modelId,
+        type,
+        reason,
+        id: entityId,
         details,
       });
     };
 
     return (
-      <Modal opened={context.opened} onClose={context.close} title="Report this uses my art">
-        <Form form={form} onSubmit={handleSubmit}>
-          <Stack>
-            <Alert>
-              If you believe that this model may have been trained using your art, please complete
-              the form below for review
-            </Alert>
-            <InputText name="name" label="Name" withAsterisk clearable={false} />
-            <InputText name="email" label="Email" withAsterisk clearable={false} />
-            <InputText name="phone" label="Phone" clearable={false} />
-            <InputRTE name="comment" label="Comment" />
-            <InputImageUpload
-              name="images"
-              label="Images for comparison"
-              withMeta={false}
-              onChange={(values) => setUploading(values.some((x) => x.file))}
-              withAsterisk
-            />
-            <Stack spacing={4}>
-              <InputRadioGroup
-                name="establishInterest"
-                withAsterisk
-                label="Are you interested in having an official model of your art style created and
-                attributed to you?"
-                description={
-                  <Text>
-                    You would receive 70% of any proceeds made from the use of your model on
-                    Civitai.{' '}
-                    <Text
-                      variant="link"
-                      component="a"
-                      href="/content/art-and-ai#monetizing-your-art"
-                      target="_blank"
-                    >
-                      Learn more
-                    </Text>
-                  </Text>
-                }
-              >
-                <Radio value="yes" label="I'm interested" />
-                <Radio value="no" label="$#!% off!" />
-              </InputRadioGroup>
-            </Stack>
-            <Group grow>
-              <Button variant="default" onClick={context.close}>
-                Cancel
-              </Button>
-              <Button type="submit" loading={isLoading} disabled={uploading}>
-                Submit
-              </Button>
+      <Modal opened={context.opened} onClose={context.close} withCloseButton={false}>
+        <Stack>
+          <Group position="apart" noWrap>
+            <Group spacing={4}>
+              {!!reason && (
+                <ActionIcon onClick={() => setReason(undefined)}>
+                  <IconArrowLeft size={16} />
+                </ActionIcon>
+              )}
+              <Text>{title}</Text>
             </Group>
-          </Stack>
-        </Form>
+            <CloseButton onClick={context.close} />
+          </Group>
+          {isInitialLoading ? (
+            <Center p="xl">
+              <Loader />
+            </Center>
+          ) : (
+            !reason && (
+              <Radio.Group
+                orientation="vertical"
+                value={reason}
+                onChange={(reason) => setReason(reason as ReportReason)}
+                // label="Report reason"
+                pb="xs"
+              >
+                {reports
+                  .filter(({ availableFor }) => availableFor.includes(type))
+                  .filter((item) => {
+                    if (type === ReportEntity.Model) {
+                      if (item.reason === ReportReason.Claim) return data?.userId !== -1;
+                      if (item.reason === ReportReason.Ownership) {
+                        return !data?.reportStats?.ownershipPending;
+                      }
+                    }
+                    return true;
+                  }) // TEMP FIX
+                  .map(({ reason, label }, index) => (
+                    <Radio key={index} value={reason} label={label} />
+                  ))}
+              </Radio.Group>
+            )
+          )}
+          {ReportForm && (
+            <ReportForm onSubmit={handleSubmit} setUploading={setUploading}>
+              <Group grow>
+                <Button variant="default" onClick={context.close}>
+                  Cancel
+                </Button>
+                <Button type="submit" loading={isLoading} disabled={uploading}>
+                  Submit
+                </Button>
+              </Group>
+            </ReportForm>
+          )}
+        </Stack>
       </Modal>
     );
   },

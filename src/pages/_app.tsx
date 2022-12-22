@@ -78,6 +78,12 @@ function MyApp(props: CustomAppProps) {
                       label: { cursor: 'pointer' },
                     },
                   },
+                  Radio: {
+                    styles: {
+                      radio: { cursor: 'pointer' },
+                      label: { cursor: 'pointer' },
+                    },
+                  },
                   Badge: {
                     styles: { leftSection: { lineHeight: 1 } },
                   },
@@ -111,6 +117,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     sort: cookies?.['f_sort'],
     period: cookies?.['f_period'],
     types: cookies?.['f_types'],
+    baseModels: cookies?.['f_baseModels'],
   });
 
   return {

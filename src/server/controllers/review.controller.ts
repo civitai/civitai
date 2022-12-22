@@ -14,7 +14,6 @@ import {
   getReviewReactions,
   getReviews,
   createOrUpdateReview,
-  reportReviewById,
   deleteReviewById,
   getUserReactionByReviewId,
   updateReviewById,
@@ -80,21 +79,13 @@ export const upsertReviewHandler = async ({
   }
 };
 
-export const reportReviewHandler = async ({
-  input,
+export const deleteUserReviewHandler = async ({
   ctx,
+  input,
 }: {
-  input: ReportInput;
   ctx: DeepNonNullable<Context>;
+  input: GetByIdInput;
 }) => {
-  try {
-    await reportReviewById({ ...input, userId: ctx.user.id });
-  } catch (error) {
-    throwDbError(error);
-  }
-};
-
-export const deleteUserReviewHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     const deleted = await deleteReviewById({ ...input });
     if (!deleted) {

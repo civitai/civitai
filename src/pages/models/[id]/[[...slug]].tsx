@@ -24,8 +24,7 @@ import {
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { hideNotification, showNotification } from '@mantine/notifications';
-import { ModelStatus, ReportReason } from '@prisma/client';
+import { ModelStatus } from '@prisma/client';
 import {
   IconArrowsSort,
   IconBan,
@@ -86,6 +85,7 @@ import { MultiActionButton } from '~/components/MultiActionButton/MultiActionBut
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { ReportEntity } from '~/server/schema/report.schema';
 
 //TODO - Break model query into multiple queries
 /*
@@ -189,34 +189,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         title: 'Could not delete model',
         reason: 'An unexpected error occurred, please try again',
       });
-    },
-  });
-  const reportModelMutation = trpc.model.report.useMutation({
-    onMutate() {
-      showNotification({
-        id: 'sending-report',
-        loading: true,
-        disallowClose: true,
-        autoClose: false,
-        message: 'Sending report...',
-      });
-    },
-    async onSuccess(_, variables) {
-      showSuccessNotification({
-        title: 'Model reported',
-        message: 'Your request has been received',
-      });
-      await queryUtils.model.getById.invalidate({ id: variables.id });
-    },
-    onError(error) {
-      showErrorNotification({
-        error: new Error(error.message),
-        title: 'Unable to send report',
-        reason: 'An unexpected error occurred, please try again',
-      });
-    },
-    onSettled() {
-      hideNotification('sending-report');
     },
   });
   const unpublishModelMutation = trpc.model.unpublish.useMutation({
@@ -392,6 +364,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       value: <Text>{model?.modelVersions.length}</Text>,
     },
     {
+      label: 'Base Model',
+      value: <Text>{latestVersion?.baseModel}</Text>,
+    },
+    {
       label: 'Tags',
       value: (
         <Group spacing={4}>
@@ -500,7 +476,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Menu.Target>
 
               <Menu.Dropdown>
-                {session && isOwner && published ? (
+                {session && isOwner && published && (
                   <Menu.Item
                     icon={<IconBan size={14} stroke={1.5} />}
                     color="yellow"
@@ -509,8 +485,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   >
                     Unpublish
                   </Menu.Item>
-                ) : null}
-                {session && isOwner ? (
+                )}
+                {session && isOwner && (
                   <>
                     <Menu.Item
                       color={theme.colors.red[6]}
@@ -528,43 +504,20 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       Edit Model
                     </Menu.Item>
                   </>
-                ) : null}
-                {!session || !isOwner || isModerator ? (
-                  <>
-                    <LoginRedirect reason="report-model">
-                      <Menu.Item
-                        icon={<IconFlag size={14} stroke={1.5} />}
-                        onClick={() =>
-                          reportModelMutation.mutate({ id, reason: ReportReason.NSFW })
-                        }
-                        disabled={reportModelMutation.isLoading}
-                      >
-                        Report as NSFW
-                      </Menu.Item>
-                    </LoginRedirect>
-                    <LoginRedirect reason="report-model">
-                      <Menu.Item
-                        icon={<IconFlag size={14} stroke={1.5} />}
-                        onClick={() =>
-                          reportModelMutation.mutate({ id, reason: ReportReason.TOSViolation })
-                        }
-                        disabled={reportModelMutation.isLoading}
-                      >
-                        Report as Terms Violation
-                      </Menu.Item>
-                    </LoginRedirect>
-                    <LoginRedirect reason="report-model">
-                      <Menu.Item
-                        icon={<IconFlag size={14} stroke={1.5} />}
-                        onClick={() => openContext('report', {})}
-                        disabled={!!model.reportStats?.ownershipPending}
-                      >
-                        Report this uses my art
-                      </Menu.Item>
-                    </LoginRedirect>
-                  </>
-                ) : null}
-                {session ? <HideUserButton as="menu-item" userId={model.user.id} /> : null}
+                )}
+                {(!session || !isOwner || isModerator) && (
+                  <LoginRedirect reason="report-model">
+                    <Menu.Item
+                      icon={<IconFlag size={14} stroke={1.5} />}
+                      onClick={() =>
+                        openContext('report', { type: ReportEntity.Model, entityId: model.id })
+                      }
+                    >
+                      Report
+                    </Menu.Item>
+                  </LoginRedirect>
+                )}
+                {session && <HideUserButton as="menu-item" userId={model.user.id} />}
               </Menu.Dropdown>
             </Menu>
           </Group>
@@ -575,8 +528,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   <IconExclamationMark />
                 </ThemeIcon>
                 <Text size="md">
-                  This model has been unpublished because it looks like the model file failed to
-                  upload. Please re-upload the file.
+                  This model has been unpublished and is not visible to the community.
                 </Text>
               </Group>
             </Alert>
@@ -612,7 +564,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
             <Stack>
               {latestVersion && (
-                <Group spacing="xs" style={{ alignItems: 'flex-start' }}>
+                <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
                   <Stack sx={{ flex: 1 }} spacing={4}>
                     <MultiActionButton
                       component="a"
