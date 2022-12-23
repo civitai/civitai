@@ -1,6 +1,7 @@
 import {
   Avatar,
   AvatarProps,
+  BadgeProps,
   Group,
   MantineNumberSize,
   MantineSize,
@@ -24,8 +25,9 @@ const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSiz
 export function UserAvatar({
   user,
   withUsername,
-  subText,
+  subText: subText,
   avatarProps,
+  badge,
   size = 'sm',
   spacing = 4,
 }: Props) {
@@ -45,14 +47,19 @@ export function UserAvatar({
       {withUsername || subText ? (
         <Stack spacing={0}>
           {withUsername && (
-            <Text size={textSize} lineClamp={1}>
-              {user?.username ?? user?.name}
-            </Text>
+            <Group spacing={4}>
+              <Text size={textSize} lineClamp={1}>
+                {user?.username ?? user?.name}
+              </Text>
+              {badge}
+            </Group>
           )}
-          {subText && (
+          {subText && typeof subText === 'string' ? (
             <Text size={subTextSize} color="dimmed">
               {subText}
             </Text>
+          ) : (
+            subText
           )}
         </Stack>
       ) : null}
@@ -65,7 +72,8 @@ type Props = {
   withUsername?: boolean;
   withLink?: boolean;
   avatarProps?: AvatarProps;
-  subText?: string;
+  subText?: React.ReactNode;
   size?: MantineSize;
   spacing?: MantineNumberSize;
+  badge?: React.ReactElement<BadgeProps> | null;
 };

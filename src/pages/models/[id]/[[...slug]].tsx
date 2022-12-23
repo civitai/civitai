@@ -86,7 +86,6 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { ModelFileType } from '~/server/common/constants';
 
 //TODO - Break model query into multiple queries
 /*

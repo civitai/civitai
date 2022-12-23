@@ -151,7 +151,9 @@ function TabContent({ version, nsfw }: TabContentProps) {
                     })}
                     download
                   >
-                    {`${startCase(file.type)} (${formatKBytes(file.sizeKB)})`}
+                    {`${startCase(file.type)}${
+                      ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.format : ''
+                    } (${formatKBytes(file.sizeKB)})`}
                   </Menu.Item>
                 ))}
                 download
