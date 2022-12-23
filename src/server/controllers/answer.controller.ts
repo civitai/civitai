@@ -24,7 +24,7 @@ export const getAnswersHandler = async ({
         createdAt: true,
         updatedAt: true,
         user: { select: simpleUserSelect },
-        metrics: {
+        rank: {
           select: {
             heartCountAllTime: true,
             crossCountAllTime: true,

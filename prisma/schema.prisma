@@ -675,12 +675,12 @@ model Question {
   selectedAnswerId Int?     @unique
   selectedAnswer   Answer?  @relation("SelectedAnswer", fields: [selectedAnswerId], references: [id])
 
-  tags         TagsOnQuestions[]
-  reactions    QuestionReaction[]
-  comments     QuestionComment[]
-  answers      Answer[]           @relation("Question")
-  metrics      QuestionMetric[]
-  QuestionRank QuestionRank?
+  tags      TagsOnQuestions[]
+  reactions QuestionReaction[]
+  comments  QuestionComment[]
+  answers   Answer[]           @relation("Question")
+  metrics   QuestionMetric[]
+  rank      QuestionRank?
 }
 
 model QuestionMetric {

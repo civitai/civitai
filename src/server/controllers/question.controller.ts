@@ -1,4 +1,3 @@
-import { reactionSelect } from './../selectors/reaction.selector';
 import { getUserReaction } from './../services/reaction.service';
 import { SetQuestionAnswerInput } from './../schema/question.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
@@ -14,6 +13,7 @@ import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { GetQuestionsInput, UpsertQuestionInput } from '~/server/schema/question.schema';
 import { Context } from '~/server/createContext';
 
+export type GetQuestionsProps = AsyncReturnType<typeof getQuestionsHandler>;
 export const getQuestionsHandler = async ({
   ctx,
   input,
@@ -36,7 +36,7 @@ export const getQuestionsHandler = async ({
             },
           },
         },
-        metrics: {
+        rank: {
           select: {
             heartCountDay: true,
             answerCountDay: true,
@@ -46,8 +46,15 @@ export const getQuestionsHandler = async ({
     });
 
     return {
-      items: items.map(({ tags, ...item }) => ({ ...item, tags: tags.map((x) => x.tag) })),
       ...rest,
+      items: items.map(({ tags, ...item }) => ({
+        ...item,
+        tags: tags.map((x) => x.tag),
+        rank: {
+          heartCount: item.rank?.heartCountDay,
+          answerCount: item.rank?.answerCountDay,
+        },
+      })),
     };
   } catch (error) {
     throw throwDbError(error);
@@ -81,7 +88,7 @@ export const getQuestionDetailHandler = async ({
             },
           },
         },
-        metrics: {
+        rank: {
           select: {
             heartCountAllTime: true,
           },

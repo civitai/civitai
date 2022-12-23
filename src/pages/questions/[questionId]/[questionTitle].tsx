@@ -86,7 +86,7 @@ export function QuestionPage(props: InferGetServerSidePropsType<typeof getServer
               reactionId={question.userReaction?.id}
               reactionType="heart"
               userReaction={question.userReaction?.heart}
-              count={question.metrics?.heartCountAllTime}
+              count={question.rank?.heartCountAllTime}
               entityType="question"
               entityId={question.id}
               disabled={question.user.id === user?.id}
@@ -114,7 +114,7 @@ export function QuestionPage(props: InferGetServerSidePropsType<typeof getServer
                 userReaction={answer.userReaction?.heart}
                 entityType="answer"
                 entityId={answer.id}
-                count={answer.metrics?.heartCountAllTime}
+                count={answer.rank?.heartCountAllTime}
                 disabled={answer.user.id === user?.id}
               />
               <ReactionButton
@@ -123,7 +123,7 @@ export function QuestionPage(props: InferGetServerSidePropsType<typeof getServer
                 userReaction={answer.userReaction?.check}
                 entityType="answer"
                 entityId={answer.id}
-                count={answer.metrics?.checkCountAllTime}
+                count={answer.rank?.checkCountAllTime}
                 disabled={answer.user.id === user?.id}
               />
               <ReactionButton
@@ -132,7 +132,7 @@ export function QuestionPage(props: InferGetServerSidePropsType<typeof getServer
                 userReaction={answer.userReaction?.cross}
                 entityType="answer"
                 entityId={answer.id}
-                count={answer.metrics?.crossCountAllTime}
+                count={answer.rank?.crossCountAllTime}
                 disabled={answer.user.id === user?.id}
               />
             </Stack>
