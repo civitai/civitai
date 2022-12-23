@@ -5,6 +5,7 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getAnswers } from '~/server/services/answer.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { GetAnswersInput, UpsertAnswerInput } from './../schema/answer.schema';
+import { getManyUserReactions } from '~/server/services/reaction.service';
 
 export type GetAnswersProps = AsyncReturnType<typeof getAnswersHandler>;
 export const getAnswersHandler = async ({
@@ -16,6 +17,7 @@ export const getAnswersHandler = async ({
 }) => {
   try {
     const userId = ctx.user?.id;
+    console.log('_____GETTING ANSWERS_____');
     const items = await getAnswers({
       questionId,
       select: {
@@ -33,7 +35,7 @@ export const getAnswersHandler = async ({
         },
         reactions: {
           where: { reaction: { userId } },
-          take: 1,
+          take: userId ? 1 : 0,
           select: {
             reaction: {
               select: {

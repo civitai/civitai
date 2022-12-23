@@ -58,7 +58,11 @@ export function AnswerForm({
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <Stack>
-        <InputRTE name="content" withAsterisk />
+        <InputRTE
+          name="content"
+          withAsterisk
+          includeControls={['heading', 'formatting', 'list', 'link', 'media']}
+        />
         <Alert color="yellow" variant="light">
           <Text size="sm">Thanks for contributing an answer to Stack Overflow!</Text>
           <List size="sm">

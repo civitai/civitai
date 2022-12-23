@@ -55,6 +55,7 @@ export function ReactionButton({
       variant={hasReaction ? 'filled' : 'default'}
       leftIcon={<Icon size={18} />}
       onClick={!disabled ? toggleReaction : undefined}
+      size="xs"
     >
       {count}
     </Button>
