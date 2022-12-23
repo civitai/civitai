@@ -1,6 +1,7 @@
 import {
   IconBrandDiscord,
   IconBrandFacebook,
+  IconBrandGithub,
   IconBrandInstagram,
   IconBrandPatreon,
   IconBrandReddit,
@@ -40,4 +41,5 @@ const tablerIconMap: { [key in DomainLink]: TablerIcon } = {
   koFi: IconMug,
   coindrop: IconPigMoney,
   discord: IconBrandDiscord,
+  github: IconBrandGithub,
 };
