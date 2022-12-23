@@ -12,10 +12,10 @@ import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 
 const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
-  sm: '60px',
-  md: '80px',
-  lg: '100px',
-  xl: '120px',
+  sm: '30px',
+  md: '50px',
+  lg: '70px',
+  xl: '90px',
 };
 
 export function RichTextEditor({
@@ -86,13 +86,22 @@ export function RichTextEditor({
         id={id}
         sx={(theme) => ({
           marginTop: description ? 5 : undefined,
+          marginBottom: error ? 5 : undefined,
+          borderColor: error ? theme.colors.red[8] : undefined,
 
           // Fixes gapcursor color for dark mode
           '& .ProseMirror-gapcursor:after': {
             borderTop: `1px solid ${theme.colorScheme === 'dark' ? 'white' : 'black'}`,
           },
+
+          '& .ProseMirror': {
+            minHeight: mapEditorSizeHeight[editorSize],
+
+            '& p.is-editor-empty:first-of-type::before': {
+              color: error ? theme.colors.red[8] : undefined,
+            },
+          },
         })}
-        styles={{ content: { minHeight: mapEditorSizeHeight[editorSize] } }}
       >
         {!hideToolbar && (
           <RTE.Toolbar>

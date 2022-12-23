@@ -7,7 +7,7 @@ import React from 'react';
 
 const useStyles = createStyles(() => ({
   htmlRenderer: {
-    '& p': {
+    '& p:last-of-type': {
       marginBottom: 0,
     },
   },
