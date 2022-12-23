@@ -1,20 +1,21 @@
 import { ActionIcon, Button, Group, Input, InputWrapperProps, Tooltip } from '@mantine/core';
-import { ModelFileFormat, ModelFileType, ModelType } from '@prisma/client';
+import { ModelFileFormat, ModelType } from '@prisma/client';
 import { IconPlus, IconStar, IconTrash } from '@tabler/icons';
 import startCase from 'lodash/startCase';
 import { useEffect, useState } from 'react';
 import { useFieldArray, UseFormReturn } from 'react-hook-form';
 
 import { InputFileUpload, InputSelect } from '~/libs/form';
+import { constants, ModelFileType } from '~/server/common/constants';
 import { ModelFileInput } from '~/server/schema/model-file.schema';
 
-const fileTypes = Object.values(ModelFileType);
 const fileFormats = Object.values(ModelFileFormat).filter((type) => type !== 'Other');
 const fileFormatCount = fileFormats.length;
 const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   Model: '.ckpt,.pt,.safetensors',
-  PrunedModel: '.ckpt,.pt,.safetensors',
-  TrainingData: '.zip',
+  'Pruned Model': '.ckpt,.pt,.safetensors',
+  Negative: '.pt',
+  'Training Data': '.zip',
   Config: '.yaml,.yml',
   VAE: '.pt',
 };
@@ -24,8 +25,8 @@ export function FileList({ parentIndex, form, ...wrapperProps }: Props) {
   const modelType = form.watch('type') as ModelType;
   const isCheckpointModel = modelType === 'Checkpoint';
   const availableFileTypes = isCheckpointModel
-    ? fileTypes
-    : fileTypes.filter((type) => type !== 'PrunedModel');
+    ? constants.modelFileTypes
+    : constants.modelFileTypes.filter((type) => type !== 'Pruned Model');
   const fileTypeCount = availableFileTypes.length;
   // We reduce by 2 when is not checkpoint cause we don't need prunedModel
   const maxLength = fileTypeCount + fileFormatCount - (isCheckpointModel ? 0 : 2);
@@ -62,7 +63,7 @@ export function FileList({ parentIndex, form, ...wrapperProps }: Props) {
   useEffect(() => {
     if (!isCheckpointModel) {
       for (let i = 0; i < files.length; i++) {
-        const isPruned = files[i].type === 'PrunedModel';
+        const isPruned = files[i].type === 'Pruned Model';
         if (!isPruned) continue;
 
         remove(i);
@@ -84,7 +85,7 @@ export function FileList({ parentIndex, form, ...wrapperProps }: Props) {
             onClick={() =>
               fields.length < maxLength
                 ? append({
-                    type: ModelFileType.Model,
+                    type: constants.modelFileTypes[0],
                     url: '',
                     name: '',
                     sizeKB: 0,
@@ -127,6 +128,14 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   onLoading?: (loading: boolean) => void;
 };
 
+const fileTypesByModelType: Record<ModelType, ModelFileType[]> = {
+  TextualInversion: ['Model', 'Negative', 'Training Data'],
+  LORA: ['Model', 'Training Data'],
+  Checkpoint: ['Model', 'Pruned Model', 'Config', 'VAE', 'Training Data'],
+  AestheticGradient: ['Model', 'Training Data'],
+  Hypernetwork: ['Model', 'Training Data'],
+};
+
 function FileItem({
   primary,
   type,
@@ -142,19 +151,18 @@ function FileItem({
   const [uploading, setUploading] = useState(false);
   const isModelType = ['Model', 'PrunedModel'].includes(selectedType);
   const isCheckpointModel = modelType === 'Checkpoint';
+  const fileTypeOptions = fileTypesByModelType[modelType];
 
   return (
     <Group my={5} spacing={8} noWrap>
       <InputSelect
         name={`modelVersions.${parentIndex}.files.${index}.type`}
-        data={Object.values(ModelFileType)
-          .filter((type) => (!isCheckpointModel ? type !== 'PrunedModel' : true))
-          .map((type) => ({
-            label: type === 'Model' && !isCheckpointModel ? startCase(modelType) : startCase(type),
-            value: type,
-            disabled:
-              (primary && !['Model', 'PrunedModel'].includes(type)) || selectedTypes.includes(type),
-          }))}
+        data={fileTypeOptions.map((type) => ({
+          label: type === 'Model' && !isCheckpointModel ? startCase(modelType) : startCase(type),
+          value: type,
+          disabled:
+            (primary && !['Model', 'Pruned Model'].includes(type)) || selectedTypes.includes(type),
+        }))}
         onChange={(value: ModelFileType) => {
           setSelectedType(value);
           onTypeChange(index, value);

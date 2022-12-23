@@ -1,13 +1,8 @@
-import {
-  ModelFileFormat,
-  ModelFileType,
-  ModelStatus,
-  Prisma,
-  ScanResultCode,
-} from '@prisma/client';
+import { ModelFileFormat, ModelStatus, Prisma, ScanResultCode } from '@prisma/client';
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
+import { constants } from '~/server/common/constants';
 import { prisma } from '~/server/db/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -107,7 +102,7 @@ type ScanResult = {
 
 const querySchema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
-  type: z.nativeEnum(ModelFileType),
+  type: z.enum(constants.modelFileTypes),
   format: z.nativeEnum(ModelFileFormat),
 });
 

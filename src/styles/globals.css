@@ -64,6 +64,15 @@ a {
   margin-bottom: 0;
 }
 
+.markdown-content img {
+  max-width: 100%;
+}
+
+.markdown-content a {
+  color: #4dabf7;
+  text-decoration: underline;
+}
+
 .theme-light .markdown-content blockquote {
   background: #eee;
   border-top: 4px solid #ddd;

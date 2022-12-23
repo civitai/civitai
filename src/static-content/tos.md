@@ -1,5 +1,6 @@
 ---
 title: Terms of Service
+description: The Terms of Service for the model sharing platform Civitai
 ---
 
 ## Consent

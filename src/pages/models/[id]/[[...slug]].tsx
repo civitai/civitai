@@ -86,6 +86,7 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { ModelFileType } from '~/server/common/constants';
 
 //TODO - Break model query into multiple queries
 /*
@@ -582,13 +583,13 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                           icon={<VerifiedText file={file} iconOnly />}
                           href={createModelFileDownloadUrl({
                             versionId: latestVersion.id,
-                            type: file.type,
+                            type: file.type as ModelFileType,
                             format: file.format,
                           })}
                           download
                         >
                           {`${startCase(file.type)}${
-                            ['Model', 'PrunedModel'].includes(file.type) ? ' ' + file.format : ''
+                            ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.format : ''
                           } (${formatKBytes(file.sizeKB)})`}
                         </Menu.Item>
                       ))}

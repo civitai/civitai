@@ -277,14 +277,6 @@ enum ScanResultCode {
   Error
 }
 
-enum ModelFileType {
-  Model
-  PrunedModel
-  TrainingData
-  VAE
-  Config
-}
-
 enum ModelFileFormat {
   PickleTensor
   SafeTensor
@@ -297,7 +289,7 @@ model ModelFile {
   url               String
   sizeKB            Float
   createdAt         DateTime        @default(now())
-  type              ModelFileType
+  type              String          @default("Model")
   format            ModelFileFormat @default(Other)
   modelVersionId    Int
   modelVersion      ModelVersion    @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)

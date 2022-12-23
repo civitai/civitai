@@ -11,7 +11,6 @@ import {
   Menu,
 } from '@mantine/core';
 import { useRouter } from 'next/router';
-import { ModelFileType } from '@prisma/client';
 import { startCase } from 'lodash';
 import React from 'react';
 
@@ -33,6 +32,7 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
+import { ModelFileType } from '~/server/common/constants';
 
 const VERSION_IMAGES_LIMIT = 8;
 
@@ -118,7 +118,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
           Download
         </Text>
       ),
-      visible: !!version.files?.find((file) => file.type === ModelFileType.TrainingData),
+      visible: !!version.files?.find((file) => (file.type as ModelFileType) === 'Training Data'),
     },
   ];
 

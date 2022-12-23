@@ -1,4 +1,4 @@
-import { ModelFileFormat, ModelFileType, Prisma, ScanResultCode } from '@prisma/client';
+import { ModelFileFormat, Prisma, ScanResultCode } from '@prisma/client';
 import { S3Client } from '@aws-sdk/client-s3';
 import dayjs from 'dayjs';
 
@@ -7,6 +7,7 @@ import { prisma } from '~/server/db/client';
 import { getGetUrl, getS3Client } from '~/utils/s3-utils';
 
 import { createJob } from './job';
+import { ModelFileType } from '~/server/common/constants';
 
 export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
   const scanCutOff = dayjs().subtract(1, 'day').toDate();
@@ -68,7 +69,7 @@ async function requestFileScan(
 
 type FileScanRequest = {
   modelVersionId: number;
-  type: ModelFileType;
+  type: string;
   format: ModelFileFormat;
   url: string;
 };
