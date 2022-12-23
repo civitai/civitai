@@ -11,6 +11,7 @@ import { IconArrowLeft, IconCheck, IconX } from '@tabler/icons';
 import { slugit } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
+import { TagTarget } from '@prisma/client';
 
 const schema = upsertQuestionSchema.extend({ tags: z.string().array().nullish() });
 
@@ -24,7 +25,7 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
   });
 
   const { data: { items: tags } = { items: [] } } = trpc.tag.getAll.useQuery(
-    { limit: 0 },
+    { limit: 0, entityType: TagTarget.Question },
     { cacheTime: Infinity, staleTime: Infinity }
   );
   const questionTags = form.watch('tags');

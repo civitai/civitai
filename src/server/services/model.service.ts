@@ -1,4 +1,4 @@
-import { MetricTimeframe, ModelStatus, Prisma } from '@prisma/client';
+import { MetricTimeframe, ModelStatus, Prisma, TagTarget } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 
 import { ModelSort } from '~/server/common/enums';
@@ -176,7 +176,7 @@ export const createModel = async ({
           tag: {
             connectOrCreate: {
               where: { name },
-              create: { name },
+              create: { name, target: TagTarget.Model },
             },
           },
         })),
@@ -339,7 +339,7 @@ export const updateModel = async ({
               create: { tagId: tag.id as number },
             })),
             create: tagsToCreate.map((tag) => ({
-              tag: { create: { name: tag.name.toLowerCase() } },
+              tag: { create: { name: tag.name.toLowerCase(), target: TagTarget.Model } },
             })),
           },
         },

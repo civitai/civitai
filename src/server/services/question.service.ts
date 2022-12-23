@@ -1,6 +1,6 @@
 import { isNotTag } from './../schema/tag.schema';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { Prisma } from '@prisma/client';
+import { Prisma, TagTarget } from '@prisma/client';
 import { prisma } from '~/server/db/client';
 import {
   GetQuestionsInput,
@@ -67,7 +67,7 @@ export const upsertQuestion = async ({
                   tag: {
                     connectOrCreate: {
                       where: { name },
-                      create: { name },
+                      create: { name, target: TagTarget.Question },
                     },
                   },
                 })),
@@ -94,7 +94,7 @@ export const upsertQuestion = async ({
                 })),
                 create: tags.filter(isNotTag).map(({ name }) => ({
                   tag: {
-                    create: { name },
+                    create: { name, target: TagTarget.Question },
                   },
                 })),
               }

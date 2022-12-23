@@ -1,3 +1,4 @@
+import { TagTarget } from '@prisma/client';
 import { z } from 'zod';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 
@@ -19,11 +20,12 @@ export const isNotTag = (
   tag: TagUpsertSchema
 ): tag is Omit<TagUpsertSchema, 'id'> & { id: undefined } => !tag.id;
 
-export const getTagsInput = getAllQuerySchema
-  .extend({
-    withModels: z.preprocess((val) => {
+export const getTagsInput = getAllQuerySchema.extend({
+  withModels: z
+    .preprocess((val) => {
       return val === 'true' || val === true;
-    }, z.boolean().default(false)),
-  })
-  .partial();
+    }, z.boolean().default(false))
+    .optional(),
+  entityType: z.nativeEnum(TagTarget),
+});
 export type GetTagsInput = z.infer<typeof getTagsInput>;
