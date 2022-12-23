@@ -13,7 +13,6 @@ import {
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { ReviewReactions } from '@prisma/client';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconMessageCircle2 } from '@tabler/icons';
-import { useSession } from 'next-auth/react';
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -21,7 +20,9 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { SFW } from '~/components/Media/SFW';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -33,8 +34,7 @@ import { trpc } from '~/utils/trpc';
 
 export function ReviewDiscussionItem({ review }: Props) {
   const { openContext } = useRoutedContext();
-  const { data: session } = useSession();
-  const currentUser = session?.user;
+  const currentUser = useCurrentUser();
   const isOwner = currentUser?.id === review.user.id;
   const isMod = currentUser?.isModerator ?? false;
 
@@ -179,7 +179,7 @@ export function ReviewDiscussionItem({ review }: Props) {
                   </Menu.Item>
                 </>
               )}
-              {(!session || !isOwner) && (
+              {(!currentUser || !isOwner) && (
                 <LoginRedirect reason="report-model">
                   <Menu.Item
                     icon={<IconFlag size={14} stroke={1.5} />}
@@ -216,9 +216,11 @@ export function ReviewDiscussionItem({ review }: Props) {
         </Card.Section>
       )}
 
-      <ContentClamp maxHeight={100}>
-        <Text>{review.text}</Text>
-      </ContentClamp>
+      {review.text ? (
+        <ContentClamp maxHeight={100}>
+          <RenderHtml html={review.text} sx={(theme) => ({ fontSize: theme.fontSizes.sm })} />
+        </ContentClamp>
+      ) : null}
 
       <Group mt="sm" align="flex-start" position="apart" noWrap>
         <ReactionPicker

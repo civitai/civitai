@@ -3,13 +3,13 @@ import { constants } from '~/server/common/constants';
 
 import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
-import { sanitizedStringSchema } from '~/server/schema/utils.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export const modelVersionUpsertSchema = z.object({
   id: z.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
   baseModel: z.enum(constants.baseModels),
-  description: sanitizedStringSchema,
+  description: getSanitizedStringSchema().nullish(),
   steps: z.number().nullish(),
   epochs: z.number().nullish(),
   images: z

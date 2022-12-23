@@ -2,7 +2,8 @@ import { Button, Group, Modal, Stack, LoadingOverlay } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { z } from 'zod';
-import { Form, InputTextArea, useForm } from '~/libs/form';
+
+import { Form, InputRTE, useForm } from '~/libs/form';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { commentUpsertInput } from '~/server/schema/comment.schema';
 import { showErrorNotification } from '~/utils/notifications';
@@ -63,11 +64,11 @@ export default createRoutedContext({
         <LoadingOverlay visible={loadingComment} />
         <Form form={form} onSubmit={(data) => saveCommentMutation.mutate(data)}>
           <Stack spacing="md">
-            <InputTextArea
+            <InputRTE
               name="content"
-              minRows={3}
               placeholder="Type your thoughts..."
-              autosize
+              includeControls={['formatting', 'link']}
+              editorSize="xl"
             />
             <Group position="apart">
               <Button variant="default" onClick={handleClose}>

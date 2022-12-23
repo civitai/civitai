@@ -2,26 +2,25 @@ import { ActionIcon, Button, Card, Group, Menu, Text } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { ReviewReactions } from '@prisma/client';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconMessageCircle2 } from '@tabler/icons';
-import dayjs from 'dayjs';
-import { useSession } from 'next-auth/react';
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { ReportEntity } from '~/server/schema/report.schema';
-
+import { CommentGetAllItem } from '~/types/router';
+import { daysFromNow } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { CommentGetAllItem } from '~/types/router';
 
 export function CommentDiscussionItem({ comment }: Props) {
   const { openContext } = useRoutedContext();
-  const { data: session } = useSession();
-  const currentUser = session?.user;
+  const currentUser = useCurrentUser();
   const isOwner = currentUser?.id === comment.user.id;
   const isMod = currentUser?.isModerator ?? false;
 
@@ -111,11 +110,7 @@ export function CommentDiscussionItem({ comment }: Props) {
   return (
     <Card radius="md" p="md" withBorder>
       <Group align="flex-start" sx={{ justifyContent: 'space-between' }} noWrap>
-        <UserAvatar
-          user={comment.user}
-          subText={`${dayjs(comment.createdAt).fromNow()}`}
-          withUsername
-        />
+        <UserAvatar user={comment.user} subText={daysFromNow(comment.createdAt)} withUsername />
         <Menu position="bottom-end">
           <Menu.Target>
             <ActionIcon size="xs" variant="subtle">
@@ -140,7 +135,7 @@ export function CommentDiscussionItem({ comment }: Props) {
                 </Menu.Item>
               </>
             )}
-            {(!session || !isOwner) && (
+            {(!currentUser || !isOwner) && (
               <LoginRedirect reason="report-model">
                 <Menu.Item
                   icon={<IconFlag size={14} stroke={1.5} />}
@@ -157,7 +152,7 @@ export function CommentDiscussionItem({ comment }: Props) {
       </Group>
 
       <ContentClamp maxHeight={100}>
-        <Text>{comment.content}</Text>
+        <RenderHtml html={comment.content} sx={(theme) => ({ fontSize: theme.fontSizes.sm })} />
       </ContentClamp>
 
       <Group mt="sm" align="flex-start" position="apart" noWrap>

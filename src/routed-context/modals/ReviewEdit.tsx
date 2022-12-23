@@ -1,20 +1,21 @@
 import { Button, Group, LoadingOverlay, Modal, Stack } from '@mantine/core';
+import { useRouter } from 'next/router';
+import { useEffect, useState } from 'react';
 import { z } from 'zod';
-import { createRoutedContext } from '~/routed-context/create-routed-context';
-import { trpc } from '~/utils/trpc';
-import { ReviewUpsertInput, reviewUpsertSchema } from '~/server/schema/review.schema';
+
 import {
   Form,
   InputCheckbox,
   InputImageUpload,
   InputRating,
+  InputRTE,
   InputSelect,
-  InputTextArea,
   useForm,
 } from '~/libs/form';
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/router';
+import { createRoutedContext } from '~/routed-context/create-routed-context';
+import { ReviewUpsertInput, reviewUpsertSchema } from '~/server/schema/review.schema';
 import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 export default createRoutedContext({
   schema: z.object({
@@ -90,7 +91,12 @@ export default createRoutedContext({
               required
             />
             <InputRating name="rating" label="Rate the model" size="xl" withAsterisk required />
-            <InputTextArea name="text" label="Comments or feedback" minRows={2} autosize />
+            <InputRTE
+              name="text"
+              label="Comments or feedback"
+              includeControls={['formatting', 'link']}
+              editorSize="md"
+            />
             <InputImageUpload
               name="images"
               label="Generated Images"
