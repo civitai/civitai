@@ -8,16 +8,22 @@ const reactionOutput = z
     return bool ? new Date() : null;
   });
 
-const connector = z.object({
-  entityId: z.number(),
+export const reactionConnector = z.object({
   entityType: z.enum(['question', 'answer', 'comment']),
 });
 
 export type GetReactionInput = z.infer<typeof getReactionSchema>;
-export const getReactionSchema = connector;
+export const getReactionSchema = reactionConnector.extend({
+  entityId: z.number(),
+});
+
+export type GetManyReactionsInput = z.infer<typeof getManyReactionsSchema>;
+export const getManyReactionsSchema = reactionConnector.extend({
+  entityIds: z.number(),
+});
 
 export type UpsertReactionSchema = z.infer<typeof upsertReactionSchema>;
-export const upsertReactionSchema = connector.extend({
+export const upsertReactionSchema = reactionConnector.extend({
   id: z.number().optional(),
   like: reactionOutput,
   dislike: reactionOutput,
@@ -26,6 +32,7 @@ export const upsertReactionSchema = connector.extend({
   heart: reactionOutput,
   check: reactionOutput,
   cross: reactionOutput,
+  entityId: z.number(),
 });
 
 // export type UpsertQuestionReactionSchema = z.infer<typeof upsertQuestionReactionSchema>;

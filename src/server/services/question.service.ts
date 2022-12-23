@@ -73,6 +73,7 @@ export const upsertQuestion = async ({
               }
             : undefined,
         },
+        select: { id: true, title: true },
       })
     : await prisma.question.update({
         where: { id },
@@ -99,6 +100,7 @@ export const upsertQuestion = async ({
               }
             : undefined,
         },
+        select: { id: true, title: true },
       });
 };
 

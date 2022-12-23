@@ -1,3 +1,5 @@
+import { reactionSelect } from './../selectors/reaction.selector';
+import { getUserReaction } from './../services/reaction.service';
 import { SetQuestionAnswerInput } from './../schema/question.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -8,7 +10,7 @@ import {
   deleteQuestion,
   setQuestionAnswer,
 } from './../services/question.service';
-import { throwDbError } from '~/server/utils/errorHandling';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { GetQuestionsInput, UpsertQuestionInput } from '~/server/schema/question.schema';
 import { Context } from '~/server/createContext';
 
@@ -52,7 +54,7 @@ export const getQuestionsHandler = async ({
   }
 };
 
-export type QuestionDetail = AsyncReturnType<typeof getQuestionDetailHandler>;
+export type QuestionDetailProps = AsyncReturnType<typeof getQuestionDetailHandler>;
 export const getQuestionDetailHandler = async ({
   ctx,
   input: { id },
@@ -61,6 +63,7 @@ export const getQuestionDetailHandler = async ({
   input: GetByIdInput;
 }) => {
   try {
+    const userId = ctx.user?.id;
     const item = await getQuestionDetail({
       id,
       select: {
@@ -83,11 +86,36 @@ export const getQuestionDetailHandler = async ({
             heartCountAllTime: true,
           },
         },
+        reactions: {
+          select: {
+            where: { reaction: { userId } },
+            take: 1,
+            reaction: {
+              select: {
+                id: true,
+                user: { select: simpleUserSelect },
+                heart: true,
+              },
+            },
+          },
+        },
       },
     });
+    const userReaction = await getUserReaction({
+      entityType: 'question',
+      entityId: id,
+      userId,
+      select: {
+        id: true,
+        heart: true,
+      },
+    });
+    if (!item) throw throwNotFoundError();
+
     return {
       ...item,
-      tags: item?.tags.map((x) => x.tag),
+      tags: item.tags.map((x) => x.tag),
+      userReaction,
     };
   } catch (error) {
     throw throwDbError(error);
@@ -102,7 +130,7 @@ export const upsertQuestionHandler = async ({
   input: UpsertQuestionInput;
 }) => {
   try {
-    await upsertQuestion({ ...input, userId: ctx.user.id });
+    return await upsertQuestion({ ...input, userId: ctx.user.id });
   } catch (error) {
     throw throwDbError(error);
   }
