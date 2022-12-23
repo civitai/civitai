@@ -6,6 +6,7 @@ import { getAnswers } from '~/server/services/answer.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { GetAnswersInput, UpsertAnswerInput } from './../schema/answer.schema';
 
+export type GetAnswersProps = AsyncReturnType<typeof getAnswersHandler>;
 export const getAnswersHandler = async ({
   ctx,
   input: { questionId },

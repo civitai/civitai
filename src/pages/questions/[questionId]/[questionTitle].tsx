@@ -16,16 +16,17 @@ import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
-import { DeleteQuestion } from '~/components/Question/DeleteQuestion';
-import { QuestionHeader } from '~/components/Question/QuestionHeader';
-import { QuestionForm } from '~/components/Question/QuestionForm';
+import { DeleteQuestion } from '~/components/Questions/DeleteQuestion';
+import { QuestionHeader } from '~/components/Questions/QuestionHeader';
+import { QuestionForm } from '~/components/Questions/QuestionForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { QuestionDetail } from '~/components/Question/QuestionDetail';
+import { QuestionDetail } from '~/components/Questions/QuestionDetail';
 import { ReactionButton } from '~/components/Reaction/ReactionButton';
+import { AnswerDetail } from '~/components/Questions/AnswerDetail';
 
 export const getServerSideProps: GetServerSideProps<{
   id: number;
@@ -88,9 +89,13 @@ export function QuestionPage(props: InferGetServerSidePropsType<typeof getServer
               count={question.metrics?.heartCountAllTime}
               entityType="question"
               entityId={question.id}
+              disabled={question.user.id === user?.id}
             />
           </div>
-          <QuestionDetail question={question} />
+          <Stack>
+            <QuestionDetail question={question} />
+            {/* TODO comments */}
+          </Stack>
         </div>
         {!!answers?.length && (
           <Group className={classes.fullWidth} noWrap>
@@ -110,6 +115,7 @@ export function QuestionPage(props: InferGetServerSidePropsType<typeof getServer
                 entityType="answer"
                 entityId={answer.id}
                 count={answer.metrics?.heartCountAllTime}
+                disabled={answer.user.id === user?.id}
               />
               <ReactionButton
                 reactionId={answer.userReaction?.id}
@@ -118,6 +124,7 @@ export function QuestionPage(props: InferGetServerSidePropsType<typeof getServer
                 entityType="answer"
                 entityId={answer.id}
                 count={answer.metrics?.checkCountAllTime}
+                disabled={answer.user.id === user?.id}
               />
               <ReactionButton
                 reactionId={answer.userReaction?.id}
@@ -126,7 +133,12 @@ export function QuestionPage(props: InferGetServerSidePropsType<typeof getServer
                 entityType="answer"
                 entityId={answer.id}
                 count={answer.metrics?.crossCountAllTime}
+                disabled={answer.user.id === user?.id}
               />
+            </Stack>
+            <Stack>
+              <AnswerDetail answer={answer} questionId={id} />
+              {/* TODO comments */}
             </Stack>
           </div>
         ))}

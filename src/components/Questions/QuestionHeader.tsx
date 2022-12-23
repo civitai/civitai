@@ -2,7 +2,7 @@ import { ActionIcon, Badge, Group, Menu, Stack, Title, useMantineTheme } from '@
 import { NextLink } from '@mantine/next';
 import { IconDotsVertical, IconEdit, IconTrash } from '@tabler/icons';
 
-import { DeleteQuestion } from '~/components/Question/DeleteQuestion';
+import { DeleteQuestion } from '~/components/Questions/DeleteQuestion';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 import { QuestionDetailProps } from '~/server/controllers/question.controller';

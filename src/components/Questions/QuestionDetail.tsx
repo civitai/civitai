@@ -13,7 +13,6 @@ export function QuestionDetail({ question }: { question: QuestionDetailProps }) 
       />
       <div>{question.content}</div>
       {/* TODO - reactions */}
-      {/* TODO - comments */}
     </Stack>
   );
 }

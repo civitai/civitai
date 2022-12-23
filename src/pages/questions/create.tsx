@@ -1,5 +1,5 @@
 import { GetServerSideProps } from 'next';
-import { QuestionForm } from '~/components/Question/QuestionForm';
+import { QuestionForm } from '~/components/Questions/QuestionForm';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 
 export default function QuestionCreate() {
