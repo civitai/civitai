@@ -513,7 +513,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
 
       -- upsert metrics for all affected users
       -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "AnswerMetric" ("answerId", timeframe, "heartCount", "checkCount", "crossCount", "commentCount")
+      INSERT INTO "AnswerMetric" ("answerId", timeframe, "heartCount", "commentCount", "checkCount", "crossCount")
       SELECT
         m.id,
         tf.timeframe,
