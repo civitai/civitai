@@ -1,5 +1,6 @@
 import { Embla, useAnimationOffsetEffect, Carousel } from '@mantine/carousel';
 import {
+  Badge,
   Loader,
   Modal,
   Center,
@@ -50,6 +51,10 @@ export default createRoutedContext({
     const { data: reactions = [] } = trpc.review.getReactions.useQuery(
       { reviewId },
       { enabled: !!review, initialData: review?.reactions }
+    );
+    const { data: model } = trpc.model.getById.useQuery(
+      { id: review?.modelId ?? -1 },
+      { enabled: !!review }
     );
 
     const toggleReactionMutation = trpc.review.toggleReaction.useMutation({
@@ -137,6 +142,13 @@ export default createRoutedContext({
                 <UserAvatar
                   user={review.user}
                   subText={daysFromNow(review.createdAt)}
+                  badge={
+                    review.user.id === model?.user.id ? (
+                      <Badge size="xs" color="violet">
+                        OP
+                      </Badge>
+                    ) : null
+                  }
                   size="lg"
                   spacing="xs"
                   withUsername

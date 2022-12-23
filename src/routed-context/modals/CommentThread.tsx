@@ -1,4 +1,4 @@
-import { Modal, Group, CloseButton, Alert, Center, Loader, Stack } from '@mantine/core';
+import { Badge, Modal, Group, CloseButton, Alert, Center, Loader, Stack } from '@mantine/core';
 import { z } from 'zod';
 
 import CommentSection from '~/components/CommentSection/CommentSection';
@@ -30,6 +30,10 @@ export default createRoutedContext({
     const { data: reactions = [] } = trpc.comment.getReactions.useQuery(
       { commentId },
       { enabled: !!comment, initialData: comment?.reactions }
+    );
+    const { data: model } = trpc.model.getById.useQuery(
+      { id: comment?.modelId ?? -1 },
+      { enabled: !!comment }
     );
 
     const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
@@ -86,6 +90,13 @@ export default createRoutedContext({
               <UserAvatar
                 user={comment.user}
                 subText={daysFromNow(comment.createdAt)}
+                badge={
+                  comment.user.id === model?.user.id ? (
+                    <Badge size="xs" color="violet">
+                      OP
+                    </Badge>
+                  ) : null
+                }
                 size="lg"
                 spacing="xs"
                 withUsername

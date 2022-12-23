@@ -2,6 +2,7 @@ import { Carousel } from '@mantine/carousel';
 import {
   ActionIcon,
   AspectRatio,
+  Badge,
   Button,
   Card,
   Group,
@@ -46,6 +47,7 @@ export function ReviewDiscussionItem({ review }: Props) {
     { id: review.id },
     { initialData: review._count.comments }
   );
+  const { data: model } = trpc.model.getById.useQuery({ id: review.modelId });
 
   const queryUtils = trpc.useContext();
   const deleteMutation = trpc.review.delete.useMutation({
@@ -149,10 +151,17 @@ export function ReviewDiscussionItem({ review }: Props) {
   return (
     <Card radius="md" p="md" withBorder>
       <Stack spacing={4} mb="sm">
-        <Group align="flex-start" sx={{ justifyContent: 'space-between' }} noWrap>
+        <Group align="flex-start" position="apart" noWrap>
           <UserAvatar
             user={review.user}
             subText={`${daysFromNow(review.createdAt)} - ${review.modelVersion?.name}`}
+            badge={
+              review.user.id === model?.user.id ? (
+                <Badge size="xs" color="violet">
+                  OP
+                </Badge>
+              ) : null
+            }
             withUsername
           />
           <Menu position="bottom-end">
