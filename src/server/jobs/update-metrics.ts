@@ -359,6 +359,260 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
     `);
   };
 
+  const updateQuestionMetrics = async () => {
+    await prisma.$executeRawUnsafe(`
+      WITH recent_engagements AS
+      (
+        SELECT
+          a."questionId" AS id
+        FROM "QuestionReaction" a
+        JOIN "Reaction" r ON r.id = a."reactionId"
+        WHERE r."heart" > '${lastUpdate}'
+
+        UNION
+
+        SELECT
+          a."questionId" AS id
+        FROM "Answer" a
+        WHERE (a."createdAt" > '${lastUpdate}')
+
+        UNION
+
+        SELECT
+          a."questionId" AS id
+        FROM "QuestionComment" a
+        JOIN "CommentV2" c ON a."commentId" = c.id
+        WHERE (c."createdAt" > '${lastUpdate}')
+      ),
+      -- Get all affected users
+      affected AS
+      (
+          SELECT DISTINCT
+              r.id
+          FROM recent_engagements r
+          WHERE r.id IS NOT NULL
+      )
+
+      -- upsert metrics for all affected users
+      -- perform a one-pass table scan producing all metrics for all affected users
+      INSERT INTO "QuestionMetric" ("questionId", timeframe, "heartCount", "commentCount", "answerCount")
+      SELECT
+        m.id,
+        tf.timeframe,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN heart_count
+          WHEN tf.timeframe = 'Year' THEN year_heart_count
+          WHEN tf.timeframe = 'Month' THEN month_heart_count
+          WHEN tf.timeframe = 'Week' THEN week_heart_count
+          WHEN tf.timeframe = 'Day' THEN day_heart_count
+        END AS heart_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN comment_count
+          WHEN tf.timeframe = 'Year' THEN year_comment_count
+          WHEN tf.timeframe = 'Month' THEN month_comment_count
+          WHEN tf.timeframe = 'Week' THEN week_comment_count
+          WHEN tf.timeframe = 'Day' THEN day_comment_count
+        END AS comment_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN answer_count
+          WHEN tf.timeframe = 'Year' THEN year_answer_count
+          WHEN tf.timeframe = 'Month' THEN month_answer_count
+          WHEN tf.timeframe = 'Week' THEN week_answer_count
+          WHEN tf.timeframe = 'Day' THEN day_answer_count
+        END AS answer_count
+      FROM
+      (
+        SELECT
+          q.id,
+          COALESCE(r.heart_count, 0) AS heart_count,
+          COALESCE(r.year_heart_count, 0) AS year_heart_count,
+          COALESCE(r.month_heart_count, 0) AS month_heart_count,
+          COALESCE(r.week_heart_count, 0) AS week_heart_count,
+          COALESCE(r.day_heart_count, 0) AS day_heart_count,
+          COALESCE(c.comment_count, 0) AS comment_count,
+          COALESCE(c.year_comment_count, 0) AS year_comment_count,
+          COALESCE(c.month_comment_count, 0) AS month_comment_count,
+          COALESCE(c.week_comment_count, 0) AS week_comment_count,
+          COALESCE(c.day_comment_count, 0) AS day_comment_count,
+          COALESCE(a.answer_count, 0) AS answer_count,
+          COALESCE(a.year_answer_count, 0) AS year_answer_count,
+          COALESCE(a.month_answer_count, 0) AS month_answer_count,
+          COALESCE(a.week_answer_count, 0) AS week_answer_count,
+          COALESCE(a.day_answer_count, 0) AS day_answer_count
+        FROM affected q
+        LEFT JOIN (
+          SELECT
+            a."questionId" AS id,
+            COUNT(*) AS answer_count,
+            SUM(IIF(a."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_answer_count,
+            SUM(IIF(a."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_answer_count,
+            SUM(IIF(a."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_answer_count,
+            SUM(IIF(a."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_answer_count
+          FROM "Answer" a
+          GROUP BY a."questionId"
+        ) a ON q.id = a.id
+        LEFT JOIN (
+          SELECT
+            qc."questionId" AS id,
+            COUNT(*) AS comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_comment_count
+          FROM "QuestionComment" qc
+          JOIN "CommentV2" v ON qc."commentId" = v.id
+          GROUP BY qc."questionId"
+        ) c ON q.id = c.id
+        LEFT JOIN (
+          SELECT
+            qr."questionId" AS id,
+            SUM(IIF(r.heart IS NOT NULL, 1, 0)) AS heart_count,
+            SUM(IIF(r.heart >= (NOW() - interval '365 days'), 1, 0)) AS year_heart_count,
+            SUM(IIF(r.heart >= (NOW() - interval '30 days'), 1, 0)) AS month_heart_count,
+            SUM(IIF(r.heart >= (NOW() - interval '7 days'), 1, 0)) AS week_heart_count,
+            SUM(IIF(r.heart >= (NOW() - interval '1 days'), 1, 0)) AS day_heart_count
+          FROM "QuestionReaction" qr
+          JOIN "Reaction" r ON qr."reactionId" = r.id
+          GROUP BY qr."questionId"
+        ) r ON q.id = r.id
+      ) m
+      CROSS JOIN (
+        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+      ) tf
+      ON CONFLICT ("questionId", timeframe) DO UPDATE
+        SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "answerCount" = EXCLUDED."answerCount";
+    `);
+  };
+
+  const updateAnswerMetrics = async () => {
+    await prisma.$executeRawUnsafe(`
+      WITH recent_engagements AS
+      (
+        SELECT
+          a."answerId" AS id
+        FROM "AnswerReaction" a
+        JOIN "Reaction" r ON r.id = a."reactionId"
+        WHERE r."heart" > '${lastUpdate}' OR r."check" > '${lastUpdate}' OR r."cross" > '${lastUpdate}'
+
+        UNION
+
+        SELECT
+          a."answerId" AS id
+        FROM "AnswerComment" a
+        JOIN "CommentV2" c ON a."commentId" = c.id
+        WHERE c."createdAt" > '${lastUpdate}'
+      ),
+      -- Get all affected users
+      affected AS
+      (
+          SELECT DISTINCT
+              r.id
+          FROM recent_engagements r
+          WHERE r.id IS NOT NULL
+      )
+
+      -- upsert metrics for all affected users
+      -- perform a one-pass table scan producing all metrics for all affected users
+      INSERT INTO "AnswerMetric" ("answerId", timeframe, "heartCount", "checkCount", "crossCount", "commentCount")
+      SELECT
+        m.id,
+        tf.timeframe,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN heart_count
+          WHEN tf.timeframe = 'Year' THEN year_heart_count
+          WHEN tf.timeframe = 'Month' THEN month_heart_count
+          WHEN tf.timeframe = 'Week' THEN week_heart_count
+          WHEN tf.timeframe = 'Day' THEN day_heart_count
+        END AS heart_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN comment_count
+          WHEN tf.timeframe = 'Year' THEN year_comment_count
+          WHEN tf.timeframe = 'Month' THEN month_comment_count
+          WHEN tf.timeframe = 'Week' THEN week_comment_count
+          WHEN tf.timeframe = 'Day' THEN day_comment_count
+        END AS comment_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN check_count
+          WHEN tf.timeframe = 'Year' THEN year_check_count
+          WHEN tf.timeframe = 'Month' THEN month_check_count
+          WHEN tf.timeframe = 'Week' THEN week_check_count
+          WHEN tf.timeframe = 'Day' THEN day_check_count
+        END AS check_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN cross_count
+          WHEN tf.timeframe = 'Year' THEN year_cross_count
+          WHEN tf.timeframe = 'Month' THEN month_cross_count
+          WHEN tf.timeframe = 'Week' THEN week_cross_count
+          WHEN tf.timeframe = 'Day' THEN day_cross_count
+        END AS cross_count
+      FROM
+      (
+        SELECT
+          q.id,
+          COALESCE(c.comment_count, 0) AS comment_count,
+          COALESCE(c.year_comment_count, 0) AS year_comment_count,
+          COALESCE(c.month_comment_count, 0) AS month_comment_count,
+          COALESCE(c.week_comment_count, 0) AS week_comment_count,
+          COALESCE(c.day_comment_count, 0) AS day_comment_count,
+          COALESCE(r.heart_count, 0) AS heart_count,
+          COALESCE(r.year_heart_count, 0) AS year_heart_count,
+          COALESCE(r.month_heart_count, 0) AS month_heart_count,
+          COALESCE(r.week_heart_count, 0) AS week_heart_count,
+          COALESCE(r.day_heart_count, 0) AS day_heart_count,
+          COALESCE(r.check_count, 0) AS check_count,
+          COALESCE(r.year_check_count, 0) AS year_check_count,
+          COALESCE(r.month_check_count, 0) AS month_check_count,
+          COALESCE(r.week_check_count, 0) AS week_check_count,
+          COALESCE(r.day_check_count, 0) AS day_check_count,
+          COALESCE(r.cross_count, 0) AS cross_count,
+          COALESCE(r.year_cross_count, 0) AS year_cross_count,
+          COALESCE(r.month_cross_count, 0) AS month_cross_count,
+          COALESCE(r.week_cross_count, 0) AS week_cross_count,
+          COALESCE(r.day_cross_count, 0) AS day_cross_count
+        FROM affected q
+        LEFT JOIN (
+          SELECT
+            ac."answerId" AS id,
+            COUNT(*) AS comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_comment_count
+          FROM "AnswerComment" ac
+          JOIN "CommentV2" v ON ac."commentId" = v.id
+          GROUP BY ac."answerId"
+        ) c ON q.id = c.id
+        LEFT JOIN (
+          SELECT
+            ar."answerId"                                            AS id,
+            SUM(IIF(r.heart IS NOT NULL, 1, 0))                      AS heart_count,
+            SUM(IIF(r.heart >= (NOW() - interval '365 days'), 1, 0)) AS year_heart_count,
+            SUM(IIF(r.heart >= (NOW() - interval '30 days'), 1, 0))  AS month_heart_count,
+            SUM(IIF(r.heart >= (NOW() - interval '7 days'), 1, 0))   AS week_heart_count,
+            SUM(IIF(r.heart >= (NOW() - interval '1 days'), 1, 0))   AS day_heart_count,
+            SUM(IIF(r.check IS NOT NULL, 1, 0))                      AS check_count,
+            SUM(IIF(r.check >= (NOW() - interval '365 days'), 1, 0)) AS year_check_count,
+            SUM(IIF(r.check >= (NOW() - interval '30 days'), 1, 0))  AS month_check_count,
+            SUM(IIF(r.check >= (NOW() - interval '7 days'), 1, 0))   AS week_check_count,
+            SUM(IIF(r.check >= (NOW() - interval '1 days'), 1, 0))   AS day_check_count,
+            SUM(IIF(r.cross IS NOT NULL, 1, 0)) AS cross_count,
+            SUM(IIF(r.cross >= (NOW() - interval '365 days'), 1, 0)) AS year_cross_count,
+            SUM(IIF(r.cross >= (NOW() - interval '30 days'), 1, 0)) AS month_cross_count,
+            SUM(IIF(r.cross >= (NOW() - interval '7 days'), 1, 0)) AS week_cross_count,
+            SUM(IIF(r.cross >= (NOW() - interval '1 days'), 1, 0)) AS day_cross_count
+          FROM "AnswerReaction" ar
+          JOIN "Reaction" r ON ar."reactionId" = r.id
+          GROUP BY ar."answerId"
+        ) r ON q.id = r.id
+      ) m
+      CROSS JOIN (
+        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+      ) tf
+      ON CONFLICT ("answerId", timeframe) DO UPDATE
+        SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "checkCount" = EXCLUDED."checkCount", "crossCount" = EXCLUDED."crossCount";
+    `);
+  };
+
   const refreshModelRank = async () =>
     await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelRank"');
 
@@ -382,6 +636,8 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
   // --------------------------------------------
   await updateModelMetrics('models');
   await updateModelMetrics('versions');
+  await updateAnswerMetrics();
+  await updateQuestionMetrics();
   await refreshModelRank();
   await updateUserMetrics();
   await refreshUserRank();
