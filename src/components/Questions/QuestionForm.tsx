@@ -1,5 +1,5 @@
 import { Grid, Group, Stack, Paper, Button, Container, ActionIcon, Title } from '@mantine/core';
-import { useForm, Form, InputText, InputTextArea, InputMultiSelect } from '~/libs/form';
+import { useForm, Form, InputText, InputMultiSelect, InputRTE } from '~/libs/form';
 import { QuestionDetailProps } from '~/server/controllers/question.controller';
 import { upsertQuestionSchema } from '~/server/schema/question.schema';
 import { trpc } from '~/utils/trpc';
@@ -10,6 +10,7 @@ import { showNotification } from '@mantine/notifications';
 import { IconArrowLeft, IconCheck, IconX } from '@tabler/icons';
 import { slugit } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
+import { useMemo } from 'react';
 
 const schema = upsertQuestionSchema.extend({ tags: z.string().array() });
 
@@ -25,6 +26,11 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
   const { data: { items: tags } = { items: [] } } = trpc.tag.getAll.useQuery(
     { limit: 0 },
     { cacheTime: Infinity, staleTime: Infinity }
+  );
+  const questionTags = form.watch('tags');
+  const tagsData = useMemo(
+    () => Array.from(new Set([...(questionTags ?? []), ...tags.map((x) => x.name)])),
+    [questionTags, tags]
   );
 
   const { mutate, isLoading } = trpc.question.upsert.useMutation({
@@ -59,14 +65,15 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
 
   const handleSubmit = (values: z.infer<typeof schema>) => {
     const data = {
+      ...question,
       ...values,
       tags: values.tags?.map((name) => {
         const match = tags.find((x) => x.name === name);
         return match ?? { name };
       }),
     };
-    console.log({ data });
-    // mutate(data);
+    // console.log({ data });
+    mutate(data);
   };
 
   return (
@@ -83,15 +90,30 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
             <Paper radius="md" p="xl" withBorder>
               <Stack>
                 <InputText name="title" label="Title" withAsterisk />
-                <InputTextArea name="content" label="Content" withAsterisk />
+                <InputRTE
+                  name="content"
+                  label="Content"
+                  withAsterisk
+                  includeControls={['heading', 'formatting', 'list', 'link', 'media']}
+                />
               </Stack>
             </Paper>
           </Grid.Col>
           <Grid.Col lg={4}>
             <Paper radius="md" p="xl" withBorder>
               <Stack>
-                <InputMultiSelect data={tags.map((x) => x.name)} name="tags" label="Tags" />
-                <Group position="right">
+                <InputMultiSelect
+                  data={tagsData}
+                  name="tags"
+                  label="Tags"
+                  placeholder="e.g.: portrait, sharp focus, etc."
+                  description="Please add your tags"
+                  creatable
+                  getCreateLabel={(query) => `+ Create ${query}`}
+                  clearable
+                  searchable
+                />
+                <Group position="right" noWrap>
                   <Button
                     variant="outline"
                     onClick={() => form.reset()}
@@ -100,7 +122,7 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
                     Discard Changes
                   </Button>
                   <Button type="submit" loading={isLoading}>
-                    {isLoading ? 'Saving...' : 'Save'}
+                    Save
                   </Button>
                 </Group>
               </Stack>

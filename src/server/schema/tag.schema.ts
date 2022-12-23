@@ -15,6 +15,9 @@ export const tagSchema = z.object({
 
 export const isTag = (tag: TagUpsertSchema): tag is Omit<TagUpsertSchema, 'id'> & { id: number } =>
   !!tag.id;
+export const isNotTag = (
+  tag: TagUpsertSchema
+): tag is Omit<TagUpsertSchema, 'id'> & { id: undefined } => !tag.id;
 
 export const getTagsInput = getAllQuerySchema
   .extend({

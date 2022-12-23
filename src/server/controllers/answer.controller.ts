@@ -32,9 +32,9 @@ export const getAnswersHandler = async ({
           },
         },
         reactions: {
+          where: { reaction: { userId } },
+          take: 1,
           select: {
-            where: { reaction: { userId } },
-            take: 1,
             reaction: {
               select: {
                 id: true,

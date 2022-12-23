@@ -4,6 +4,7 @@ import {
   Button,
   Container,
   createStyles,
+  Divider,
   Group,
   Menu,
   Stack,
@@ -51,11 +52,13 @@ export const getServerSideProps: GetServerSideProps<{
   };
 };
 
-export function QuestionPage(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
+export default function QuestionPage(
+  props: InferGetServerSidePropsType<typeof getServerSideProps>
+) {
   const { id, title } = props;
   const router = useRouter();
   const user = useCurrentUser();
-  const editing = router.query.editing;
+  const editing = router.query.edit;
   const { classes } = useStyles();
 
   const theme = useMantineTheme();
@@ -80,6 +83,7 @@ export function QuestionPage(props: InferGetServerSidePropsType<typeof getServer
         <div className={classes.fullWidth}>
           <QuestionHeader question={question} />
         </div>
+        <Divider className={classes.fullWidth} my="md" />
         <div className={classes.row}>
           <div>
             <ReactionButton
@@ -147,10 +151,11 @@ export function QuestionPage(props: InferGetServerSidePropsType<typeof getServer
   );
 }
 
-const useStyles = createStyles({
+const useStyles = createStyles((theme) => ({
   grid: {
     display: 'grid',
     gridTemplateColumns: 'min-content 1fr',
+    columnGap: theme.spacing.md,
   },
   fullWidth: {
     gridColumn: '1/-1',
@@ -158,4 +163,4 @@ const useStyles = createStyles({
   row: {
     display: 'contents',
   },
-});
+}));

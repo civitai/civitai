@@ -1,6 +1,7 @@
 import { ActionIcon, Badge, Group, Menu, Stack, Title, useMantineTheme } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconDotsVertical, IconEdit, IconTrash } from '@tabler/icons';
+import { useRouter } from 'next/router';
 
 import { DeleteQuestion } from '~/components/Questions/DeleteQuestion';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -10,13 +11,15 @@ import { QuestionDetailProps } from '~/server/controllers/question.controller';
 export function QuestionHeader({ question }: { question: QuestionDetailProps }) {
   const user = useCurrentUser();
   const theme = useMantineTheme();
+  const router = useRouter();
+  const questionTitle = router.query.questionTitle;
 
   const isModerator = user?.isModerator ?? false;
   const isOwner = user?.id === question?.user.id;
 
   return (
-    <Group position="apart" noWrap>
-      <Stack>
+    <Group position="apart" noWrap align="center">
+      <Stack spacing="xs">
         <Title>{question.title}</Title>
         <Group spacing={4}>
           {question.tags.map((tag) => (
@@ -54,7 +57,7 @@ export function QuestionHeader({ question }: { question: QuestionDetailProps }) 
                 </DeleteQuestion>
                 <Menu.Item
                   component={NextLink}
-                  href={`/questions/${question.id}/${question.title}?edit=true`}
+                  href={`/questions/${question.id}/${questionTitle}?edit=true`}
                   icon={<IconEdit size={14} stroke={1.5} />}
                   shallow
                 >

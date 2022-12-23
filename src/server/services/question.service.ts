@@ -1,3 +1,4 @@
+import { isNotTag } from './../schema/tag.schema';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { Prisma } from '@prisma/client';
 import { prisma } from '~/server/db/client';
@@ -87,16 +88,15 @@ export const upsertQuestion = async ({
                     notIn: tags.filter(isTag).map((x) => x.id),
                   },
                 },
-                create: tags
-                  .filter((x) => !x.id)
-                  .map(({ name }) => ({
-                    tag: {
-                      connectOrCreate: {
-                        where: { name },
-                        create: { name },
-                      },
-                    },
-                  })),
+                connectOrCreate: tags.filter(isTag).map((tag) => ({
+                  where: { tagId_questionId: { tagId: tag.id, questionId: id } },
+                  create: { tagId: tag.id },
+                })),
+                create: tags.filter(isNotTag).map(({ name }) => ({
+                  tag: {
+                    create: { name },
+                  },
+                })),
               }
             : undefined,
         },

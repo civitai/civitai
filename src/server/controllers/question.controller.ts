@@ -79,7 +79,7 @@ export const getQuestionDetailHandler = async ({
         updatedAt: true,
         title: true,
         content: true,
-        answered: true,
+        selectedAnswerId: true,
         user: { select: simpleUserSelect },
         tags: {
           select: {
@@ -94,9 +94,9 @@ export const getQuestionDetailHandler = async ({
           },
         },
         reactions: {
+          where: { reaction: { userId } },
+          take: 1,
           select: {
-            where: { reaction: { userId } },
-            take: 1,
             reaction: {
               select: {
                 id: true,
@@ -114,6 +114,7 @@ export const getQuestionDetailHandler = async ({
       userId,
       select: {
         id: true,
+        user: { select: simpleUserSelect },
         heart: true,
       },
     });
