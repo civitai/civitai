@@ -17,7 +17,7 @@ const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   Negative: '.pt',
   'Training Data': '.zip',
   Config: '.yaml,.yml',
-  VAE: '.pt',
+  VAE: '.pt,.ckpt,.safetensors',
 };
 
 export function FileList({ parentIndex, form, ...wrapperProps }: Props) {
