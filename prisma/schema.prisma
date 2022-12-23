@@ -679,8 +679,19 @@ model Question {
   reactions    QuestionReaction[]
   comments     QuestionComment[]
   answers      Answer[]           @relation("Question")
-  metrics      QuestionMetric?
+  metrics      QuestionMetric[]
   QuestionRank QuestionRank?
+}
+
+model QuestionMetric {
+  questionId   Int
+  question     Question        @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  timeframe    MetricTimeframe
+  heartCount   Int             @default(0)
+  commentCount Int             @default(0)
+  answerCount  Int             @default(0)
+
+  @@id([questionId, timeframe])
 }
 
 model Answer {
@@ -695,9 +706,21 @@ model Answer {
 
   reactions AnswerReaction[]
   comments  AnswerComment[]
-  metrics   AnswerMetric?
+  metrics   AnswerMetric[]
   answerFor Question?        @relation("SelectedAnswer")
   rank      AnswerRank?
+}
+
+model AnswerMetric {
+  answerId     Int
+  answer       Answer          @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  timeframe    MetricTimeframe
+  checkCount   Int
+  crossCount   Int
+  heartCount   Int
+  commentCount Int
+
+  @@id([answerId, timeframe])
 }
 
 model CommentV2 {
@@ -1050,51 +1073,4 @@ model UserRank {
   favoriteCountMonthRank   Int
   favoriteCountYearRank    Int
   favoriteCountAllTimeRank Int
-}
-
-/// @view
-model QuestionMetric {
-  questionId          Int      @id
-  question            Question @relation(fields: [questionId], references: [id], onDelete: NoAction)
-  heartCountDay       Int
-  heartCountWeek      Int
-  heartCountMonth     Int
-  heartCountYear      Int
-  heartCountAllTime   Int
-  commentCountDay     Int
-  commentCountWeek    Int
-  commentCountMonth   Int
-  commentCountYear    Int
-  commentCountAllTime Int
-  answerCountDay      Int
-  answerCountWeek     Int
-  answerCountMonth    Int
-  answerCountYear     Int
-  answerCountAllTime  Int
-}
-
-/// @view
-model AnswerMetric {
-  answerId            Int    @id
-  answer              Answer @relation(fields: [answerId], references: [id], onDelete: NoAction)
-  checkCountDay       Int
-  checkCountWeek      Int
-  checkCountMonth     Int
-  checkCountYear      Int
-  checkCountAllTime   Int
-  crossCountDay       Int
-  crossCountWeek      Int
-  crossCountMonth     Int
-  crossCountYear      Int
-  crossCountAllTime   Int
-  heartCountDay       Int
-  heartCountWeek      Int
-  heartCountMonth     Int
-  heartCountYear      Int
-  heartCountAllTime   Int
-  commentCountDay     Int
-  commentCountWeek    Int
-  commentCountMonth   Int
-  commentCountYear    Int
-  commentCountAllTime Int
 }
