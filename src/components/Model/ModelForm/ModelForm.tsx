@@ -104,7 +104,7 @@ export function ModelForm({ model }: Props) {
 
   const defaultModelVersion: z.infer<typeof schema>['modelVersions'][number] = {
     name: '',
-    description: '',
+    description: null,
     epochs: null,
     steps: null,
     trainedWords: [],
