@@ -496,12 +496,18 @@ model ImagesOnReviews {
   @@id([imageId, reviewId])
 }
 
+enum TagTarget {
+  Model
+  Question
+}
+
 model Tag {
-  id        Int      @id @default(autoincrement())
-  name      String   @unique
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
   color     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  target    TagTarget
 
   tagsOnModels   TagsOnModels[]
   TagsOnQuestion TagsOnQuestions[]
