@@ -100,7 +100,7 @@ export const getQuestionDetailHandler = async ({
             reaction: {
               select: {
                 id: true,
-                user: { select: simpleUserSelect },
+                userId: true,
                 heart: true,
               },
             },

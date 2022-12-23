@@ -64,7 +64,7 @@ export function AnswerForm({
           includeControls={['heading', 'formatting', 'list', 'link', 'media']}
         />
         <Alert color="yellow" variant="light">
-          <Text size="sm">Thanks for contributing an answer to Stack Overflow!</Text>
+          <Text size="sm">Thanks for contributing!</Text>
           <List size="sm">
             <List.Item>
               Please be sure to answer the question. Provide details and share your research!

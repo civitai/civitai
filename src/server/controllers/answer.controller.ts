@@ -17,7 +17,6 @@ export const getAnswersHandler = async ({
 }) => {
   try {
     const userId = ctx.user?.id;
-    console.log('_____GETTING ANSWERS_____');
     const items = await getAnswers({
       questionId,
       select: {
@@ -40,7 +39,7 @@ export const getAnswersHandler = async ({
             reaction: {
               select: {
                 id: true,
-                user: { select: simpleUserSelect },
+                userId: true,
                 heart: true,
                 cross: true,
                 check: true,
