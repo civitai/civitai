@@ -18,12 +18,15 @@ export const getAnswerDetail = async <TSelect extends Prisma.AnswerSelect>({
 };
 
 export const upsertAnswer = async ({ userId, ...data }: UpsertAnswerInput & { userId: number }) => {
-  return await prisma.answer.upsert({
-    where: { id: data.id },
-    create: { userId, ...data },
-    update: data,
-    select: { id: true },
-  });
+  return !data.id
+    ? await prisma.answer.create({ data: { ...data, userId } })
+    : await prisma.answer.update({ where: { id: data.id }, data });
+  // return await prisma.answer.upsert({
+  //   where: { id: data.id },
+  //   create: { userId, ...data },
+  //   update: data,
+  //   select: { id: true },
+  // });
 };
 
 export const deleteAnswer = async ({ id }: GetByIdInput) => {

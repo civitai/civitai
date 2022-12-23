@@ -4,7 +4,7 @@ import { IconCheck, IconX } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { z } from 'zod';
-import { Form, useForm } from '~/libs/form';
+import { Form, InputRTE, useForm } from '~/libs/form';
 import { GetAnswersProps } from '~/server/controllers/answer.controller';
 import { trpc } from '~/utils/trpc';
 
@@ -13,9 +13,11 @@ const schema = z.object({ content: z.string() });
 export function AnswerForm({
   answer,
   questionId,
+  onCancel,
 }: {
   answer?: GetAnswersProps[0];
   questionId: number;
+  onCancel?: () => void;
 }) {
   const form = useForm({
     schema,
@@ -33,6 +35,8 @@ export function AnswerForm({
       });
 
       await queryUtils.answer.invalidate();
+      onCancel?.();
+      form.reset();
     },
     onError(error: TRPCClientErrorBase<DefaultErrorShape>) {
       const message = error.message;
@@ -47,14 +51,14 @@ export function AnswerForm({
   });
 
   const handleSubmit = (values: z.infer<typeof schema>) => {
-    console.log({ ...values, questionId });
-    // mutate({ ...values, questionId });
+    // console.log({ ...values, questionId });
+    mutate({ ...answer, ...values, questionId });
   };
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <Stack>
-        <Textarea name="content" label="Your answer" />
+        <InputRTE name="content" withAsterisk />
         <Alert color="yellow" variant="light">
           <Text size="sm">Thanks for contributing an answer to Stack Overflow!</Text>
           <List size="sm">
@@ -72,7 +76,14 @@ export function AnswerForm({
           </List>
         </Alert>
         <Group position="right">
-          <Button type="submit">Post your answer</Button>
+          {onCancel && (
+            <Button variant="default" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
+          <Button type="submit" loading={isLoading}>
+            {answer ? 'Edit' : 'Post'} your answer
+          </Button>
         </Group>
       </Stack>
     </Form>

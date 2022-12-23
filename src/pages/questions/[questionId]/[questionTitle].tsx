@@ -28,6 +28,7 @@ import { isNumber } from '~/utils/type-guards';
 import { QuestionDetail } from '~/components/Questions/QuestionDetail';
 import { ReactionButton } from '~/components/Reaction/ReactionButton';
 import { AnswerDetail } from '~/components/Questions/AnswerDetail';
+import { AnswerForm } from '~/components/Questions/AnswerForm';
 
 export const getServerSideProps: GetServerSideProps<{
   id: number;
@@ -79,7 +80,7 @@ export default function QuestionPage(
         description={removeTags(question.content ?? '')}
         // TODO - determine if we need to do anything to handle content that has images/videos in it
       />
-      <Container className={classes.grid}>
+      <Container className={classes.grid} pb="xl">
         <div className={classes.fullWidth}>
           <QuestionHeader question={question} />
         </div>
@@ -101,14 +102,17 @@ export default function QuestionPage(
             {/* TODO comments */}
           </Stack>
         </div>
-        {!!answers?.length && (
-          <Group className={classes.fullWidth} noWrap>
-            <Title order={2}>
-              {answers.length} {answers.length === 1 ? 'Answer' : 'Answers'}
-            </Title>
-            {/* TODO - Answer Sorting */}
-          </Group>
-        )}
+        <div className={classes.fullWidth}>
+          {!!answers?.length ? (
+            <Group noWrap>
+              <Title order={2}>
+                {answers.length} {answers.length === 1 ? 'Answer' : 'Answers'}
+              </Title>
+              {/* TODO - Answer Sorting */}
+            </Group>
+          ) : null}
+        </div>
+
         {answers?.map((answer) => (
           <div key={answer.id} className={classes.row}>
             <Stack>
@@ -142,10 +146,17 @@ export default function QuestionPage(
             </Stack>
             <Stack>
               <AnswerDetail answer={answer} questionId={id} />
+              <Divider></Divider>
               {/* TODO comments */}
             </Stack>
           </div>
         ))}
+        {!answers?.some((x) => x.user.id === user?.id) && (
+          <Stack className={classes.fullWidth}>
+            <Title order={3}>Your anwser</Title>
+            <AnswerForm questionId={id} />
+          </Stack>
+        )}
       </Container>
     </>
   );
@@ -156,6 +167,7 @@ const useStyles = createStyles((theme) => ({
     display: 'grid',
     gridTemplateColumns: 'min-content 1fr',
     columnGap: theme.spacing.md,
+    rowGap: theme.spacing.md,
   },
   fullWidth: {
     gridColumn: '1/-1',
