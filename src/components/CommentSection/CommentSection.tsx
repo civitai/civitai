@@ -19,7 +19,7 @@ import { CommentSectionItem } from '~/components/CommentSection/CommentSectionIt
 
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Form, InputTextArea, useForm } from '~/libs/form';
+import { Form, InputRTE, useForm } from '~/libs/form';
 
 import { commentUpsertInput } from '~/server/schema/comment.schema';
 import { CommentGetCommentsById, ReviewGetCommentsById } from '~/types/router';
@@ -44,7 +44,6 @@ export default function CommentSection({
     schema: commentUpsertInput,
     shouldUnregister: false,
     defaultValues: { modelId, reviewId, parentId },
-    shouldFocusError: true,
   });
 
   const [showCommentActions, setShowCommentActions] = useState(false);
@@ -106,7 +105,7 @@ export default function CommentSection({
           onSubmit={(data) => saveCommentMutation.mutate({ ...data })}
           style={{ flex: '1 1 0' }}
         >
-          <Stack spacing={4}>
+          <Stack spacing="xs">
             <Box sx={{ position: 'relative' }}>
               {!currentUser ? (
                 <Overlay color={theme.fn.rgba(theme.colors.gray[9], 0.6)} opacity={1} zIndex={5}>
@@ -126,11 +125,13 @@ export default function CommentSection({
                   </Stack>
                 </Overlay>
               ) : null}
-              <InputTextArea
+              <InputRTE
                 name="content"
                 placeholder="Type your comment..."
+                includeControls={['formatting', 'link']}
                 disabled={saveCommentMutation.isLoading}
                 onFocus={() => setShowCommentActions(true)}
+                hideToolbar
               />
             </Box>
             {showCommentActions ? (

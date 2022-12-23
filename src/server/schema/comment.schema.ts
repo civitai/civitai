@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type GetAllCommentsSchema = z.infer<typeof getAllCommentsSchema>;
 export const getAllCommentsSchema = z
@@ -15,16 +16,15 @@ export const getAllCommentsSchema = z
   })
   .partial();
 
-export type CommentUpsertInput = z.input<typeof commentUpsertInput>;
+export type CommentUpsertInput = z.infer<typeof commentUpsertInput>;
 export const commentUpsertInput = z.object({
   id: z.number().optional(),
   modelId: z.number(),
   commentId: z.number().nullish(),
   reviewId: z.number().nullish(),
   parentId: z.number().nullish(),
-  content: z.string({
-    required_error: 'This field is required',
-    invalid_type_error: 'Please type in your comment',
+  content: getSanitizedStringSchema({
+    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br'],
   }),
 });
 

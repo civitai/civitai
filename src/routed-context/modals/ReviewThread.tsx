@@ -5,7 +5,6 @@ import {
   Center,
   AspectRatio,
   Grid,
-  Text,
   Group,
   Rating,
   Stack,
@@ -20,6 +19,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { SFW } from '~/components/Media/SFW';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
@@ -49,7 +49,7 @@ export default createRoutedContext({
       });
     const { data: reactions = [] } = trpc.review.getReactions.useQuery(
       { reviewId },
-      { enabled: !!review, initialData: review?.reactions ?? [] }
+      { enabled: !!review, initialData: review?.reactions }
     );
 
     const toggleReactionMutation = trpc.review.toggleReaction.useMutation({
@@ -147,15 +147,7 @@ export default createRoutedContext({
             </Group>
             <Grid gutter="xl">
               <Grid.Col span={12}>
-                <Stack>
-                  <Text>{review?.text}</Text>
-                  <ReactionPicker
-                    reactions={reactions}
-                    onSelect={(reaction) =>
-                      toggleReactionMutation.mutate({ id: reviewId, reaction })
-                    }
-                  />
-                </Stack>
+                {review?.text ? <RenderHtml html={review.text} /> : null}
               </Grid.Col>
               {hasImages ? (
                 <Grid.Col span={12} sx={{ position: 'relative' }}>
@@ -172,6 +164,12 @@ export default createRoutedContext({
                   </SFW>
                 </Grid.Col>
               ) : null}
+              <Grid.Col span={12} py={0}>
+                <ReactionPicker
+                  reactions={reactions}
+                  onSelect={(reaction) => toggleReactionMutation.mutate({ id: reviewId, reaction })}
+                />
+              </Grid.Col>
               <Grid.Col span={12}>
                 <CommentSection
                   comments={comments}

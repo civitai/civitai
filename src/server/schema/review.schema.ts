@@ -1,7 +1,9 @@
 import { ReviewReactions } from '@prisma/client';
 import { z } from 'zod';
+
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { imageSchema } from '~/server/schema/image.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type ReviewUpsertInput = z.infer<typeof reviewUpsertSchema>;
 export const reviewUpsertSchema = z.object({
@@ -9,7 +11,9 @@ export const reviewUpsertSchema = z.object({
   modelId: z.number(),
   modelVersionId: z.number(),
   rating: z.number(),
-  text: z.string().nullish(),
+  text: getSanitizedStringSchema({
+    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br'],
+  }).nullish(),
   nsfw: z.boolean().optional(),
   images: z.array(imageSchema).max(10, 'You can only upload up to 10 images').optional(),
 });

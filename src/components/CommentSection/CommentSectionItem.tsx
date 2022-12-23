@@ -1,10 +1,12 @@
-import { Group, Stack, Text, Textarea, Button, Menu, ActionIcon } from '@mantine/core';
+import { Group, Stack, Text, Button, Menu, ActionIcon } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag } from '@tabler/icons';
 import { useState } from 'react';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
@@ -162,14 +164,19 @@ export function CommentSectionItem({ comment, modelId }: Props) {
               </Text>
             </Group>
             {!isEditing ? (
-              <Text size="sm">{comment.content}</Text>
+              <RenderHtml
+                html={comment.content}
+                sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+              />
             ) : (
-              <Textarea
+              <RichTextEditor
                 value={editComment.content}
-                disabled={editComment && saveCommentMutation.isLoading}
-                onChange={(e) =>
-                  setEditComment((state) => (state ? { ...state, content: e.target.value } : state))
+                disabled={saveCommentMutation.isLoading}
+                includeControls={['formatting', 'link']}
+                onChange={(value) =>
+                  setEditComment((state) => (state ? { ...state, content: value } : state))
                 }
+                hideToolbar
               />
             )}
           </Stack>
