@@ -104,7 +104,7 @@ export function getDownloadFilename({
   if (model.type === ModelType.TextualInversion) {
     const trainedWord = modelVersion.trainedWords[0];
     let fileSuffix = '';
-    if (fileType === 'Negative') fileSuffix = '-negative';
+    if (fileType === 'Negative') fileSuffix = '-neg';
 
     if (trainedWord) fileName = `${trainedWord}${fileSuffix}.pt`;
   } else if (fileType === 'Training Data') {

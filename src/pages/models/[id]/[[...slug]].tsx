@@ -583,7 +583,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                           icon={<VerifiedText file={file} iconOnly />}
                           href={createModelFileDownloadUrl({
                             versionId: latestVersion.id,
-                            type: file.type as ModelFileType,
+                            type: file.type,
                             format: file.format,
                           })}
                           download
