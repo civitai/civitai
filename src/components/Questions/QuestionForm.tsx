@@ -12,7 +12,7 @@ import { slugit } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 
-const schema = upsertQuestionSchema.extend({ tags: z.string().array() });
+const schema = upsertQuestionSchema.extend({ tags: z.string().array().nullish() });
 
 export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
   const router = useRouter();
