@@ -16,6 +16,9 @@ export function sanitizeHtml(html: string, options?: sanitize.IOptions) {
       'img',
       'iframe',
       'div',
+      'code',
+      'pre',
+      'span',
     ],
     allowedAttributes: {
       a: ['rel', 'href', 'target'],
