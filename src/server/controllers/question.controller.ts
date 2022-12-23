@@ -95,7 +95,7 @@ export const getQuestionDetailHandler = async ({
         },
         reactions: {
           where: { reaction: { userId } },
-          take: 1,
+          take: userId ? 1 : 0,
           select: {
             reaction: {
               select: {

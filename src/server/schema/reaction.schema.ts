@@ -19,7 +19,7 @@ export const getReactionSchema = reactionConnector.extend({
 
 export type GetManyReactionsInput = z.infer<typeof getManyReactionsSchema>;
 export const getManyReactionsSchema = reactionConnector.extend({
-  entityIds: z.number(),
+  entityIds: z.number().array(),
 });
 
 export type UpsertReactionSchema = z.infer<typeof upsertReactionSchema>;

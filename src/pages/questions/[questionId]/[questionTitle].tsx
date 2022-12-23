@@ -29,6 +29,7 @@ import { QuestionDetail } from '~/components/Questions/QuestionDetail';
 import { ReactionButton } from '~/components/Reaction/ReactionButton';
 import { AnswerDetail } from '~/components/Questions/AnswerDetail';
 import { AnswerForm } from '~/components/Questions/AnswerForm';
+import { useEffect } from 'react';
 
 export const getServerSideProps: GetServerSideProps<{
   id: number;
@@ -43,6 +44,7 @@ export const getServerSideProps: GetServerSideProps<{
 
   const ssg = await getServerProxySSGHelpers(context);
   await ssg.question.getById.prefetch({ id: questionId });
+  await ssg.answer.getAll.prefetch({ questionId });
 
   return {
     props: {
@@ -65,6 +67,8 @@ export default function QuestionPage(
   const theme = useMantineTheme();
   const { data: question, isLoading: loadingQuestion } = trpc.question.getById.useQuery({ id });
   const { data: answers } = trpc.answer.getAll.useQuery({ questionId: id });
+
+  useEffect(() => console.log({ answers }), [answers]);
 
   const isModerator = user?.isModerator ?? false;
   const isOwner = user?.id === question?.user.id;
@@ -113,9 +117,9 @@ export default function QuestionPage(
           ) : null}
         </div>
 
-        {answers?.map((answer) => (
+        {answers?.map((answer, index) => (
           <div key={answer.id} className={classes.row}>
-            <Stack>
+            <Stack spacing="xs">
               <ReactionButton
                 reactionId={answer.userReaction?.id}
                 reactionType="heart"
@@ -146,7 +150,7 @@ export default function QuestionPage(
             </Stack>
             <Stack>
               <AnswerDetail answer={answer} questionId={id} />
-              <Divider></Divider>
+              {index !== answers.length - 1 && <Divider />}
               {/* TODO comments */}
             </Stack>
           </div>
