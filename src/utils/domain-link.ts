@@ -13,6 +13,8 @@ export const domainLinks = {
   coindrop: ['coindrop.to'],
   discord: ['discord.gg'],
   github: ['github.com'],
+  linktree: ['linktr.ee'],
+  deviantArt: ['www.deviantart.com', 'deviantart.com'],
 };
 
 const sortArray = (Object.keys(domainLinks) as (string | undefined)[]).concat(undefined);
