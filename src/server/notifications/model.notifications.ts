@@ -8,7 +8,7 @@ export const modelNotifications = createNotificationProcessor({
   'model-download-milestone': {
     displayName: 'Model Download Milestones',
     prepareMessage: ({ details }) => ({
-      message: `Congrats! Your ${details.modelName} model has recieved ${details.downloadCount} downloads`,
+      message: `Congrats! Your ${details.modelName} model has received ${details.downloadCount} downloads`,
       url: `/models/${details.modelId}`,
     }),
     prepareQuery: ({ lastSent }) => `
@@ -64,7 +64,7 @@ export const modelNotifications = createNotificationProcessor({
   'model-like-milestone': {
     displayName: 'Model Like Milestones',
     prepareMessage: ({ details }) => ({
-      message: `Congrats! Your ${details.modelName} model has recieved ${details.favoriteCount} likes`,
+      message: `Congrats! Your ${details.modelName} model has received ${details.favoriteCount} likes`,
       url: `/models/${details.modelId}`,
     }),
     prepareQuery: ({ lastSent }) => `
