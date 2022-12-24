@@ -13,13 +13,3 @@ export type ReactionDetails = Prisma.ReviewReactionGetPayload<typeof getReaction
 const getReactions = Prisma.validator<Prisma.ReviewReactionArgs>()({
   select: getReactionsSelect,
 });
-
-export const reactionSelect = Prisma.validator<Prisma.ReactionSelect>()({
-  id: true,
-  user: { select: simpleUserSelect },
-  like: true,
-  dislike: true,
-  laugh: true,
-  cry: true,
-  heart: true,
-});

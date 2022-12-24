@@ -1,11 +1,7 @@
-import {
-  getUserReactionHandler,
-  upsertReactionHandler,
-} from './../controllers/reaction.controller';
-import { upsertReactionSchema, getReactionSchema } from './../schema/reaction.schema';
+import { toggleReactionHandler } from './../controllers/reaction.controller';
+import { toggleReactionSchema } from './../schema/reaction.schema';
 import { router, protectedProcedure } from '~/server/trpc';
 
 export const reactionRouter = router({
-  getUserReaction: protectedProcedure.input(getReactionSchema).query(getUserReactionHandler),
-  upsert: protectedProcedure.input(upsertReactionSchema).mutation(upsertReactionHandler),
+  toggle: protectedProcedure.input(toggleReactionSchema).mutation(toggleReactionHandler),
 });

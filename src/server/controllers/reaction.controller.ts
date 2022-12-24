@@ -1,32 +1,17 @@
-import { reactionSelect } from './../selectors/reaction.selector';
-import { upsertReaction, getUserReaction } from './../services/reaction.service';
-import { UpsertReactionSchema, GetReactionInput } from '~/server/schema/reaction.schema';
+import { toggleReaction } from './../services/reaction.service';
+import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { Context } from '~/server/createContext';
 import { throwDbError } from '~/server/utils/errorHandling';
 
-export const upsertReactionHandler = async ({
+export const toggleReactionHandler = async ({
   ctx,
   input,
 }: {
   ctx: DeepNonNullable<Context>;
-  input: UpsertReactionSchema;
+  input: ToggleReactionInput;
 }) => {
   try {
-    await upsertReaction({ ...input, userId: ctx.user.id });
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
-export const getUserReactionHandler = async ({
-  ctx,
-  input,
-}: {
-  ctx: DeepNonNullable<Context>;
-  input: GetReactionInput;
-}) => {
-  try {
-    await getUserReaction({ ...input, userId: ctx.user.id, select: reactionSelect });
+    await toggleReaction({ ...input, userId: ctx.user.id });
   } catch (error) {
     throw throwDbError(error);
   }

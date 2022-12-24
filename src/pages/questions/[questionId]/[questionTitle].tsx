@@ -30,6 +30,7 @@ import { ReactionButton } from '~/components/Reaction/ReactionButton';
 import { AnswerDetail } from '~/components/Questions/AnswerDetail';
 import { AnswerForm } from '~/components/Questions/AnswerForm';
 import { useEffect } from 'react';
+import { ReviewReactions } from '@prisma/client';
 
 export const getServerSideProps: GetServerSideProps<{
   id: number;
@@ -92,9 +93,8 @@ export default function QuestionPage(
         <div className={classes.row}>
           <div>
             <ReactionButton
-              reactionId={question.userReaction?.id}
-              reactionType="heart"
-              userReaction={question.userReaction?.heart}
+              reaction={ReviewReactions.Heart}
+              userReacted={question.userReactions.some((x) => x.reaction === ReviewReactions.Heart)}
               count={question.rank?.heartCountAllTime}
               entityType="question"
               entityId={question.id}
@@ -121,30 +121,27 @@ export default function QuestionPage(
           <div key={answer.id} className={classes.row}>
             <Stack spacing="xs">
               <ReactionButton
-                reactionId={answer.userReaction?.id}
-                reactionType="heart"
-                userReaction={answer.userReaction?.heart}
-                entityType="answer"
-                entityId={answer.id}
+                reaction={ReviewReactions.Heart}
+                userReacted={answer.userReactions.some((x) => x.reaction === ReviewReactions.Heart)}
                 count={answer.rank?.heartCountAllTime}
+                entityType="answer"
+                entityId={answer.id}
                 disabled={answer.user.id === user?.id}
               />
               <ReactionButton
-                reactionId={answer.userReaction?.id}
-                reactionType="check"
-                userReaction={answer.userReaction?.check}
-                entityType="answer"
-                entityId={answer.id}
+                reaction={ReviewReactions.Check}
+                userReacted={answer.userReactions.some((x) => x.reaction === ReviewReactions.Check)}
                 count={answer.rank?.checkCountAllTime}
+                entityType="answer"
+                entityId={answer.id}
                 disabled={answer.user.id === user?.id}
               />
               <ReactionButton
-                reactionId={answer.userReaction?.id}
-                reactionType="cross"
-                userReaction={answer.userReaction?.cross}
+                reaction={ReviewReactions.Cross}
+                userReacted={answer.userReactions.some((x) => x.reaction === ReviewReactions.Cross)}
+                count={answer.rank?.crossCountAllTime}
                 entityType="answer"
                 entityId={answer.id}
-                count={answer.rank?.crossCountAllTime}
                 disabled={answer.user.id === user?.id}
               />
             </Stack>

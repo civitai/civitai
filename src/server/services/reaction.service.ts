@@ -1,64 +1,86 @@
-import { Prisma, Reaction } from '@prisma/client';
-import { GetReactionInput, GetManyReactionsInput } from './../schema/reaction.schema';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { ToggleReactionInput, ReactionEntityType } from './../schema/reaction.schema';
 import { prisma } from '~/server/db/client';
-import { UpsertReactionSchema } from '~/server/schema/reaction.schema';
-import { unknown } from 'zod';
 
-//TODO - consider how you will get reaction totals for questions/answers/comments
-// TODO - update reaction schema to support different types
-type Connectors = 'question' | 'answer' | 'comment';
-export const upsertReaction = async ({
+export const toggleReaction = async ({
+  entityType,
+  entityId,
   userId,
+  reaction,
+}: ToggleReactionInput & { userId: number }) => {
+  const existing = await getReaction({ entityType, entityId, userId, reaction });
+  if (existing) return await deleteReaction({ entityType, id: existing.id });
+  else return await createReaction({ entityType, entityId, userId, reaction });
+};
+
+const getReaction = async ({
+  entityType,
+  entityId,
+  userId,
+  reaction,
+}: ToggleReactionInput & { userId: number }) => {
+  switch (entityType) {
+    case 'question':
+      return await prisma.questionReaction.findFirst({
+        where: { userId, reaction, questionId: entityId },
+        select: { id: true },
+      });
+    case 'answer':
+      return await prisma.answerReaction.findFirst({
+        where: { userId, reaction, answerId: entityId },
+        select: { id: true },
+      });
+    case 'comment':
+      return await prisma.commentV2Reaction.findFirst({
+        where: { userId, reaction, commentId: entityId },
+        select: { id: true },
+      });
+    default:
+      throw throwBadRequestError();
+  }
+};
+
+const deleteReaction = async ({
+  entityType,
+  id,
+}: {
+  entityType: ReactionEntityType;
+  id: number;
+}) => {
+  switch (entityType) {
+    case 'question':
+      return await prisma.questionReaction.delete({ where: { id }, select: { reaction: true } });
+    case 'answer':
+      return await prisma.answerReaction.delete({ where: { id }, select: { reaction: true } });
+    case 'comment':
+      return await prisma.commentV2Reaction.delete({ where: { id }, select: { reaction: true } });
+    default:
+      throw throwBadRequestError();
+  }
+};
+
+const createReaction = async ({
   entityType,
   entityId,
   ...data
-}: UpsertReactionSchema & { userId: number; entityType: Connectors; entityId: number }) => {
-  return !data.id
-    ? await prisma.reaction.create({
-        data: {
-          ...data,
-          userId,
-          [entityType]: {
-            create: {
-              [entityType]: {
-                connect: { id: entityId },
-              },
-            },
-          },
-        },
-      })
-    : await prisma.reaction.update({ where: { id: data.id }, data });
-};
-
-export const getUserReaction = async <TSelect extends Prisma.ReactionSelect>({
-  entityType,
-  entityId,
-  userId,
-  select,
-}: GetReactionInput & { userId?: number; select: TSelect }) => {
-  if (!userId) return undefined;
-  return await prisma.reaction.findFirst({
-    where: {
-      userId,
-      [entityType]: { [`${entityType}Id`]: entityId },
-    },
-    select,
-  });
-};
-
-export const getManyUserReactions = async <TSelect extends Prisma.ReactionSelect>({
-  entityType,
-  entityIds,
-  userId,
-  select,
-}: GetManyReactionsInput & { userId?: number; select: TSelect }) => {
-  if (!userId) return undefined;
-  return;
-  // return await prisma.reaction.findMany({
-  //   where: {
-  //     userId,
-  //     [entityType]: { [`${entityType}Id`]: entityId },
-  //   },
-  //   select,
-  // });
+}: ToggleReactionInput & { userId: number }) => {
+  switch (entityType) {
+    case 'question':
+      return await prisma.questionReaction.create({
+        data: { ...data, questionId: entityId },
+        select: { reaction: true },
+      });
+    case 'answer':
+      return await prisma.answerReaction.create({
+        data: { ...data, answerId: entityId },
+        select: { reaction: true },
+      });
+    case 'comment':
+      return await prisma.commentV2Reaction.create({
+        data: { ...data, commentId: entityId },
+        select: { reaction: true },
+      });
+    default:
+      throw throwBadRequestError();
+  }
 };

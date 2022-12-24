@@ -1,4 +1,3 @@
-import { getUserReaction } from './../services/reaction.service';
 import { SetQuestionAnswerInput } from './../schema/question.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -94,36 +93,23 @@ export const getQuestionDetailHandler = async ({
           },
         },
         reactions: {
-          where: { reaction: { userId } },
-          take: userId ? 1 : 0,
+          where: { userId },
+          take: !userId ? 0 : undefined,
           select: {
-            reaction: {
-              select: {
-                id: true,
-                userId: true,
-                heart: true,
-              },
-            },
+            id: true,
+            userId: true,
+            reaction: true,
           },
         },
       },
     });
-    const userReaction = await getUserReaction({
-      entityType: 'question',
-      entityId: id,
-      userId,
-      select: {
-        id: true,
-        user: { select: simpleUserSelect },
-        heart: true,
-      },
-    });
     if (!item) throw throwNotFoundError();
+    const { reactions, tags, ...question } = item;
 
     return {
-      ...item,
-      tags: item.tags.map((x) => x.tag),
-      userReaction,
+      ...question,
+      tags: tags.map((x) => x.tag),
+      userReactions: reactions,
     };
   } catch (error) {
     throw throwDbError(error);

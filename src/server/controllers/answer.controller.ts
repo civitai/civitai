@@ -5,7 +5,6 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getAnswers } from '~/server/services/answer.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { GetAnswersInput, UpsertAnswerInput } from './../schema/answer.schema';
-import { getManyUserReactions } from '~/server/services/reaction.service';
 
 export type GetAnswersProps = AsyncReturnType<typeof getAnswersHandler>;
 export const getAnswersHandler = async ({
@@ -33,26 +32,20 @@ export const getAnswersHandler = async ({
           },
         },
         reactions: {
-          where: { reaction: { userId } },
-          take: userId ? 1 : 0,
+          where: { userId },
+          take: !userId ? 0 : undefined,
           select: {
-            reaction: {
-              select: {
-                id: true,
-                userId: true,
-                heart: true,
-                cross: true,
-                check: true,
-              },
-            },
+            id: true,
+            userId: true,
+            reaction: true,
           },
         },
       },
     });
     if (!items) throw throwNotFoundError();
-    return items.map((item) => ({
+    return items.map(({ reactions, ...item }) => ({
       ...item,
-      userReaction: item.reactions.map((x) => x.reaction)[0],
+      userReactions: reactions,
     }));
   } catch (error) {
     throw throwDbError(error);

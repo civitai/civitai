@@ -81,7 +81,9 @@ model User {
   questions            Question[]
   answers              Answer[]
   commentsv2           CommentV2[]
-  reactions            Reaction[]
+  questionReactions    QuestionReaction[]
+  answerReactions      AnswerReaction[]
+  commentV2Reactions   CommentV2Reaction[]
 }
 
 enum UserEngagementType {
@@ -437,6 +439,8 @@ enum ReviewReactions {
   Laugh
   Cry
   Heart
+  Cross
+  Check
 }
 
 model ReviewReaction {
@@ -768,48 +772,43 @@ model TagsOnQuestions {
   @@id([tagId, questionId])
 }
 
-model Reaction {
-  id      Int       @id @default(autoincrement())
-  userId  Int
-  user    User      @relation(fields: [userId], references: [id])
-  like    DateTime?
-  dislike DateTime?
-  laugh   DateTime?
-  cry     DateTime?
-  heart   DateTime?
-  check   DateTime?
-  cross   DateTime?
-
-  question QuestionReaction?
-  answer   AnswerReaction?
-  comment  CommentV2Reaction?
-}
-
 model QuestionReaction {
+  id         Int             @id @default(autoincrement())
+  question   Question        @relation(fields: [questionId], references: [id], onDelete: Cascade)
   questionId Int
-  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
-  reactionId Int      @unique
-  reaction   Reaction @relation(fields: [reactionId], references: [id], onDelete: Cascade)
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     Int
+  reaction   ReviewReactions
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
 
-  @@id([questionId, reactionId])
+  @@unique([questionId, userId, reaction])
 }
 
 model AnswerReaction {
-  answerId   Int
-  answer     Answer   @relation(fields: [answerId], references: [id], onDelete: Cascade)
-  reactionId Int      @unique
-  reaction   Reaction @relation(fields: [reactionId], references: [id], onDelete: Cascade)
+  id        Int             @id @default(autoincrement())
+  answer    Answer          @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  answerId  Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
 
-  @@id([answerId, reactionId])
+  @@unique([answerId, userId, reaction])
 }
 
 model CommentV2Reaction {
-  commentId  Int
-  comment    CommentV2 @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  reactionId Int       @unique
-  reaction   Reaction  @relation(fields: [reactionId], references: [id], onDelete: Cascade)
+  id        Int             @id @default(autoincrement())
+  comment   CommentV2       @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  commentId Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
 
-  @@id([commentId, reactionId])
+  @@unique([commentId, userId, reaction])
 }
 
 /// @view
