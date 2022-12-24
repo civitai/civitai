@@ -24,7 +24,7 @@ import {
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { ModelStatus } from '@prisma/client';
+import { ModelStatus, ModelType } from '@prisma/client';
 import {
   IconArrowsSort,
   IconBan,
@@ -35,6 +35,7 @@ import {
   IconFilter,
   IconFlag,
   IconHeart,
+  IconInfoCircle,
   IconLicense,
   IconMessage,
   IconStar,
@@ -262,6 +263,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const primaryFile = latestVersion?.files?.find((file) => file.primary === true);
   const inaccurate = model?.modelVersions.some((version) => version.inaccurate);
   const hasPendingClaimReport = model?.reportStats && model.reportStats.ownershipPending > 0;
+  const hasNegativeEmbed =
+    model?.type === ModelType.TextualInversion &&
+    latestVersion &&
+    latestVersion.files.some((x) => x.type === 'Negative');
 
   if (loadingModel)
     return (
@@ -341,7 +346,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     {
       label: 'Type',
       value: (
-        <Group position="apart">
+        <Group spacing="xs">
           <Badge radius="sm">{splitUppercase(model?.type)}</Badge>
           {model?.status !== ModelStatus.Published && (
             <Badge color="yellow" radius="sm">
@@ -623,6 +628,19 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     </div>
                   </Tooltip>
                 </Group>
+              )}
+              {hasNegativeEmbed && (
+                <Alert radius="sm">
+                  <Group spacing="xs" noWrap>
+                    <ThemeIcon>
+                      <IconInfoCircle />
+                    </ThemeIcon>
+                    <Text size="xs" sx={{ lineHeight: 1.1 }}>
+                      This Textual Inversion includes a Negative embed, click the dropdown and
+                      download the negative for full effect.
+                    </Text>
+                  </Group>
+                </Alert>
               )}
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
