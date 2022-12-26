@@ -606,7 +606,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
             SUM(IIF(av.vote = FALSE AND av."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_cross_count
           FROM "AnswerVote" av
           GROUP BY av."answerId"
-        ) v ON v.id = c.id
+        ) v ON v.id = q.id
         LEFT JOIN (
           SELECT
             ar."answerId" AS id,
