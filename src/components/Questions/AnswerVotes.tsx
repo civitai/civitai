@@ -5,8 +5,9 @@ import { createContext, useContext, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 
 interface AnswerVoteContext {
-  vote?: boolean;
-  setVote: (value: boolean) => void;
+  vote?: boolean | null;
+  setCheck: (value: boolean | null) => void;
+  setCross: (value: boolean | null) => void;
   crossCount: number;
   checkCount: number;
 }
@@ -18,25 +19,44 @@ export function AnswerVotes({
   ...props
 }: {
   children: React.ReactNode;
-  userVote?: boolean;
+  userVote?: boolean | null;
   crossCount?: number;
   checkCount?: number;
   answerId: number;
 }) {
-  const [vote, setVote] = useState(props.userVote);
+  const [vote, setVote] = useState<boolean | undefined | null>(props.userVote);
   const [crossCount, setCrossCount] = useState(props.crossCount ?? 0);
   const [checkCount, setCheckCount] = useState(props.checkCount ?? 0);
 
   const { mutate } = trpc.answer.vote.useMutation();
 
-  const handleSetVote = (value: boolean) => {
-    console.log({ vote, value });
+  const handleCheckClick = (value: boolean | null) => {
     if (vote !== value) {
       setVote(value);
-      if (vote === undefined) {
-        if (value === true) setCheckCount((c) => c + 1);
-        else if (value === false) setCrossCount((c) => c + 1);
+      if (vote === undefined || vote === null) {
+        // user hasn't voted, add vote
+        setCheckCount((c) => c + 1);
+      } else if (value === null) {
+        // user has voted, remove vote
+        setCheckCount((c) => c - 1);
       } else {
+        setCrossCount((c) => (value ? c - 1 : c + 1));
+        setCheckCount((c) => (value ? c + 1 : c - 1));
+      }
+    }
+  };
+
+  const handleCrossClick = (value: boolean | null) => {
+    if (vote !== value) {
+      setVote(value);
+      if (vote === undefined || vote === null) {
+        // user hasn't voted, add vote
+        setCrossCount((c) => c + 1);
+      } else if (value === null) {
+        // user has voted, remove vote
+        setCrossCount((c) => c - 1);
+      } else {
+        // user has voted, change vote
         setCrossCount((c) => (value ? c - 1 : c + 1));
         setCheckCount((c) => (value ? c + 1 : c - 1));
       }
@@ -53,23 +73,32 @@ export function AnswerVotes({
   }, [vote]);
 
   return (
-    <AnswerVoteCtx.Provider value={{ vote, setVote: handleSetVote, crossCount, checkCount }}>
+    <AnswerVoteCtx.Provider
+      value={{
+        vote,
+        setCheck: handleCheckClick,
+        setCross: handleCrossClick,
+        crossCount,
+        checkCount,
+      }}
+    >
       {props.children}
     </AnswerVoteCtx.Provider>
   );
 }
 
-function AnswerVoteCheck(props: Omit<ButtonProps, 'children'>) {
-  const { vote, setVote, checkCount } = useContext(AnswerVoteCtx);
+type VoteButtonProps = Omit<ButtonProps, 'children'>;
+function AnswerVoteCheck(props: VoteButtonProps) {
+  const { vote, setCheck, checkCount } = useContext(AnswerVoteCtx);
   const active = vote === true;
 
-  const handleClick = () => setVote(true);
+  const handleClick = () => setCheck(!active ? true : null);
 
   return (
     <Button
       variant={active ? 'filled' : 'default'}
       leftIcon={<IconCheck size={18} />}
-      onClick={!active ? handleClick : undefined}
+      onClick={handleClick}
       {...props}
     >
       {checkCount}
@@ -77,17 +106,17 @@ function AnswerVoteCheck(props: Omit<ButtonProps, 'children'>) {
   );
 }
 
-function AnswerVoteCross(props: Omit<ButtonProps, 'children'>) {
-  const { vote, setVote, crossCount } = useContext(AnswerVoteCtx);
+function AnswerVoteCross(props: VoteButtonProps) {
+  const { vote, setCross, crossCount } = useContext(AnswerVoteCtx);
   const active = vote === false;
 
-  const handleClick = () => setVote(false);
+  const handleClick = () => setCross(!active ? false : null);
 
   return (
     <Button
       variant={active ? 'filled' : 'default'}
       leftIcon={<IconX size={18} />}
-      onClick={!active ? handleClick : undefined}
+      onClick={handleClick}
       {...props}
     >
       {crossCount}

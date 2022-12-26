@@ -15,5 +15,5 @@ export const upsertAnswerSchema = z.object({
 export type AnswerVoteInput = z.infer<typeof answerVoteSchema>;
 export const answerVoteSchema = z.object({
   id: z.number(),
-  vote: z.boolean(),
+  vote: z.boolean().nullable(),
 });
