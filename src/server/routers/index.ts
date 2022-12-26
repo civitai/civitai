@@ -13,6 +13,7 @@ import { tagRouter } from './tag.router';
 import { userRouter } from './user.router';
 import { imageRouter } from './image.router';
 import { reportRouter } from './report.router';
+import { downloadRouter } from '~/server/routers/download.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -21,6 +22,7 @@ export const appRouter = router({
   comment: commentRouter,
   model: modelRouter,
   notification: notificationRouter,
+  download: downloadRouter,
   review: reviewRouter,
   tag: tagRouter,
   user: userRouter,

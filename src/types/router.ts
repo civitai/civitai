@@ -23,3 +23,7 @@ export type CommentGetCommentsById = CommentRouter['getCommentsById'];
 type NotificationRouter = RouterOutput['notification'];
 export type NotificationGetAll = NotificationRouter['getAllByUser'];
 export type NotificationGetAllItem = NotificationGetAll['items'][number];
+
+type DownloadRouter = RouterOutput['download'];
+export type DownloadGetAll = DownloadRouter['getAllByUser'];
+export type DownloadGetAllItem = DownloadGetAll['items'][number];

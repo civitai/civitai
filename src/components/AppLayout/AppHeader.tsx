@@ -18,6 +18,7 @@ import { NextLink } from '@mantine/next';
 import {
   IconFile,
   IconHeart,
+  IconHistory,
   IconLogout,
   IconPalette,
   IconPlus,
@@ -235,6 +236,20 @@ export function AppHeader({ links }: Props) {
               </Group>
             </Anchor>
           </Link>,
+          <Link key="your-history-menu-item" href={`/user/downloads`} passHref>
+            <Anchor
+              className={cx(classes.link, {
+                [classes.linkActive]: router.asPath.includes(`/user/downloads`),
+              })}
+              variant="text"
+              onClick={() => closeBurger()}
+            >
+              <Group align="center" spacing="xs">
+                <IconHistory stroke={1.5} />
+                Download History
+              </Group>
+            </Anchor>
+          </Link>,
         ]
       : [
           <Link key="sign-in-menu-item" href={`/login?returnUrl=${router.asPath}`} passHref>
@@ -395,6 +410,13 @@ export function AppHeader({ links }: Props) {
                       href={`/user/${session.user.username}/following`}
                     >
                       Creators you follow
+                    </Menu.Item>
+                    <Menu.Item
+                      icon={<IconHistory size={14} stroke={1.5} />}
+                      component={NextLink}
+                      href={`/user/downloads`}
+                    >
+                      Download History
                     </Menu.Item>
                   </>
                 ) : (
