@@ -84,6 +84,7 @@ model User {
   questionReactions    QuestionReaction[]
   answerReactions      AnswerReaction[]
   commentV2Reactions   CommentV2Reaction[]
+  answerVotes          AnswerVote[]
 }
 
 enum UserEngagementType {
@@ -439,8 +440,6 @@ enum ReviewReactions {
   Laugh
   Cry
   Heart
-  Cross
-  Check
 }
 
 model ReviewReaction {
@@ -713,6 +712,18 @@ model Answer {
   metrics   AnswerMetric[]
   answerFor Question?        @relation("SelectedAnswer")
   rank      AnswerRank?
+  votes     AnswerVote[]
+}
+
+model AnswerVote {
+  answer    Answer   @relation(fields: [answerId], references: [id])
+  answerId  Int
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int
+  vote      Boolean
+  createdAt DateTime @default(now())
+
+  @@id([answerId, userId])
 }
 
 model AnswerMetric {
