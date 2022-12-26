@@ -84,6 +84,7 @@ export function AnswerVotes({
         setCross: handleCrossClick,
         crossCount,
         checkCount,
+        disabled,
       }}
     >
       {props.children}

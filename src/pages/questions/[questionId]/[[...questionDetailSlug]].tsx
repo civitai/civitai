@@ -32,17 +32,44 @@ import { AnswerForm } from '~/components/Questions/AnswerForm';
 import { useEffect } from 'react';
 import { ReviewReactions } from '@prisma/client';
 import { AnswerVotes } from '~/components/Questions/AnswerVotes';
+import { prisma } from '~/server/db/client';
+import { slugit } from '~/utils/string-helpers';
 
 export const getServerSideProps: GetServerSideProps<{
   id: number;
   title: string;
 }> = async (context) => {
-  const params = (context.params ?? {}) as { questionId: string; questionTitle: string };
+  const params = (context.params ?? {}) as {
+    questionId: string;
+    questionDetailSlug: string[] | undefined;
+  };
   const questionId = Number(params.questionId);
+  const questionTitle = params.questionDetailSlug?.[0];
   if (!isNumber(questionId))
     return {
       notFound: true,
     };
+
+  if (!questionTitle) {
+    const question = await prisma.question.findUnique({
+      where: { id: questionId },
+      select: { title: true },
+    });
+    if (question?.title) {
+      const [pathname, query] = context.resolvedUrl.split('?');
+      let destination = `${pathname}/${slugit(question.title)}`;
+      if (query) destination += `?${query}`;
+      return {
+        redirect: {
+          permanent: false,
+          destination,
+        },
+      };
+    }
+    return {
+      notFound: true,
+    };
+  }
 
   const ssg = await getServerProxySSGHelpers(context);
   await ssg.question.getById.prefetch({ id: questionId });
@@ -52,7 +79,7 @@ export const getServerSideProps: GetServerSideProps<{
     props: {
       trpcState: ssg.dehydrate(),
       id: questionId,
-      title: params.questionTitle,
+      title: questionTitle,
     },
   };
 };
@@ -75,6 +102,12 @@ export default function QuestionPage(
   const isModerator = user?.isModerator ?? false;
   const isOwner = user?.id === question?.user.id;
 
+  useEffect(() => {
+    if (!title) {
+      router.replace({});
+    }
+  }, [router, title]);
+
   if (!question) return <NotFound />;
   // TODO - inline this with question content instead of displaying as a separate page
   if (editing && question && (isOwner || isModerator)) return <QuestionForm question={question} />;
@@ -82,7 +115,7 @@ export default function QuestionPage(
   return (
     <>
       <Meta
-        title={`${title} | Civitai`}
+        title={`${question.title} | Civitai`}
         description={removeTags(question.content ?? '')}
         // TODO - determine if we need to do anything to handle content that has images/videos in it
       />
@@ -134,6 +167,7 @@ export default function QuestionPage(
                 answerId={answer.id}
                 crossCount={answer.rank?.crossCountAllTime}
                 checkCount={answer.rank?.checkCountAllTime}
+                disabled={answer.user.id === user?.id}
               >
                 <AnswerVotes.Check />
                 <AnswerVotes.Cross />
