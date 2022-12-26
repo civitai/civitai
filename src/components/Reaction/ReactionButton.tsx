@@ -1,10 +1,11 @@
+import { Button, useMantineTheme, Badge, Center } from '@mantine/core';
 import { IconArrowRight, IconCheck, IconHeart, IconX } from '@tabler/icons';
 import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { trpc } from '~/utils/trpc';
 import { useState } from 'react';
-import { Button, useMantineTheme } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { ReviewReactions } from '@prisma/client';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 
 const reactionIcons = {
   [ReviewReactions.Heart]: IconHeart,
@@ -28,6 +29,7 @@ export const ReactionButton = ({
   count: initialCount,
   disabled,
 }: ReactionButtonProps) => {
+  const theme = useMantineTheme();
   const [hasReacted, setHasReacted] = useState(!!userReacted);
   const [count, setCount] = useState(initialCount ?? 0);
   const { mutate, isLoading } = trpc.reaction.toggle.useMutation();
@@ -47,12 +49,25 @@ export const ReactionButton = ({
 
   const Icon = reactionIcons[reaction];
   return (
-    <Button
-      variant={hasReacted ? 'filled' : 'default'}
-      leftIcon={<Icon size={18} />}
+    <Badge
+      // variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
+      variant={'light'}
+      // variant="outline"
+      color={hasReacted ? 'pink' : 'gray'}
+      leftSection={
+        <Center>
+          <Icon size={18} color={theme.colors.pink[7]} />
+        </Center>
+      }
+      sx={{ userSelect: 'none', ...(!disabled && { cursor: 'pointer' }) }}
       onClick={!disabled ? toggleReaction : undefined}
+      size="lg"
+      px={5}
+      // px={4}
+      // radius="lg"
+      // py="md"
     >
       {count}
-    </Button>
+    </Badge>
   );
 };

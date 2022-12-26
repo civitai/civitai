@@ -1,7 +1,9 @@
-import { Button, ButtonProps } from '@mantine/core';
+import { Button, ButtonProps, Badge, BadgeProps, Center, useMantineTheme } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { IconCheck, IconX } from '@tabler/icons';
 import { createContext, useContext, useState } from 'react';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { trpc } from '~/utils/trpc';
 
 interface AnswerVoteContext {
@@ -94,40 +96,78 @@ export function AnswerVotes({
 
 type VoteButtonProps = Omit<ButtonProps, 'children'>;
 function AnswerVoteCheck(props: VoteButtonProps) {
+  const theme = useMantineTheme();
   const { vote, setCheck, checkCount, disabled } = useContext(AnswerVoteCtx);
   const active = vote === true;
 
   const handleClick = () => setCheck(!active ? true : null);
 
   return (
-    <Button
-      variant={active ? 'filled' : 'default'}
-      leftIcon={<IconCheck size={18} />}
+    <Badge
+      // variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
+      // variant={active ? 'filled' : 'outline'}
+      variant="light"
+      // color={active ? 'green' : 'gray'}
+      color={active ? 'green' : 'gray'}
+      leftSection={
+        <Center>
+          <IconCheck size={18} color={theme.colors.green[7]} />
+        </Center>
+      }
+      sx={{ userSelect: 'none', ...(!disabled && { cursor: 'pointer' }) }}
       onClick={!disabled ? handleClick : undefined}
-      {...props}
+      size="lg"
+      px={5}
+      // py="md"
     >
       {checkCount}
-    </Button>
+    </Badge>
   );
 }
 
 function AnswerVoteCross(props: VoteButtonProps) {
+  const theme = useMantineTheme();
   const { vote, setCross, crossCount, disabled } = useContext(AnswerVoteCtx);
   const active = vote === false;
 
   const handleClick = () => setCross(!active ? false : null);
 
   return (
-    <Button
-      variant={active ? 'filled' : 'default'}
-      leftIcon={<IconX size={18} />}
+    <Badge
+      // variant={theme.colorScheme === 'dark' ? 'light' : !active ? 'light' : 'filled'}
+      // variant={active ? 'filled' : 'outline'}
+      variant="light"
+      color={active ? 'red' : 'gray'}
+      leftSection={
+        <Center>
+          <IconX size={18} color={theme.colors.red[7]} />
+        </Center>
+      }
+      sx={{ userSelect: 'none', ...(!disabled && { cursor: 'pointer' }) }}
       onClick={!disabled ? handleClick : undefined}
-      {...props}
+      size="lg"
+      px={5}
+      // py="md"
     >
       {crossCount}
-    </Button>
+    </Badge>
   );
 }
+
+// function ReactionHeart({
+//   entityId,
+//   entityType,
+//   reaction,
+//   userReacted,
+//   count: initialCount,
+//   disabled,
+// }: ToggleReactionInput & {
+//   userReacted?: boolean;
+//   count?: number;
+//   disabled: boolean;
+// }) {
+//   return <></>;
+// }
 
 AnswerVotes.Check = AnswerVoteCheck;
 AnswerVotes.Cross = AnswerVoteCross;
