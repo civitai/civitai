@@ -30,7 +30,6 @@ export function NotificationList({
           const [pathname] = router.asPath.split('?');
           const [notificationPathname, query] = details.url.split('?');
           if (pathname !== notificationPathname) {
-            console.log(1);
             router.push(notificationPathname).then(() =>
               router.push(
                 { pathname: notificationPathname, query: QS.parse(query) as any }, //eslint-disable-line
@@ -41,7 +40,6 @@ export function NotificationList({
               )
             );
           } else {
-            console.log(2);
             router.push(details.url, undefined, { shallow: true });
           }
         };

@@ -1,10 +1,9 @@
 import { protectedProcedure, router } from '~/server/trpc';
-import {
-  getUserNotificationsInfiniteHandler,
-  markReadNotificationHandler,
-  upsertUserNotificationSettingsHandler,
-} from '~/server/controllers/notification.controller';
 import { getUserDownloadsSchema, hideDownloadInput } from '~/server/schema/download.schema';
+import {
+  getUserDownloadsInfiniteHandler,
+  hideDownloadHandler,
+} from '~/server/controllers/download.controller';
 
 export const downloadRouter = router({
   getAllByUser: protectedProcedure

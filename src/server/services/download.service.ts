@@ -1,30 +1,24 @@
 import { Prisma } from '@prisma/client';
 
 import { prisma } from '~/server/db/client';
-import {
-  GetUserNotificationsSchema,
-  MarkReadNotificationInput,
-  ToggleNotificationSettingInput,
-} from '~/server/schema/notification.schema';
+import { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
-export const getUserDownloads = async <TSelect extends Prisma.NotificationSelect>({
+export const getUserDownloads = async <TSelect extends Prisma.DownloadHistorySelect>({
   limit = DEFAULT_PAGE_SIZE,
   cursor,
   userId,
   select,
   count = false,
-  unread = false,
-}: Partial<GetUserNotificationsSchema> & {
+}: Partial<GetUserDownloadsSchema> & {
   userId: number;
   select: TSelect;
   count?: boolean;
 }) => {
-  const where: Prisma.NotificationWhereInput = {
+  const where: Prisma.DownloadHistoryWhereInput = {
     userId,
-    viewedAt: unread ? { equals: null } : undefined,
   };
-  const notificationQuery = prisma.notification.findMany({
+  const downloadHistoryQuery = prisma.downloadHistory.findMany({
     take: limit,
     cursor: cursor ? { id: cursor } : undefined,
     where,
@@ -34,37 +28,26 @@ export const getUserDownloads = async <TSelect extends Prisma.NotificationSelect
 
   if (count) {
     const [items, count] = await Promise.all([
-      notificationQuery,
-      prisma.notification.count({ where }),
+      downloadHistoryQuery,
+      prisma.downloadHistory.count({ where }),
     ]);
 
     return { items, count };
   }
 
-  const items = await notificationQuery;
+  const items = await downloadHistoryQuery;
 
   return { items };
 };
 
-export const createUserNotificationSetting = async ({
-  toggle,
-  ...data
-}: ToggleNotificationSettingInput) => {
-  return prisma.userNotificationSettings.create({ data });
-};
-
-export const updateUserNoticationById = ({
+export const updateUserActivityById = ({
   id,
   userId,
   data,
   all = false,
-}: MarkReadNotificationInput & { data: Prisma.NotificationUpdateInput }) => {
-  return prisma.notification.updateMany({
-    where: { id: !all ? id : undefined, userId, viewedAt: { equals: null } },
+}: HideDownloadInput & { data: Prisma.UserActivityUpdateInput }) => {
+  return prisma.userActivity.updateMany({
+    where: { id: !all ? id : undefined, userId, hide: { equals: false } },
     data,
   });
-};
-
-export const deleteUserNotificationSetting = ({ type, userId }: ToggleNotificationSettingInput) => {
-  return prisma.userNotificationSettings.deleteMany({ where: { type, userId } });
 };

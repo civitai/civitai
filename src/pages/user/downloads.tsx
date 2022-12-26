@@ -1,21 +1,20 @@
 import {
   ActionIcon,
+  Button,
   Center,
   Container,
-  Grid,
   Group,
   Loader,
   Stack,
   Text,
+  ThemeIcon,
   Title,
   Tooltip,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
-import { IconListCheck, IconSettings, IconTrash } from '@tabler/icons';
+import { IconCloudOff, IconTrash } from '@tabler/icons';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
-
-import { NotificationList } from '~/components/Notifications/NotificationList';
+import { DownloadList } from '~/components/Downloads/DownloadList';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
@@ -26,22 +25,37 @@ export default function Downloads() {
   const { ref, inView } = useInView();
 
   const { data, isLoading, fetchNextPage, hasNextPage } =
-    trpc.notification.getAllByUser.useInfiniteQuery(
+    trpc.download.getAllByUser.useInfiniteQuery(
       {},
       {
-        getNextPageParam: (lastPage) => lastPage.nextCursor,
+        getNextPageParam: (lastPage) => lastPage?.nextCursor,
+        cacheTime: 0,
       }
     );
   const downloads = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data?.pages]);
 
-  const readNotificationMutation = trpc.notification.markRead.useMutation({
-    async onSuccess() {
-      await queryUtils.user.checkNotifications.invalidate();
-      await queryUtils.notification.getAllByUser.invalidate();
+  const hideDownloadMutation = trpc.download.hide.useMutation({
+    async onMutate({ id, all }) {
+      queryUtils.download.getAllByUser.setInfiniteData({}, (data) => {
+        if (!data || all) {
+          return {
+            pages: [],
+            pageParams: [],
+          };
+        }
+
+        return {
+          ...data,
+          pages: data.pages.map((page) => ({
+            ...page,
+            items: page.items.filter((item) => item.id !== id),
+          })),
+        };
+      });
     },
   });
-  const handleMarkAsRead = ({ id, all }: { id?: string; all?: boolean }) => {
-    if (currentUser) readNotificationMutation.mutate({ id, all, userId: currentUser.id });
+  const handleHide = ({ id, all }: { id?: number; all?: boolean }) => {
+    if (currentUser) hideDownloadMutation.mutate({ id, all, userId: currentUser.id });
   };
 
   useEffect(() => {
@@ -52,14 +66,18 @@ export default function Downloads() {
 
   return (
     <Container size="xs">
-      <Group position="apart">
+      <Group position="apart" align="flex-end">
         <Title order={1}>Downloads</Title>
         <Group spacing={8}>
-          <Tooltip label="Clear history" position="bottom">
-            <ActionIcon size="lg" onClick={() => handleRemoveDownload({ all: true })}>
-              <IconTrash />
-            </ActionIcon>
-          </Tooltip>
+          <Button
+            rightIcon={<IconTrash size={16} />}
+            variant="subtle"
+            size="xs"
+            compact
+            onClick={() => handleHide({ all: true })}
+          >
+            Clear History
+          </Button>
         </Group>
       </Group>
 
@@ -71,7 +89,7 @@ export default function Downloads() {
         <Stack>
           <DownloadList
             items={downloads}
-            onItemClick={(download) => handleRemoveDownload(download)}
+            onHideClick={(download) => handleHide(download)}
             textSize="md"
             withDivider
           />
@@ -82,9 +100,14 @@ export default function Downloads() {
           )}
         </Stack>
       ) : (
-        <Center>
-          <Text>There are no downloads in your history</Text>
-        </Center>
+        <Stack align="center" mt="md">
+          <ThemeIcon size={96} radius={100}>
+            <IconCloudOff size={60} />
+          </ThemeIcon>
+          <Text size={18} align="center">
+            No downloads in your history
+          </Text>
+        </Stack>
       )}
     </Container>
   );

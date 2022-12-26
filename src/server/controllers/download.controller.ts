@@ -1,39 +1,30 @@
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
-import {
-  GetUserNotificationsSchema,
-  MarkReadNotificationInput,
-  ToggleNotificationSettingInput,
-} from '~/server/schema/notification.schema';
-import { getAllNotificationsSelect } from '~/server/selectors/notification.selector';
-import {
-  createUserNotificationSetting,
-  deleteUserNotificationSetting,
-  getUserNotifications,
-  updateUserNoticationById,
-} from '~/server/services/notification.service';
+import { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
+import { getAllDownloadsSelect } from '~/server/selectors/download.selector';
+import { getUserDownloads, updateUserActivityById } from '~/server/services/download.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
-export const getDownloadsInfiniteHandler = async ({
+export const getUserDownloadsInfiniteHandler = async ({
   input,
   ctx,
 }: {
-  input: Partial<GetUserNotificationsSchema>;
+  input: Partial<GetUserDownloadsSchema>;
   ctx: DeepNonNullable<Context>;
 }) => {
   const { id: userId } = ctx.user;
   const limit = input.limit ?? DEFAULT_PAGE_SIZE;
 
   try {
-    const { items } = await getUserNotifications({
+    const { items } = await getUserDownloads({
       ...input,
       limit: limit + 1,
       userId,
-      select: getAllNotificationsSelect,
+      select: getAllDownloadsSelect,
     });
 
-    let nextCursor: string | undefined;
+    let nextCursor: number | undefined;
     if (items.length > limit) {
       const nextItem = items.pop();
       nextCursor = nextItem?.id;
@@ -45,38 +36,16 @@ export const getDownloadsInfiniteHandler = async ({
   }
 };
 
-export const upsertUserNotificationSettingsHandler = async ({
-  input,
-}: {
-  input: ToggleNotificationSettingInput;
-}) => {
+export const hideDownloadHandler = async ({ input }: { input: HideDownloadInput }) => {
   try {
-    if (input.toggle) {
-      const deleted = await deleteUserNotificationSetting({ ...input });
-      return { deleted };
-    }
-
-    const notificationSetting = await createUserNotificationSetting({ ...input });
-    return { notificationSetting };
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
-export const markReadNotificationHandler = async ({
-  input,
-}: {
-  input: MarkReadNotificationInput;
-}) => {
-  try {
-    const notification = await updateUserNoticationById({
+    const download = await updateUserActivityById({
       ...input,
-      data: { viewedAt: new Date() },
+      data: { hide: true },
     });
 
-    if (!notification) throw throwNotFoundError(`No notification with id ${input.id}`);
+    if (!download) throw throwNotFoundError(`No download with id ${input.id}`);
 
-    return { notification };
+    return { download };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
