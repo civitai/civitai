@@ -1,10 +1,15 @@
-import { deleteAnswer, getAnswerDetail, upsertAnswer } from './../services/answer.service';
+import {
+  deleteAnswer,
+  getAnswerDetail,
+  setAnswerVote,
+  upsertAnswer,
+} from './../services/answer.service';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { Context } from '~/server/createContext';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getAnswers } from '~/server/services/answer.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { GetAnswersInput, UpsertAnswerInput } from './../schema/answer.schema';
+import { AnswerVoteInput, GetAnswersInput, UpsertAnswerInput } from './../schema/answer.schema';
 
 export type GetAnswersProps = AsyncReturnType<typeof getAnswersHandler>;
 export const getAnswersHandler = async ({
@@ -40,12 +45,18 @@ export const getAnswersHandler = async ({
             reaction: true,
           },
         },
+        votes: {
+          where: { userId },
+          take: !userId ? 0 : 1,
+          select: { vote: true, userId: true },
+        },
       },
     });
     if (!items) throw throwNotFoundError();
-    return items.map(({ reactions, ...item }) => ({
+    return items.map(({ reactions, votes, ...item }) => ({
       ...item,
       userReactions: reactions,
+      userVote: votes.length > 0 ? votes[0] : undefined,
     }));
   } catch (error) {
     throw throwDbError(error);
@@ -98,6 +109,20 @@ export const deleteAnswerHandler = async ({
 }) => {
   try {
     return await deleteAnswer({ id });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const setAnswerVoteHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: AnswerVoteInput;
+}) => {
+  try {
+    return await setAnswerVote({ ...input, userId: ctx.user.id });
   } catch (error) {
     throw throwDbError(error);
   }

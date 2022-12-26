@@ -3,8 +3,9 @@ import {
   getAnswerDetailHandler,
   upsertAnswerHandler,
   deleteAnswerHandler,
+  setAnswerVoteHandler,
 } from './../controllers/answer.controller';
-import { getAnswersSchema, upsertAnswerSchema } from './../schema/answer.schema';
+import { getAnswersSchema, upsertAnswerSchema, answerVoteSchema } from './../schema/answer.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 
 import { middleware, router, publicProcedure, protectedProcedure } from '~/server/trpc';
@@ -46,4 +47,5 @@ export const answerRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteAnswerHandler),
+  vote: protectedProcedure.input(answerVoteSchema).mutation(setAnswerVoteHandler),
 });

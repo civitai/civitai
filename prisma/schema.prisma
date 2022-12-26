@@ -720,7 +720,7 @@ model AnswerVote {
   answerId  Int
   user      User     @relation(fields: [userId], references: [id])
   userId    Int
-  vote      Boolean
+  vote      Boolean?
   createdAt DateTime @default(now())
 
   @@id([answerId, userId])

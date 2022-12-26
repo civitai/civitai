@@ -31,6 +31,7 @@ import { AnswerDetail } from '~/components/Questions/AnswerDetail';
 import { AnswerForm } from '~/components/Questions/AnswerForm';
 import { useEffect } from 'react';
 import { ReviewReactions } from '@prisma/client';
+import { AnswerVotes } from '~/components/Questions/AnswerVotes';
 
 export const getServerSideProps: GetServerSideProps<{
   id: number;
@@ -128,22 +129,15 @@ export default function QuestionPage(
                 entityId={answer.id}
                 disabled={answer.user.id === user?.id}
               />
-              <ReactionButton
-                reaction={ReviewReactions.Check}
-                userReacted={answer.userReactions.some((x) => x.reaction === ReviewReactions.Check)}
-                count={answer.rank?.checkCountAllTime}
-                entityType="answer"
-                entityId={answer.id}
-                disabled={answer.user.id === user?.id}
-              />
-              <ReactionButton
-                reaction={ReviewReactions.Cross}
-                userReacted={answer.userReactions.some((x) => x.reaction === ReviewReactions.Cross)}
-                count={answer.rank?.crossCountAllTime}
-                entityType="answer"
-                entityId={answer.id}
-                disabled={answer.user.id === user?.id}
-              />
+              <AnswerVotes
+                userVote={answer.userVote?.vote}
+                answerId={answer.id}
+                crossCount={answer.rank?.crossCountAllTime}
+                checkCount={answer.rank?.checkCountAllTime}
+              >
+                <AnswerVotes.Check />
+                <AnswerVotes.Cross />
+              </AnswerVotes>
             </Stack>
             <Stack>
               <AnswerDetail answer={answer} questionId={id} />

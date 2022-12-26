@@ -66,7 +66,7 @@ export const upsertQuestion = async ({
                 create: tags.map(({ name }) => ({
                   tag: {
                     connectOrCreate: {
-                      where: { name },
+                      where: { name_target: { name, target: TagTarget.Question } },
                       create: { name, target: TagTarget.Question },
                     },
                   },

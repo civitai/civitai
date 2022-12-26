@@ -8,8 +8,6 @@ import { ReviewReactions } from '@prisma/client';
 
 const reactionIcons = {
   [ReviewReactions.Heart]: IconHeart,
-  [ReviewReactions.Check]: IconCheck,
-  [ReviewReactions.Cross]: IconX,
   [ReviewReactions.Like]: IconArrowRight,
   [ReviewReactions.Dislike]: IconArrowRight,
   [ReviewReactions.Laugh]: IconArrowRight,

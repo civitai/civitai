@@ -1,5 +1,5 @@
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetAnswersInput, UpsertAnswerInput } from './../schema/answer.schema';
+import { GetAnswersInput, UpsertAnswerInput, AnswerVoteInput } from './../schema/answer.schema';
 import { prisma } from '~/server/db/client';
 import { Prisma } from '@prisma/client';
 
@@ -31,4 +31,18 @@ export const upsertAnswer = async ({ userId, ...data }: UpsertAnswerInput & { us
 
 export const deleteAnswer = async ({ id }: GetByIdInput) => {
   await prisma.answer.delete({ where: { id } });
+};
+
+export const setAnswerVote = async ({ id, vote, userId }: AnswerVoteInput & { userId: number }) => {
+  return await prisma.answerVote.upsert({
+    where: { answerId_userId: { answerId: id, userId } },
+    create: {
+      answerId: id,
+      userId,
+      vote,
+    },
+    update: {
+      vote,
+    },
+  });
 };
