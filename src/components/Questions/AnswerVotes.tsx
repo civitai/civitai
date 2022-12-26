@@ -5,6 +5,7 @@ import { createContext, useContext, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 
 interface AnswerVoteContext {
+  disabled?: boolean;
   vote?: boolean | null;
   setCheck: (value: boolean | null) => void;
   setCross: (value: boolean | null) => void;
@@ -16,6 +17,8 @@ const AnswerVoteCtx = createContext<AnswerVoteContext>({} as any);
 
 export function AnswerVotes({
   answerId,
+  disabled,
+  userVote,
   ...props
 }: {
   children: React.ReactNode;
@@ -23,8 +26,9 @@ export function AnswerVotes({
   crossCount?: number;
   checkCount?: number;
   answerId: number;
+  disabled?: boolean;
 }) {
-  const [vote, setVote] = useState<boolean | undefined | null>(props.userVote);
+  const [vote, setVote] = useState<boolean | undefined | null>(userVote);
   const [crossCount, setCrossCount] = useState(props.crossCount ?? 0);
   const [checkCount, setCheckCount] = useState(props.checkCount ?? 0);
 
@@ -89,7 +93,7 @@ export function AnswerVotes({
 
 type VoteButtonProps = Omit<ButtonProps, 'children'>;
 function AnswerVoteCheck(props: VoteButtonProps) {
-  const { vote, setCheck, checkCount } = useContext(AnswerVoteCtx);
+  const { vote, setCheck, checkCount, disabled } = useContext(AnswerVoteCtx);
   const active = vote === true;
 
   const handleClick = () => setCheck(!active ? true : null);
@@ -98,7 +102,7 @@ function AnswerVoteCheck(props: VoteButtonProps) {
     <Button
       variant={active ? 'filled' : 'default'}
       leftIcon={<IconCheck size={18} />}
-      onClick={handleClick}
+      onClick={!disabled ? handleClick : undefined}
       {...props}
     >
       {checkCount}
@@ -107,7 +111,7 @@ function AnswerVoteCheck(props: VoteButtonProps) {
 }
 
 function AnswerVoteCross(props: VoteButtonProps) {
-  const { vote, setCross, crossCount } = useContext(AnswerVoteCtx);
+  const { vote, setCross, crossCount, disabled } = useContext(AnswerVoteCtx);
   const active = vote === false;
 
   const handleClick = () => setCross(!active ? false : null);
@@ -116,7 +120,7 @@ function AnswerVoteCross(props: VoteButtonProps) {
     <Button
       variant={active ? 'filled' : 'default'}
       leftIcon={<IconX size={18} />}
-      onClick={handleClick}
+      onClick={!disabled ? handleClick : undefined}
       {...props}
     >
       {crossCount}
