@@ -465,11 +465,11 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         LEFT JOIN (
           SELECT
             qr."questionId" AS id,
-            SUM(IIF(qr.reaction == 'Heart', 1, 0)) AS heart_count,
-            SUM(IIF(qr.reaction == 'Heart' AND qr."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_heart_count,
-            SUM(IIF(qr.reaction == 'Heart' AND qr."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_heart_count,
-            SUM(IIF(qr.reaction == 'Heart' AND qr."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_heart_count,
-            SUM(IIF(qr.reaction == 'Heart' AND qr."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_heart_count
+            SUM(IIF(qr.reaction = 'Heart', 1, 0)) AS heart_count,
+            SUM(IIF(qr.reaction = 'Heart' AND qr."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_heart_count,
+            SUM(IIF(qr.reaction = 'Heart' AND qr."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_heart_count,
+            SUM(IIF(qr.reaction = 'Heart' AND qr."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_heart_count,
+            SUM(IIF(qr.reaction = 'Heart' AND qr."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_heart_count
           FROM "QuestionReaction" qr
           GROUP BY qr."questionId"
         ) r ON q.id = r.id
