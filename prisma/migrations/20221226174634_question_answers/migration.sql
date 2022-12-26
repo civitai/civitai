@@ -35,6 +35,16 @@ CREATE TABLE "Answer" (
 );
 
 -- CreateTable
+CREATE TABLE "AnswerVote" (
+    "answerId" INTEGER NOT NULL,
+    "userId" INTEGER NOT NULL,
+    "vote" BOOLEAN NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "AnswerVote_pkey" PRIMARY KEY ("answerId","userId")
+);
+
+-- CreateTable
 CREATE TABLE "AnswerMetric" (
     "answerId" INTEGER NOT NULL,
     "timeframe" "MetricTimeframe" NOT NULL,
@@ -85,42 +95,39 @@ CREATE TABLE "TagsOnQuestions" (
 );
 
 -- CreateTable
-CREATE TABLE "Reaction" (
-    "id" SERIAL NOT NULL,
-    "userId" INTEGER NOT NULL,
-    "like" TIMESTAMP(3),
-    "dislike" TIMESTAMP(3),
-    "laugh" TIMESTAMP(3),
-    "cry" TIMESTAMP(3),
-    "heart" TIMESTAMP(3),
-    "check" TIMESTAMP(3),
-    "cross" TIMESTAMP(3),
-
-    CONSTRAINT "Reaction_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
 CREATE TABLE "QuestionReaction" (
+    "id" SERIAL NOT NULL,
     "questionId" INTEGER NOT NULL,
-    "reactionId" INTEGER NOT NULL,
+    "userId" INTEGER NOT NULL,
+    "reaction" "ReviewReactions" NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "QuestionReaction_pkey" PRIMARY KEY ("questionId","reactionId")
+    CONSTRAINT "QuestionReaction_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "AnswerReaction" (
+    "id" SERIAL NOT NULL,
     "answerId" INTEGER NOT NULL,
-    "reactionId" INTEGER NOT NULL,
+    "userId" INTEGER NOT NULL,
+    "reaction" "ReviewReactions" NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "AnswerReaction_pkey" PRIMARY KEY ("answerId","reactionId")
+    CONSTRAINT "AnswerReaction_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "CommentV2Reaction" (
+    "id" SERIAL NOT NULL,
     "commentId" INTEGER NOT NULL,
-    "reactionId" INTEGER NOT NULL,
+    "userId" INTEGER NOT NULL,
+    "reaction" "ReviewReactions" NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "CommentV2Reaction_pkey" PRIMARY KEY ("commentId","reactionId")
+    CONSTRAINT "CommentV2Reaction_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
@@ -133,13 +140,13 @@ CREATE UNIQUE INDEX "QuestionComment_commentId_key" ON "QuestionComment"("commen
 CREATE UNIQUE INDEX "AnswerComment_commentId_key" ON "AnswerComment"("commentId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "QuestionReaction_reactionId_key" ON "QuestionReaction"("reactionId");
+CREATE UNIQUE INDEX "QuestionReaction_questionId_userId_reaction_key" ON "QuestionReaction"("questionId", "userId", "reaction");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "AnswerReaction_reactionId_key" ON "AnswerReaction"("reactionId");
+CREATE UNIQUE INDEX "AnswerReaction_answerId_userId_reaction_key" ON "AnswerReaction"("answerId", "userId", "reaction");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "CommentV2Reaction_reactionId_key" ON "CommentV2Reaction"("reactionId");
+CREATE UNIQUE INDEX "CommentV2Reaction_commentId_userId_reaction_key" ON "CommentV2Reaction"("commentId", "userId", "reaction");
 
 -- AddForeignKey
 ALTER TABLE "Question" ADD CONSTRAINT "Question_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -155,6 +162,12 @@ ALTER TABLE "Answer" ADD CONSTRAINT "Answer_questionId_fkey" FOREIGN KEY ("quest
 
 -- AddForeignKey
 ALTER TABLE "Answer" ADD CONSTRAINT "Answer_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AnswerVote" ADD CONSTRAINT "AnswerVote_answerId_fkey" FOREIGN KEY ("answerId") REFERENCES "Answer"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AnswerVote" ADD CONSTRAINT "AnswerVote_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "AnswerMetric" ADD CONSTRAINT "AnswerMetric_answerId_fkey" FOREIGN KEY ("answerId") REFERENCES "Answer"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -184,79 +197,25 @@ ALTER TABLE "TagsOnQuestions" ADD CONSTRAINT "TagsOnQuestions_questionId_fkey" F
 ALTER TABLE "TagsOnQuestions" ADD CONSTRAINT "TagsOnQuestions_tagId_fkey" FOREIGN KEY ("tagId") REFERENCES "Tag"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Reaction" ADD CONSTRAINT "Reaction_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE "QuestionReaction" ADD CONSTRAINT "QuestionReaction_questionId_fkey" FOREIGN KEY ("questionId") REFERENCES "Question"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "QuestionReaction" ADD CONSTRAINT "QuestionReaction_reactionId_fkey" FOREIGN KEY ("reactionId") REFERENCES "Reaction"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "QuestionReaction" ADD CONSTRAINT "QuestionReaction_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "AnswerReaction" ADD CONSTRAINT "AnswerReaction_answerId_fkey" FOREIGN KEY ("answerId") REFERENCES "Answer"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "AnswerReaction" ADD CONSTRAINT "AnswerReaction_reactionId_fkey" FOREIGN KEY ("reactionId") REFERENCES "Reaction"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "AnswerReaction" ADD CONSTRAINT "AnswerReaction_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "CommentV2Reaction" ADD CONSTRAINT "CommentV2Reaction_commentId_fkey" FOREIGN KEY ("commentId") REFERENCES "CommentV2"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "CommentV2Reaction" ADD CONSTRAINT "CommentV2Reaction_reactionId_fkey" FOREIGN KEY ("reactionId") REFERENCES "Reaction"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "CommentV2Reaction" ADD CONSTRAINT "CommentV2Reaction_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- Add Rank Views
-CREATE OR REPLACE VIEW "QuestionRank" AS
-SELECT
-	t."questionId",
-	MAX(IIF(t.timeframe = 'Day', t."heartCount", NULL)) AS "heartCountDay",
-	MAX(IIF(t.timeframe = 'Day', t."heartCountRank", NULL)) AS "heartCountDayRank",
-	MAX(IIF(t.timeframe = 'Week', t."heartCount", NULL)) AS "heartCountWeek",
-	MAX(IIF(t.timeframe = 'Week', t."heartCountRank", NULL)) AS "heartCountWeekRank",
-	MAX(IIF(t.timeframe = 'Month', t."heartCount", NULL)) AS "heartCountMonth",
-	MAX(IIF(t.timeframe = 'Month', t."heartCountRank", NULL)) AS "heartCountMonthRank",
-	MAX(IIF(t.timeframe = 'Year', t."heartCount", NULL)) AS "heartCountYear",
-	MAX(IIF(t.timeframe = 'Year', t."heartCountRank", NULL)) AS "heartCountYearRank",
-	MAX(IIF(t.timeframe = 'AllTime', t."heartCount", NULL)) AS "heartCountAllTime",
-	MAX(IIF(t.timeframe = 'AllTime', t."heartCountRank", NULL)) AS "heartCountAllTimeRank",
-	MAX(IIF(t.timeframe = 'Day', t."commentCount", NULL)) AS "commentCountDay",
-	MAX(IIF(t.timeframe = 'Day', t."commentCountRank", NULL)) AS "commentCountDayRank",
-	MAX(IIF(t.timeframe = 'Week', t."commentCount", NULL)) AS "commentCountWeek",
-	MAX(IIF(t.timeframe = 'Week', t."commentCountRank", NULL)) AS "commentCountWeekRank",
-	MAX(IIF(t.timeframe = 'Month', t."commentCount", NULL)) AS "commentCountMonth",
-	MAX(IIF(t.timeframe = 'Month', t."commentCountRank", NULL)) AS "commentCountMonthRank",
-	MAX(IIF(t.timeframe = 'Year', t."commentCount", NULL)) AS "commentCountYear",
-	MAX(IIF(t.timeframe = 'Year', t."commentCountRank", NULL)) AS "commentCountYearRank",
-	MAX(IIF(t.timeframe = 'AllTime', t."commentCount", NULL)) AS "commentCountAllTime",
-	MAX(IIF(t.timeframe = 'AllTime', t."commentCountRank", NULL)) AS "commentCountAllTimeRank",
-	MAX(IIF(t.timeframe = 'Day', t."answerCount", NULL)) AS "answerCountDay",
-	MAX(IIF(t.timeframe = 'Day', t."answerCountRank", NULL)) AS "answerCountDayRank",
-	MAX(IIF(t.timeframe = 'Week', t."answerCount", NULL)) AS "answerCountWeek",
-	MAX(IIF(t.timeframe = 'Week', t."answerCountRank", NULL)) AS "answerCountWeekRank",
-	MAX(IIF(t.timeframe = 'Month', t."answerCount", NULL)) AS "answerCountMonth",
-	MAX(IIF(t.timeframe = 'Month', t."answerCountRank", NULL)) AS "answerCountMonthRank",
-	MAX(IIF(t.timeframe = 'Year', t."answerCount", NULL)) AS "answerCountYear",
-	MAX(IIF(t.timeframe = 'Year', t."answerCountRank", NULL)) AS "answerCountYearRank",
-	MAX(IIF(t.timeframe = 'AllTime', t."answerCount", NULL)) AS "answerCountAllTime",
-	MAX(IIF(t.timeframe = 'AllTime', t."answerCountRank", NULL)) AS "answerCountAllTimeRank"
-FROM (
-	SELECT
-		q.id AS "questionId",
-		COALESCE(qm."heartCount", 0) AS "heartCount",
-		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY COALESCE(qm."heartCount", 0) DESC, COALESCE(qm."answerCount", 0) DESC, COALESCE(qm."commentCount", 0) DESC, q.Id DESC) AS "heartCountRank",
-		COALESCE(qm."commentCount", 0) AS "commentCount",
-		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY COALESCE(qm."commentCount", 0) DESC, COALESCE(qm."heartCount", 0) DESC, COALESCE(qm."answerCount", 0) DESC, q.Id DESC) AS "commentCountRank",
-    COALESCE(qm."answerCount", 0) AS "answerCount",
-		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY COALESCE(qm."answerCount", 0) DESC, COALESCE(qm."heartCount", 0) DESC, COALESCE(qm."commentCount", 0) DESC, q.Id DESC) AS "answerCountRank",
-		tf.timeframe
-	FROM "Question" q
-	CROSS JOIN (
-		SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-	) tf
-	LEFT JOIN "QuestionMetric" qm ON qm."questionId" = q.id AND qm.timeframe = tf.timeframe
-) t
-GROUP BY t."questionId";
-
-CREATE OR REPLACE VIEW "AnswerRank" AS
+-- Add Views
+CREATE VIEW "AnswerRank" AS
 SELECT
 	t."answerId",
 	MAX(IIF(t.timeframe = 'Day', t."heartCount", NULL)) AS "heartCountDay",
@@ -318,3 +277,54 @@ FROM (
 	LEFT JOIN "AnswerMetric" am ON am."answerId" = a.id AND am.timeframe = tf.timeframe
 ) t
 GROUP BY t."answerId";
+
+CREATE VIEW "QuestionRank" AS
+SELECT
+	t."questionId",
+	MAX(IIF(t.timeframe = 'Day', t."heartCount", NULL)) AS "heartCountDay",
+	MAX(IIF(t.timeframe = 'Day', t."heartCountRank", NULL)) AS "heartCountDayRank",
+	MAX(IIF(t.timeframe = 'Week', t."heartCount", NULL)) AS "heartCountWeek",
+	MAX(IIF(t.timeframe = 'Week', t."heartCountRank", NULL)) AS "heartCountWeekRank",
+	MAX(IIF(t.timeframe = 'Month', t."heartCount", NULL)) AS "heartCountMonth",
+	MAX(IIF(t.timeframe = 'Month', t."heartCountRank", NULL)) AS "heartCountMonthRank",
+	MAX(IIF(t.timeframe = 'Year', t."heartCount", NULL)) AS "heartCountYear",
+	MAX(IIF(t.timeframe = 'Year', t."heartCountRank", NULL)) AS "heartCountYearRank",
+	MAX(IIF(t.timeframe = 'AllTime', t."heartCount", NULL)) AS "heartCountAllTime",
+	MAX(IIF(t.timeframe = 'AllTime', t."heartCountRank", NULL)) AS "heartCountAllTimeRank",
+	MAX(IIF(t.timeframe = 'Day', t."commentCount", NULL)) AS "commentCountDay",
+	MAX(IIF(t.timeframe = 'Day', t."commentCountRank", NULL)) AS "commentCountDayRank",
+	MAX(IIF(t.timeframe = 'Week', t."commentCount", NULL)) AS "commentCountWeek",
+	MAX(IIF(t.timeframe = 'Week', t."commentCountRank", NULL)) AS "commentCountWeekRank",
+	MAX(IIF(t.timeframe = 'Month', t."commentCount", NULL)) AS "commentCountMonth",
+	MAX(IIF(t.timeframe = 'Month', t."commentCountRank", NULL)) AS "commentCountMonthRank",
+	MAX(IIF(t.timeframe = 'Year', t."commentCount", NULL)) AS "commentCountYear",
+	MAX(IIF(t.timeframe = 'Year', t."commentCountRank", NULL)) AS "commentCountYearRank",
+	MAX(IIF(t.timeframe = 'AllTime', t."commentCount", NULL)) AS "commentCountAllTime",
+	MAX(IIF(t.timeframe = 'AllTime', t."commentCountRank", NULL)) AS "commentCountAllTimeRank",
+	MAX(IIF(t.timeframe = 'Day', t."answerCount", NULL)) AS "answerCountDay",
+	MAX(IIF(t.timeframe = 'Day', t."answerCountRank", NULL)) AS "answerCountDayRank",
+	MAX(IIF(t.timeframe = 'Week', t."answerCount", NULL)) AS "answerCountWeek",
+	MAX(IIF(t.timeframe = 'Week', t."answerCountRank", NULL)) AS "answerCountWeekRank",
+	MAX(IIF(t.timeframe = 'Month', t."answerCount", NULL)) AS "answerCountMonth",
+	MAX(IIF(t.timeframe = 'Month', t."answerCountRank", NULL)) AS "answerCountMonthRank",
+	MAX(IIF(t.timeframe = 'Year', t."answerCount", NULL)) AS "answerCountYear",
+	MAX(IIF(t.timeframe = 'Year', t."answerCountRank", NULL)) AS "answerCountYearRank",
+	MAX(IIF(t.timeframe = 'AllTime', t."answerCount", NULL)) AS "answerCountAllTime",
+	MAX(IIF(t.timeframe = 'AllTime', t."answerCountRank", NULL)) AS "answerCountAllTimeRank"
+FROM (
+	SELECT
+		q.id AS "questionId",
+		COALESCE(qm."heartCount", 0) AS "heartCount",
+		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY COALESCE(qm."heartCount", 0) DESC, COALESCE(qm."answerCount", 0) DESC, COALESCE(qm."commentCount", 0) DESC, q.Id DESC) AS "heartCountRank",
+		COALESCE(qm."commentCount", 0) AS "commentCount",
+		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY COALESCE(qm."commentCount", 0) DESC, COALESCE(qm."heartCount", 0) DESC, COALESCE(qm."answerCount", 0) DESC, q.Id DESC) AS "commentCountRank",
+    COALESCE(qm."answerCount", 0) AS "answerCount",
+		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY COALESCE(qm."answerCount", 0) DESC, COALESCE(qm."heartCount", 0) DESC, COALESCE(qm."commentCount", 0) DESC, q.Id DESC) AS "answerCountRank",
+		tf.timeframe
+	FROM "Question" q
+	CROSS JOIN (
+		SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+	) tf
+	LEFT JOIN "QuestionMetric" qm ON qm."questionId" = q.id AND qm.timeframe = tf.timeframe
+) t
+GROUP BY t."questionId";

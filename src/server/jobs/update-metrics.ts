@@ -364,10 +364,9 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       WITH recent_engagements AS
       (
         SELECT
-          a."questionId" AS id
-        FROM "QuestionReaction" a
-        JOIN "Reaction" r ON r.id = a."reactionId"
-        WHERE r."heart" > '${lastUpdate}'
+          "questionId" AS id
+        FROM "QuestionReaction"
+        WHERE "createdAt" > '${lastUpdate}'
 
         UNION
 
@@ -466,13 +465,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         LEFT JOIN (
           SELECT
             qr."questionId" AS id,
-            SUM(IIF(r.heart IS NOT NULL, 1, 0)) AS heart_count,
-            SUM(IIF(r.heart >= (NOW() - interval '365 days'), 1, 0)) AS year_heart_count,
-            SUM(IIF(r.heart >= (NOW() - interval '30 days'), 1, 0)) AS month_heart_count,
-            SUM(IIF(r.heart >= (NOW() - interval '7 days'), 1, 0)) AS week_heart_count,
-            SUM(IIF(r.heart >= (NOW() - interval '1 days'), 1, 0)) AS day_heart_count
+            SUM(IIF(qr.reaction == 'Heart', 1, 0)) AS heart_count,
+            SUM(IIF(qr.reaction == 'Heart' AND qr."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_heart_count,
+            SUM(IIF(qr.reaction == 'Heart' AND qr."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_heart_count,
+            SUM(IIF(qr.reaction == 'Heart' AND qr."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_heart_count,
+            SUM(IIF(qr.reaction == 'Heart' AND qr."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_heart_count
           FROM "QuestionReaction" qr
-          JOIN "Reaction" r ON qr."reactionId" = r.id
           GROUP BY qr."questionId"
         ) r ON q.id = r.id
       ) m
@@ -489,10 +487,9 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       WITH recent_engagements AS
       (
         SELECT
-          a."answerId" AS id
-        FROM "AnswerReaction" a
-        JOIN "Reaction" r ON r.id = a."reactionId"
-        WHERE r."heart" > '${lastUpdate}' OR r."check" > '${lastUpdate}' OR r."cross" > '${lastUpdate}'
+          "answerId" AS id
+        FROM "AnswerReaction"
+        WHERE "createdAt" > '${lastUpdate}'
 
         UNION
 
@@ -501,6 +498,13 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         FROM "AnswerComment" a
         JOIN "CommentV2" c ON a."commentId" = c.id
         WHERE c."createdAt" > '${lastUpdate}'
+
+        UNION
+
+        SELECT
+          "answerId" AS id
+        FROM "AnswerVote"
+        WHERE "createdAt" > '${lastUpdate}'
       ),
       -- Get all affected users
       affected AS
@@ -513,7 +517,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
 
       -- upsert metrics for all affected users
       -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "AnswerMetric" ("answerId", timeframe, "heartCount", "commentCount", "checkCount", "crossCount")
+      INSERT INTO "AnswerMetric" ("answerId", timeframe, "heartCount", "checkCount", "crossCount", "commentCount")
       SELECT
         m.id,
         tf.timeframe,
@@ -524,13 +528,6 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           WHEN tf.timeframe = 'Week' THEN week_heart_count
           WHEN tf.timeframe = 'Day' THEN day_heart_count
         END AS heart_count,
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN comment_count
-          WHEN tf.timeframe = 'Year' THEN year_comment_count
-          WHEN tf.timeframe = 'Month' THEN month_comment_count
-          WHEN tf.timeframe = 'Week' THEN week_comment_count
-          WHEN tf.timeframe = 'Day' THEN day_comment_count
-        END AS comment_count,
         CASE
           WHEN tf.timeframe = 'AllTime' THEN check_count
           WHEN tf.timeframe = 'Year' THEN year_check_count
@@ -544,7 +541,14 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           WHEN tf.timeframe = 'Month' THEN month_cross_count
           WHEN tf.timeframe = 'Week' THEN week_cross_count
           WHEN tf.timeframe = 'Day' THEN day_cross_count
-        END AS cross_count
+        END AS cross_count,
+        CASE
+            WHEN tf.timeframe = 'AllTime' THEN comment_count
+            WHEN tf.timeframe = 'Year' THEN year_comment_count
+            WHEN tf.timeframe = 'Month' THEN month_comment_count
+            WHEN tf.timeframe = 'Week' THEN week_comment_count
+            WHEN tf.timeframe = 'Day' THEN day_comment_count
+          END AS comment_count
       FROM
       (
         SELECT
@@ -559,16 +563,16 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           COALESCE(r.month_heart_count, 0) AS month_heart_count,
           COALESCE(r.week_heart_count, 0) AS week_heart_count,
           COALESCE(r.day_heart_count, 0) AS day_heart_count,
-          COALESCE(r.check_count, 0) AS check_count,
-          COALESCE(r.year_check_count, 0) AS year_check_count,
-          COALESCE(r.month_check_count, 0) AS month_check_count,
-          COALESCE(r.week_check_count, 0) AS week_check_count,
-          COALESCE(r.day_check_count, 0) AS day_check_count,
-          COALESCE(r.cross_count, 0) AS cross_count,
-          COALESCE(r.year_cross_count, 0) AS year_cross_count,
-          COALESCE(r.month_cross_count, 0) AS month_cross_count,
-          COALESCE(r.week_cross_count, 0) AS week_cross_count,
-          COALESCE(r.day_cross_count, 0) AS day_cross_count
+          COALESCE(v.check_count, 0) AS check_count,
+          COALESCE(v.year_check_count, 0) AS year_check_count,
+          COALESCE(v.month_check_count, 0) AS month_check_count,
+          COALESCE(v.week_check_count, 0) AS week_check_count,
+          COALESCE(v.day_check_count, 0) AS day_check_count,
+          COALESCE(v.cross_count, 0) AS cross_count,
+          COALESCE(v.year_cross_count, 0) AS year_cross_count,
+          COALESCE(v.month_cross_count, 0) AS month_cross_count,
+          COALESCE(v.week_cross_count, 0) AS week_cross_count,
+          COALESCE(v.day_cross_count, 0) AS day_cross_count
         FROM affected q
         LEFT JOIN (
           SELECT
@@ -584,24 +588,34 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         ) c ON q.id = c.id
         LEFT JOIN (
           SELECT
-            ar."answerId"                                            AS id,
-            SUM(IIF(r.heart IS NOT NULL, 1, 0))                      AS heart_count,
-            SUM(IIF(r.heart >= (NOW() - interval '365 days'), 1, 0)) AS year_heart_count,
-            SUM(IIF(r.heart >= (NOW() - interval '30 days'), 1, 0))  AS month_heart_count,
-            SUM(IIF(r.heart >= (NOW() - interval '7 days'), 1, 0))   AS week_heart_count,
-            SUM(IIF(r.heart >= (NOW() - interval '1 days'), 1, 0))   AS day_heart_count,
-            SUM(IIF(r.check IS NOT NULL, 1, 0))                      AS check_count,
-            SUM(IIF(r.check >= (NOW() - interval '365 days'), 1, 0)) AS year_check_count,
-            SUM(IIF(r.check >= (NOW() - interval '30 days'), 1, 0))  AS month_check_count,
-            SUM(IIF(r.check >= (NOW() - interval '7 days'), 1, 0))   AS week_check_count,
-            SUM(IIF(r.check >= (NOW() - interval '1 days'), 1, 0))   AS day_check_count,
-            SUM(IIF(r.cross IS NOT NULL, 1, 0)) AS cross_count,
-            SUM(IIF(r.cross >= (NOW() - interval '365 days'), 1, 0)) AS year_cross_count,
-            SUM(IIF(r.cross >= (NOW() - interval '30 days'), 1, 0)) AS month_cross_count,
-            SUM(IIF(r.cross >= (NOW() - interval '7 days'), 1, 0)) AS week_cross_count,
-            SUM(IIF(r.cross >= (NOW() - interval '1 days'), 1, 0)) AS day_cross_count
+            av."answerId" AS id,
+            COUNT(*) AS vote_count,
+            SUM(IIF(av."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_vote_count,
+            SUM(IIF(av."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_vote_count,
+            SUM(IIF(av."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_vote_count,
+            SUM(IIF(av."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_vote_count,
+            SUM(IIF(av.vote = TRUE AND av."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS check_count,
+            SUM(IIF(av.vote = TRUE AND av."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_check_count,
+            SUM(IIF(av.vote = TRUE AND av."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_check_count,
+            SUM(IIF(av.vote = TRUE AND av."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_check_count,
+            SUM(IIF(av.vote = TRUE AND av."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_check_count,
+            SUM(IIF(av.vote = FALSE AND av."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS cross_count,
+            SUM(IIF(av.vote = FALSE AND av."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_cross_count,
+            SUM(IIF(av.vote = FALSE AND av."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_cross_count,
+            SUM(IIF(av.vote = FALSE AND av."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_cross_count,
+            SUM(IIF(av.vote = FALSE AND av."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_cross_count
+          FROM "AnswerVote" av
+          GROUP BY av."answerId"
+        ) v ON v.id = c.id
+        LEFT JOIN (
+          SELECT
+            ar."answerId" AS id,
+            SUM(IIF(ar.reaction = 'Heart', 1, 0)) AS heart_count,
+            SUM(IIF(ar.reaction = 'Heart' AND ar."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_heart_count,
+            SUM(IIF(ar.reaction = 'Heart' AND ar."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_heart_count,
+            SUM(IIF(ar.reaction = 'Heart' AND ar."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_heart_count,
+            SUM(IIF(ar.reaction = 'Heart' AND ar."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_heart_count
           FROM "AnswerReaction" ar
-          JOIN "Reaction" r ON ar."reactionId" = r.id
           GROUP BY ar."answerId"
         ) r ON q.id = r.id
       ) m
