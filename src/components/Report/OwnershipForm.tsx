@@ -16,11 +16,20 @@ export const OwnershipForm = createReportForm({
     return (
       <>
         <Alert>
-          If you believe that this model may have been trained using your art, please complete the
-          form below for review
+          <Text>
+            If you believe that this model may have been trained using your art, please complete the
+            form below for review. A review of the claim will only be opened if this is placed by
+            the original artist.
+          </Text>
         </Alert>
         <InputText name="name" label="Name" withAsterisk clearable={false} />
-        <InputText name="email" label="Email" withAsterisk clearable={false} />
+        <InputText
+          name="email"
+          label="Email"
+          description="We will contact you at this address to verify the legitimacy of your claim"
+          withAsterisk
+          clearable={false}
+        />
         <InputText name="phone" label="Phone" clearable={false} />
         <InputRTE name="comment" label="Comment" />
         <InputImageUpload
