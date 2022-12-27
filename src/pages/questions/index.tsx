@@ -10,12 +10,15 @@ import {
   Button,
   createStyles,
   useMantineTheme,
+  Pagination,
+  Text,
 } from '@mantine/core';
 import { IconHeart, IconMessageCircle } from '@tabler/icons';
 import { GetServerSideProps } from 'next';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
+import { QS } from '~/utils/qs';
 import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -26,7 +29,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     : undefined;
 
   const ssg = await getServerProxySSGHelpers(context);
-  await ssg.question.getPaged.prefetch({ page, tagname, limit: 0 });
+  await ssg.question.getPaged.prefetch({ page, tagname, limit: 20 });
 
   return {
     props: {
@@ -46,8 +49,10 @@ export default function Questions() {
   const { data: questions, isLoading } = trpc.question.getPaged.useQuery({
     page,
     tagname,
-    limit: 0,
+    limit: 20,
   });
+
+  console.log({ questions });
 
   const { classes } = useStyles();
 
@@ -117,6 +122,23 @@ export default function Questions() {
                 </a>
               </Link>
             ))}
+            <Group position="apart">
+              {questions.totalItems > questions.pageSize ? (
+                <Text>Total {questions.totalItems} items</Text>
+              ) : (
+                <div></div>
+              )}
+              <Pagination
+                page={page}
+                onChange={(page) => {
+                  const [pathname, query] = router.asPath.split('?');
+                  router.push({ pathname, query: { ...QS.parse(query), page } }, undefined, {
+                    shallow: true,
+                  });
+                }}
+                total={questions.totalItems}
+              />
+            </Group>
           </Stack>
         )}
       </Stack>
