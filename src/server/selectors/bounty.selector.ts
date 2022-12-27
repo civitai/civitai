@@ -19,6 +19,7 @@ export const getAllBountiesSelect = Prisma.validator<Prisma.BountySelect>()({
 export const getBountyDetailsSelect = Prisma.validator<Prisma.BountySelect>()({
   id: true,
   name: true,
+  description: true,
   type: true,
   nsfw: true,
   user: { select: simpleUserSelect },

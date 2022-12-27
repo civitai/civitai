@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { constants } from '~/server/common/constants';
 
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -21,8 +22,10 @@ export const getBountiesInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
+    input.limit = input.limit ?? constants.bountyFilterDefaults.limit;
+
     const { user } = ctx;
-    const take = (input.limit ?? 100) + 1;
+    const take = input.limit + 1;
     const items = await getBounties({
       user,
       input: { ...input, take },
@@ -47,7 +50,10 @@ export const getBountyDetailsHandler = async ({ input }: { input: GetByIdInput }
     const bounty = await getBountyById({ id, select: getBountyDetailsSelect });
     if (!bounty) throw throwNotFoundError(`No bounty with id ${id}`);
 
-    return bounty;
+    return {
+      ...bounty,
+      images: bounty.images.map(({ index, image }) => ({ ...image, index })),
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

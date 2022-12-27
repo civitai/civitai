@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
-import { GetByIdInput, ReportInput } from '~/server/schema/base.schema';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllReviewsInput,
   GetReviewReactionsInput,
@@ -80,7 +80,6 @@ export const upsertReviewHandler = async ({
 };
 
 export const deleteUserReviewHandler = async ({
-  ctx,
   input,
 }: {
   ctx: DeepNonNullable<Context>;

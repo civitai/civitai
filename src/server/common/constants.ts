@@ -11,6 +11,7 @@ export const constants = {
   bountyFilterDefaults: {
     sort: BountySort.HighestBounty,
     period: MetricTimeframe.AllTime,
+    limit: 100,
   },
 } as const;
 

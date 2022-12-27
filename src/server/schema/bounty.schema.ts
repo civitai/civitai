@@ -7,21 +7,18 @@ import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 
-export const getAllBountiesSchema = getAllQuerySchema.extend({
-  cursor: z.preprocess((val) => Number(val), z.number()).optional(),
-  tag: z.string().optional(),
-  types: z
-    .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
-    .optional()
-    .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
-    .optional(),
-  sort: z.nativeEnum(BountySort).default(constants.bountyFilterDefaults.sort),
-  period: z.nativeEnum(MetricTimeframe).default(constants.bountyFilterDefaults.period),
-  favorites: z.preprocess(
-    (val) => val === true || val === 'true',
-    z.boolean().optional().default(false)
-  ),
-});
+export const getAllBountiesSchema = getAllQuerySchema
+  .extend({
+    cursor: z.preprocess((val) => Number(val), z.number()),
+    tag: z.string(),
+    types: z
+      .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
+      .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel])),
+    sort: z.nativeEnum(BountySort).default(constants.bountyFilterDefaults.sort),
+    period: z.nativeEnum(MetricTimeframe).default(constants.bountyFilterDefaults.period),
+    favorites: z.preprocess((val) => val === true || val === 'true', z.boolean().default(false)),
+  })
+  .partial();
 export type GetAllBountiesSchema = z.infer<typeof getAllBountiesSchema>;
 
 export const bountyFileSchema = z.object({

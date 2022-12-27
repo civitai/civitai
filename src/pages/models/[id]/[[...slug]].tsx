@@ -15,7 +15,6 @@ import {
   Stack,
   Text,
   Title,
-  useMantineTheme,
   Alert,
   ThemeIcon,
   Tooltip,
@@ -142,10 +141,9 @@ const useStyles = createStyles((theme) => ({
 }));
 
 export default function ModelDetail(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const theme = useMantineTheme();
   const router = useRouter();
   const { data: session } = useSession();
-  const { classes } = useStyles();
+  const { classes, theme } = useStyles();
   const mobile = useIsMobile();
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();

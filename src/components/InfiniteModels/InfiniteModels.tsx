@@ -12,8 +12,6 @@ import {
   Rating,
   Stack,
   Text,
-  ThemeIcon,
-  useMantineTheme,
   AspectRatio,
   Menu,
   ActionIcon,
@@ -21,7 +19,6 @@ import {
 import { ModelStatus } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
 import {
-  IconCloudOff,
   IconDotsVertical,
   IconDownload,
   IconFlag,
@@ -45,6 +42,7 @@ import { useInView } from 'react-intersection-observer';
 import { z } from 'zod';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { Empty } from '~/components/Empty/Empty';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -161,17 +159,7 @@ export function InfiniteModels({
           filters={{ ...filters, ...queryParams }}
         />
       ) : (
-        <Stack align="center">
-          <ThemeIcon size={128} radius={100}>
-            <IconCloudOff size={80} />
-          </ThemeIcon>
-          <Text size={32} align="center">
-            No results found
-          </Text>
-          <Text align="center">
-            {"Try adjusting your search or filters to find what you're looking for"}
-          </Text>
-        </Stack>
+        <Empty message="Try adjusting your search or filters to find what you're looking for" />
       )}
       {!isLoading && hasNextPage && (
         <Group position="center" ref={ref}>
@@ -260,8 +248,7 @@ const MasonryItem = ({
   width: number;
 }) => {
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
-  const theme = useMantineTheme();
+  const { classes, theme } = useStyles();
 
   const { id, image, name, rank, nsfw, user } = data ?? {};
 
@@ -401,7 +388,7 @@ const MasonryItem = ({
     <LoginRedirect reason="report-model" key="report">
       <Menu.Item
         icon={<IconFlag size={14} stroke={1.5} />}
-        onClick={(e: any) => {
+        onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
           openContext('report', { type: ReportEntity.Model, entityId: id });

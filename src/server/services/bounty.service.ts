@@ -48,7 +48,7 @@ export const getBounties = <TSelect extends Prisma.BountySelect>({
         ? [{ rank: { [`favoriteCount${period}Rank`]: 'asc' } }]
         : []),
       ...(sort === BountySort.HighestBounty
-        ? [{ rank: { [`bountyValueCount${period}Rank`]: 'asc' } }]
+        ? [{ rank: { [`bountyValue${period}Rank`]: 'asc' } }]
         : []),
       ...(sort === BountySort.MostDiscussed
         ? [{ rank: { [`commentCount${period}Rank`]: 'asc' } }]
