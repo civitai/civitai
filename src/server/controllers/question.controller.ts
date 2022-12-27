@@ -37,8 +37,8 @@ export const getQuestionsHandler = async ({
         },
         rank: {
           select: {
-            heartCountDay: true,
-            answerCountDay: true,
+            [`heartCount${input.period}`]: true,
+            [`answerCount${input.period}`]: true,
           },
         },
         selectedAnswerId: true,
@@ -47,14 +47,17 @@ export const getQuestionsHandler = async ({
 
     return {
       ...rest,
-      items: items.map(({ tags, ...item }) => ({
-        ...item,
-        tags: tags.map((x) => x.tag),
-        rank: {
-          heartCount: item.rank?.heartCountDay,
-          answerCount: item.rank?.answerCountDay,
-        },
-      })),
+      items: items.map(({ tags, ...item }) => {
+        const rank = (item.rank ?? {}) as Record<string, number>;
+        return {
+          ...item,
+          tags: tags.map((x) => x.tag),
+          rank: {
+            heartCount: rank[`heartCount${input.period}`],
+            answerCount: rank[`answerCount${input.period}`],
+          },
+        };
+      }),
     };
   } catch (error) {
     throw throwDbError(error);

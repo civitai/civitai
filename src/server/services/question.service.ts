@@ -27,11 +27,11 @@ export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
     tags: tagname
       ? { some: { tag: { name: { equals: tagname, mode: 'insensitive' } } } }
       : undefined,
-    selectedAnswerId:
+    answers:
       status === QuestionStatus.Answered
-        ? { not: null }
+        ? { some: {} }
         : status === QuestionStatus.Unanswered
-        ? { equals: null }
+        ? { none: {} }
         : undefined,
   };
   const items = await prisma.question.findMany({
@@ -59,10 +59,6 @@ export const getQuestionDetail = async <TSelect extends Prisma.QuestionSelect>({
 }) => {
   return await prisma.question.findUnique({ where: { id }, select });
 };
-
-// export const toggleQuestionReaction = async ({questionId, }) => {
-//   return await toggleReaction({entityType: 'question', entityId: questionId,})
-// };
 
 export const upsertQuestion = async ({
   id,

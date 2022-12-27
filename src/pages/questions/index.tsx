@@ -1,35 +1,29 @@
-import {
-  Center,
-  Container,
-  Loader,
-  Paper,
-  Stack,
-  Title,
-  Badge,
-  Group,
-  Button,
-  createStyles,
-  useMantineTheme,
-  Pagination,
-  Text,
-} from '@mantine/core';
-import { IconHeart, IconMessageCircle } from '@tabler/icons';
+import { Container, Stack, Title, Group, Button } from '@mantine/core';
 import { GetServerSideProps } from 'next';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
-import { QS } from '~/utils/qs';
-import { slugit } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
+
+import { Meta } from '~/components/Meta/Meta';
+import { Questions } from '~/components/Questions/Questions.Provider';
+import { constants } from '~/server/common/constants';
+import { parseCookies } from '~/providers/CookiesProvider';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
-  const page = Number(context.query.page ?? 1);
-  const tagname = context.query.tagname
-    ? ([] as string[]).concat(context.query.tagname)[0]
-    : undefined;
+  const page = context.query.page ? Number(context.query.page) : 1;
+  const {
+    sort = constants.questionFilterDefaults.sort,
+    period = constants.questionFilterDefaults.period,
+    status,
+  } = parseCookies(context.req.cookies).questions;
 
   const ssg = await getServerProxySSGHelpers(context);
-  await ssg.question.getPaged.prefetch({ page, tagname, limit: 50 });
+  await ssg.question.getPaged.prefetch({
+    page,
+    limit: constants.questionFilterDefaults.limit,
+    sort,
+    period,
+    status,
+  });
 
   return {
     props: {
@@ -38,113 +32,32 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
   };
 };
 
-export default function Questions() {
-  const router = useRouter();
-  const theme = useMantineTheme();
-  const page = Number(router.query.page ?? 1);
-  const tagname = router.query.tagname
-    ? ([] as string[]).concat(router.query.tagname)[0]
-    : undefined;
-
-  const { data: questions } = trpc.question.getPaged.useQuery({
-    page,
-    tagname,
-    limit: 50,
-  });
-
-  const { classes } = useStyles();
-
+export default function QuestionsList() {
   return (
-    <Container pb="xl">
-      <Stack spacing="md">
-        {/* TODO - filters */}
-        <Group position="apart">
-          <Title>Questions</Title>
-          <Group>
-            <Link href="/questions/create" passHref>
-              <Button component="a">Ask question</Button>
-            </Link>
-          </Group>
-        </Group>
-        {!questions?.items?.length ? (
-          <Center>
-            <Loader />
-          </Center>
-        ) : (
-          <Stack spacing="sm">
-            {questions.items.map((question) => (
-              <Link
-                key={question.id}
-                href={`/questions/${question.id}/${slugit(question.title)}`}
-                passHref
-              >
-                <a>
-                  <Paper withBorder p="sm">
-                    <Stack spacing="xs">
-                      <Title order={3} className={classes.title}>
-                        {question.title}
-                      </Title>
-                      <Group position="apart" spacing="sm">
-                        <Group spacing={4}>
-                          {question.tags.map((tag, index) => (
-                            <Badge key={index}>{tag.name}</Badge>
-                          ))}
-                        </Group>
-                        <Group spacing={4}>
-                          <Badge
-                            variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
-                            color={question.rank.heartCount ? 'pink' : 'gray'}
-                            leftSection={
-                              <Center>
-                                <IconHeart size={16} />
-                              </Center>
-                            }
-                          >
-                            {question.rank.heartCount}
-                          </Badge>
-                          <Badge
-                            variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
-                            color={question.selectedAnswerId ? 'green' : 'gray'}
-                            leftSection={
-                              <Center>
-                                <IconMessageCircle size={16} />
-                              </Center>
-                            }
-                          >
-                            {question.rank.answerCount}
-                          </Badge>
-                        </Group>
-                      </Group>
-                    </Stack>
-                  </Paper>
-                </a>
+    <>
+      <Meta title="Questions | Civitai" />
+      <Container pb="xl">
+        <Stack spacing="md">
+          <Group position="apart">
+            <Title>Questions</Title>
+            <Group>
+              <Link href="/questions/create" passHref>
+                <Button component="a">Ask question</Button>
               </Link>
-            ))}
-            {questions.totalPages > 1 && (
-              <Group position="apart">
-                <Text>Total {questions.totalItems} items</Text>
-
-                <Pagination
-                  page={page}
-                  onChange={(page) => {
-                    const [pathname, query] = router.asPath.split('?');
-                    router.push({ pathname, query: { ...QS.parse(query), page } }, undefined, {
-                      shallow: true,
-                    });
-                  }}
-                  total={questions.totalPages}
-                />
+            </Group>
+          </Group>
+          <Questions>
+            <Group position="apart">
+              <Questions.Sort />
+              <Group spacing="xs">
+                <Questions.Period />
+                <Questions.Filter />
               </Group>
-            )}
-          </Stack>
-        )}
-      </Stack>
-    </Container>
+            </Group>
+            <Questions.List />
+          </Questions>
+        </Stack>
+      </Container>
+    </>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  title: {
-    overflowWrap: 'break-word',
-  },
-}));

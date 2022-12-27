@@ -114,12 +114,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const session = await getSession(appContext.ctx);
 
   const cookies = getCookies(appContext.ctx);
-  const parsedCookies = parseCookies({
-    sort: cookies?.['f_sort'],
-    period: cookies?.['f_period'],
-    types: cookies?.['f_types'],
-    baseModels: cookies?.['f_baseModels'],
-  });
+  const parsedCookies = parseCookies(cookies);
 
   return {
     pageProps: {

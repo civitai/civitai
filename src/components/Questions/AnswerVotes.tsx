@@ -1,4 +1,4 @@
-import { ButtonProps, Badge, Center, useMantineTheme, BadgeProps } from '@mantine/core';
+import { Badge, Center, BadgeProps } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { IconCheck, IconX } from '@tabler/icons';
 import { createContext, useContext, useState } from 'react';
@@ -100,7 +100,6 @@ export function AnswerVotes({
 
 type VoteButtonProps = Omit<BadgeProps, 'children'>;
 function AnswerVoteCheck(props: VoteButtonProps) {
-  const theme = useMantineTheme();
   const { vote, setCheck, checkCount, disabled } = useContext(AnswerVoteCtx);
   const active = vote === true;
 
@@ -127,7 +126,6 @@ function AnswerVoteCheck(props: VoteButtonProps) {
 }
 
 function AnswerVoteCross(props: VoteButtonProps) {
-  const theme = useMantineTheme();
   const { vote, setCross, crossCount, disabled } = useContext(AnswerVoteCtx);
   const active = vote === false;
 
