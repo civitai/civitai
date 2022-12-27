@@ -742,6 +742,7 @@ model Hunter {
   images        ImagesOnHunter[]
   favorites     FavoriteHunter[]
   hunterMetrics HunterMetric[]
+  HunterRank    HunterRank[]
 
   @@unique([bountyId, userId])
 }
@@ -784,13 +785,11 @@ model BountyMetric {
 }
 
 model HunterMetric {
-  hunter         Hunter          @relation(fields: [hunterBountyId, hunterUserId], references: [bountyId, userId], onDelete: Cascade)
-  hunterId       Int
-  timeframe      MetricTimeframe
-  favoriteCount  Int             @default(0)
-  commentCount   Int             @default(0)
-  hunterBountyId Int
-  hunterUserId   Int
+  hunter        Hunter          @relation(fields: [hunterId], references: [id], onDelete: Cascade)
+  hunterId      Int
+  timeframe     MetricTimeframe
+  favoriteCount Int             @default(0)
+  commentCount  Int             @default(0)
 
   @@id([hunterId, timeframe])
 }
@@ -990,7 +989,7 @@ model DownloadHistory {
 
 /// @view
 model BountyRank {
-  bounty                     Bounty @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  bounty                     Bounty @relation(fields: [bountyId], references: [id], onDelete: NoAction)
   bountyId                   Int    @id
   favoriteCountDay           Int
   favoriteCountWeek          Int
@@ -1042,4 +1041,30 @@ model BountyRank {
   bountyValueMonthRank       Int
   bountyValueYearRank        Int
   bountyValueAllTimeRank     Int
+}
+
+/// @view
+model HunterRank {
+  hunter                   Hunter @relation(fields: [hunterId], references: [id], onDelete: NoAction)
+  hunterId                 Int    @id
+  favoriteCountDay         Int
+  favoriteCountWeek        Int
+  favoriteCountMonth       Int
+  favoriteCountYear        Int
+  favoriteCountAllTime     Int
+  commentCountDay          Int
+  commentCountWeek         Int
+  commentCountMonth        Int
+  commentCountYear         Int
+  commentCountAllTime      Int
+  favoriteCountDayRank     Int
+  favoriteCountWeekRank    Int
+  favoriteCountMonthRank   Int
+  favoriteCountYearRank    Int
+  favoriteCountAllTimeRank Int
+  commentCountDayRank      Int
+  commentCountWeekRank     Int
+  commentCountMonthRank    Int
+  commentCountYearRank     Int
+  commentCountAllTimeRank  Int
 }

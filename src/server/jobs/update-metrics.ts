@@ -359,6 +359,207 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
     `);
   };
 
+  const updateBountyMetrics = async () => {
+    await prisma.$executeRawUnsafe(`
+      WITH recent_engagements AS
+      (
+        SELECT
+          "bountyId" AS id
+        FROM "Benefactor"
+        WHERE "createdAt" > '${lastUpdate}'
+
+        UNION
+
+        SELECT
+          "bountyId" AS id
+        FROM "Hunter"
+        WHERE "createdAt" > '${lastUpdate}'
+
+        UNION
+
+        SELECT
+          "bountyId" AS id
+        FROM "FavoriteBounty"
+        WHERE "createdAt" > '${lastUpdate}'
+      ),
+      -- Get all affected users
+      affected AS
+      (
+          SELECT DISTINCT
+              r.id
+          FROM recent_engagements r
+          WHERE r.id IS NOT NULL
+      )
+
+      -- upsert metrics for all affected users
+      -- perform a one-pass table scan producing all metrics for all affected users
+      INSERT INTO "BountyMetric" ("bountyId", timeframe, "favoriteCount", "commentCount", "hunterCount", "benefactorCount", "bountyValue")
+      SELECT
+        m.id,
+        tf.timeframe,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN favorite_count
+          WHEN tf.timeframe = 'Year' THEN year_favorite_count
+          WHEN tf.timeframe = 'Month' THEN month_favorite_count
+          WHEN tf.timeframe = 'Week' THEN week_favorite_count
+          WHEN tf.timeframe = 'Day' THEN day_favorite_count
+        END AS favorite_count,
+        0 AS comment_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN hunter_count
+          WHEN tf.timeframe = 'Year' THEN year_hunter_count
+          WHEN tf.timeframe = 'Month' THEN month_hunter_count
+          WHEN tf.timeframe = 'Week' THEN week_hunter_count
+          WHEN tf.timeframe = 'Day' THEN day_hunter_count
+        END AS hunter_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN benefactor_count
+          WHEN tf.timeframe = 'Year' THEN year_benefactor_count
+          WHEN tf.timeframe = 'Month' THEN month_benefactor_count
+          WHEN tf.timeframe = 'Week' THEN week_benefactor_count
+          WHEN tf.timeframe = 'Day' THEN day_benefactor_count
+        END AS benefactor_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN bounty_value
+          WHEN tf.timeframe = 'Year' THEN year_bounty_value
+          WHEN tf.timeframe = 'Month' THEN month_bounty_value
+          WHEN tf.timeframe = 'Week' THEN week_bounty_value
+          WHEN tf.timeframe = 'Day' THEN day_bounty_value
+        END AS bounty_value
+      FROM
+      (
+        SELECT
+          q.id,
+          COALESCE(f.favorite_count, 0) AS favorite_count,
+          COALESCE(f.year_favorite_count, 0) AS year_favorite_count,
+          COALESCE(f.month_favorite_count, 0) AS month_favorite_count,
+          COALESCE(f.week_favorite_count, 0) AS week_favorite_count,
+          COALESCE(f.day_favorite_count, 0) AS day_favorite_count,
+          COALESCE(b.bounty_value, 0) AS bounty_value,
+          COALESCE(b.year_bounty_value, 0) AS year_bounty_value,
+          COALESCE(b.month_bounty_value, 0) AS month_bounty_value,
+          COALESCE(b.week_bounty_value, 0) AS week_bounty_value,
+          COALESCE(b.day_bounty_value, 0) AS day_bounty_value,
+          COALESCE(b.benefactor_count, 0) AS benefactor_count,
+          COALESCE(b.year_benefactor_count, 0) AS year_benefactor_count,
+          COALESCE(b.month_benefactor_count, 0) AS month_benefactor_count,
+          COALESCE(b.week_benefactor_count, 0) AS week_benefactor_count,
+          COALESCE(b.day_benefactor_count, 0) AS day_benefactor_count,
+          COALESCE(h.hunter_count, 0) AS hunter_count,
+          COALESCE(h.year_hunter_count, 0) AS year_hunter_count,
+          COALESCE(h.month_hunter_count, 0) AS month_hunter_count,
+          COALESCE(h.week_hunter_count, 0) AS week_hunter_count,
+          COALESCE(h.day_hunter_count, 0) AS day_hunter_count
+        FROM affected q
+        LEFT JOIN (
+          SELECT
+            "bountyId" AS id,
+            COUNT(*) AS benefactor_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_benefactor_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_benefactor_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_benefactor_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_benefactor_count,
+            SUM(contribution) AS bounty_value,
+            SUM(IIF("createdAt" >= (NOW() - interval '365 days'), contribution, 0)) AS year_bounty_value,
+            SUM(IIF("createdAt" >= (NOW() - interval '30 days'), contribution, 0)) AS month_bounty_value,
+            SUM(IIF("createdAt" >= (NOW() - interval '7 days'), contribution, 0)) AS week_bounty_value,
+            SUM(IIF("createdAt" >= (NOW() - interval '1 days'), contribution, 0)) AS day_bounty_value
+          FROM "Benefactor"
+          GROUP BY "bountyId"
+        ) b ON q.id = b.id
+        LEFT JOIN (
+          SELECT
+            "bountyId" AS id,
+            COUNT(*) AS hunter_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_hunter_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_hunter_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_hunter_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_hunter_count
+          FROM "Hunter"
+          GROUP BY "bountyId"
+        ) h ON q.id = h.id
+        LEFT JOIN (
+          SELECT
+            "bountyId" AS id,
+            COUNT(*) AS favorite_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_favorite_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_favorite_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_favorite_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_favorite_count
+          FROM "FavoriteBounty"
+          GROUP BY "bountyId"
+        ) f ON q.id = f.id
+      ) m
+      CROSS JOIN (
+        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+      ) tf
+      ON CONFLICT ("bountyId", timeframe) DO UPDATE
+        SET "commentCount" = EXCLUDED."commentCount", "favoriteCount" = EXCLUDED."favoriteCount", "hunterCount" = EXCLUDED."hunterCount", "benefactorCount" = EXCLUDED."
+    `);
+  };
+
+  const updateHunterMetrics = async () => {
+    await prisma.$executeRawUnsafe(`
+      WITH recent_engagements AS
+      (
+        SELECT
+          "hunterId" AS id
+        FROM "FavoriteHunter"
+        WHERE "createdAt" > '${lastUpdate}'
+      ),
+      -- Get all affected users
+      affected AS
+      (
+          SELECT DISTINCT
+              r.id
+          FROM recent_engagements r
+          WHERE r.id IS NOT NULL
+      )
+
+      -- upsert metrics for all affected users
+      -- perform a one-pass table scan producing all metrics for all affected users
+      INSERT INTO "HunterMetric" ("hunterId", timeframe, "favoriteCount", "commentCount")
+      SELECT
+        m.id,
+        tf.timeframe,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN favorite_count
+          WHEN tf.timeframe = 'Year' THEN year_favorite_count
+          WHEN tf.timeframe = 'Month' THEN month_favorite_count
+          WHEN tf.timeframe = 'Week' THEN week_favorite_count
+          WHEN tf.timeframe = 'Day' THEN day_favorite_count
+        END AS favorite_count,
+        0 AS comment_count
+      FROM
+      (
+        SELECT
+          q.id,
+          COALESCE(f.favorite_count, 0) AS favorite_count,
+          COALESCE(f.year_favorite_count, 0) AS year_favorite_count,
+          COALESCE(f.month_favorite_count, 0) AS month_favorite_count,
+          COALESCE(f.week_favorite_count, 0) AS week_favorite_count,
+          COALESCE(f.day_favorite_count, 0) AS day_favorite_count
+        FROM affected q
+        LEFT JOIN (
+          SELECT
+            "hunterId" AS id,
+            COUNT(*) AS favorite_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_favorite_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_favorite_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_favorite_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_favorite_count
+          FROM "FavoriteHunter"
+          GROUP BY "hunterId"
+        ) f ON q.id = f.id
+      ) m
+      CROSS JOIN (
+        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+      ) tf
+      ON CONFLICT ("hunterId", timeframe) DO UPDATE
+        SET "commentCount" = EXCLUDED."commentCount", "favoriteCount" = EXCLUDED."favoriteCount";
+    `);
+  };
+
   const refreshModelRank = async () =>
     await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelRank"');
 
@@ -382,8 +583,10 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
   // --------------------------------------------
   await updateModelMetrics('models');
   await updateModelMetrics('versions');
-  await refreshModelRank();
   await updateUserMetrics();
+  await updateBountyMetrics();
+  await updateHunterMetrics();
+  await refreshModelRank();
   await refreshUserRank();
 
   // Update the last update time
