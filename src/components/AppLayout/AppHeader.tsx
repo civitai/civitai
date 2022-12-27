@@ -218,6 +218,20 @@ export function AppHeader({ links }: Props) {
               </Group>
             </Anchor>
           </Link>,
+          <Link key="questions" href={`/questions`} passHref>
+            <Anchor
+              className={cx(classes.link, {
+                [classes.linkActive]: router.asPath.includes(`/questions`),
+              })}
+              variant="text"
+              onClick={() => closeBurger()}
+            >
+              <Group align="center" spacing="xs">
+                <IconQuestionCircle stroke={1.5} />
+                Questions
+              </Group>
+            </Anchor>
+          </Link>,
           <Link
             key="your-following-menu-item"
             href={`/user/${session.user.username}/following`}

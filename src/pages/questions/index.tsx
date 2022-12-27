@@ -122,23 +122,22 @@ export default function Questions() {
                 </a>
               </Link>
             ))}
-            <Group position="apart">
-              {questions.totalItems > questions.pageSize ? (
+            {questions.totalPages > 1 && (
+              <Group position="apart">
                 <Text>Total {questions.totalItems} items</Text>
-              ) : (
-                <div></div>
-              )}
-              <Pagination
-                page={page}
-                onChange={(page) => {
-                  const [pathname, query] = router.asPath.split('?');
-                  router.push({ pathname, query: { ...QS.parse(query), page } }, undefined, {
-                    shallow: true,
-                  });
-                }}
-                total={questions.totalItems}
-              />
-            </Group>
+
+                <Pagination
+                  page={page}
+                  onChange={(page) => {
+                    const [pathname, query] = router.asPath.split('?');
+                    router.push({ pathname, query: { ...QS.parse(query), page } }, undefined, {
+                      shallow: true,
+                    });
+                  }}
+                  total={questions.totalPages}
+                />
+              </Group>
+            )}
           </Stack>
         )}
       </Stack>
