@@ -268,8 +268,8 @@ export const updateModel = async ({
   const versionIds = modelVersions.map((version) => version.id).filter(Boolean) as number[];
   const hasNewVersions = modelVersions.some((x) => !x.id);
 
-  const model = await prisma.model.update({
-    where: { id },
+  const model = await updateModelById({
+    id,
     data: {
       ...data,
       status: data.status,

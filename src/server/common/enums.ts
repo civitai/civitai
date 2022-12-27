@@ -28,3 +28,10 @@ export enum ReviewFilter {
   NSFW = 'nsfw',
   IncludesImages = 'includes-images',
 }
+
+export enum BountySort {
+  HighestBounty = 'HighestBounty',
+  MostLiked = 'MostLiked',
+  MostDiscussed = 'MostDiscussed',
+  Newest = 'Newest',
+}

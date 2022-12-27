@@ -196,8 +196,6 @@ export const updateModelHandler = async ({
 
     return model;
   } catch (error) {
-    console.log('test');
-    console.log(error);
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
   }

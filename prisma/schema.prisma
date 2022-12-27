@@ -79,6 +79,11 @@ model User {
   metrics              UserMetric[]
   reports              Report[]
   downloads            DownloadHistory[]
+  benefactors          Benefactor[]
+  favoriteBounties     FavoriteBounty[]
+  hunters              Hunter[]
+  favoriteHunters      FavoriteHunter[]
+  bounties             Bounty[]
 }
 
 enum UserEngagementType {
@@ -469,6 +474,8 @@ model Image {
 
   imagesOnModels  ImagesOnModels[]
   imagesOnReviews ImagesOnReviews[]
+  ImagesOnBounty  ImagesOnBounty[]
+  ImagesOnHunter  ImagesOnHunter[]
 }
 
 enum ImageOnModelType {
@@ -504,6 +511,8 @@ model Tag {
   updatedAt DateTime @updatedAt
 
   tagsOnModels TagsOnModels[]
+  bounty       Bounty?        @relation(fields: [bountyId], references: [id])
+  bountyId     Int?
 }
 
 model TagsOnModels {
@@ -653,6 +662,137 @@ model Webhook {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([url, userId])
+}
+
+model Bounty {
+  id          Int       @id @default(autoincrement())
+  name        String
+  description String
+  type        ModelType
+  createdAt   DateTime  @default(now())
+  deadline    DateTime?
+  nsfw        Boolean   @default(false)
+  poi         Boolean   @default(false)
+  awardedAt   DateTime?
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id])
+
+  rank        BountyRank?
+  images      ImagesOnBounty[]
+  hunters     Hunter[]
+  benefactors Benefactor[]
+  tags        Tag[] //Implicit many-to-many
+  favorites   FavoriteBounty[]
+  files       BountyFile[]
+  metrics     BountyMetric[]
+}
+
+model Benefactor {
+  id           Int      @id @default(autoincrement())
+  bounty       Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  bountyId     Int
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId       Int
+  contribution Int // Credits
+  createdAt    DateTime @default(now())
+  isPrimary    Boolean  @default(false)
+
+  @@unique([bountyId, userId])
+}
+
+model FavoriteBounty {
+  bounty    Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  bountyId  Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  createdAt DateTime @default(now())
+
+  @@id([bountyId, userId])
+}
+
+model ImagesOnBounty {
+  bounty   Bounty @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  bountyId Int
+  image    Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  imageId  Int
+  index    Int?
+
+  @@id([imageId, bountyId])
+}
+
+model BountyFile {
+  id        Int      @id @default(autoincrement())
+  bounty    Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  bountyId  Int
+  name      String
+  url       String
+  sizeKB    Float
+  createdAt DateTime @default(now())
+  type      String   @default("Training Data")
+}
+
+model Hunter {
+  id        Int      @id @default(autoincrement())
+  bounty    Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  bountyId  Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  createdAt DateTime @default(now())
+
+  images        ImagesOnHunter[]
+  favorites     FavoriteHunter[]
+  hunterMetrics HunterMetric[]
+
+  @@unique([bountyId, userId])
+}
+
+model ImagesOnHunter {
+  hunter         Hunter @relation(fields: [hunterBountyId, hunterUserId], references: [bountyId, userId])
+  hunterId       Int
+  image          Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  imageId        Int
+  index          Int?
+  hunterBountyId Int
+  hunterUserId   Int
+
+  @@id([imageId, hunterId])
+}
+
+model FavoriteHunter {
+  hunter         Hunter   @relation(fields: [hunterBountyId, hunterUserId], references: [bountyId, userId])
+  hunterId       Int
+  user           User     @relation(fields: [userId], references: [id])
+  userId         Int
+  createdAt      DateTime @default(now())
+  hunterBountyId Int
+  hunterUserId   Int
+
+  @@id([hunterId, userId])
+}
+
+model BountyMetric {
+  bounty          Bounty          @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  bountyId        Int
+  timeframe       MetricTimeframe
+  favoriteCount   Int             @default(0)
+  commentCount    Int             @default(0)
+  hunterCount     Int             @default(0)
+  benefactorCount Int             @default(0)
+  bountyValue     Int             @default(0)
+
+  @@id([bountyId, timeframe])
+}
+
+model HunterMetric {
+  hunter         Hunter          @relation(fields: [hunterBountyId, hunterUserId], references: [bountyId, userId], onDelete: Cascade)
+  hunterId       Int
+  timeframe      MetricTimeframe
+  favoriteCount  Int             @default(0)
+  commentCount   Int             @default(0)
+  hunterBountyId Int
+  hunterUserId   Int
+
+  @@id([hunterId, timeframe])
 }
 
 /// @view
@@ -846,4 +986,60 @@ model DownloadHistory {
   modelId        Int
   model          Model        @relation(fields: [modelId], references: [id], onDelete: NoAction)
   createdAt      DateTime
+}
+
+/// @view
+model BountyRank {
+  bounty                     Bounty @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  bountyId                   Int    @id
+  favoriteCountDay           Int
+  favoriteCountWeek          Int
+  favoriteCountMonth         Int
+  favoriteCountYear          Int
+  favoriteCountAllTime       Int
+  commentCountDay            Int
+  commentCountWeek           Int
+  commentCountMonth          Int
+  commentCountYear           Int
+  commentCountAllTime        Int
+  hunterCountDay             Int
+  hunterCountWeek            Int
+  hunterCountMonth           Int
+  hunterCountYear            Int
+  hunterCountAllTime         Int
+  benefactorCountDay         Int
+  benefactorCountWeek        Int
+  benefactorCountMonth       Int
+  benefactorCountYear        Int
+  benefactorCountAllTime     Int
+  bountyValueDay             Int
+  bountyValueWeek            Int
+  bountyValueMonth           Int
+  bountyValueYear            Int
+  bountyValueAllTime         Int
+  favoriteCountDayRank       Int
+  favoriteCountWeekRank      Int
+  favoriteCountMonthRank     Int
+  favoriteCountYearRank      Int
+  favoriteCountAllTimeRank   Int
+  commentCountDayRank        Int
+  commentCountWeekRank       Int
+  commentCountMonthRank      Int
+  commentCountYearRank       Int
+  commentCountAllTimeRank    Int
+  hunterCountDayRank         Int
+  hunterCountWeekRank        Int
+  hunterCountMonthRank       Int
+  hunterCountYearRank        Int
+  hunterCountAllTimeRank     Int
+  benefactorCountDayRank     Int
+  benefactorCountWeekRank    Int
+  benefactorCountMonthRank   Int
+  benefactorCountYearRank    Int
+  benefactorCountAllTimeRank Int
+  bountyValueDayRank         Int
+  bountyValueWeekRank        Int
+  bountyValueMonthRank       Int
+  bountyValueYearRank        Int
+  bountyValueAllTimeRank     Int
 }
