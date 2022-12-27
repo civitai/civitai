@@ -63,7 +63,6 @@ export default function Questions() {
             </Link>
           </Group>
         </Group>
-        {/* TODO - filters */}
         {!questions?.items?.length ? (
           <Center>
             <Loader />
@@ -91,7 +90,7 @@ export default function Questions() {
                         <Group spacing={4}>
                           <Badge
                             variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
-                            color="pink"
+                            color={question.rank.heartCount ? 'pink' : 'gray'}
                             leftSection={
                               <Center>
                                 <IconHeart size={16} />
@@ -102,7 +101,7 @@ export default function Questions() {
                           </Badge>
                           <Badge
                             variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
-                            color="green"
+                            color={question.selectedAnswerId ? 'green' : 'gray'}
                             leftSection={
                               <Center>
                                 <IconMessageCircle size={16} />

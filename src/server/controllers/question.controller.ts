@@ -41,6 +41,7 @@ export const getQuestionsHandler = async ({
             answerCountDay: true,
           },
         },
+        selectedAnswerId: true,
       },
     });
 

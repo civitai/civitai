@@ -8,7 +8,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { DeleteAnswer } from '~/components/Questions/DeleteAnswer';
 import { IconDotsVertical, IconTrash, IconEdit } from '@tabler/icons';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 
 export function AnswerDetail({
   answer,
@@ -64,7 +63,6 @@ export function AnswerDetail({
           </Menu>
         )}
       </Group>
-      <ReactionPicker reactions={[]} onSelect={(reaction) => {}} />
       <RenderHtml html={answer.content} />
       {/* TODO - reactions */}
     </Stack>

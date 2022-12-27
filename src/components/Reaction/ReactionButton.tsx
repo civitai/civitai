@@ -50,9 +50,7 @@ export const ReactionButton = ({
   const Icon = reactionIcons[reaction];
   return (
     <Badge
-      // variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
       variant={'light'}
-      // variant="outline"
       color={hasReacted ? 'pink' : 'gray'}
       leftSection={
         <Center>
@@ -63,9 +61,6 @@ export const ReactionButton = ({
       onClick={!disabled ? toggleReaction : undefined}
       size="lg"
       px={5}
-      // px={4}
-      // radius="lg"
-      // py="md"
     >
       {count}
     </Badge>

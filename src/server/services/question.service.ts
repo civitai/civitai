@@ -29,6 +29,9 @@ export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
     skip,
     select,
     where,
+    orderBy: {
+      createdAt: 'desc',
+    },
   });
   const count = await prisma.question.count({ where });
   return getPagingData({ items, count }, take, page);

@@ -19,6 +19,8 @@ export function AnswerVotes({
   answerId,
   disabled,
   userVote,
+  questionId,
+  questionOwnerId,
   ...props
 }: {
   children: React.ReactNode;
@@ -27,6 +29,8 @@ export function AnswerVotes({
   checkCount?: number;
   answerId: number;
   disabled?: boolean;
+  questionId: number;
+  questionOwnerId: number;
 }) {
   const [vote, setVote] = useState<boolean | undefined | null>(userVote);
   const [crossCount, setCrossCount] = useState(props.crossCount ?? 0);
@@ -72,6 +76,8 @@ export function AnswerVotes({
       mutate({
         id: answerId,
         vote,
+        questionId,
+        questionOwnerId,
       });
     }
   }, [vote]);
@@ -146,21 +152,6 @@ function AnswerVoteCross(props: VoteButtonProps) {
     </Badge>
   );
 }
-
-// function ReactionHeart({
-//   entityId,
-//   entityType,
-//   reaction,
-//   userReacted,
-//   count: initialCount,
-//   disabled,
-// }: ToggleReactionInput & {
-//   userReacted?: boolean;
-//   count?: number;
-//   disabled: boolean;
-// }) {
-//   return <></>;
-// }
 
 AnswerVotes.Check = AnswerVoteCheck;
 AnswerVotes.Cross = AnswerVoteCross;

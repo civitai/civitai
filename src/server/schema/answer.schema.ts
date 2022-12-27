@@ -16,4 +16,6 @@ export type AnswerVoteInput = z.infer<typeof answerVoteSchema>;
 export const answerVoteSchema = z.object({
   id: z.number(),
   vote: z.boolean().nullable(),
+  questionId: z.number().optional(),
+  questionOwnerId: z.number().optional(),
 });

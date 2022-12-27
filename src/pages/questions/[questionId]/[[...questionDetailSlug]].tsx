@@ -1,23 +1,16 @@
 import {
-  ActionIcon,
-  Badge,
-  Button,
   Container,
   createStyles,
   Divider,
   Group,
-  Menu,
   Stack,
   Title,
   useMantineTheme,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
-import { IconCheck, IconDotsVertical, IconEdit, IconHeart, IconTrash, IconX } from '@tabler/icons';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
-import { DeleteQuestion } from '~/components/Questions/DeleteQuestion';
 import { QuestionHeader } from '~/components/Questions/QuestionHeader';
 import { QuestionForm } from '~/components/Questions/QuestionForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -168,6 +161,8 @@ export default function QuestionPage(
                 crossCount={answer.rank?.crossCountAllTime}
                 checkCount={answer.rank?.checkCountAllTime}
                 disabled={answer.user.id === user?.id}
+                questionId={question.id}
+                questionOwnerId={question.user.id}
               >
                 <AnswerVotes.Check />
                 <AnswerVotes.Cross />
