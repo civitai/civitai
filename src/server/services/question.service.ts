@@ -9,6 +9,7 @@ import {
 } from '~/server/schema/question.schema';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { isTag } from '~/server/schema/tag.schema';
+import { QuestionSort, QuestionStatus } from '~/server/common/enums';
 
 export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
   limit,
@@ -16,6 +17,9 @@ export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
   query,
   tagname,
   select,
+  sort,
+  period,
+  status,
 }: GetQuestionsInput & { select: TSelect }) => {
   const { take, skip } = getPagination(limit, page);
   const where: Prisma.QuestionWhereInput = {
@@ -23,15 +27,24 @@ export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
     tags: tagname
       ? { some: { tag: { name: { equals: tagname, mode: 'insensitive' } } } }
       : undefined,
+    selectedAnswerId:
+      status === QuestionStatus.Answered
+        ? { not: null }
+        : status === QuestionStatus.Unanswered
+        ? { equals: null }
+        : undefined,
   };
   const items = await prisma.question.findMany({
     take,
     skip,
     select,
     where,
-    orderBy: {
-      createdAt: 'desc',
-    },
+    orderBy: [
+      ...(sort === QuestionSort.MostLiked
+        ? [{ rank: { [`heartCount${period}Rank`]: 'asc' } }]
+        : []),
+      { createdAt: 'desc' },
+    ],
   });
   const count = await prisma.question.count({ where });
   return getPagingData({ items, count }, take, page);

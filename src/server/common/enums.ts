@@ -33,3 +33,8 @@ export enum QuestionSort {
   Newest = 'Newest',
   MostLiked = 'Most Liked',
 }
+
+export enum QuestionStatus {
+  Answered = 'Answered',
+  Unanswered = 'Unanswered',
+}

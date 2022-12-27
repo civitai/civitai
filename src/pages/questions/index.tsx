@@ -29,7 +29,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     : undefined;
 
   const ssg = await getServerProxySSGHelpers(context);
-  await ssg.question.getPaged.prefetch({ page, tagname, limit: 20 });
+  await ssg.question.getPaged.prefetch({ page, tagname, limit: 50 });
 
   return {
     props: {
@@ -46,13 +46,11 @@ export default function Questions() {
     ? ([] as string[]).concat(router.query.tagname)[0]
     : undefined;
 
-  const { data: questions, isLoading } = trpc.question.getPaged.useQuery({
+  const { data: questions } = trpc.question.getPaged.useQuery({
     page,
     tagname,
-    limit: 20,
+    limit: 50,
   });
-
-  console.log({ questions });
 
   const { classes } = useStyles();
 
