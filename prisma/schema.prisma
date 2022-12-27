@@ -85,6 +85,7 @@ model User {
   answerReactions      AnswerReaction[]
   commentV2Reactions   CommentV2Reaction[]
   answerVotes          AnswerVote[]
+  downloads            DownloadHistory[]
 }
 
 enum UserEngagementType {
@@ -207,6 +208,7 @@ model Model {
   favoriteModels FavoriteModel[]
   comments       Comment[]
   interests      ModelInterest[]
+  downloads      DownloadHistory[]
 }
 
 model ModelInterest {
@@ -255,6 +257,7 @@ model ModelVersion {
   files         ModelFile[]
   runStrategies RunStrategy[]
   hashes        ModelHash[]
+  downloads     DownloadHistory[]
 }
 
 enum ModelHashType {
@@ -356,6 +359,7 @@ model UserActivity {
   user      User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
   activity  UserActivityType
   details   Json?
+  hide      Boolean          @default(false)
   createdAt DateTime         @default(now())
 }
 
@@ -1083,4 +1087,16 @@ model UserRank {
   favoriteCountMonthRank   Int
   favoriteCountYearRank    Int
   favoriteCountAllTimeRank Int
+}
+
+/// @view
+model DownloadHistory {
+  id             Int          @id
+  userId         Int
+  user           User         @relation(fields: [userId], references: [id], onDelete: NoAction)
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
+  modelId        Int
+  model          Model        @relation(fields: [modelId], references: [id], onDelete: NoAction)
+  createdAt      DateTime
 }

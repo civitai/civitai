@@ -1,7 +1,10 @@
 import {
+  IconBrandDeviantart,
   IconBrandDiscord,
   IconBrandFacebook,
+  IconBrandGithub,
   IconBrandInstagram,
+  IconBrandLinktree,
   IconBrandPatreon,
   IconBrandReddit,
   IconBrandTwitch,
@@ -40,4 +43,7 @@ const tablerIconMap: { [key in DomainLink]: TablerIcon } = {
   koFi: IconMug,
   coindrop: IconPigMoney,
   discord: IconBrandDiscord,
+  github: IconBrandGithub,
+  linktree: IconBrandLinktree,
+  deviantArt: IconBrandDeviantart,
 };

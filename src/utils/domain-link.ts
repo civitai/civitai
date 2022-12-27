@@ -8,10 +8,13 @@ export const domainLinks = {
   facebook: ['www.facebook.com'],
   instagram: ['www.instagram.com'],
   buyMeACoffee: ['www.buymeacoffee.com'],
-  patreon: ['www.patreon.com'],
+  patreon: ['patreon.com', 'www.patreon.com'],
   koFi: ['ko-fi.com'],
   coindrop: ['coindrop.to'],
   discord: ['discord.gg'],
+  github: ['github.com'],
+  linktree: ['linktr.ee'],
+  deviantArt: ['www.deviantart.com', 'deviantart.com'],
 };
 
 const sortArray = (Object.keys(domainLinks) as (string | undefined)[]).concat(undefined);

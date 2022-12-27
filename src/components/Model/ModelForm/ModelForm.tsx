@@ -11,18 +11,16 @@ import {
   Alert,
   ThemeIcon,
 } from '@mantine/core';
-import { showNotification } from '@mantine/notifications';
 import { Model, ModelStatus, ModelType, TagTarget } from '@prisma/client';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconArrowDown,
   IconArrowLeft,
   IconArrowUp,
-  IconCheck,
   IconExclamationMark,
   IconPlus,
   IconTrash,
-  IconX,
 } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -49,11 +47,10 @@ import { ModelFileInput, modelFileSchema } from '~/server/schema/model-file.sche
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ModelById } from '~/types/router';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { openConfirmModal } from '@mantine/modals';
 import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
 
 const schema = modelSchema.extend({
@@ -153,8 +150,10 @@ export function ModelForm({ model }: Props) {
   }, [tagsOnModels, tags]);
 
   const mutating = addMutation.isLoading || updateMutation.isLoading;
-  const [poi, nsfw] = form.watch(['poi', 'nsfw']);
+  const [poi, nsfw, type] = form.watch(['poi', 'nsfw', 'type']);
   const poiNsfw = poi && nsfw;
+  const acceptsTrainedWords = ['Checkpoint', 'TextualInversion', 'LORA'].includes(type);
+  const isTextualInversion = type === 'TextualInversion';
 
   const handleSubmit = (values: z.infer<typeof schema>) => {
     function runMutation(options = { asDraft: false }) {
@@ -164,11 +163,9 @@ export function ModelForm({ model }: Props) {
         async onSuccess(results: Model | undefined, input: { id?: number }) {
           const modelLink = `/models/${results?.id}/${slugit(results?.name ?? '')}`;
 
-          showNotification({
+          showSuccessNotification({
             title: 'Your model was saved',
             message: `Successfully ${editing ? 'updated' : 'created'} the model.`,
-            color: 'teal',
-            icon: <IconCheck size={18} />,
           });
           await queryUtils.model.invalidate();
           await queryUtils.tag.invalidate();
@@ -177,13 +174,9 @@ export function ModelForm({ model }: Props) {
           });
         },
         onError(error: TRPCClientErrorBase<DefaultErrorShape>) {
-          const message = error.message;
-
-          showNotification({
+          showErrorNotification({
             title: 'Could not save model',
-            message: `An error occurred while saving the model: ${message}`,
-            color: 'red',
-            icon: <IconX size={18} />,
+            error: new Error(`An error occurred while saving the model: ${error.message}`),
           });
         },
       };
@@ -195,6 +188,21 @@ export function ModelForm({ model }: Props) {
           const match = tags.find((x) => x.name === name);
           return match ?? { name };
         }),
+        modelVersions: isTextualInversion
+          ? values.modelVersions.map((version) => {
+              const files = version.files ?? [];
+              const hasNegativeFile = files.findIndex((file) => file.type === 'Negative') > -1;
+              if (!hasNegativeFile) return version;
+
+              const trainedWords = version.trainedWords ?? [];
+              const [firstWord] = trainedWords;
+
+              return {
+                ...version,
+                trainedWords: firstWord ? [firstWord, `${firstWord}-neg`] : [],
+              };
+            })
+          : values.modelVersions,
       };
 
       if (editing) updateMutation.mutate(data as UpdateModelProps, commonOptions);
@@ -235,6 +243,30 @@ export function ModelForm({ model }: Props) {
     }
 
     runMutation();
+  };
+
+  const handleModelTypeChange = (value: ModelType) => {
+    switch (value) {
+      case 'TextualInversion':
+        fields.forEach((_, index) => {
+          const modelVersion = form.getValues(`modelVersions.${index}`);
+          const trainedWords = modelVersion.trainedWords ?? [];
+          const [firstWord] = trainedWords;
+
+          if (firstWord)
+            form.setValue(`modelVersions.${index}.trainedWords`, [firstWord, `${firstWord}-neg`]);
+        });
+        break;
+      case 'Hypernetwork':
+      case 'AestheticGradient':
+        fields.forEach((_, index) => {
+          form.setValue(`modelVersions.${index}.trainedWords`, []);
+          form.setValue(`modelVersions.${index}.skipTrainedWords`, true);
+        });
+        break;
+      default:
+        break;
+    }
   };
 
   return (
@@ -360,28 +392,38 @@ export function ModelForm({ model }: Props) {
                             editorSize="md"
                           />
                         </Grid.Col>
-                        <Grid.Col span={12}>
-                          <Stack spacing="xs">
-                            {!skipTrainedWords && (
-                              <InputMultiSelect
-                                name={`modelVersions.${index}.trainedWords`}
-                                label="Trigger Words"
-                                placeholder="e.g.: Master Chief"
-                                description="Please input the words you have trained your model with"
-                                data={trainedWords}
-                                creatable
-                                getCreateLabel={(query) => `+ Create ${query}`}
-                                clearable
-                                searchable
-                                required
+                        {acceptsTrainedWords && (
+                          <Grid.Col span={12}>
+                            <Stack spacing="xs">
+                              {!skipTrainedWords && (
+                                <InputMultiSelect
+                                  name={`modelVersions.${index}.trainedWords`}
+                                  label="Trigger Words"
+                                  placeholder="e.g.: Master Chief"
+                                  description={`Please input the words you have trained your model with${
+                                    isTextualInversion ? ' (max 1 word)' : ''
+                                  }`}
+                                  data={trainedWords}
+                                  getCreateLabel={(query) => `+ Create ${query}`}
+                                  maxSelectedValues={type === 'TextualInversion' ? 1 : undefined}
+                                  creatable
+                                  clearable
+                                  searchable
+                                  required
+                                />
+                              )}
+                              <InputSwitch
+                                name={`modelVersions.${index}.skipTrainedWords`}
+                                label="This version doesn't require any trigger words"
+                                onChange={(e) =>
+                                  e.target.checked
+                                    ? form.setValue(`modelVersions.${index}.trainedWords`, [])
+                                    : undefined
+                                }
                               />
-                            )}
-                            <InputSwitch
-                              name={`modelVersions.${index}.skipTrainedWords`}
-                              label="This version doesn't require any trigger words"
-                            />
-                          </Stack>
-                        </Grid.Col>
+                            </Stack>
+                          </Grid.Col>
+                        )}
                         <Grid.Col span={6}>
                           <InputNumber
                             name={`modelVersions.${index}.epochs`}
@@ -440,6 +482,7 @@ export function ModelForm({ model }: Props) {
                       label: splitUppercase(type),
                       value: type,
                     }))}
+                    onChange={handleModelTypeChange}
                     withAsterisk
                   />
 

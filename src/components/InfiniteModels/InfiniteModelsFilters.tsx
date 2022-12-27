@@ -3,13 +3,19 @@ import { ModelType, MetricTimeframe } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { splitUppercase } from '~/utils/string-helpers';
-import { deleteCookie, setCookie } from 'cookies-next';
+import { deleteCookie, setCookie as sc } from 'cookies-next';
 import { immer } from 'zustand/middleware/immer';
 import { modelFilterSchema, useCookies } from '~/providers/CookiesProvider';
 import { Popover, ActionIcon, Stack, Checkbox, Indicator, Divider } from '@mantine/core';
 import { IconFilter } from '@tabler/icons';
 import { z } from 'zod';
 import { BaseModel, constants } from '~/server/common/constants';
+import dayjs from 'dayjs';
+
+const setCookie = (key: string, data: any) => // eslint-disable-line
+  sc(key, data, {
+    expires: dayjs().add(1, 'year').toDate(),
+  });
 
 type FilterProps = z.input<typeof modelFilterSchema>;
 

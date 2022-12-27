@@ -1,4 +1,4 @@
-import { Group, Stack, Text, Button, Menu, ActionIcon } from '@mantine/core';
+import { Badge, Group, Stack, Text, Button, Menu, ActionIcon } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag } from '@tabler/icons';
 import { useState } from 'react';
@@ -28,6 +28,7 @@ export function CommentSectionItem({ comment, modelId }: Props) {
     { commentId: comment.id },
     { initialData: comment.reactions }
   );
+  const { data: model } = trpc.model.getById.useQuery({ id: comment.modelId });
 
   const saveCommentMutation = trpc.comment.upsert.useMutation({
     async onSuccess() {
@@ -159,6 +160,11 @@ export function CommentSectionItem({ comment, modelId }: Props) {
               <Text size="sm" weight="bold">
                 {comment.user.username}
               </Text>
+              {comment.user.id === model?.user.id ? (
+                <Badge color="violet" size="xs">
+                  OP
+                </Badge>
+              ) : null}
               <Text color="dimmed" size="xs">
                 {daysFromNow(comment.createdAt)}
               </Text>

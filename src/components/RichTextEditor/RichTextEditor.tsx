@@ -42,7 +42,7 @@ export function RichTextEditor({
   const extensions: Extensions = [
     Placeholder.configure({ placeholder }),
     StarterKit.configure({
-      heading: !addHeading ? false : undefined,
+      heading: !addHeading ? false : { levels: [1, 2, 3] },
       bulletList: !addList ? false : undefined,
       orderedList: !addList ? false : undefined,
       bold: !addFormatting ? false : undefined,

@@ -17,6 +17,7 @@ import { questionRouter } from './question.router';
 import { answerRouter } from './answer.router';
 import { commentv2Router } from './commentv2.router';
 import { reactionRouter } from './reaction.router';
+import { downloadRouter } from '~/server/routers/download.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -25,6 +26,7 @@ export const appRouter = router({
   comment: commentRouter,
   model: modelRouter,
   notification: notificationRouter,
+  download: downloadRouter,
   review: reviewRouter,
   tag: tagRouter,
   user: userRouter,

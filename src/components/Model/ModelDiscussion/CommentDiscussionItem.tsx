@@ -1,4 +1,4 @@
-import { ActionIcon, Button, Card, Group, Menu, Text } from '@mantine/core';
+import { ActionIcon, Badge, Button, Card, Group, Menu, Text } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { ReviewReactions } from '@prisma/client';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconMessageCircle2 } from '@tabler/icons';
@@ -32,6 +32,7 @@ export function CommentDiscussionItem({ comment }: Props) {
     { id: comment.id },
     { initialData: comment._count.comments }
   );
+  const { data: model } = trpc.model.getById.useQuery({ id: comment.modelId });
 
   const queryUtils = trpc.useContext();
   const deleteMutation = trpc.comment.delete.useMutation({
@@ -109,8 +110,21 @@ export function CommentDiscussionItem({ comment }: Props) {
 
   return (
     <Card radius="md" p="md" withBorder>
-      <Group align="flex-start" sx={{ justifyContent: 'space-between' }} noWrap>
-        <UserAvatar user={comment.user} subText={daysFromNow(comment.createdAt)} withUsername />
+      <Group align="flex-start" position="apart" noWrap>
+        <Group spacing={4}>
+          <UserAvatar
+            user={comment.user}
+            subText={daysFromNow(comment.createdAt)}
+            badge={
+              comment.user.id === model?.user.id ? (
+                <Badge size="xs" color="violet">
+                  OP
+                </Badge>
+              ) : null
+            }
+            withUsername
+          />
+        </Group>
         <Menu position="bottom-end">
           <Menu.Target>
             <ActionIcon size="xs" variant="subtle">
