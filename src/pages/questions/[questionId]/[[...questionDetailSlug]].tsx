@@ -18,7 +18,6 @@ import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelper
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { QuestionDetail } from '~/components/Questions/QuestionDetail';
 import { ReactionButton } from '~/components/Reaction/ReactionButton';
 import { AnswerDetail } from '~/components/Questions/AnswerDetail';
 import { AnswerForm } from '~/components/Questions/AnswerForm';
@@ -27,6 +26,9 @@ import { ReviewReactions } from '@prisma/client';
 import { AnswerVotes } from '~/components/Questions/AnswerVotes';
 import { prisma } from '~/server/db/client';
 import { slugit } from '~/utils/string-helpers';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { daysFromNow } from '~/utils/date-helpers';
 
 export const getServerSideProps: GetServerSideProps<{
   id: number;
@@ -87,10 +89,8 @@ export default function QuestionPage(
   const { classes } = useStyles();
 
   const theme = useMantineTheme();
-  const { data: question, isLoading: loadingQuestion } = trpc.question.getById.useQuery({ id });
+  const { data: question } = trpc.question.getById.useQuery({ id });
   const { data: answers } = trpc.answer.getAll.useQuery({ questionId: id });
-
-  useEffect(() => console.log({ answers }), [answers]);
 
   const isModerator = user?.isModerator ?? false;
   const isOwner = user?.id === question?.user.id;
@@ -129,7 +129,12 @@ export default function QuestionPage(
             />
           </Stack>
           <Stack>
-            <QuestionDetail question={question} />
+            <UserAvatar
+              user={question.user}
+              subText={`${daysFromNow(question.createdAt)}`}
+              withUsername
+            />
+            <RenderHtml html={question.content} />
             {/* TODO comments */}
           </Stack>
         </div>

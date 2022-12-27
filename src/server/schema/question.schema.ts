@@ -1,10 +1,14 @@
+import { MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
+import { QuestionSort } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 
 export type GetQuestionsInput = z.infer<typeof getQuestionsSchema>;
 export const getQuestionsSchema = getAllQuerySchema.extend({
   tagname: z.string().optional(),
+  sort: z.nativeEnum(QuestionSort).default(QuestionSort.Newest),
+  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
 });
 
 export type UpsertQuestionInput = z.infer<typeof upsertQuestionSchema>;

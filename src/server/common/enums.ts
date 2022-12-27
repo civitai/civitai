@@ -28,3 +28,8 @@ export enum ReviewFilter {
   NSFW = 'nsfw',
   IncludesImages = 'includes-images',
 }
+
+export enum QuestionSort {
+  Newest = 'Newest',
+  MostLiked = 'Most Liked',
+}
