@@ -21,6 +21,7 @@ import {
   IconLogout,
   IconPalette,
   IconPlus,
+  // IconQuestionCircle,
   IconSettings,
   IconUpload,
   IconUserCircle,
@@ -388,6 +389,15 @@ export function AppHeader({ links }: Props) {
                       href={`/?favorites=true`}
                     >
                       Liked models
+                    </Menu.Item>
+                    <Menu.Item
+                      // icon={
+                      //   // <IconQuestionCircle size={14} color={theme.colors.pink[6]} stroke={1.5} />
+                      // }
+                      component={NextLink}
+                      href="/questions"
+                    >
+                      Questions
                     </Menu.Item>
                     <Menu.Item
                       icon={<IconUsers size={14} stroke={1.5} />}

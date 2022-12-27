@@ -1,9 +1,7 @@
-import { Button, ButtonProps, Badge, BadgeProps, Center, useMantineTheme } from '@mantine/core';
+import { ButtonProps, Badge, Center, useMantineTheme, BadgeProps } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { IconCheck, IconX } from '@tabler/icons';
 import { createContext, useContext, useState } from 'react';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { trpc } from '~/utils/trpc';
 
 interface AnswerVoteContext {
@@ -94,7 +92,7 @@ export function AnswerVotes({
   );
 }
 
-type VoteButtonProps = Omit<ButtonProps, 'children'>;
+type VoteButtonProps = Omit<BadgeProps, 'children'>;
 function AnswerVoteCheck(props: VoteButtonProps) {
   const theme = useMantineTheme();
   const { vote, setCheck, checkCount, disabled } = useContext(AnswerVoteCtx);
@@ -104,21 +102,18 @@ function AnswerVoteCheck(props: VoteButtonProps) {
 
   return (
     <Badge
-      // variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
-      // variant={active ? 'filled' : 'outline'}
       variant="light"
-      // color={active ? 'green' : 'gray'}
       color={active ? 'green' : 'gray'}
       leftSection={
         <Center>
-          <IconCheck size={18} color={theme.colors.green[7]} />
+          <IconCheck size={18} />
         </Center>
       }
       sx={{ userSelect: 'none', ...(!disabled && { cursor: 'pointer' }) }}
       onClick={!disabled ? handleClick : undefined}
       size="lg"
       px={5}
-      // py="md"
+      {...props}
     >
       {checkCount}
     </Badge>
@@ -134,20 +129,18 @@ function AnswerVoteCross(props: VoteButtonProps) {
 
   return (
     <Badge
-      // variant={theme.colorScheme === 'dark' ? 'light' : !active ? 'light' : 'filled'}
-      // variant={active ? 'filled' : 'outline'}
       variant="light"
       color={active ? 'red' : 'gray'}
       leftSection={
         <Center>
-          <IconX size={18} color={theme.colors.red[7]} />
+          <IconX size={18} />
         </Center>
       }
       sx={{ userSelect: 'none', ...(!disabled && { cursor: 'pointer' }) }}
       onClick={!disabled ? handleClick : undefined}
       size="lg"
       px={5}
-      // py="md"
+      {...props}
     >
       {crossCount}
     </Badge>

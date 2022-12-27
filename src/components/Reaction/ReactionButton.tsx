@@ -56,7 +56,7 @@ export const ReactionButton = ({
       color={hasReacted ? 'pink' : 'gray'}
       leftSection={
         <Center>
-          <Icon size={18} color={theme.colors.pink[7]} />
+          <Icon size={18} />
         </Center>
       }
       sx={{ userSelect: 'none', ...(!disabled && { cursor: 'pointer' }) }}
