@@ -119,13 +119,13 @@ export default function QuestionPage(
         description={removeTags(question.content ?? '')}
         // TODO - determine if we need to do anything to handle content that has images/videos in it
       />
-      <Container className={classes.grid} pb="xl">
+      <Container className={classes.grid} pb={60}>
         <div className={classes.fullWidth}>
           <QuestionHeader question={question} />
         </div>
-        <Divider className={classes.fullWidth} my="md" />
+        <Divider className={classes.fullWidth} />
         <div className={classes.row}>
-          <div>
+          <Stack>
             <ReactionButton
               reaction={ReviewReactions.Heart}
               userReacted={question.userReactions.some((x) => x.reaction === ReviewReactions.Heart)}
@@ -134,7 +134,7 @@ export default function QuestionPage(
               entityId={question.id}
               disabled={question.user.id === user?.id}
             />
-          </div>
+          </Stack>
           <Stack>
             <QuestionDetail question={question} />
             {/* TODO comments */}
@@ -153,7 +153,7 @@ export default function QuestionPage(
 
         {answers?.map((answer, index) => (
           <div key={answer.id} className={classes.row}>
-            <Stack spacing="xs">
+            <Stack spacing={4}>
               <ReactionButton
                 reaction={ReviewReactions.Heart}
                 userReacted={answer.userReactions.some((x) => x.reaction === ReviewReactions.Heart)}

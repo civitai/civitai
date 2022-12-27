@@ -7,7 +7,9 @@ import {
   Title,
   Badge,
   Group,
+  Button,
   createStyles,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconHeart, IconMessageCircle } from '@tabler/icons';
 import { GetServerSideProps } from 'next';
@@ -35,6 +37,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 
 export default function Questions() {
   const router = useRouter();
+  const theme = useMantineTheme();
   const page = Number(router.query.page ?? 1);
   const tagname = router.query.tagname
     ? ([] as string[]).concat(router.query.tagname)[0]
@@ -50,7 +53,16 @@ export default function Questions() {
 
   return (
     <Container pb="xl">
-      <Stack spacing="xl">
+      <Stack spacing="md">
+        {/* TODO - filters */}
+        <Group position="apart">
+          <Title>Questions</Title>
+          <Group>
+            <Link href="/questions/create" passHref>
+              <Button component="a">Ask question</Button>
+            </Link>
+          </Group>
+        </Group>
         {/* TODO - filters */}
         {!questions?.items?.length ? (
           <Center>
@@ -70,7 +82,7 @@ export default function Questions() {
                       <Title order={3} className={classes.title}>
                         {question.title}
                       </Title>
-                      <Group position="apart">
+                      <Group position="apart" spacing="sm">
                         <Group spacing={4}>
                           {question.tags.map((tag, index) => (
                             <Badge key={index}>{tag.name}</Badge>
@@ -78,6 +90,8 @@ export default function Questions() {
                         </Group>
                         <Group spacing={4}>
                           <Badge
+                            variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
+                            color="pink"
                             leftSection={
                               <Center>
                                 <IconHeart size={16} />
@@ -87,6 +101,7 @@ export default function Questions() {
                             {question.rank.heartCount}
                           </Badge>
                           <Badge
+                            variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
                             color="green"
                             leftSection={
                               <Center>
