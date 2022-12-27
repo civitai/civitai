@@ -633,18 +633,17 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
   const refreshUserRank = async () =>
     await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "UserRank"');
 
+  const clearDayMetrics = async () =>
+    await prisma.$executeRawUnsafe(`
+    UPDATE "ModelMetric" SET "downloadCount" = 0, "ratingCount" = 0, rating = 0, "favoriteCount" = 0, "commentCount" = 0 WHERE timeframe = 'day';
+    UPDATE "ModelVersionMetric" SET "downloadCount" = 0, "ratingCount" = 0, rating = 0, "favoriteCount" = 0, "commentCount" = 0 WHERE timeframe = 'day';
+    UPDATE "QuestionMetric" SET "answerCount" = 0, "commentCount" = 0, "heartCount" = 0 WHERE timeframe = 'day';
+    UPDATE "AnswerMetric" SET "heartCount" = 0, "checkCount" = 0, "crossCount" = 0, "commentCount" = 0 WHERE timeframe = 'day';
+  `);
+
   // If this is the first metric update of the day, reset the day metrics
   // -------------------------------------------------------------------
-  if (lastUpdateDate.getDate() !== new Date().getDate()) {
-    await prisma?.modelMetric.updateMany({
-      where: { timeframe: MetricTimeframe.Day },
-      data: {
-        downloadCount: 0,
-        ratingCount: 0,
-        rating: 0,
-      },
-    });
-  }
+  if (lastUpdateDate.getDate() !== new Date().getDate()) await clearDayMetrics();
 
   // Update all affected metrics
   // --------------------------------------------
