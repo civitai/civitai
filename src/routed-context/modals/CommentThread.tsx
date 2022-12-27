@@ -100,6 +100,7 @@ export default createRoutedContext({
                 size="lg"
                 spacing="xs"
                 withUsername
+                linkToProfile
               />
               <CloseButton onClick={context.close} />
             </Group>

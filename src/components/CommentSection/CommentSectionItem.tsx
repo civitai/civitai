@@ -1,6 +1,7 @@
-import { Badge, Group, Stack, Text, Button, Menu, ActionIcon } from '@mantine/core';
+import { Anchor, Badge, Group, Stack, Text, Button, Menu, ActionIcon } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag } from '@tabler/icons';
+import Link from 'next/link';
 import { useState } from 'react';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -153,13 +154,15 @@ export function CommentSectionItem({ comment, modelId }: Props) {
   return (
     <Group align="flex-start" position="apart" noWrap>
       <Group align="flex-start" sx={{ flex: '1 1 0' }} noWrap>
-        <UserAvatar user={comment.user} size="md" />
+        <UserAvatar user={comment.user} size="md" linkToProfile />
         <Stack spacing="xs" sx={{ flex: '1 1 0' }}>
           <Stack spacing={0}>
             <Group spacing={8} align="center">
-              <Text size="sm" weight="bold">
-                {comment.user.username}
-              </Text>
+              <Link href={`/user/${comment.user.username}`} passHref>
+                <Anchor variant="text" size="sm" weight="bold">
+                  {comment.user.username}
+                </Anchor>
+              </Link>
               {comment.user.id === model?.user.id ? (
                 <Badge color="violet" size="xs">
                   OP

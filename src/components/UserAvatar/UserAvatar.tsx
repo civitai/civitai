@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Avatar,
   AvatarProps,
   BadgeProps,
@@ -9,6 +10,7 @@ import {
   Text,
 } from '@mantine/core';
 import { User } from '@prisma/client';
+import Link from 'next/link';
 
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { getInitials } from '~/utils/string-helpers';
@@ -30,10 +32,10 @@ export function UserAvatar({
   badge,
   size = 'sm',
   spacing = 4,
+  linkToProfile = false,
 }: Props) {
   const { textSize, subTextSize } = mapAvatarTextSize[size];
-
-  return (
+  const avatar = (
     <Group align="center" spacing={spacing} noWrap>
       <Avatar
         src={user?.image ? getEdgeUrl(user.image, { width: 96 }) : undefined}
@@ -65,6 +67,14 @@ export function UserAvatar({
       ) : null}
     </Group>
   );
+
+  return linkToProfile ? (
+    <Link href={`/user/${user?.username}`} passHref>
+      <Anchor variant="text">{avatar}</Anchor>
+    </Link>
+  ) : (
+    avatar
+  );
 }
 
 type Props = {
@@ -76,4 +86,5 @@ type Props = {
   size?: MantineSize;
   spacing?: MantineNumberSize;
   badge?: React.ReactElement<BadgeProps> | null;
+  linkToProfile?: boolean;
 };
