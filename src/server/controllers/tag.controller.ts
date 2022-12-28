@@ -17,13 +17,14 @@ export const getTagWithModelCountHandler = async ({
 
 export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => {
   try {
-    const { withModels = false, limit = DEFAULT_PAGE_SIZE, page, query } = input || {};
+    const { withModels = false, limit = DEFAULT_PAGE_SIZE, page, query, entityType } = input || {};
     const { take, skip } = getPagination(limit, page);
 
     const results = await getTags({
       take,
       skip,
       query,
+      target: entityType,
       select: withModels
         ? {
             id: true,

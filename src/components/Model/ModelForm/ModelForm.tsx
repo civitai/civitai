@@ -11,8 +11,8 @@ import {
   Alert,
   ThemeIcon,
 } from '@mantine/core';
+import { Model, ModelStatus, ModelType, TagTarget } from '@prisma/client';
 import { openConfirmModal } from '@mantine/modals';
-import { Model, ModelStatus, ModelType } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconArrowDown,
@@ -84,7 +84,7 @@ export function ModelForm({ model }: Props) {
   const editing = !!model;
 
   const { data: { items: tags } = { items: [] } } = trpc.tag.getAll.useQuery(
-    { limit: 0 },
+    { limit: 0, entityType: TagTarget.Model },
     { cacheTime: Infinity, staleTime: Infinity }
   );
   const addMutation = trpc.model.add.useMutation();

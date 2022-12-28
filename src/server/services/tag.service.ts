@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, TagTarget } from '@prisma/client';
 
 import { prisma } from '~/server/db/client';
 
@@ -21,15 +21,18 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
   select,
   take,
   skip,
+  target,
   query,
 }: {
   select: TSelect;
   take?: number;
   skip?: number;
+  target?: TagTarget;
   query?: string;
 }) => {
   const where: Prisma.TagWhereInput = {
     name: query ? { contains: query, mode: 'insensitive' } : undefined,
+    target,
   };
 
   const items = await prisma.tag.findMany({
