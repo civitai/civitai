@@ -29,7 +29,7 @@ export function withController<
   }) => Partial<TComponentProps>
 ) {
   function ControlledInput({ name, ...props }: TComponentProps & { name: TName }) {
-    const { control } = useFormContext<TFieldValues>();
+    const { control, ...form } = useFormContext<TFieldValues>();
     return (
       <Controller
         control={control}
@@ -60,7 +60,14 @@ export function withController<
             ...mappedProps,
           };
 
-          return <BaseComponent {...(props as TComponentProps & { name: TName })} {...mapped} />;
+          // TODO - instead of passing reset prop, find a way to pass an onReset handler
+          return (
+            <BaseComponent
+              {...(props as TComponentProps & { name: TName })}
+              {...mapped}
+              reset={(form as any).resetCount}
+            />
+          );
         }}
       />
     );
