@@ -123,6 +123,7 @@ export function CommentDiscussionItem({ comment }: Props) {
               ) : null
             }
             withUsername
+            linkToProfile
           />
         </Group>
         <Menu position="bottom-end">

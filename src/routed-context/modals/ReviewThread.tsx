@@ -152,6 +152,7 @@ export default createRoutedContext({
                   size="lg"
                   spacing="xs"
                   withUsername
+                  linkToProfile
                 />
                 <Rating value={review.rating} fractions={2} readOnly />
               </Group>
