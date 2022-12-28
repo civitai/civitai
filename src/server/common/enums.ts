@@ -29,6 +29,16 @@ export enum ReviewFilter {
   IncludesImages = 'includes-images',
 }
 
+export enum QuestionSort {
+  Newest = 'Newest',
+  MostLiked = 'Most Liked',
+}
+
+export enum QuestionStatus {
+  Answered = 'Answered',
+  Unanswered = 'Unanswered',
+}
+
 export enum BountySort {
   HighestBounty = 'HighestBounty',
   MostLiked = 'MostLiked',

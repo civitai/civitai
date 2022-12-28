@@ -163,6 +163,7 @@ export function ReviewDiscussionItem({ review }: Props) {
               ) : null
             }
             withUsername
+            linkToProfile
           />
           <Menu position="bottom-end">
             <Menu.Target>

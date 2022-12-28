@@ -12,6 +12,7 @@ import {
   Transition,
   Paper,
   Grid,
+  Badge,
 } from '@mantine/core';
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
@@ -22,6 +23,7 @@ import {
   IconLogout,
   IconPalette,
   IconPlus,
+  IconQuestionCircle,
   IconSettings,
   IconUpload,
   IconUserCircle,
@@ -218,6 +220,23 @@ export function AppHeader({ links }: Props) {
               </Group>
             </Anchor>
           </Link>,
+          <Link key="questions" href={`/questions`} passHref>
+            <Anchor
+              className={cx(classes.link, {
+                [classes.linkActive]: router.asPath.includes(`/questions`),
+              })}
+              variant="text"
+              onClick={() => closeBurger()}
+            >
+              <Group align="center" spacing="xs">
+                <IconQuestionCircle stroke={1.5} />
+                Questions{' '}
+                <Badge color="yellow" size="xs">
+                  Beta
+                </Badge>
+              </Group>
+            </Anchor>
+          </Link>,
           <Link
             key="your-following-menu-item"
             href={`/user/${session.user.username}/following`}
@@ -403,6 +422,16 @@ export function AppHeader({ links }: Props) {
                       href={`/?favorites=true`}
                     >
                       Liked models
+                    </Menu.Item>
+                    <Menu.Item
+                      icon={<IconQuestionCircle size={14} stroke={1.5} />}
+                      component={NextLink}
+                      href="/questions"
+                    >
+                      Questions{' '}
+                      <Badge color="yellow" size="xs">
+                        Beta
+                      </Badge>
                     </Menu.Item>
                     <Menu.Item
                       icon={<IconUsers size={14} stroke={1.5} />}

@@ -8,6 +8,7 @@ import { useForm } from '@mantine/form';
 import { useRouter } from 'next/router';
 import { useModelFilters } from '~/hooks/useModelFilters';
 import { slugit } from '~/utils/string-helpers';
+import { TagTarget } from '@prisma/client';
 
 const limit = 3;
 
@@ -53,7 +54,7 @@ export function ListSearch({ onSearch }: Props) {
     query.startsWith('#') ? query.substring(1).toLowerCase() : query.toLowerCase();
 
   const { data: tags } = trpc.tag.getAll.useQuery(
-    { query: parseTagQuery(value), limit },
+    { query: parseTagQuery(value), limit, entityType: TagTarget.Model },
     { enabled: !!value.length && canQueryTags, keepPreviousData: true }
   );
 

@@ -1,4 +1,4 @@
-import { MetricTimeframe, ModelStatus, Prisma } from '@prisma/client';
+import { MetricTimeframe, ModelStatus, Prisma, TagTarget } from '@prisma/client';
 import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
 
@@ -8,6 +8,7 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
 import { prepareFile } from '~/utils/file-helpers';
 import { env } from '~/env/server.mjs';
+import { isNotTag, isTag } from '~/server/schema/tag.schema';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   input: { id },
@@ -176,8 +177,8 @@ export const createModel = async ({
         create: tagsOnModels?.map(({ name }) => ({
           tag: {
             connectOrCreate: {
-              where: { name },
-              create: { name },
+              where: { name_target: { name, target: TagTarget.Model } },
+              create: { name, target: TagTarget.Model },
             },
           },
         })),
@@ -253,17 +254,6 @@ export const updateModel = async ({
     },
     { versionsToCreate: [] as PayloadVersion[], versionsToUpdate: [] as PayloadVersion[] }
   );
-
-  // Determine which tags to create/update
-  const { tagsToCreate, tagsToUpdate } = tagsOnModels?.reduce(
-    (acc, current) => {
-      if (!current.id) acc.tagsToCreate.push(current);
-      else acc.tagsToUpdate.push(current);
-
-      return acc;
-    },
-    { tagsToCreate: [] as typeof tagsOnModels, tagsToUpdate: [] as typeof tagsOnModels }
-  ) ?? { tagsToCreate: [], tagsToUpdate: [] };
 
   const versionIds = modelVersions.map((version) => version.id).filter(Boolean) as number[];
   const hasNewVersions = modelVersions.some((x) => !x.id);
@@ -386,16 +376,24 @@ export const updateModel = async ({
           };
         }),
       },
-      tagsOnModels: {
-        deleteMany: {},
-        connectOrCreate: tagsToUpdate.map((tag) => ({
-          where: { modelId_tagId: { modelId: id, tagId: tag.id as number } },
-          create: { tagId: tag.id as number },
-        })),
-        create: tagsToCreate.map((tag) => ({
-          tag: { create: { name: tag.name.toLowerCase() } },
-        })),
-      },
+      tagsOnModels: tagsOnModels
+        ? {
+            deleteMany: {
+              tagId: {
+                notIn: tagsOnModels.filter(isTag).map((x) => x.id),
+              },
+            },
+            connectOrCreate: tagsOnModels.filter(isTag).map((tag) => ({
+              where: { modelId_tagId: { tagId: tag.id, modelId: id } },
+              create: { tagId: tag.id },
+            })),
+            create: tagsOnModels.filter(isNotTag).map(({ name }) => ({
+              tag: {
+                create: { name, target: TagTarget.Model },
+              },
+            })),
+          }
+        : undefined,
     },
   });
 
