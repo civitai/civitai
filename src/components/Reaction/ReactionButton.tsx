@@ -18,7 +18,7 @@ const reactionIcons = {
 type ReactionButtonProps = ToggleReactionInput & {
   userReacted?: boolean;
   count?: number;
-  disabled: boolean;
+  disabled?: boolean;
 };
 
 export const ReactionButton = ({

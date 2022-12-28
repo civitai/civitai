@@ -11,7 +11,6 @@ export const constants = {
     sort: QuestionSort.MostLiked,
     period: MetricTimeframe.AllTime,
     limit: 50,
-    page: 1,
   },
   baseModels: ['SD 1.4', 'SD 1.5', 'SD 2.0', 'SD 2.1', 'SD 2.0 768', 'Other'],
   modelFileTypes: ['Model', 'Pruned Model', 'Negative', 'Training Data', 'VAE', 'Config'],

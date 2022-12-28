@@ -125,7 +125,6 @@ export default function QuestionPage(
               count={question.rank?.heartCountAllTime}
               entityType="question"
               entityId={question.id}
-              disabled={question.user.id === user?.id}
             />
           </Stack>
           <Stack>
@@ -158,14 +157,12 @@ export default function QuestionPage(
                 count={answer.rank?.heartCountAllTime}
                 entityType="answer"
                 entityId={answer.id}
-                disabled={answer.user.id === user?.id}
               />
               <AnswerVotes
                 userVote={answer.userVote?.vote}
                 answerId={answer.id}
                 crossCount={answer.rank?.crossCountAllTime}
                 checkCount={answer.rank?.checkCountAllTime}
-                disabled={answer.user.id === user?.id}
                 questionId={question.id}
                 questionOwnerId={question.user.id}
               >

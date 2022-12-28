@@ -42,15 +42,22 @@ export const setAnswerVote = async ({
       vote,
     },
     update: {
+      createdAt: new Date(),
       vote,
     },
   });
 
   if (questionId && questionOwnerId === userId) {
+    const lastVote = await prisma.answerVote.findFirst({
+      where: { userId, vote: true, answer: { questionId } },
+      select: { answerId: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
     await prisma.question.update({
       where: { id: questionId },
       data: {
-        selectedAnswerId: result.vote ? id : null,
+        selectedAnswerId: lastVote?.answerId ?? null,
       },
     });
   }
