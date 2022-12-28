@@ -118,7 +118,6 @@ export const getModelsInfiniteHandler = async ({
           rating: rank[`rating${input.period}`],
         },
         image: modelVersions[0]?.images[0]?.image ?? {},
-        pendingClaim: reportStats && reportStats.ownershipPending > 0,
       };
     }),
   };
