@@ -1,10 +1,15 @@
 import { getByIdSchema } from './../schema/base.schema';
 import {
   deleteCommentV2Handler,
-  getCommentsV2Handler,
+  getCommentCountV2Handler,
+  getInfiniteCommentsV2Handler,
   upsertCommentV2Handler,
 } from './../controllers/commentv2.controller';
-import { getCommentsV2Schema, upsertCommentv2Schema } from './../schema/commentv2.schema';
+import {
+  commentConnectorSchema,
+  getCommentsV2Schema,
+  upsertCommentv2Schema,
+} from './../schema/commentv2.schema';
 import { middleware, router, publicProcedure, protectedProcedure } from '~/server/trpc';
 import { prisma } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -34,8 +39,14 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 });
 
 export const commentv2Router = router({
-  getAll: publicProcedure.input(getCommentsV2Schema).query(getCommentsV2Handler),
-  upsert: protectedProcedure.input(upsertCommentv2Schema).mutation(upsertCommentV2Handler),
-  delete: protectedProcedure.input(getByIdSchema).mutation(deleteCommentV2Handler),
-  // upsert: protectedProcedure
+  getInfinite: publicProcedure.input(getCommentsV2Schema).query(getInfiniteCommentsV2Handler),
+  getCount: publicProcedure.input(commentConnectorSchema).query(getCommentCountV2Handler),
+  upsert: protectedProcedure
+    .input(upsertCommentv2Schema)
+    .use(isOwnerOrModerator)
+    .mutation(upsertCommentV2Handler),
+  delete: protectedProcedure
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .mutation(deleteCommentV2Handler),
 });

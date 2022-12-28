@@ -39,7 +39,7 @@ export function UserAvatar({
     <Group align="center" spacing={spacing} noWrap>
       <Avatar
         src={user?.image ? getEdgeUrl(user.image, { width: 96 }) : undefined}
-        alt={`${user?.username}'s Avatar` ?? 'User avatar'}
+        alt={user?.username ? `${user.username}'s Avatar` : undefined}
         radius="xl"
         size={size}
         {...avatarProps}
