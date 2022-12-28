@@ -34,10 +34,10 @@ export function AnswerVotes({
 }) {
   const [vote, setVote] = useState<boolean | undefined | null>(userVote);
   const [crossCount, setCrossCount] = useState(
-    vote === false && !crossCount ? 1 : props.crossCount ?? 0
+    vote === false && !props.crossCount ? 1 : props.crossCount ?? 0
   );
   const [checkCount, setCheckCount] = useState(
-    vote === true && !checkCount ? 1 : props.checkCount ?? 0
+    vote === true && !props.checkCount ? 1 : props.checkCount ?? 0
   );
 
   const { mutate } = trpc.answer.vote.useMutation();
