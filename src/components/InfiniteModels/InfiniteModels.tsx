@@ -418,18 +418,17 @@ const MasonryItem = ({
 
   const isNew = data.createdAt > aDayAgo;
   const isUpdated = !isNew && data.lastVersionAt && data.lastVersionAt > aDayAgo;
-  const hasPendingClaimReports = data.pendingClaim;
 
   return (
     <Link href={`/models/${id}/${slugit(name)}`} passHref>
       <a>
         <Indicator
-          disabled={!isNew && !isUpdated && !hasPendingClaimReports}
+          disabled={!isNew && !isUpdated}
           withBorder
           size={24}
           radius="sm"
-          label={hasPendingClaimReports ? 'Under review' : isNew ? 'New' : 'Updated'}
-          color={hasPendingClaimReports ? 'yellow' : 'red'}
+          label={isNew ? 'New' : 'Updated'}
+          color="red"
           styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
           sx={{ opacity: isHidden ? 0.1 : undefined }}
         >
