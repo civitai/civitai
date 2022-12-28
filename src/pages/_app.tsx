@@ -86,7 +86,7 @@ function MyApp(props: CustomAppProps) {
                   },
                   Badge: {
                     styles: { leftSection: { lineHeight: 1 } },
-                    defaultProps: { radius: 'xs' },
+                    defaultProps: { radius: 'sm' },
                   },
                 },
               }}

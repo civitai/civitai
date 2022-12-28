@@ -194,16 +194,19 @@ function QuestionsList() {
                 <Group position="apart" spacing="sm">
                   <Group spacing={4}>
                     {question.tags.map((tag, index) => (
-                      <Badge key={index}>{tag.name}</Badge>
+                      <Badge key={index} size="xs">
+                        {tag.name}
+                      </Badge>
                     ))}
                   </Group>
                   <Group spacing={4}>
                     <Badge
                       variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
                       color={question.rank.heartCount ? 'pink' : 'gray'}
+                      size="xs"
                       leftSection={
                         <Center>
-                          <IconHeart size={16} />
+                          <IconHeart size={14} />
                         </Center>
                       }
                     >
@@ -212,9 +215,10 @@ function QuestionsList() {
                     <Badge
                       variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
                       color={question.selectedAnswerId ? 'green' : 'gray'}
+                      size="xs"
                       leftSection={
                         <Center>
-                          <IconMessageCircle size={16} />
+                          <IconMessageCircle size={14} />
                         </Center>
                       }
                     >
@@ -262,6 +266,10 @@ function QuestionsList() {
 const useStyles = createStyles((theme) => ({
   title: {
     overflowWrap: 'break-word',
+
+    [`@media(max-width: ${theme.breakpoints.sm}px)`]: {
+      fontSize: 16,
+    },
   },
 }));
 

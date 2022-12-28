@@ -12,6 +12,7 @@ import {
   Transition,
   Paper,
   Grid,
+  Badge,
 } from '@mantine/core';
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
@@ -229,7 +230,10 @@ export function AppHeader({ links }: Props) {
             >
               <Group align="center" spacing="xs">
                 <IconQuestionCircle stroke={1.5} />
-                Questions
+                Questions{' '}
+                <Badge color="yellow" size="xs">
+                  Beta
+                </Badge>
               </Group>
             </Anchor>
           </Link>,
@@ -424,7 +428,10 @@ export function AppHeader({ links }: Props) {
                       component={NextLink}
                       href="/questions"
                     >
-                      Questions
+                      Questions{' '}
+                      <Badge color="yellow" size="xs">
+                        Beta
+                      </Badge>
                     </Menu.Item>
                     <Menu.Item
                       icon={<IconUsers size={14} stroke={1.5} />}

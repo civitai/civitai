@@ -33,8 +33,12 @@ export function AnswerVotes({
   questionOwnerId: number;
 }) {
   const [vote, setVote] = useState<boolean | undefined | null>(userVote);
-  const [crossCount, setCrossCount] = useState(props.crossCount ?? 0);
-  const [checkCount, setCheckCount] = useState(props.checkCount ?? 0);
+  const [crossCount, setCrossCount] = useState(
+    vote === false && !crossCount ? 1 : props.crossCount ?? 0
+  );
+  const [checkCount, setCheckCount] = useState(
+    vote === true && !checkCount ? 1 : props.checkCount ?? 0
+  );
 
   const { mutate } = trpc.answer.vote.useMutation();
 

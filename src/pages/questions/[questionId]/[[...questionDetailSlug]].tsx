@@ -18,7 +18,6 @@ import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelper
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { ReactionButton } from '~/components/Reaction/ReactionButton';
 import { AnswerDetail } from '~/components/Questions/AnswerDetail';
 import { AnswerForm } from '~/components/Questions/AnswerForm';
 import { useEffect } from 'react';
@@ -29,6 +28,7 @@ import { slugit } from '~/utils/string-helpers';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { daysFromNow } from '~/utils/date-helpers';
+import { FavoriteBadge } from '~/components/Questions/FavoriteBadge';
 
 export const getServerSideProps: GetServerSideProps<{
   id: number;
@@ -119,8 +119,7 @@ export default function QuestionPage(
         <Divider className={classes.fullWidth} />
         <div className={classes.row}>
           <Stack>
-            <ReactionButton
-              reaction={ReviewReactions.Heart}
+            <FavoriteBadge
               userReacted={question.userReactions.some((x) => x.reaction === ReviewReactions.Heart)}
               count={question.rank?.heartCountAllTime}
               entityType="question"
@@ -151,8 +150,7 @@ export default function QuestionPage(
         {answers?.map((answer, index) => (
           <div key={answer.id} className={classes.row}>
             <Stack spacing={4}>
-              <ReactionButton
-                reaction={ReviewReactions.Heart}
+              <FavoriteBadge
                 userReacted={answer.userReactions.some((x) => x.reaction === ReviewReactions.Heart)}
                 count={answer.rank?.heartCountAllTime}
                 entityType="answer"

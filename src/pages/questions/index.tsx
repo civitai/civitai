@@ -1,4 +1,4 @@
-import { Container, Stack, Title, Group, Button } from '@mantine/core';
+import { Container, Stack, Title, Group, Button, Indicator, Badge } from '@mantine/core';
 import { GetServerSideProps } from 'next';
 import Link from 'next/link';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
@@ -39,7 +39,12 @@ export default function QuestionsList() {
       <Container pb="xl">
         <Stack spacing="md">
           <Group position="apart">
-            <Title>Questions</Title>
+            <Title style={{ position: 'relative' }}>
+              Questions{' '}
+              <Badge color="yellow" size="xs" style={{ position: 'absolute', top: 5, right: -45 }}>
+                Beta
+              </Badge>
+            </Title>
             <Group>
               <Link href="/questions/create" passHref>
                 <Button component="a">Ask question</Button>
