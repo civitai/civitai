@@ -430,7 +430,7 @@ export function ModelForm({ model }: Props) {
                             label="Training Epochs"
                             placeholder="Training Epochs"
                             min={0}
-                            max={100}
+                            max={1000}
                           />
                         </Grid.Col>
                         <Grid.Col span={6}>
