@@ -1,3 +1,4 @@
+import { TagTarget } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
@@ -12,6 +13,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     const { items, ...metadata } = await apiCaller.tag.getAll({
       ...req.query,
       withModels: true,
+      entityType: TagTarget.Model,
     });
     const { nextPage, prevPage, baseUrl } = getPaginationLinks({
       ...metadata,

@@ -61,7 +61,7 @@ export const useInfiniteModelsFilters = () => {
     period = constants.modelFilterDefaults.period,
     baseModels,
     types,
-  } = useCookies();
+  } = useCookies().models;
 
   const filters = useFilters((state) => state.filters);
   return { limit: 100, sort, period, types, baseModels, ...filters };
@@ -69,7 +69,7 @@ export const useInfiniteModelsFilters = () => {
 
 const sortOptions = Object.values(ModelSort);
 export function InfiniteModelsSort() {
-  const cookies = useCookies();
+  const cookies = useCookies().models;
   const setSort = useFilters((state) => state.setSort);
   const sort = useFilters(
     (state) => state.filters.sort ?? cookies.sort ?? constants.modelFilterDefaults.sort
@@ -87,7 +87,7 @@ export function InfiniteModelsSort() {
 
 const periodOptions = Object.values(MetricTimeframe);
 export function InfiniteModelsPeriod() {
-  const cookies = useCookies();
+  const cookies = useCookies().models;
   const setPeriod = useFilters((state) => state.setPeriod);
   const period = useFilters(
     (state) => state.filters.period ?? cookies.period ?? constants.modelFilterDefaults.period
@@ -104,7 +104,7 @@ export function InfiniteModelsPeriod() {
 }
 
 export function InfiniteModelsFilter() {
-  const cookies = useCookies();
+  const cookies = useCookies().models;
   const setTypes = useFilters((state) => state.setTypes);
   const types = useFilters((state) => state.filters.types ?? cookies.types ?? []);
   const setBaseModels = useFilters((state) => state.setBaseModels);

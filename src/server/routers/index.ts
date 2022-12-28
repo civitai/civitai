@@ -13,6 +13,10 @@ import { tagRouter } from './tag.router';
 import { userRouter } from './user.router';
 import { imageRouter } from './image.router';
 import { reportRouter } from './report.router';
+import { questionRouter } from './question.router';
+import { answerRouter } from './answer.router';
+import { commentv2Router } from './commentv2.router';
+import { reactionRouter } from './reaction.router';
 import { downloadRouter } from '~/server/routers/download.router';
 
 export const appRouter = router({
@@ -31,6 +35,10 @@ export const appRouter = router({
   modelVersion: modelVersionRouter,
   image: imageRouter,
   report: reportRouter,
+  question: questionRouter,
+  answer: answerRouter,
+  commentv2: commentv2Router,
+  reaction: reactionRouter,
 });
 
 // export type definition of API
