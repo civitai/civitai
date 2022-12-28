@@ -114,7 +114,7 @@ export default createRoutedContext({
                     if (variables.reason === ReportReason.NSFW) {
                       old.nsfw = true;
                     } else if (variables.reason === ReportReason.Ownership) {
-                      old.reportStats = { ...old.reportStats, ownershipPending: 1 };
+                      old.reportStats = { ...old.reportStats, ownershipProcessing: 1 };
                     }
                   }
                 })
