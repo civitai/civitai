@@ -98,7 +98,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   status: true,
   reportStats: {
     select: {
-      ownershipPending: true,
+      ownershipProcessing: true,
     },
   },
   user: {

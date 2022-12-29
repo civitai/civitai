@@ -26,6 +26,7 @@ import { NextLink } from '@mantine/next';
 import { ModelStatus, ModelType } from '@prisma/client';
 import {
   IconArrowsSort,
+  IconBallpen,
   IconBan,
   IconDotsVertical,
   IconDownload,
@@ -37,6 +38,7 @@ import {
   IconInfoCircle,
   IconLicense,
   IconMessage,
+  IconMessageCircle2,
   IconStar,
   IconTrash,
 } from '@tabler/icons';
@@ -260,7 +262,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const secondaryFiles = latestVersion?.files?.filter((file) => !file.primary) ?? [];
   const primaryFile = latestVersion?.files?.find((file) => file.primary === true);
   const inaccurate = model?.modelVersions.some((version) => version.inaccurate);
-  const hasPendingClaimReport = model?.reportStats && model.reportStats.ownershipPending > 0;
+  const hasPendingClaimReport = model?.reportStats && model.reportStats.ownershipProcessing > 0;
   const hasNegativeEmbed =
     model?.type === ModelType.TextualInversion &&
     latestVersion &&
@@ -549,19 +551,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Group>
             </Alert>
           )}
-          {hasPendingClaimReport && (
-            <Alert color="yellow">
-              <Group spacing="xs" noWrap align="flex-start">
-                <ThemeIcon color="yellow">
-                  <IconExclamationMark />
-                </ThemeIcon>
-                <Text size="md">
-                  {/* wrapping in {``} to avoid apostrophe (') warning */}
-                  {`Someone has submitted a claim that this uses their art in it's training data and this claim is pending review`}
-                </Text>
-              </Group>
-            </Alert>
-          )}
         </Stack>
         <Grid gutter="xl">
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
@@ -657,6 +646,18 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     </Text>
                   </Text>
                 </Group>
+              )}
+              {hasPendingClaimReport && (
+                <Alert>
+                  <Group spacing="xs" noWrap>
+                    <ThemeIcon size="lg">
+                      <IconMessageCircle2 />
+                    </ThemeIcon>
+                    <Text size="xs" sx={{ lineHeight: 1.1 }}>
+                      {`A verified artist believes this model was fine-tuned on their art. We're discussing this with the model creator and artist`}
+                    </Text>
+                  </Group>
+                </Alert>
               )}
             </Stack>
           </Grid.Col>

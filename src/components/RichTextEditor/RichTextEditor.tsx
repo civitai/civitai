@@ -1,4 +1,5 @@
 import { Input, InputWrapperProps, MantineSize } from '@mantine/core';
+import { useDidUpdate, usePrevious } from '@mantine/hooks';
 import { Link, RichTextEditor as RTE, RichTextEditorProps } from '@mantine/tiptap';
 import Image from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -6,7 +7,7 @@ import Underline from '@tiptap/extension-underline';
 import Youtube from '@tiptap/extension-youtube';
 import { BubbleMenu, Extensions, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
@@ -31,6 +32,7 @@ export function RichTextEditor({
   disabled = false,
   hideToolbar = false,
   editorSize = 'sm',
+  reset = 0,
   ...props
 }: Props) {
   const addHeading = includeControls.includes('heading');
@@ -38,6 +40,7 @@ export function RichTextEditor({
   const addList = includeControls.includes('list');
   const addLink = includeControls.includes('link');
   const addMedia = includeControls.includes('media');
+  // const [value, setValue] = useState(initialValue);
 
   const extensions: Extensions = [
     Placeholder.configure({ placeholder }),
@@ -71,6 +74,12 @@ export function RichTextEditor({
   useEffect(() => {
     if (!value && editor) editor.commands.clearContent();
   }, [editor, value]);
+
+  useEffect(() => {
+    if (reset > 0 && editor && value && editor.getHTML() !== value) {
+      editor.commands.setContent(value);
+    }
+  }, [reset]); //eslint-disable-line
 
   return (
     <Input.Wrapper
@@ -177,4 +186,5 @@ type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
     disabled?: boolean;
     hideToolbar?: boolean;
     editorSize?: 'sm' | 'md' | 'lg' | 'xl';
+    reset?: number;
   };

@@ -39,6 +39,7 @@ export default createRoutedContext({
     const saveCommentMutation = trpc.comment.upsert.useMutation({
       async onSuccess() {
         await queryUtils.comment.getAll.invalidate();
+        if (commentId) await queryUtils.comment.getById.invalidate({ id: commentId });
         handleClose();
       },
       onError: (error) => {

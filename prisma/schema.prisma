@@ -378,6 +378,7 @@ enum ReportReason {
 
 enum ReportStatus {
   Pending
+  Processing
   Valid
   Invalid
 }
@@ -397,27 +398,27 @@ model Report {
 
 model ModelReport {
   modelId  Int
-  model    Model  @relation(fields: [modelId], references: [id])
+  model    Model  @relation(fields: [modelId], references: [id], onDelete: Cascade)
   reportId Int    @unique
-  report   Report @relation(fields: [reportId], references: [id])
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, modelId])
 }
 
 model ReviewReport {
   reviewId Int
-  review   Review @relation(fields: [reviewId], references: [id])
+  review   Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   reportId Int    @unique
-  report   Report @relation(fields: [reportId], references: [id])
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, reviewId])
 }
 
 model CommentReport {
   commentId Int
-  comment   Comment @relation(fields: [commentId], references: [id])
+  comment   Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
   reportId  Int     @unique
-  report    Report  @relation(fields: [reportId], references: [id])
+  report    Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, commentId])
 }
@@ -1045,6 +1046,7 @@ model ModelReportStat {
   nsfwValid             Int
   nsfwInvalid           Int
   ownershipPending      Int
+  ownershipProcessing   Int
   ownershipValid        Int
   ownershipInvalid      Int
   adminAttentionPending Int
