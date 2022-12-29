@@ -12,3 +12,7 @@ export function daysFromNow(
 
   return dayjs(value).fromNow(withoutSuffix);
 }
+
+export function addToDate(value: Date, amount: number, unit: dayjs.ManipulateType) {
+  return dayjs(value).add(amount, unit);
+}

@@ -26,7 +26,7 @@ export const bountyFileSchema = z.object({
   name: z.string(),
   url: z.string().url().min(1, 'You must select a file'),
   sizeKB: z.number(),
-  type: z.enum(constants.modelFileTypes),
+  type: z.string(),
 });
 
 export const bountyUpsertSchema = z.object({
@@ -34,11 +34,12 @@ export const bountyUpsertSchema = z.object({
   name: z.string(),
   description: z.string(),
   type: z.nativeEnum(ModelType),
-  deadline: z.date(),
-  nsfw: z.boolean(),
-  poi: z.boolean(),
+  deadline: z.date().nullish(),
+  nsfw: z.boolean().optional(),
+  poi: z.boolean().optional(),
   images: z.array(imageSchema).min(1, 'At least one example image must be uploaded'),
   tags: z.array(tagSchema).nullish(),
-  files: z.array(bountyFileSchema).min(1, 'At least one file must be uploaded').max(1),
+  file: bountyFileSchema.nullish(),
+  // files: z.array(bountyFileSchema).min(1, 'At least one file must be uploaded').max(1),
 });
 export type BountyUpsertSchema = z.infer<typeof bountyUpsertSchema>;

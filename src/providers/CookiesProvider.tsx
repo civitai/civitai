@@ -2,7 +2,7 @@ import { MetricTimeframe, ModelType } from '@prisma/client';
 import React, { createContext, useContext } from 'react';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
-import { ModelSort, QuestionSort, QuestionStatus } from '~/server/common/enums';
+import { BountySort, ModelSort, QuestionSort, QuestionStatus } from '~/server/common/enums';
 
 export const modelFilterSchema = z.object({
   sort: z.nativeEnum(ModelSort).optional(),
@@ -15,6 +15,12 @@ export const questionsFilterSchema = z.object({
   sort: z.nativeEnum(QuestionSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
   status: z.nativeEnum(QuestionStatus).optional(),
+});
+
+export const bountiesFilterSchema = z.object({
+  sort: z.nativeEnum(BountySort).optional(),
+  period: z.nativeEnum(MetricTimeframe).optional(),
+  types: z.nativeEnum(ModelType).array().optional(),
 });
 
 const CookiesCtx = createContext<CookiesContext>({} as CookiesContext);
@@ -30,6 +36,7 @@ export const CookiesProvider = ({
 const cookiesSchema = z.object({
   models: modelFilterSchema,
   questions: questionsFilterSchema,
+  bounties: bountiesFilterSchema,
 });
 export type CookiesContext = z.input<typeof cookiesSchema>;
 
@@ -49,6 +56,11 @@ export function parseCookies(
       sort: cookies?.['q_sort'],
       period: cookies?.['q_period'],
       status: cookies?.['q_status'],
+    },
+    bounties: {
+      sort: cookies?.['b_sort'],
+      period: cookies?.['b_period'],
+      types: cookies?.['b_types'],
     },
   });
 }
@@ -72,15 +84,26 @@ const zodParse = z
           status: z.string(),
         })
         .partial(),
+      bounties: z
+        .object({
+          sort: z.string(),
+          period: z.string(),
+          types: z.string(),
+        })
+        .partial(),
     })
   )
   .implement(
-    ({ models, questions }) =>
+    ({ models, questions, bounties }) =>
       ({
         models: {
           ...models,
           types: !!models.types ? JSON.parse(decodeURIComponent(models.types)) : [],
           baseModels: !!models.baseModels ? JSON.parse(decodeURIComponent(models.baseModels)) : [],
+        },
+        bounties: {
+          ...bounties,
+          types: !!bounties.types ? JSON.parse(decodeURIComponent(bounties.types)) : [],
         },
         questions,
       } as CookiesContext)

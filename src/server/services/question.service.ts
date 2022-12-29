@@ -1,6 +1,7 @@
-import { isNotTag } from './../schema/tag.schema';
-import { GetByIdInput } from '~/server/schema/base.schema';
 import { Prisma, TagTarget } from '@prisma/client';
+
+import { isNotTag } from '~/server/schema/tag.schema';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import { prisma } from '~/server/db/client';
 import {
   GetQuestionsInput,
@@ -10,9 +11,10 @@ import {
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { isTag } from '~/server/schema/tag.schema';
 import { QuestionSort, QuestionStatus } from '~/server/common/enums';
+import { constants } from '~/server/common/constants';
 
 export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
-  limit,
+  limit = constants.questionFilterDefaults.limit,
   page,
   query,
   tagname,

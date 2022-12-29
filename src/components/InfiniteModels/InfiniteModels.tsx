@@ -4,7 +4,6 @@ import {
   Card,
   Center,
   createStyles,
-  DefaultMantineColor,
   Group,
   Indicator,
   Loader,
@@ -51,6 +50,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { SFW } from '~/components/Media/SFW';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { constants } from '~/server/common/constants';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getRandom } from '~/utils/array-helpers';
@@ -217,21 +217,6 @@ export function MasonryList({ columnWidth, data, filters }: MasonryListProps) {
   });
 }
 
-const mantineColors: DefaultMantineColor[] = [
-  'blue',
-  'cyan',
-  'grape',
-  'green',
-  'indigo',
-  'lime',
-  'orange',
-  'pink',
-  'red',
-  'teal',
-  'violet',
-  'yellow',
-];
-
 // const maxNameLengthByType: Record<ModelType, number> = {
 //   [ModelType.Checkpoint]: 30,
 //   [ModelType.Hypernetwork]: 30,
@@ -388,7 +373,7 @@ const MasonryItem = ({
     <LoginRedirect reason="report-model" key="report">
       <Menu.Item
         icon={<IconFlag size={14} stroke={1.5} />}
-        onClick={(e) => {
+        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
           openContext('report', { type: ReportEntity.Model, entityId: id });
@@ -442,7 +427,7 @@ const MasonryItem = ({
                         <ActionIcon
                           variant="transparent"
                           p={0}
-                        onClick={(e: any) => { //eslint-disable-line
+                          onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                             e.preventDefault();
                             e.stopPropagation();
                           }}
@@ -492,7 +477,7 @@ const MasonryItem = ({
 };
 
 const useStyles = createStyles((theme) => {
-  const base = theme.colors[getRandom(mantineColors)];
+  const base = theme.colors[getRandom(constants.mantineColors)];
   const background = theme.colorScheme === 'dark' ? theme.colors.dark[6] : '#fff';
 
   return {

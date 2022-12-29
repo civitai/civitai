@@ -25,6 +25,7 @@ import {
   IconPlus,
   IconQuestionCircle,
   IconSettings,
+  IconTrophy,
   IconUpload,
   IconUserCircle,
   IconUsers,
@@ -237,6 +238,23 @@ export function AppHeader({ links }: Props) {
               </Group>
             </Anchor>
           </Link>,
+          <Link key="bounties-menu-item" href="/bounties" passHref>
+            <Anchor
+              className={cx(classes.link, {
+                [classes.linkActive]: router.asPath.includes(`/bounties`),
+              })}
+              variant="text"
+              onClick={() => closeBurger()}
+            >
+              <Group align="center" spacing="xs">
+                <IconTrophy stroke={1.5} color="gold" />
+                Bounties
+                <Badge color="yellow" size="xs">
+                  Beta
+                </Badge>
+              </Group>
+            </Anchor>
+          </Link>,
           <Link
             key="your-following-menu-item"
             href={`/user/${session.user.username}/following`}
@@ -422,6 +440,16 @@ export function AppHeader({ links }: Props) {
                       href={`/?favorites=true`}
                     >
                       Liked models
+                    </Menu.Item>
+                    <Menu.Item
+                      icon={<IconTrophy size={14} stroke={1.5} color="orange" />}
+                      component={NextLink}
+                      href="/bounties"
+                    >
+                      Bounties{' '}
+                      <Badge color="yellow" size="xs">
+                        Beta
+                      </Badge>
                     </Menu.Item>
                     <Menu.Item
                       icon={<IconQuestionCircle size={14} stroke={1.5} />}

@@ -29,7 +29,17 @@ export const getBountiesInfiniteHandler = async ({
     const items = await getBounties({
       user,
       input: { ...input, take },
-      select: getAllBountiesSelect,
+      select: {
+        ...getAllBountiesSelect,
+        rank: {
+          select: {
+            [`bountyValue${input.period}`]: true,
+            [`favoriteCount${input.period}`]: true,
+            [`commentCount${input.period}`]: true,
+            [`hunterCount${input.period}`]: true,
+          },
+        },
+      },
     });
 
     let nextCursor: number | undefined;
@@ -38,7 +48,23 @@ export const getBountiesInfiniteHandler = async ({
       nextCursor = nextItem?.id;
     }
 
-    return { nextCursor, items };
+    return {
+      nextCursor,
+      items: items.map(({ images, ...bounty }) => {
+        const rank = bounty.rank as Record<string, number>;
+
+        return {
+          ...bounty,
+          image: images[0]?.image ?? {},
+          rank: {
+            bountyValue: rank[`bountyValue${input.period}`],
+            favoriteCount: rank[`favoriteCount${input.period}`],
+            commentCount: rank[`commentCount${input.period}`],
+            hunterCount: rank[`hunterCount${input.period}`],
+          },
+        };
+      }),
+    };
   } catch (error) {
     throw throwDbError(error);
   }
@@ -50,9 +76,11 @@ export const getBountyDetailsHandler = async ({ input }: { input: GetByIdInput }
     const bounty = await getBountyById({ id, select: getBountyDetailsSelect });
     if (!bounty) throw throwNotFoundError(`No bounty with id ${id}`);
 
+    const { images, files, ...item } = bounty;
     return {
-      ...bounty,
-      images: bounty.images.map(({ index, image }) => ({ ...image, index })),
+      ...item,
+      images: images.map(({ index, image }) => ({ ...image, index })),
+      file: files[0],
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

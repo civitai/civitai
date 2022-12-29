@@ -481,8 +481,8 @@ model Image {
 
   imagesOnModels  ImagesOnModels[]
   imagesOnReviews ImagesOnReviews[]
-  ImagesOnBounty  ImagesOnBounty[]
-  ImagesOnHunter  ImagesOnHunter[]
+  imagesOnBounty  ImagesOnBounty[]
+  imagesOnHunter  ImagesOnHunter[]
 }
 
 enum ImageOnModelType {
@@ -513,6 +513,7 @@ model ImagesOnReviews {
 enum TagTarget {
   Model
   Question
+  Bounty
 }
 
 model Tag {
@@ -523,10 +524,9 @@ model Tag {
   updatedAt DateTime  @updatedAt
   target    TagTarget
 
-  tagsOnModels   TagsOnModels[]
-  TagsOnQuestion TagsOnQuestions[]
-  bounty         Bounty?           @relation(fields: [bountyId], references: [id])
-  bountyId       Int?
+  tagsOnModels    TagsOnModels[]
+  tagsOnQuestions TagsOnQuestions[]
+  bounties        Bounty[] // Implicit many-to-many
 
   @@unique([name, target])
 }
@@ -766,6 +766,7 @@ model CommentV2 {
 
   question  QuestionComment?
   answer    AnswerComment?
+  bounty    BountyComment?
   reactions CommentV2Reaction[]
 }
 
@@ -785,6 +786,15 @@ model AnswerComment {
   comment   CommentV2 @relation(fields: [commentId], references: [id], onDelete: Cascade)
 
   @@id([answerId, commentId])
+}
+
+model BountyComment {
+  bountyId  Int
+  bounty    Bounty    @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  commentId Int       @unique
+  comment   CommentV2 @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@id([bountyId, commentId])
 }
 
 model TagsOnQuestions {
@@ -856,6 +866,7 @@ model Bounty {
   favorites   FavoriteBounty[]
   files       BountyFile[]
   metrics     BountyMetric[]
+  comments    BountyComment[]
 }
 
 model Benefactor {

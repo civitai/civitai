@@ -1,6 +1,6 @@
 import { GetServerSideProps } from 'next';
 import { Session } from 'next-auth';
-import { BountyForm } from '~/components/BountyForm/BountyForm';
+import { BountyForm } from '~/components/Bounties/BountyForm';
 
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 

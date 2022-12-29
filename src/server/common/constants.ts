@@ -1,6 +1,7 @@
 import { QuestionSort } from './enums';
 import { MetricTimeframe } from '@prisma/client';
 import { BountySort, ModelSort } from '~/server/common/enums';
+import { DefaultMantineColor } from '@mantine/core';
 
 export const constants = {
   modelFilterDefaults: {
@@ -19,6 +20,20 @@ export const constants = {
     period: MetricTimeframe.AllTime,
     limit: 100,
   },
+  mantineColors: [
+    'blue',
+    'cyan',
+    'grape',
+    'green',
+    'indigo',
+    'lime',
+    'orange',
+    'pink',
+    'red',
+    'teal',
+    'violet',
+    'yellow',
+  ] as DefaultMantineColor[],
 } as const;
 
 export type BaseModel = typeof constants.baseModels[number];

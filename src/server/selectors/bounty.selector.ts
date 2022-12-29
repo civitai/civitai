@@ -7,6 +7,7 @@ export const getAllBountiesSelect = Prisma.validator<Prisma.BountySelect>()({
   name: true,
   type: true,
   nsfw: true,
+  user: { select: simpleUserSelect },
   images: {
     orderBy: { index: 'asc' },
     take: 1,
@@ -20,8 +21,10 @@ export const getBountyDetailsSelect = Prisma.validator<Prisma.BountySelect>()({
   id: true,
   name: true,
   description: true,
+  deadline: true,
   type: true,
   nsfw: true,
+  createdAt: true,
   user: { select: simpleUserSelect },
   hunters: {
     select: {
@@ -52,6 +55,14 @@ export const getBountyDetailsSelect = Prisma.validator<Prisma.BountySelect>()({
       sizeKB: true,
       name: true,
       type: true,
+    },
+  },
+  rank: {
+    select: {
+      bountyValueAllTime: true,
+      favoriteCountAllTime: true,
+      commentCountAllTime: true,
+      hunterCountAllTime: true,
     },
   },
 });

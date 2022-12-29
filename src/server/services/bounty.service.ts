@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, TagTarget } from '@prisma/client';
 import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
 
@@ -53,6 +53,9 @@ export const getBounties = <TSelect extends Prisma.BountySelect>({
       ...(sort === BountySort.MostDiscussed
         ? [{ rank: { [`commentCount${period}Rank`]: 'asc' } }]
         : []),
+      ...(sort === BountySort.MostHunters
+        ? [{ rank: { [`hunterCount${period}Rank`]: 'asc' } }]
+        : []),
       ...(sort === BountySort.Newest ? [{ createdAt: 'desc' } as const] : []),
     ],
   });
@@ -72,7 +75,7 @@ export const createBounty = ({
   userId,
   tags,
   images,
-  files,
+  file,
   ...data
 }: BountyUpsertSchema & { userId: number }) => {
   return prisma.bounty.create({
@@ -91,11 +94,9 @@ export const createBounty = ({
           },
         })),
       },
-      files: {
-        create: files.map((file) => ({ ...file })),
-      },
+      files: file ? { create: file } : undefined,
       tags: {
-        create: tags?.map((tag) => ({ ...tag })),
+        create: tags?.map((tag) => ({ ...tag, target: TagTarget.Bounty })),
       },
     },
   });
@@ -108,7 +109,7 @@ export const updateBountyById = ({ id, data }: { id: number; data: Prisma.Bounty
 export const updateBounty = async ({
   id = -1,
   userId,
-  files,
+  file,
   images,
   tags,
   ...data
@@ -121,6 +122,7 @@ export const updateBounty = async ({
       type: true,
       deadline: true,
       files: {
+        take: 1,
         select: {
           id: true,
           type: true,
@@ -194,6 +196,9 @@ export const updateBounty = async ({
     { imagesToCreate: [] as PayloadImage[], imagesToUpdate: [] as PayloadImage[] }
   );
 
+  const [existingFile] = currentBounty.files ?? [];
+  const differentFiles = !isEqual(existingFile, file);
+
   return updateBountyById({
     id,
     data: {
@@ -210,8 +215,15 @@ export const updateBounty = async ({
       },
       tags: {
         deleteMany: { id: { notIn: existingTags.map(({ id }) => id as number) } },
-        create: tagsToCreate.map((tag) => tag),
+        create: tagsToCreate.map((tag) => ({ ...tag, target: TagTarget.Bounty })),
       },
+      files:
+        differentFiles && file
+          ? {
+              delete: existingFile ? { id: existingFile.id } : undefined,
+              create: file,
+            }
+          : undefined,
     },
   });
 };
