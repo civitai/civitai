@@ -47,6 +47,9 @@ export const getComments = async <TSelect extends Prisma.CommentV2Select>({
         [`${entityType}Id`]: entityId,
       },
     },
+    orderBy: {
+      createdAt: 'asc',
+    },
     select,
   });
 };

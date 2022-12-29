@@ -1,6 +1,8 @@
 import { Stack, Text, Center, Loader, Group, Alert, Button, useMantineTheme } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { useRouter } from 'next/router';
+import { useMemo } from 'react';
+import { CommentDetail } from '~/components/Comments/CommentDetail';
 import { CommentForm } from '~/components/Comments/CommentForm';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -17,23 +19,45 @@ import { trpc } from '~/utils/trpc';
 */
 type CommentsProps = {
   initialData?: InfiniteCommentResults['comments'];
+  initialLimit?: number;
 } & CommentConnectorInput;
 
-export function Comments({ entityId, entityType, initialData }: CommentsProps) {
+export function Comments({ entityId, entityType, initialData, initialLimit = 4 }: CommentsProps) {
   const router = useRouter();
   const user = useCurrentUser();
   const theme = useMantineTheme();
+  console.log({ initialData });
 
-  const { data, isLoading, fetchNextPage, hasNextPage } =
+  const { items, nextCursor } = useMemo(() => {
+    const data = [...(initialData ?? [])];
+    return {
+      nextCursor: data.length > initialLimit ? data.splice(-1)[0]?.id : undefined,
+      items: data,
+    };
+  }, [initialData, initialLimit]);
+
+  const { data, isInitialLoading, fetchNextPage, hasNextPage } =
     trpc.commentv2.getInfinite.useInfiniteQuery(
       { entityId, entityType },
       {
-        getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-        getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+        getNextPageParam: (lastPage) => {
+          return !!lastPage ? lastPage.nextCursor : 0;
+        },
+        getPreviousPageParam: (firstPage) => {
+          return !!firstPage ? firstPage.nextCursor : 0;
+        },
+        initialData: !!initialData
+          ? {
+              pages: [{ nextCursor, comments: items }],
+              pageParams: [null],
+            }
+          : undefined,
       }
     );
 
   const handleMoreClick = () => fetchNextPage();
+
+  const comments = useMemo(() => data?.pages.flatMap((x) => x.comments), [data]);
 
   return (
     <Stack>
@@ -60,15 +84,23 @@ export function Comments({ entityId, entityType, initialData }: CommentsProps) {
           </Stack>
         </Alert>
       )}
-      {!data && isLoading ? (
+      {!comments && isInitialLoading ? (
         <Center p="xl">
           <Loader />
         </Center>
       ) : (
-        <></>
+        comments &&
+        comments.map((comment) => (
+          <CommentDetail
+            key={comment.id}
+            comment={comment}
+            entityId={entityId}
+            entityType={entityType}
+          />
+        ))
       )}
       {hasNextPage &&
-        (isLoading ? (
+        (isInitialLoading ? (
           <Center>
             <Loader variant="dots" />
           </Center>

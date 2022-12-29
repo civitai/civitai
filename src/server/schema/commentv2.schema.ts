@@ -9,7 +9,7 @@ export const commentConnectorSchema = z.object({
 export type GetCommentsV2Input = z.infer<typeof getCommentsV2Schema>;
 export const getCommentsV2Schema = commentConnectorSchema.extend({
   limit: z.number().min(0).max(100).optional(),
-  cursor: z.number().optional(),
+  cursor: z.number().nullish(),
 });
 
 export type UpsertCommentV2Input = z.infer<typeof upsertCommentv2Schema>;

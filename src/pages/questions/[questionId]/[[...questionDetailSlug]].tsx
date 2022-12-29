@@ -29,6 +29,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { daysFromNow } from '~/utils/date-helpers';
 import { FavoriteBadge } from '~/components/Questions/FavoriteBadge';
+import { Comments } from '~/components/Comments/Comments';
 
 export const getServerSideProps: GetServerSideProps<{
   id: number;
@@ -89,17 +90,13 @@ export default function QuestionPage(
   const { classes } = useStyles();
 
   const theme = useMantineTheme();
-  const { data: question } = trpc.question.getById.useQuery({ id });
-  const { data: answers } = trpc.answer.getAll.useQuery({ questionId: id });
+  const { data: question, isLoading: questionsLoading } = trpc.question.getById.useQuery({ id });
+  const { data: answers, isLoading: answersLoading } = trpc.answer.getAll.useQuery({
+    questionId: id,
+  });
 
   const isModerator = user?.isModerator ?? false;
   const isOwner = user?.id === question?.user.id;
-
-  useEffect(() => {
-    if (!title) {
-      router.replace({});
-    }
-  }, [router, title]);
 
   if (!question) return <NotFound />;
   // TODO - inline this with question content instead of displaying as a separate page
@@ -133,7 +130,11 @@ export default function QuestionPage(
               withUsername
             />
             <RenderHtml html={question.content} />
-            {/* TODO comments */}
+            <Comments
+              entityId={question.id}
+              entityType="question"
+              initialData={question.comments}
+            />
           </Stack>
         </div>
         <div className={classes.fullWidth}>
@@ -170,8 +171,8 @@ export default function QuestionPage(
             </Stack>
             <Stack>
               <AnswerDetail answer={answer} questionId={id} />
+              <Comments entityId={answer.id} entityType="answer" initialData={answer.comments} />
               {index !== answers.length - 1 && <Divider />}
-              {/* TODO comments */}
             </Stack>
           </div>
         ))}
