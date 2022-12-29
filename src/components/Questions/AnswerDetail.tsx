@@ -48,14 +48,14 @@ export function AnswerDetail({
                       color={theme.colors.red[6]}
                       icon={<IconTrash size={14} stroke={1.5} />}
                     >
-                      Delete Question
+                      Delete answer
                     </Menu.Item>
                   </DeleteAnswer>
                   <Menu.Item
                     icon={<IconEdit size={14} stroke={1.5} />}
                     onClick={() => setEditing(true)}
                   >
-                    Edit question
+                    Edit answer
                   </Menu.Item>
                 </>
               )}
