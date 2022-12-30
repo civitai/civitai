@@ -2,9 +2,9 @@ import { Stack, Text, MantineSize, Group, ActionIcon } from '@mantine/core';
 import { IconTrash } from '@tabler/icons';
 import dayjs from 'dayjs';
 import Link from 'next/link';
-import slugify from 'slugify';
 
 import { DownloadGetAll } from '~/types/router';
+import { slugit } from '~/utils/string-helpers';
 
 export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
   return (
@@ -14,7 +14,7 @@ export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
 
         return (
           <Group key={download.id} style={{ flexWrap: 'nowrap' }}>
-            <Link href={`/models/${download.model.id}/${slugify(download.model.name)}`} passHref>
+            <Link href={`/models/${download.model.id}/${slugit(download.model.name)}`} passHref>
               <Text
                 component="a"
                 sx={(theme) => ({

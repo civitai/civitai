@@ -256,7 +256,6 @@ model ModelVersion {
   rank          ModelVersionRank?
   files         ModelFile[]
   runStrategies RunStrategy[]
-  hashes        ModelHash[]
   downloads     DownloadHistory[]
 }
 
@@ -267,13 +266,13 @@ enum ModelHashType {
 }
 
 model ModelHash {
-  modelVersion   ModelVersion  @relation(fields: [modelVersionId], references: [id])
-  modelVersionId Int
-  type           ModelHashType
-  hash           String
-  createdAt      DateTime      @default(now())
+  file      ModelFile     @relation(fields: [fileId], references: [id])
+  fileId    Int
+  type      ModelHashType
+  hash      String
+  createdAt DateTime      @default(now())
 
-  @@id([modelVersionId, type])
+  @@id([fileId, type])
 }
 
 enum ScanResultCode {
@@ -308,6 +307,7 @@ model ModelFile {
   scanRequestedAt   DateTime?
   rawScanResult     Json?
   primary           Boolean         @default(false)
+  hashes            ModelHash[]
 
   @@unique([modelVersionId, type, format])
 }

@@ -1,4 +1,10 @@
-import { ModelFileFormat, ModelStatus, Prisma, ScanResultCode } from '@prisma/client';
+import {
+  ModelFileFormat,
+  ModelHashType,
+  ModelStatus,
+  Prisma,
+  ScanResultCode,
+} from '@prisma/client';
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
@@ -14,8 +20,8 @@ export default WebhookEndpoint(async (req, res) => {
   const where: Prisma.ModelFileFindUniqueArgs['where'] = {
     modelVersionId_type_format: { modelVersionId, type, format },
   };
-  const { url } = (await prisma.modelFile.findUnique({ where })) ?? {};
-  if (!url) return res.status(404).json({ error: 'File not found' });
+  const { url, id: fileId } = (await prisma.modelFile.findUnique({ where })) ?? {};
+  if (!url || !fileId) return res.status(404).json({ error: 'File not found' });
 
   const { hasDanger, pickleScanMessage } = examinePickleScanMessage(scanResult);
   if (hasDanger) scanResult.picklescanExitCode = ScanExitCode.Danger;
@@ -37,8 +43,22 @@ export default WebhookEndpoint(async (req, res) => {
   const scannerImportedFile = !url.includes(bucket) && scanResult.url.includes(bucket);
   if (exists && scannerImportedFile) data.url = scanResult.url;
 
+  // Update file
   await prisma.modelFile.update({ where, data });
 
+  // Update hashes
+  if (scanResult.hashes) {
+    await prisma.modelHash.deleteMany({ where: { fileId } });
+    await prisma.modelHash.createMany({
+      data: Object.entries(scanResult.hashes).map(([type, hash]) => ({
+        fileId,
+        type: type as ModelHashType,
+        hash,
+      })),
+    });
+  }
+
+  // Unpublish model if file isn't available
   if (!exists) {
     await prisma.modelVersion.update({
       where: { id: modelVersionId },
@@ -98,6 +118,7 @@ type ScanResult = {
   picklescanDangerousImports?: string[];
   clamscanExitCode: ScanExitCode;
   clamscanOutput: string;
+  hashes: Record<ModelHashType, string>;
 };
 
 const querySchema = z.object({
