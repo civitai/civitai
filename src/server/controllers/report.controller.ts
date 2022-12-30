@@ -90,6 +90,7 @@ export async function getReportsHandler({
                 tosViolation: true,
                 modelId: true,
                 reviewId: true,
+                parentId: true,
               },
             },
           },

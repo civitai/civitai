@@ -51,12 +51,13 @@ type ReportDetail = GetReportsProps['items'][0];
 export default function Reports() {
   const router = useRouter();
   const page = router.query.page ? Number(router.query.page) : 1;
+  const limit = 50;
   const [type, setType] = useState(ReportEntity.Model);
-  const [selected, setSelected] = useState<ReportDetail>();
+  const [selected, setSelected] = useState<number>();
 
   const { data, isLoading, isFetching } = trpc.report.getAll.useQuery({
     page,
-    limit: 50,
+    limit,
     type,
   });
 
@@ -72,11 +73,13 @@ export default function Reports() {
     router.replace({ pathname, query: { ...QS.parse(query), page } }, undefined, {
       shallow: true,
     });
+    setSelected(undefined);
   };
 
   const handleTypeChange = (type: ReportEntity) => {
     handlePageChange(1);
     setType(type);
+    setSelected(undefined);
   };
 
   return (
@@ -104,35 +107,23 @@ export default function Reports() {
               {data.items.map((item) => (
                 <tr key={item.id}>
                   <td>
-                    {/* {type === ReportEntity.Model && item.model && (
-                      <Link href={`/models/${item.model.id}`} passHref>
-                        <Text variant="link" component="a" target="_blank">
-                          View
-                        </Text>
-                      </Link>
-                    )}
-                    {type === ReportEntity.Review && item.review && (
-                      <Link
-                        href={`/models/${item.review.modelId}/?modal=reviewThread&reviewId=${item.review.id}`}
-                        passHref
-                      >
-                        <Text variant="link" component="a" target="_blank">
-                          View
-                        </Text>
-                      </Link>
-                    )}
-                    {type === ReportEntity.Comment && 'Coming Soon'} */}
                     <Text
                       variant="link"
                       sx={{ cursor: 'pointer' }}
-                      onClick={() => setSelected(item)}
+                      onClick={() => setSelected(item.id)}
                     >
                       View Details
                     </Text>
                   </td>
                   <td>{item.reason}</td>
                   <td>
-                    <ToggleReportStatus id={item.id} status={item.status} />
+                    <ToggleReportStatus
+                      id={item.id}
+                      status={item.status}
+                      page={page}
+                      type={type}
+                      limit={limit}
+                    />
                   </td>
                   <td>{formatDate(item.createdAt)}</td>
                   <td>
@@ -155,7 +146,13 @@ export default function Reports() {
           </Group>
         )}
       </Stack>
-      <ReportDrawer report={selected} onClose={() => setSelected(undefined)} type={type} />
+      <ReportDrawer
+        report={data.items.find((x) => x.id === selected)}
+        onClose={() => setSelected(undefined)}
+        type={type}
+        page={page}
+        limit={limit}
+      />
     </Container>
   );
 }
@@ -164,10 +161,14 @@ function ReportDrawer({
   report,
   onClose,
   type,
+  page,
+  limit,
 }: {
   report?: ReportDetail;
   onClose: () => void;
   type: ReportEntity;
+  page: number;
+  limit: number;
 }) {
   const theme = useMantineTheme();
   return (
@@ -210,7 +211,12 @@ function ReportDrawer({
             <Stack>
               <Text>CommentId: {report.comment.id}</Text>
               {report.comment.modelId && (
-                <Link href={`/models/${report.comment.modelId}`} passHref>
+                <Link
+                  href={`/models/${report.comment.modelId}/?modal=commentThread&commentId=${
+                    report.comment.parentId ?? report.comment.id
+                  }&highlight=${report.comment.id}`}
+                  passHref
+                >
                   <Text variant="link" component="a" target="_blank">
                     View comment model
                   </Text>
@@ -218,6 +224,13 @@ function ReportDrawer({
               )}
             </Stack>
           )}
+          <ToggleReportStatus
+            id={report.id}
+            status={report.status}
+            page={page}
+            type={type}
+            limit={limit}
+          />
           <ReportDetails details={report.details} />
         </Stack>
       )}
@@ -260,18 +273,26 @@ function ReportDetails({ details }: { details: Prisma.JsonValue }) {
 
 function ToggleReportStatus({
   id,
-  status: initialStatus,
-}: SetReportStatusInput & { type: ReportEntity; page: number }) {
+  status,
+  type,
+  page,
+  limit,
+}: SetReportStatusInput & { type: ReportEntity; page: number; limit: number }) {
   const queryUtils = trpc.useContext();
-  const [status, setStatus] = useState(initialStatus);
+  // const [status, setStatus] = useState(initialStatus);
 
   const { mutate, isLoading } = trpc.report.setStatus.useMutation({
     async onSuccess(response, request) {
-      setStatus(request.status);
-      // await queryUtils.report.getAll.setData({type, page}, produce((old) => {
-      //   if(!old) return;
-
-      // }))
+      // setStatus(request.status);
+      await queryUtils.report.getAll.setData(
+        { type, page, limit },
+        produce((old) => {
+          if (old) {
+            const index = old.items.findIndex((x) => x.id === id);
+            old.items[index].status = request.status;
+          }
+        })
+      );
     },
   });
 
