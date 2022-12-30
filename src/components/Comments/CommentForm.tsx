@@ -1,5 +1,6 @@
 import { Stack, Group, Button } from '@mantine/core';
 import { Form, InputRTE, useForm } from '~/libs/form';
+import { useState } from 'react';
 import {
   CommentConnectorInput,
   UpsertCommentV2Input,
@@ -9,15 +10,25 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';
 
+/*
+  Most use cases of this form will require cancel/submit buttons to be displayed
+    - divergences:
+      - create message
+        - show rte, hide cancel/submit buttons until rte focused
+*/
+
 export const CommentForm = ({
   comment,
   onCancel,
   entityId,
   entityType,
+  autoFocus,
 }: {
   comment?: { id: number; content: string };
   onCancel?: () => void;
+  autoFocus?: boolean;
 } & CommentConnectorInput) => {
+  const [focused, setFocused] = useState(autoFocus);
   const form = useForm({
     schema: upsertCommentv2Schema,
     defaultValues: { ...comment, entityId, entityType },
@@ -68,12 +79,12 @@ export const CommentForm = ({
   });
 
   const handleCancel = () => {
+    if (!autoFocus) setFocused(false);
     onCancel?.();
     form.reset();
   };
 
   const handleSubmit = (data: UpsertCommentV2Input) => {
-    console.log({ ...comment, ...data, entityId, entityType });
     mutate({ ...comment, ...data, entityId, entityType });
   };
 
@@ -86,15 +97,19 @@ export const CommentForm = ({
           includeControls={['formatting', 'link']}
           hideToolbar
           placeholder="Type your comment..."
+          autoFocus={focused}
+          onFocus={!autoFocus ? () => setFocused(true) : undefined}
         />
-        <Group position="right">
-          <Button variant="default" size="xs" onClick={handleCancel}>
-            Cancel
-          </Button>
-          <Button type="submit" size="xs" loading={isLoading}>
-            Comment
-          </Button>
-        </Group>
+        {focused && (
+          <Group position="right">
+            <Button variant="default" size="xs" onClick={handleCancel}>
+              Cancel
+            </Button>
+            <Button type="submit" size="xs" loading={isLoading}>
+              Comment
+            </Button>
+          </Group>
+        )}
       </Stack>
     </Form>
   );

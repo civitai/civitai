@@ -18,3 +18,7 @@ export const commentV2Select = Prisma.validator<Prisma.CommentV2Select>()({
   //   select: //TODO - reactionSelect or totalReactionSelect???
   // },
 });
+
+export const getRelationalComments = () => {
+  return;
+};

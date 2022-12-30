@@ -75,14 +75,17 @@ export const upsertQuestion = async ({
           userId,
           tags: tags
             ? {
-                create: tags.map(({ name }) => ({
-                  tag: {
-                    connectOrCreate: {
-                      where: { name_target: { name, target: TagTarget.Question } },
-                      create: { name, target: TagTarget.Question },
+                create: tags.map((tag) => {
+                  const name = tag.name.toLowerCase();
+                  return {
+                    tag: {
+                      connectOrCreate: {
+                        where: { name_target: { name, target: TagTarget.Question } },
+                        create: { name, target: TagTarget.Question },
+                      },
                     },
-                  },
-                })),
+                  };
+                }),
               }
             : undefined,
         },
@@ -104,11 +107,14 @@ export const upsertQuestion = async ({
                   where: { tagId_questionId: { tagId: tag.id, questionId: id } },
                   create: { tagId: tag.id },
                 })),
-                create: tags.filter(isNotTag).map(({ name }) => ({
-                  tag: {
-                    create: { name, target: TagTarget.Question },
-                  },
-                })),
+                create: tags.filter(isNotTag).map((tag) => {
+                  const name = tag.name.toLowerCase();
+                  return {
+                    tag: {
+                      create: { name, target: TagTarget.Question },
+                    },
+                  };
+                }),
               }
             : undefined,
         },

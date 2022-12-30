@@ -115,6 +115,11 @@ export const getQuestionDetailHandler = async ({
             },
           },
         },
+        _count: {
+          select: {
+            comments: true,
+          },
+        },
       },
     });
     if (!item) throw throwNotFoundError();

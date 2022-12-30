@@ -1,7 +1,8 @@
-import { Badge, Center, BadgeProps } from '@mantine/core';
+import { Badge, Center, BadgeProps, ButtonProps } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { IconCheck, IconX } from '@tabler/icons';
 import { createContext, useContext, useState } from 'react';
+import { ReactionBadge } from '~/components/Questions/ReactionBadge';
 import { trpc } from '~/utils/trpc';
 
 interface AnswerVoteContext {
@@ -102,7 +103,7 @@ export function AnswerVotes({
   );
 }
 
-type VoteButtonProps = Omit<BadgeProps, 'children'>;
+type VoteButtonProps = Omit<ButtonProps, 'children'>;
 function AnswerVoteCheck(props: VoteButtonProps) {
   const { vote, setCheck, checkCount, disabled } = useContext(AnswerVoteCtx);
   const active = vote === true;
@@ -110,22 +111,14 @@ function AnswerVoteCheck(props: VoteButtonProps) {
   const handleClick = () => setCheck(!active ? true : null);
 
   return (
-    <Badge
-      variant="light"
-      color={active ? 'green' : 'gray'}
-      leftSection={
-        <Center>
-          <IconCheck size={18} />
-        </Center>
-      }
-      sx={{ userSelect: 'none', ...(!disabled && { cursor: 'pointer' }) }}
+    <ReactionBadge
+      color={active ? 'green' : undefined}
+      leftIcon={<IconCheck size={18} />}
       onClick={!disabled ? handleClick : undefined}
-      size="lg"
-      px={5}
       {...props}
     >
       {checkCount}
-    </Badge>
+    </ReactionBadge>
   );
 }
 
@@ -136,22 +129,14 @@ function AnswerVoteCross(props: VoteButtonProps) {
   const handleClick = () => setCross(!active ? false : null);
 
   return (
-    <Badge
-      variant="light"
-      color={active ? 'red' : 'gray'}
-      leftSection={
-        <Center>
-          <IconX size={18} />
-        </Center>
-      }
-      sx={{ userSelect: 'none', ...(!disabled && { cursor: 'pointer' }) }}
+    <ReactionBadge
+      color={active ? 'red' : undefined}
+      leftIcon={<IconX size={18} />}
       onClick={!disabled ? handleClick : undefined}
-      size="lg"
-      px={5}
       {...props}
     >
       {crossCount}
-    </Badge>
+    </ReactionBadge>
   );
 }
 

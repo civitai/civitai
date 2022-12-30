@@ -60,6 +60,11 @@ export const getAnswersHandler = async ({
             },
           },
         },
+        _count: {
+          select: {
+            comments: true,
+          },
+        },
       },
     });
     if (!items) throw throwNotFoundError();
