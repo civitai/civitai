@@ -17,6 +17,7 @@ export function AppLayout({ children, showNavbar }: Props) {
           main: {
             paddingLeft: 0,
             paddingRight: 0,
+            paddingBottom: 61,
           },
         }}
       >
