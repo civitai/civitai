@@ -37,6 +37,26 @@ export default defineNextConfig({
         destination: '/api/download/models/:modelVersionId?type=TrainingData',
         permanent: true,
       },
+      {
+        source: '/github',
+        destination: 'https://github.com/civitai/civitai',
+        permanent: true,
+      },
+      {
+        source: '/discord',
+        destination: 'https://discord.gg/UwX5wKwm6c',
+        permanent: true,
+      },
+      {
+        source: '/twitter',
+        destination: 'https://twitter.com/HelloCivitai',
+        permanent: true,
+      },
+      {
+        source: '/ideas',
+        destination: 'https://github.com/civitai/civitai/discussions/categories/ideas',
+        permanent: true,
+      },
     ];
   },
 });
