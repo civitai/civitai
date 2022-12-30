@@ -1,5 +1,7 @@
-import { ReportReason } from '@prisma/client';
+import { MantineColor } from '@mantine/core';
+import { ReportReason, ReportStatus } from '@prisma/client';
 import { z } from 'zod';
+import { getAllQuerySchema } from '~/server/schema/base.schema';
 
 export enum ReportEntity {
   Model = 'model',
@@ -65,11 +67,35 @@ export const reportAdminAttentionSchema = baseSchema.extend({
 });
 // #endregion
 
-export type ReportInput = z.infer<typeof reportInputSchema>;
-export const reportInputSchema = z.discriminatedUnion('reason', [
+export type CreateReportInput = z.infer<typeof createReportInputSchema>;
+export const createReportInputSchema = z.discriminatedUnion('reason', [
   reportNsfwSchema,
   reportTOSViolationSchema,
   reportOwnershipSchema,
   reportClaimSchema,
   reportAdminAttentionSchema,
 ]);
+
+export type SetReportStatusInput = z.infer<typeof setReportStatusSchema>;
+export const setReportStatusSchema = z.object({
+  id: z.number(),
+  status: z.nativeEnum(ReportStatus),
+});
+
+export type GetReportsInput = z.infer<typeof getReportsSchema>;
+export const getReportsSchema = getAllQuerySchema.extend({
+  type: z.nativeEnum(ReportEntity),
+});
+
+export type GetReportCountInput = z.infer<typeof getReportCount>;
+export const getReportCount = z.object({
+  type: z.nativeEnum(ReportEntity),
+  statuses: z.nativeEnum(ReportStatus).array(),
+});
+
+export const reportStatusColorScheme: Record<ReportStatus, MantineColor> = {
+  [ReportStatus.Invalid]: 'red',
+  [ReportStatus.Valid]: 'green',
+  [ReportStatus.Processing]: 'orange',
+  [ReportStatus.Pending]: 'yellow',
+};

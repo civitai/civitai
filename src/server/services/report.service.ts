@@ -1,13 +1,19 @@
+import {
+  GetReportsInput,
+  SetReportStatusInput,
+  GetReportCountInput,
+} from './../schema/report.schema';
 import { Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { prisma } from '~/server/db/client';
-import { ReportEntity, ReportInput } from '~/server/schema/report.schema';
+import { ReportEntity, CreateReportInput } from '~/server/schema/report.schema';
+import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export const createReport = async ({
   userId,
   type,
   id,
   ...data
-}: ReportInput & { userId: number }) => {
+}: CreateReportInput & { userId: number }) => {
   const report: Prisma.ReportCreateNestedOneWithoutModelInput = {
     create: {
       ...data,
@@ -63,5 +69,44 @@ export const createReport = async ({
       default:
         throw new Error('unhandled report type');
     }
+  });
+};
+
+// TODO - add reports for questions/answers
+// get report by category (model, review, comment)
+export const getReports = async <TSelect extends Prisma.ReportSelect>({
+  page,
+  query,
+  type,
+  limit,
+  select,
+}: GetReportsInput & {
+  select: TSelect;
+}) => {
+  const { take, skip } = getPagination(limit, page);
+
+  const where: Prisma.ReportWhereInput = {
+    [type]: { isNot: null },
+  };
+  // if (type) where[type] = {};
+
+  const items = await prisma.report.findMany({
+    take,
+    skip,
+    select,
+    where,
+    orderBy: [{ createdAt: 'desc' }],
+  });
+  const count = await prisma.report.count({ where });
+  return getPagingData({ items, count }, take, page);
+};
+
+export const setReportStatus = async ({ id, status }: SetReportStatusInput) => {
+  await prisma.report.update({ where: { id }, data: { status } });
+};
+
+export const getReportCounts = async ({ type }: GetReportCountInput) => {
+  return await prisma.report.count({
+    where: { [type]: { isNot: null }, status: ReportStatus.Pending },
   });
 };
