@@ -289,7 +289,7 @@ const MasonryItem = ({
     const aspectRatio = image.width / image.height;
     const imageHeight = Math.floor(width / aspectRatio);
     const totalHeight = imageHeight + (onTwoLines ? 66 : 33);
-    return totalHeight;
+    return totalHeight > 600 ? 600 : totalHeight;
   }, [itemWidth, image.width, image.height, onTwoLines]);
 
   const modelText = (
