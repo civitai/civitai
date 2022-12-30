@@ -11,6 +11,7 @@ import {
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { GetQuestionsInput, UpsertQuestionInput } from '~/server/schema/question.schema';
 import { Context } from '~/server/createContext';
+import { commentV2Select } from '~/server/selectors/commentv2.selector';
 
 export type GetQuestionsProps = AsyncReturnType<typeof getQuestionsHandler>;
 export const getQuestionsHandler = async ({
@@ -47,11 +48,11 @@ export const getQuestionsHandler = async ({
 
     return {
       ...rest,
-      items: items.map(({ tags, ...item }) => {
+      items: items.map((item) => {
         const rank = (item.rank ?? {}) as Record<string, number>;
         return {
           ...item,
-          tags: tags.map((x) => x.tag),
+          tags: item.tags.map((x) => x.tag),
           rank: {
             heartCount: rank[`heartCount${input.period}`],
             answerCount: rank[`answerCount${input.period}`],
@@ -105,15 +106,30 @@ export const getQuestionDetailHandler = async ({
             reaction: true,
           },
         },
+        comments: {
+          orderBy: { comment: { createdAt: 'asc' } },
+          take: 5,
+          select: {
+            comment: {
+              select: commentV2Select,
+            },
+          },
+        },
+        _count: {
+          select: {
+            comments: true,
+          },
+        },
       },
     });
     if (!item) throw throwNotFoundError();
-    const { reactions, tags, ...question } = item;
+    const { reactions, tags, comments, ...question } = item;
 
     return {
       ...question,
       tags: tags.map((x) => x.tag),
       userReactions: reactions,
+      comments: comments.map((x) => x.comment),
     };
   } catch (error) {
     throw throwDbError(error);

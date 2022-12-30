@@ -10,6 +10,7 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getAnswers } from '~/server/services/answer.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { AnswerVoteInput, GetAnswersInput, UpsertAnswerInput } from './../schema/answer.schema';
+import { commentV2Select } from '~/server/selectors/commentv2.selector';
 
 export type GetAnswersProps = AsyncReturnType<typeof getAnswersHandler>;
 export const getAnswersHandler = async ({
@@ -50,13 +51,28 @@ export const getAnswersHandler = async ({
           take: !userId ? 0 : 1,
           select: { vote: true, userId: true },
         },
+        comments: {
+          orderBy: { comment: { createdAt: 'asc' } },
+          take: 5,
+          select: {
+            comment: {
+              select: commentV2Select,
+            },
+          },
+        },
+        _count: {
+          select: {
+            comments: true,
+          },
+        },
       },
     });
     if (!items) throw throwNotFoundError();
-    return items.map(({ reactions, votes, ...item }) => ({
+    return items.map(({ reactions, votes, comments, ...item }) => ({
       ...item,
       userReactions: reactions,
       userVote: votes.length > 0 ? votes[0] : undefined,
+      comments: comments.map((x) => x.comment),
     }));
   } catch (error) {
     throw throwDbError(error);

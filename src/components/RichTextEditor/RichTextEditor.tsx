@@ -1,5 +1,4 @@
 import { Input, InputWrapperProps, MantineSize } from '@mantine/core';
-import { useDidUpdate, usePrevious } from '@mantine/hooks';
 import { Link, RichTextEditor as RTE, RichTextEditorProps } from '@mantine/tiptap';
 import Image from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -7,7 +6,7 @@ import Underline from '@tiptap/extension-underline';
 import Youtube from '@tiptap/extension-youtube';
 import { BubbleMenu, Extensions, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
@@ -33,6 +32,7 @@ export function RichTextEditor({
   hideToolbar = false,
   editorSize = 'sm',
   reset = 0,
+  autoFocus,
   ...props
 }: Props) {
   const addHeading = includeControls.includes('heading');
@@ -80,6 +80,10 @@ export function RichTextEditor({
       editor.commands.setContent(value);
     }
   }, [reset]); //eslint-disable-line
+
+  useEffect(() => {
+    if (editor && autoFocus) editor.commands.focus('end');
+  }, [editor, autoFocus]);
 
   return (
     <Input.Wrapper
@@ -187,4 +191,5 @@ type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
     hideToolbar?: boolean;
     editorSize?: 'sm' | 'md' | 'lg' | 'xl';
     reset?: number;
+    autoFocus?: boolean;
   };

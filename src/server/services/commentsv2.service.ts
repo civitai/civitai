@@ -1,6 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '~/server/db/client';
-import { UpsertCommentV2Input, GetCommentsV2Input } from './../schema/commentv2.schema';
+import {
+  UpsertCommentV2Input,
+  GetCommentsV2Input,
+  CommentConnectorInput,
+} from './../schema/commentv2.schema';
 
 export const upsertComment = async ({
   userId,
@@ -28,15 +32,23 @@ export const upsertComment = async ({
 export const getComments = async <TSelect extends Prisma.CommentV2Select>({
   entityType,
   entityId,
+  limit,
+  cursor,
   select,
 }: GetCommentsV2Input & {
   select: TSelect;
 }) => {
+  const take = limit ?? 20;
   return await prisma.commentV2.findMany({
+    take,
+    cursor: cursor ? { id: cursor } : undefined,
     where: {
       [entityType]: {
         [`${entityType}Id`]: entityId,
       },
+    },
+    orderBy: {
+      createdAt: 'asc',
     },
     select,
   });
@@ -44,4 +56,14 @@ export const getComments = async <TSelect extends Prisma.CommentV2Select>({
 
 export const deleteComment = async ({ id }: { id: number }) => {
   await prisma.commentV2.delete({ where: { id } });
+};
+
+export const getCommentCount = async ({ entityId, entityType }: CommentConnectorInput) => {
+  return await prisma.commentV2.count({
+    where: {
+      [entityType]: {
+        [`${entityType}Id`]: entityId,
+      },
+    },
+  });
 };

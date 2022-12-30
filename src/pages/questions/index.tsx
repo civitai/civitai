@@ -1,4 +1,4 @@
-import { Container, Stack, Title, Group, Button, Indicator, Badge } from '@mantine/core';
+import { Container, Stack, Title, Group, Button, Badge, Alert, Text } from '@mantine/core';
 import { GetServerSideProps } from 'next';
 import Link from 'next/link';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
@@ -7,6 +7,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { Questions } from '~/components/Questions/Questions.Provider';
 import { constants } from '~/server/common/constants';
 import { parseCookies } from '~/providers/CookiesProvider';
+import { openContextModal } from '@mantine/modals';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const page = context.query.page ? Number(context.query.page) : 1;
@@ -32,6 +33,14 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
   };
 };
 
+const openModal = () =>
+  openContextModal({
+    modal: 'questionsInfo',
+    title: <Title order={2}>Additional Info</Title>,
+    size: 960,
+    innerProps: {},
+  });
+
 export default function QuestionsList() {
   return (
     <>
@@ -51,6 +60,16 @@ export default function QuestionsList() {
               </Link>
             </Group>
           </Group>
+          <Alert>
+            <Text>
+              Have a question about stable diffusion, fine tuning models, or just how best to
+              utilize a prompt? Ask it here! Clever people in the community can help you get the
+              most out of your creations! Lost?{' '}
+              <Text variant="link" style={{ cursor: 'pointer' }} onClick={openModal} span>
+                {`Here's how this works...`}
+              </Text>
+            </Text>
+          </Alert>
           <Questions>
             <Group position="apart">
               <Questions.Sort />

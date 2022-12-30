@@ -1,11 +1,21 @@
 import { GetByIdInput } from './../schema/base.schema';
-import { upsertComment, getComments, deleteComment } from './../services/commentsv2.service';
-import { UpsertCommentV2Input, GetCommentsV2Input } from './../schema/commentv2.schema';
+import {
+  upsertComment,
+  getComments,
+  deleteComment,
+  getCommentCount,
+} from './../services/commentsv2.service';
+import {
+  UpsertCommentV2Input,
+  GetCommentsV2Input,
+  CommentConnectorInput,
+} from './../schema/commentv2.schema';
 import { Context } from '~/server/createContext';
 import { throwDbError } from '~/server/utils/errorHandling';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 
-export const getCommentsV2Handler = async ({
+export type InfiniteCommentResults = AsyncReturnType<typeof getInfiniteCommentsV2Handler>;
+export const getInfiniteCommentsV2Handler = async ({
   ctx,
   input,
 }: {
@@ -13,7 +23,21 @@ export const getCommentsV2Handler = async ({
   input: GetCommentsV2Input;
 }) => {
   try {
-    await getComments({ ...input, select: commentV2Select });
+    input.limit = input.limit ?? 20;
+    const limit = input.limit + 1;
+
+    const comments = await getComments({ ...input, limit, select: commentV2Select });
+
+    let nextCursor: number | undefined;
+    if (comments.length > input.limit) {
+      const nextItem = comments.pop();
+      nextCursor = nextItem?.id;
+    }
+
+    return {
+      nextCursor,
+      comments,
+    };
   } catch (error) {
     throw throwDbError(error);
   }
@@ -42,6 +66,20 @@ export const deleteCommentV2Handler = async ({
 }) => {
   try {
     await deleteComment(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getCommentCountV2Handler = async ({
+  ctx,
+  input,
+}: {
+  ctx: Context;
+  input: CommentConnectorInput;
+}) => {
+  try {
+    return await getCommentCount(input);
   } catch (error) {
     throw throwDbError(error);
   }

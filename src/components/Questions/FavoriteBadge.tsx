@@ -5,6 +5,7 @@ import { trpc } from '~/utils/trpc';
 import { useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
 import { ReviewReactions } from '@prisma/client';
+import { ReactionBadge } from '~/components/Questions/ReactionBadge';
 
 type ReactionButtonProps = Omit<ToggleReactionInput, 'reaction'> & {
   userReacted?: boolean;
@@ -38,24 +39,18 @@ export const FavoriteBadge = ({
   }, [hasReacted]);
 
   return (
-    <Badge
-      variant={'light'}
-      color={hasReacted ? 'pink' : 'gray'}
-      leftSection={
-        <Center>
-          <IconHeart
-            size={18}
-            color={hasReacted ? theme.colors.red[6] : undefined}
-            style={{ fill: hasReacted ? theme.colors.red[6] : undefined }}
-          />
-        </Center>
+    <ReactionBadge
+      color={hasReacted ? 'pink' : undefined}
+      leftIcon={
+        <IconHeart
+          size={18}
+          color={hasReacted ? theme.colors.red[6] : undefined}
+          style={{ fill: hasReacted ? theme.colors.red[6] : undefined }}
+        />
       }
-      sx={{ userSelect: 'none', ...(!disabled && { cursor: 'pointer' }) }}
       onClick={!disabled ? toggleReaction : undefined}
-      size="lg"
-      px={5}
     >
       {count}
-    </Badge>
+    </ReactionBadge>
   );
 };

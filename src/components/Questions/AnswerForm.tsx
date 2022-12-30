@@ -1,4 +1,4 @@
-import { Button, Group, Stack, Textarea, Alert, Text, List } from '@mantine/core';
+import { Button, Group, Stack, Alert, Text, List } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import { IconCheck, IconX } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
@@ -34,7 +34,7 @@ export function AnswerForm({
         icon: <IconCheck size={18} />,
       });
 
-      await queryUtils.answer.invalidate();
+      await queryUtils.answer.getAll.invalidate({ questionId });
       onCancel?.();
       form.reset();
     },
