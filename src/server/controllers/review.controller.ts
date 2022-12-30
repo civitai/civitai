@@ -80,7 +80,6 @@ export const upsertReviewHandler = async ({
 };
 
 export const deleteUserReviewHandler = async ({
-  ctx,
   input,
 }: {
   ctx: DeepNonNullable<Context>;

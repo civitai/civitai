@@ -4,7 +4,6 @@ import {
   Card,
   Center,
   createStyles,
-  DefaultMantineColor,
   Group,
   Indicator,
   Loader,
@@ -12,8 +11,6 @@ import {
   Rating,
   Stack,
   Text,
-  ThemeIcon,
-  useMantineTheme,
   AspectRatio,
   Menu,
   ActionIcon,
@@ -21,7 +18,6 @@ import {
 import { ModelStatus } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
 import {
-  IconCloudOff,
   IconDotsVertical,
   IconDownload,
   IconFlag,
@@ -45,6 +41,7 @@ import { useInView } from 'react-intersection-observer';
 import { z } from 'zod';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { Empty } from '~/components/Empty/Empty';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -53,6 +50,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { SFW } from '~/components/Media/SFW';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { constants } from '~/server/common/constants';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getRandom } from '~/utils/array-helpers';
@@ -161,17 +159,7 @@ export function InfiniteModels({
           filters={{ ...filters, ...queryParams }}
         />
       ) : (
-        <Stack align="center">
-          <ThemeIcon size={128} radius={100}>
-            <IconCloudOff size={80} />
-          </ThemeIcon>
-          <Text size={32} align="center">
-            No results found
-          </Text>
-          <Text align="center">
-            {"Try adjusting your search or filters to find what you're looking for"}
-          </Text>
-        </Stack>
+        <Empty message="Try adjusting your search or filters to find what you're looking for" />
       )}
       {!isLoading && hasNextPage && (
         <Group position="center" ref={ref}>
@@ -229,21 +217,6 @@ export function MasonryList({ columnWidth, data, filters }: MasonryListProps) {
   });
 }
 
-const mantineColors: DefaultMantineColor[] = [
-  'blue',
-  'cyan',
-  'grape',
-  'green',
-  'indigo',
-  'lime',
-  'orange',
-  'pink',
-  'red',
-  'teal',
-  'violet',
-  'yellow',
-];
-
 // const maxNameLengthByType: Record<ModelType, number> = {
 //   [ModelType.Checkpoint]: 30,
 //   [ModelType.Hypernetwork]: 30,
@@ -260,8 +233,7 @@ const MasonryItem = ({
   width: number;
 }) => {
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
-  const theme = useMantineTheme();
+  const { classes, theme } = useStyles();
 
   const { id, image, name, rank, nsfw, user } = data ?? {};
 
@@ -401,7 +373,7 @@ const MasonryItem = ({
     <LoginRedirect reason="report-model" key="report">
       <Menu.Item
         icon={<IconFlag size={14} stroke={1.5} />}
-        onClick={(e: any) => {
+        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
           openContext('report', { type: ReportEntity.Model, entityId: id });
@@ -454,7 +426,7 @@ const MasonryItem = ({
                         <ActionIcon
                           variant="transparent"
                           p={0}
-                        onClick={(e: any) => { //eslint-disable-line
+                          onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                             e.preventDefault();
                             e.stopPropagation();
                           }}
@@ -504,7 +476,7 @@ const MasonryItem = ({
 };
 
 const useStyles = createStyles((theme) => {
-  const base = theme.colors[getRandom(mantineColors)];
+  const base = theme.colors[getRandom(constants.mantineColors)];
   const background = theme.colorScheme === 'dark' ? theme.colors.dark[6] : '#fff';
 
   return {

@@ -27,16 +27,16 @@ import {
 import { IconCloudOff, IconFilter, IconHeart, IconMessageCircle } from '@tabler/icons';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
-import dayjs from 'dayjs';
 import router, { useRouter } from 'next/router';
 import createContext from 'zustand/context';
 import { trpc } from '~/utils/trpc';
 import Link from 'next/link';
 import { QS } from '~/utils/qs';
+import { addToDate } from '~/utils/date-helpers';
 
-const setCookie = (key: string, data: any) => // eslint-disable-line
+const setCookie = (key: string, data: unknown) =>
   sc(key, data, {
-    expires: dayjs().add(1, 'year').toDate(),
+    expires: addToDate(new Date(), 1, 'year').toDate(),
   });
 
 type FilterProps = z.input<typeof questionsFilterSchema>;
@@ -50,7 +50,7 @@ type Store = {
 const { Provider, useStore } = createContext<ReturnType<typeof createMyStore>>();
 const createMyStore = (initialState: FilterProps) => {
   return create<Store>()(
-    immer((set, get) => {
+    immer((set) => {
       return {
         filters: { ...initialState },
         setSort: (sort) => {

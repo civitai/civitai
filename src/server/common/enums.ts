@@ -38,3 +38,11 @@ export enum QuestionStatus {
   Answered = 'Answered',
   Unanswered = 'Unanswered',
 }
+
+export enum BountySort {
+  HighestBounty = 'HighestBounty',
+  MostLiked = 'MostLiked',
+  MostDiscussed = 'MostDiscussed',
+  MostHunters = 'MostHunters',
+  Newest = 'Newest',
+}
