@@ -359,7 +359,7 @@ export const updateModel = async ({
                   index,
                   image: { create: image },
                 })),
-                update: imagesToUpdate.map(({ index, ...image }) => ({
+                update: imagesToUpdate.map(({ index, meta, ...image }) => ({
                   where: {
                     imageId_modelVersionId: {
                       imageId: image.id as number,
@@ -368,6 +368,11 @@ export const updateModel = async ({
                   },
                   data: {
                     index,
+                    image: {
+                      update: {
+                        meta,
+                      },
+                    },
                   },
                 })),
               },
