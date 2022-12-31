@@ -58,13 +58,17 @@ function MyApp(props: CustomAppProps) {
   const content = env.NEXT_PUBLIC_MAINTENANCE_MODE ? (
     <MaintenanceMode />
   ) : (
-    <CustomModalsProvider>
-      <NotificationsProvider>
-        <RoutedContextProvider>
-          <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-        </RoutedContextProvider>
-      </NotificationsProvider>
-    </CustomModalsProvider>
+    <SessionProvider session={session}>
+      <CookiesProvider value={cookies}>
+        <CustomModalsProvider>
+          <NotificationsProvider>
+            <RoutedContextProvider>
+              <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+            </RoutedContextProvider>
+          </NotificationsProvider>
+        </CustomModalsProvider>
+      </CookiesProvider>
+    </SessionProvider>
   );
 
   return (
@@ -75,42 +79,38 @@ function MyApp(props: CustomAppProps) {
         <link rel="manifest" href="/site.webmanifest" />
       </Head>
 
-      <SessionProvider session={session}>
-        <CookiesProvider value={cookies}>
-          <ColorSchemeProvider colorScheme={colorScheme} toggleColorScheme={toggleColorScheme}>
-            <MantineProvider
-              theme={{
-                colorScheme,
-                components: {
-                  Popover: { styles: { dropdown: { maxWidth: '100vw' } } },
-                  Rating: { styles: { symbolBody: { cursor: 'pointer' } } },
-                  Switch: {
-                    styles: {
-                      body: { verticalAlign: 'top' },
-                      track: { cursor: 'pointer' },
-                      label: { cursor: 'pointer' },
-                    },
-                  },
-                  Radio: {
-                    styles: {
-                      radio: { cursor: 'pointer' },
-                      label: { cursor: 'pointer' },
-                    },
-                  },
-                  Badge: {
-                    styles: { leftSection: { lineHeight: 1 } },
-                    defaultProps: { radius: 'sm' },
-                  },
+      <ColorSchemeProvider colorScheme={colorScheme} toggleColorScheme={toggleColorScheme}>
+        <MantineProvider
+          theme={{
+            colorScheme,
+            components: {
+              Popover: { styles: { dropdown: { maxWidth: '100vw' } } },
+              Rating: { styles: { symbolBody: { cursor: 'pointer' } } },
+              Switch: {
+                styles: {
+                  body: { verticalAlign: 'top' },
+                  track: { cursor: 'pointer' },
+                  label: { cursor: 'pointer' },
                 },
-              }}
-              withGlobalStyles
-              withNormalizeCSS
-            >
-              {content}
-            </MantineProvider>
-          </ColorSchemeProvider>
-        </CookiesProvider>
-      </SessionProvider>
+              },
+              Radio: {
+                styles: {
+                  radio: { cursor: 'pointer' },
+                  label: { cursor: 'pointer' },
+                },
+              },
+              Badge: {
+                styles: { leftSection: { lineHeight: 1 } },
+                defaultProps: { radius: 'sm' },
+              },
+            },
+          }}
+          withGlobalStyles
+          withNormalizeCSS
+        >
+          {content}
+        </MantineProvider>
+      </ColorSchemeProvider>
       {process.env.NODE_ENV == 'development' && <ReactQueryDevtools />}
     </>
   );
