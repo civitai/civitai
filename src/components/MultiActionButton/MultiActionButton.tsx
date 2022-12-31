@@ -5,13 +5,37 @@ import {
   Group,
   Menu,
   MenuItemProps,
+  Tooltip,
 } from '@mantine/core';
 import { IconChevronDown } from '@tabler/icons';
 import { forwardRef } from 'react';
 
 const _MultiActionButton = forwardRef<HTMLButtonElement, Props>(
-  ({ children, menuItems, variant = 'filled', ...props }, ref) => {
+  ({ children, menuItems, menuTooltip, variant = 'filled', ...props }, ref) => {
     const hasMenuItems = menuItems.length > 0;
+
+    let menuButton = (
+      <Button
+        variant={variant}
+        px={4}
+        sx={() => ({ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 })}
+      >
+        <IconChevronDown stroke={1.5} size={18} />
+      </Button>
+    );
+    if (menuTooltip)
+      menuButton = (
+        <Tooltip label={menuTooltip} position="top" withArrow>
+          {menuButton}
+        </Tooltip>
+      );
+
+    const menu = hasMenuItems && (
+      <Menu position="bottom-end">
+        <Menu.Target>{menuButton}</Menu.Target>
+        <Menu.Dropdown>{menuItems}</Menu.Dropdown>
+      </Menu>
+    );
 
     return (
       <Group spacing={0} noWrap>
@@ -36,20 +60,7 @@ const _MultiActionButton = forwardRef<HTMLButtonElement, Props>(
           {children}
         </Button>
 
-        {hasMenuItems ? (
-          <Menu position="bottom-end">
-            <Menu.Target>
-              <Button
-                variant={variant}
-                px={4}
-                sx={() => ({ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 })}
-              >
-                <IconChevronDown stroke={1.5} size={18} />
-              </Button>
-            </Menu.Target>
-            <Menu.Dropdown>{menuItems}</Menu.Dropdown>
-          </Menu>
-        ) : null}
+        {menu}
       </Group>
     );
   }
@@ -58,6 +69,7 @@ _MultiActionButton.displayName = 'MultiActionButton';
 
 type Props = ButtonProps & {
   menuItems: React.ReactElement<MenuItemProps>[];
+  menuTooltip?: React.ReactNode;
 };
 
 export const MultiActionButton = createPolymorphicComponent<'button', Props>(_MultiActionButton);

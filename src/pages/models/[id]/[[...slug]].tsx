@@ -21,11 +21,13 @@ import {
   Tooltip,
   Rating,
   Card,
+  Anchor,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { ModelStatus, ModelType } from '@prisma/client';
 import {
+  IconAlertCircle,
   IconArrowsSort,
   IconBallpen,
   IconBan,
@@ -269,6 +271,11 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     model?.type === ModelType.TextualInversion &&
     latestVersion &&
     latestVersion.files.some((x) => x.type === 'Negative');
+
+  const hasConfig =
+    model?.type === ModelType.Checkpoint &&
+    latestVersion &&
+    latestVersion.files.some((x) => x.type === 'Config');
 
   if (loadingModel)
     return (
@@ -586,6 +593,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                           } (${formatKBytes(file.sizeKB)})`}
                         </Menu.Item>
                       ))}
+                      menuTooltip="Other Downloads"
                       download
                     >
                       <Text align="center">
@@ -603,7 +611,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   </Stack>
 
                   <RunButton modelVersionId={latestVersion.id} />
-                  <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="bottom" withArrow>
+                  <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
                     <div>
                       <LoginRedirect reason="favorite-model">
                         <Button
@@ -619,14 +627,43 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 </Group>
               )}
               {hasNegativeEmbed && (
-                <Alert radius="sm">
+                <Alert radius="sm" pl={10}>
                   <Group spacing="xs" noWrap>
                     <ThemeIcon>
-                      <IconInfoCircle />
+                      <IconAlertCircle />
                     </ThemeIcon>
                     <Text size="xs" sx={{ lineHeight: 1.1 }}>
-                      This Textual Inversion includes a Negative embed, click the dropdown and
-                      download the negative for full effect.
+                      This Textual Inversion includes a{' '}
+                      <Anchor
+                        href={createModelFileDownloadUrl({
+                          versionId: latestVersion.id,
+                          type: 'Negative',
+                        })}
+                      >
+                        Negative embed
+                      </Anchor>
+                      , install the negative and use it in the negative prompt for full effect.
+                    </Text>
+                  </Group>
+                </Alert>
+              )}
+              {hasConfig && (
+                <Alert radius="sm" pl={10}>
+                  <Group spacing="xs" noWrap>
+                    <ThemeIcon>
+                      <IconAlertCircle />
+                    </ThemeIcon>
+                    <Text size="xs" sx={{ lineHeight: 1.1 }}>
+                      This checkpoint includes a{' '}
+                      <Anchor
+                        href={createModelFileDownloadUrl({
+                          versionId: latestVersion.id,
+                          type: 'Config',
+                        })}
+                      >
+                        config file
+                      </Anchor>
+                      , download and place along side the checkpoint.
                     </Text>
                   </Group>
                 </Alert>

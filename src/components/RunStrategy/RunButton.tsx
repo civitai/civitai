@@ -6,7 +6,7 @@ export function RunButton({ modelVersionId, ...props }: { modelVersionId: number
   const { openContext } = useRoutedContext();
 
   return (
-    <Tooltip label="Run Model" withArrow position="bottom">
+    <Tooltip label="Run Model" withArrow position="top">
       <Button
         onClick={() => openContext('runStrategy', { modelVersionId })}
         color="green"
