@@ -21,6 +21,8 @@ import { CustomModalsProvider } from './../providers/CustomModalsProvider';
 import { TosProvider } from '~/providers/TosProvider';
 import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
 import { RoutedContextProvider } from '~/routed-context/routed-context.provider';
+import { env } from '~/env/client.mjs';
+import { MaintenanceMode } from '~/components/MaintenanceMode/MaintenanceMode';
 
 dayjs.extend(duration);
 dayjs.extend(relativeTime);
@@ -53,6 +55,17 @@ function MyApp(props: CustomAppProps) {
   };
 
   const getLayout = Component.getLayout ?? ((page) => <AppLayout>{page}</AppLayout>);
+  const content = env.NEXT_PUBLIC_MAINTENANCE_MODE ? (
+    <MaintenanceMode />
+  ) : (
+    <CustomModalsProvider>
+      <NotificationsProvider>
+        <RoutedContextProvider>
+          <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+        </RoutedContextProvider>
+      </NotificationsProvider>
+    </CustomModalsProvider>
+  );
 
   return (
     <>
@@ -93,13 +106,7 @@ function MyApp(props: CustomAppProps) {
               withGlobalStyles
               withNormalizeCSS
             >
-              <CustomModalsProvider>
-                <NotificationsProvider>
-                  <RoutedContextProvider>
-                    <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                  </RoutedContextProvider>
-                </NotificationsProvider>
-              </CustomModalsProvider>
+              {content}
             </MantineProvider>
           </ColorSchemeProvider>
         </CookiesProvider>
