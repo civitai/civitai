@@ -656,7 +656,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
   await updateQuestionMetrics();
   await refreshModelRank();
   await updateUserMetrics();
-  await refreshUserRank();
+  // await refreshUserRank();
 
   // Update the last update time
   // --------------------------------------------
