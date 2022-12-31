@@ -60,7 +60,7 @@ export const OwnershipForm = createReportForm({
             }
           >
             <Radio value="yes" label="I'm interested" />
-            <Radio value="no" label="$#!% off!" />
+            <Radio value="no" label="Not at this time" />
           </InputRadioGroup>
         </Stack>
       </>

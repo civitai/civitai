@@ -33,6 +33,8 @@ import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { GetReportsProps } from '~/server/controllers/report.controller';
 import produce from 'immer';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerAuthSession(context);
@@ -254,13 +256,29 @@ function ReportDetails({ details }: { details: Prisma.JsonValue }) {
               label: key,
               value: (
                 <Stack>
-                  {value.map((cuid) => {
+                  {value.map((cuid, i) => {
                     if (typeof cuid !== 'string') return null;
                     return (
-                      <a key={cuid} href={getEdgeUrl(cuid, {})} target="_blank" rel="noreferrer" />
+                      <a
+                        key={cuid}
+                        href={getEdgeUrl(cuid, { width: 450 })}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Image {i + 1}
+                      </a>
                     );
                   })}
                 </Stack>
+              ),
+            };
+          if (key === 'comment' && typeof value === 'string')
+            return {
+              label: key,
+              value: (
+                <ContentClamp maxHeight={100}>
+                  <RenderHtml html={value} />
+                </ContentClamp>
               ),
             };
 
