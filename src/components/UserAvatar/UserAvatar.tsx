@@ -31,7 +31,7 @@ export function UserAvatar({
   avatarProps,
   badge,
   size = 'sm',
-  spacing = 4,
+  spacing = 8,
   linkToProfile = false,
 }: Props) {
   const { textSize, subTextSize } = mapAvatarTextSize[size];
@@ -50,7 +50,7 @@ export function UserAvatar({
         <Stack spacing={0}>
           {withUsername && (
             <Group spacing={4}>
-              <Text size={textSize} lineClamp={1}>
+              <Text size={textSize} lineClamp={1} weight={500} sx={{ lineHeight: 1.1 }}>
                 {user?.username ?? user?.name}
               </Text>
               {badge}

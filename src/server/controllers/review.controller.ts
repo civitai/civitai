@@ -137,6 +137,37 @@ export const toggleReactionHandler = async ({
   }
 };
 
+export const toggleExcludeHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: GetByIdInput;
+}) => {
+  const { user } = ctx;
+  const { id } = input;
+
+  const { exclude } = (await getReviewById({ id, select: { exclude: true } })) ?? {};
+
+  try {
+    const review = await updateReviewById({
+      id,
+      data: {
+        exclude: !exclude,
+      },
+    });
+
+    if (!review) {
+      throw throwNotFoundError(`No review with id ${id}`);
+    }
+
+    return review;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+};
+
 export type ReviewDetails = AsyncReturnType<typeof getReviewDetailsHandler>;
 export const getReviewDetailsHandler = async ({ input: { id } }: { input: GetByIdInput }) => {
   try {

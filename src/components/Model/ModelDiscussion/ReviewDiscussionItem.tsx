@@ -13,7 +13,15 @@ import {
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { ReviewReactions } from '@prisma/client';
-import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconMessageCircle2 } from '@tabler/icons';
+import {
+  IconDotsVertical,
+  IconTrash,
+  IconEdit,
+  IconFlag,
+  IconMessageCircle2,
+  IconCalculatorOff,
+  IconCalculator,
+} from '@tabler/icons';
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -79,6 +87,40 @@ export function ReviewDiscussionItem({ review }: Props) {
         deleteMutation.mutate({ id: review.id });
       },
     });
+  };
+
+  const excludeMutation = trpc.review.toggleExclude.useMutation({
+    async onSuccess() {
+      await queryUtils.review.getAll.invalidate();
+      closeAllModals();
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Could not exclude review',
+      });
+    },
+  });
+  const handleExcludeReview = () => {
+    openConfirmModal({
+      title: 'Exclude Review',
+      children: (
+        <Text size="sm">
+          Are you sure you want to exclude this review from the average score of this model? You
+          will not be able to revert this.
+        </Text>
+      ),
+      centered: true,
+      labels: { confirm: 'Exclude Review', cancel: "No, don't exclude it" },
+      confirmProps: { color: 'red', loading: deleteMutation.isLoading },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        excludeMutation.mutate({ id: review.id });
+      },
+    });
+  };
+  const handleUnexcludeReview = () => {
+    excludeMutation.mutate({ id: review.id });
   };
 
   const toggleReactionMutation = trpc.review.toggleReaction.useMutation({
@@ -187,6 +229,22 @@ export function ReviewDiscussionItem({ review }: Props) {
                   >
                     Edit review
                   </Menu.Item>
+                  {!review.exclude && (
+                    <Menu.Item
+                      icon={<IconCalculatorOff size={14} stroke={1.5} />}
+                      onClick={handleExcludeReview}
+                    >
+                      Exclude from average
+                    </Menu.Item>
+                  )}
+                  {isMod && review.exclude && (
+                    <Menu.Item
+                      icon={<IconCalculator size={14} stroke={1.5} />}
+                      onClick={handleUnexcludeReview}
+                    >
+                      Unexclude from average
+                    </Menu.Item>
+                  )}
                 </>
               )}
               {(!currentUser || !isOwner) && (
@@ -204,13 +262,20 @@ export function ReviewDiscussionItem({ review }: Props) {
             </Menu.Dropdown>
           </Menu>
         </Group>
-        <Rating
-          value={review.rating}
-          fractions={2}
-          size={!hasImages && !review.text ? 'xl' : undefined}
-          sx={{ alignSelf: !hasImages && !review.text ? 'center' : undefined }}
-          readOnly
-        />
+        <Group position="apart">
+          <Rating
+            value={review.rating}
+            fractions={2}
+            size={!hasImages && !review.text ? 'xl' : undefined}
+            sx={{ alignSelf: !hasImages && !review.text ? 'center' : undefined }}
+            readOnly
+          />
+          {review.exclude && (
+            <Badge size="xs" color="red">
+              Excluded from average
+            </Badge>
+          )}
+        </Group>
       </Stack>
       {hasImages && (
         <Card.Section mb="sm" style={{ position: 'relative' }}>

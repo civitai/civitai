@@ -215,6 +215,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
                 MAX(r."createdAt") AS created_at
               FROM "Review" r
               JOIN "Model" m ON m.id = r."modelId" AND m."userId" != r."userId"
+              WHERE r.exclude = FALSE
               GROUP BY r."userId", r."${tableId}"
             ) r
             GROUP BY r.${viewId}

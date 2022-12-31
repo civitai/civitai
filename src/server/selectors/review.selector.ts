@@ -8,6 +8,7 @@ export const reviewDetailSelect = Prisma.validator<Prisma.ReviewSelect>()({
   id: true,
   createdAt: true,
   nsfw: true,
+  exclude: true,
   rating: true,
   text: true,
   modelId: true,

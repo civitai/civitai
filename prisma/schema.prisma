@@ -432,6 +432,7 @@ model Review {
   updatedAt      DateTime      @updatedAt
   nsfw           Boolean       @default(false)
   tosViolation   Boolean       @default(false)
+  exclude        Boolean       @default(false)
 
   reactions       ReviewReaction[]
   imagesOnReviews ImagesOnReviews[]
