@@ -197,6 +197,12 @@ model Model {
   fromImportId  Int?        @unique
   meta          Json        @default("{}")
 
+  // Licensing
+  allowNoCredit         Boolean @default(true)
+  allowCommercialUse    Boolean @default(true)
+  allowDerivatives      Boolean @default(true)
+  allowDifferentLicense Boolean @default(true)
+
   modelVersions  ModelVersion[]
   reviews        Review[]
   tagsOnModels   TagsOnModels[]
@@ -560,22 +566,24 @@ enum PartnerPricingModel {
 }
 
 model Partner {
-  id             Int                 @id @default(autoincrement())
-  name           String
-  homepage       String?
-  tos            String?
-  privacy        String?
-  startupTime    Int? //Seconds
-  onDemand       Boolean
-  stepsPerSecond Int
-  pricingModel   PartnerPricingModel
-  price          String
-  about          String?
-  createdAt      DateTime            @default(now())
-  nsfw           Boolean             @default(false)
-  poi            Boolean             @default(false)
-  token          String?             @unique
-  runStrategies  RunStrategy[]
+  id               Int                 @id @default(autoincrement())
+  name             String
+  homepage         String?
+  tos              String?
+  privacy          String?
+  startupTime      Int? //Seconds
+  onDemand         Boolean
+  onDemandStrategy String? // URL Template
+  stepsPerSecond   Int
+  pricingModel     PartnerPricingModel
+  price            String
+  about            String?
+  createdAt        DateTime            @default(now())
+  nsfw             Boolean             @default(false)
+  poi              Boolean             @default(false)
+  personal         Boolean             @default(false)
+  token            String?             @unique
+  runStrategies    RunStrategy[]
 }
 
 model KeyValue {

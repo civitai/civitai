@@ -41,7 +41,7 @@ export default createRoutedContext({
         }))
         .map((partner) => ({
           ...partner,
-          available: partner.onDemand || partner.strategies.length > 0,
+          available: partner.strategies.length > 0,
         }))
         .sort((a, b) => Number(b.available) - Number(a.available)) ?? [];
 

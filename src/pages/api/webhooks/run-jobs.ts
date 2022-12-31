@@ -2,6 +2,7 @@ import cronParser from 'cron-parser';
 import dayjs from 'dayjs';
 import { z } from 'zod';
 
+import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
 import { processImportsJob } from '~/server/jobs/process-imports';
 import { scanFilesJob } from '~/server/jobs/scan-files';
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
@@ -15,6 +16,7 @@ const jobs = [
   processImportsJob,
   sendNotificationsJob,
   sendWebhooksJob,
+  addOnDemandRunStrategiesJob,
 ];
 
 export default WebhookEndpoint(async (req, res) => {
