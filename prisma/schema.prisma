@@ -67,6 +67,7 @@ model User {
   keys                 ApiKey[]
   favoriteModels       FavoriteModel[]
   links                UserLink[]
+  stats                UserStat?
   rank                 UserRank?
   comments             Comment[]
   commentReactions     CommentReaction[]
@@ -1035,44 +1036,50 @@ model ModelVersionRank {
 }
 
 /// @view
+model UserStat {
+  user                  User  @relation(fields: [userId], references: [id], onDelete: NoAction)
+  userId                Int   @id
+  downloadCountDay      Int
+  downloadCountWeek     Int
+  downloadCountMonth    Int
+  downloadCountYear     Int
+  downloadCountAllTime  Int
+  ratingCountDay        Int
+  ratingCountWeek       Int
+  ratingCountMonth      Int
+  ratingCountYear       Int
+  ratingCountAllTime    Int
+  followingCountDay     Int
+  followingCountWeek    Int
+  followingCountMonth   Int
+  followingCountYear    Int
+  followingCountAllTime Int
+  followerCountDay      Int
+  followerCountWeek     Int
+  followerCountMonth    Int
+  followerCountYear     Int
+  followerCountAllTime  Int
+  hiddenCountDay        Int
+  hiddenCountWeek       Int
+  hiddenCountMonth      Int
+  hiddenCountYear       Int
+  hiddenCountAllTime    Int
+  ratingDay             Float
+  ratingWeek            Float
+  ratingMonth           Float
+  ratingYear            Float
+  ratingAllTime         Float
+  favoriteCountDay      Int
+  favoriteCountWeek     Int
+  favoriteCountMonth    Int
+  favoriteCountYear     Int
+  favoriteCountAllTime  Int
+}
+
+/// @view
 model UserRank {
-  user                     User  @relation(fields: [userId], references: [id], onDelete: NoAction)
-  userId                   Int   @id
-  downloadCountDay         Int
-  downloadCountWeek        Int
-  downloadCountMonth       Int
-  downloadCountYear        Int
-  downloadCountAllTime     Int
-  ratingCountDay           Int
-  ratingCountWeek          Int
-  ratingCountMonth         Int
-  ratingCountYear          Int
-  ratingCountAllTime       Int
-  followingCountDay        Int
-  followingCountWeek       Int
-  followingCountMonth      Int
-  followingCountYear       Int
-  followingCountAllTime    Int
-  followerCountDay         Int
-  followerCountWeek        Int
-  followerCountMonth       Int
-  followerCountYear        Int
-  followerCountAllTime     Int
-  hiddenCountDay           Int
-  hiddenCountWeek          Int
-  hiddenCountMonth         Int
-  hiddenCountYear          Int
-  hiddenCountAllTime       Int
-  ratingDay                Float
-  ratingWeek               Float
-  ratingMonth              Float
-  ratingYear               Float
-  ratingAllTime            Float
-  favoriteCountDay         Int
-  favoriteCountWeek        Int
-  favoriteCountMonth       Int
-  favoriteCountYear        Int
-  favoriteCountAllTime     Int
+  user                     User @relation(fields: [userId], references: [id], onDelete: NoAction)
+  userId                   Int  @id
   downloadCountDayRank     Int
   downloadCountWeekRank    Int
   downloadCountMonthRank   Int

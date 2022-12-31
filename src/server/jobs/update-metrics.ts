@@ -1,17 +1,20 @@
 import { createJob } from './job';
-import { MetricTimeframe } from '@prisma/client';
 import { prisma } from '~/server/db/client';
 
 const METRIC_LAST_UPDATED_KEY = 'last-metrics-update';
+const RANK_LAST_UPDATED_KEY = 'last-rank-update';
+const RANK_UPDATE_DELAY = 1000 * 60 * 5; // 5 minutes
 export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async () => {
   // Get the last time this ran from the KeyValue store
   // --------------------------------------
+  const dates = await prisma.keyValue.findMany({
+    where: { key: { in: [METRIC_LAST_UPDATED_KEY, RANK_LAST_UPDATED_KEY] } },
+  });
   const lastUpdateDate = new Date(
-    ((
-      await prisma.keyValue.findUnique({
-        where: { key: METRIC_LAST_UPDATED_KEY },
-      })
-    )?.value as number) ?? 0
+    (dates.find((d) => d.key === METRIC_LAST_UPDATED_KEY)?.value as number) ?? 0
+  );
+  const lastRankDate = new Date(
+    (dates?.find((d) => d.key === RANK_LAST_UPDATED_KEY)?.value as number) ?? 0
   );
   const lastUpdate = lastUpdateDate.toISOString();
 
@@ -654,9 +657,8 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
   await updateModelMetrics('versions');
   await updateAnswerMetrics();
   await updateQuestionMetrics();
-  await refreshModelRank();
   await updateUserMetrics();
-  // await refreshUserRank();
+  await refreshModelRank();
 
   // Update the last update time
   // --------------------------------------------
@@ -665,4 +667,17 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
     create: { key: METRIC_LAST_UPDATED_KEY, value: new Date().getTime() },
     update: { value: new Date().getTime() },
   });
+
+  // Check if we need to update the slow ranks
+  // --------------------------------------------
+  const shouldUpdateRanks = lastRankDate.getTime() + RANK_UPDATE_DELAY <= new Date().getTime();
+  if (shouldUpdateRanks) {
+    await refreshUserRank();
+    console.log('Updated ranks');
+    await prisma?.keyValue.upsert({
+      where: { key: RANK_LAST_UPDATED_KEY },
+      create: { key: RANK_LAST_UPDATED_KEY, value: new Date().getTime() },
+      update: { value: new Date().getTime() },
+    });
+  }
 });
