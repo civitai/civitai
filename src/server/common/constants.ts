@@ -13,7 +13,15 @@ export const constants = {
     limit: 50,
   },
   baseModels: ['SD 1.4', 'SD 1.5', 'SD 2.0', 'SD 2.1', 'SD 2.0 768', 'Other'],
-  modelFileTypes: ['Model', 'Pruned Model', 'Negative', 'Training Data', 'VAE', 'Config'],
+  modelFileTypes: [
+    'Model',
+    'Text Encoder',
+    'Pruned Model',
+    'Negative',
+    'Training Data',
+    'VAE',
+    'Config',
+  ],
 } as const;
 
 export type BaseModel = typeof constants.baseModels[number];
