@@ -112,6 +112,7 @@ export function getDownloadFilename({
   } else if (fileType !== 'VAE') {
     let fileSuffix = '';
     if (fileName.includes('-inpainting')) fileSuffix = '-inpainting';
+    if (fileType === 'Text Encoder') fileSuffix = '_txt';
 
     const ext = file.name.split('.').pop();
     fileName = `${filenamize(model.name)}_${filenamize(modelVersion.name)}${fileSuffix}.${ext}`;
