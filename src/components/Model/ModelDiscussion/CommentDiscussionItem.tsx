@@ -126,7 +126,7 @@ export function CommentDiscussionItem({ comment }: Props) {
             linkToProfile
           />
         </Group>
-        <Menu position="bottom-end">
+        <Menu position="bottom-end" withinPortal>
           <Menu.Target>
             <ActionIcon size="xs" variant="subtle">
               <IconDotsVertical size={14} />
