@@ -1,10 +1,10 @@
-import { Container, Paper, Stack, Text, Alert, Group, ThemeIcon } from '@mantine/core';
+import { Container, Paper, Stack, Text, Alert, Group, ThemeIcon, Divider } from '@mantine/core';
 import { IconExclamationMark } from '@tabler/icons';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { BuiltInProviderType } from 'next-auth/providers';
 import { getCsrfToken, getProviders, signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
-import React from 'react';
+import { EmailLogin } from '~/components/EmailLogin/EmailLogin';
 import { SignInError } from '~/components/SignInError/SignInError';
 import { SocialButton } from '~/components/Social/SocialButton';
 
@@ -41,18 +41,22 @@ export default function Login({
             Welcome to Civitai, sign in with
           </Text>
 
-          <Stack mb="md" mt="md">
+          <Stack mb={error ? 'md' : undefined} mt="md">
             {providers
-              ? Object.values(providers).map((provider) => {
-                  return (
-                    <SocialButton
-                      key={provider.name}
-                      provider={provider.id as BuiltInProviderType}
-                      onClick={() => signIn(provider.id, { callbackUrl: returnUrl })}
-                    />
-                  );
-                })
+              ? Object.values(providers)
+                  .filter((x) => x.id !== 'email')
+                  .map((provider) => {
+                    return (
+                      <SocialButton
+                        key={provider.name}
+                        provider={provider.id as BuiltInProviderType}
+                        onClick={() => signIn(provider.id, { callbackUrl: returnUrl })}
+                      />
+                    );
+                  })
               : null}
+            <Divider label="Or" labelPosition="center" />
+            <EmailLogin />
           </Stack>
           {error && (
             <SignInError

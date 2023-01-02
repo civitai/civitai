@@ -24,6 +24,12 @@ export const serverSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string(),
   REDDIT_CLIENT_ID: z.string(),
   REDDIT_CLIENT_SECRET: z.string(),
+  EMAIL_HOST: z.string(),
+  EMAIL_PORT: z.preprocess((x) => parseInt(String(x)), z.number()),
+  EMAIL_SECURE: z.preprocess((val) => val === true || val === 'true', z.boolean()),
+  EMAIL_USER: z.string(),
+  EMAIL_PASS: z.string(),
+  EMAIL_FROM: z.string(),
   S3_UPLOAD_KEY: z.string(),
   S3_ORIGINS: z.preprocess((value) => {
     const str = String(value);

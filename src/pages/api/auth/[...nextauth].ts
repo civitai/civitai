@@ -6,11 +6,13 @@ import DiscordProvider from 'next-auth/providers/discord';
 import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
+import EmailProvider from 'next-auth/providers/email';
 
 // Prisma adapter for NextAuth, optional and can be removed
 import { env } from '~/env/server.mjs';
 import { prisma } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
+import { sendVerificationRequest } from '~/server/auth/verificationEmail';
 
 const setUserName = async (email: string) => {
   try {
@@ -91,6 +93,19 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
           duration: 'permanent',
         },
       },
+    }),
+    EmailProvider({
+      server: {
+        host: env.EMAIL_HOST,
+        port: env.EMAIL_PORT,
+        secure: env.EMAIL_SECURE,
+        auth: {
+          user: env.EMAIL_USER,
+          pass: env.EMAIL_PASS,
+        },
+      },
+      sendVerificationRequest,
+      from: env.EMAIL_FROM,
     }),
     CredentialsProvider({
       name: 'Credentials',

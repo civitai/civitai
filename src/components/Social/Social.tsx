@@ -5,6 +5,7 @@ import {
   IconBrandGithub,
   IconBrandGoogle,
   IconBrandReddit,
+  IconMail,
 } from '@tabler/icons';
 import { BuiltInProviderType } from 'next-auth/providers';
 
@@ -40,11 +41,17 @@ export const socialItems: SocialProps = {
     Icon: IconBrandReddit,
     Button: RedditButton,
   },
+  email: {
+    label: 'Email',
+    Icon: IconMail,
+    Button: EmailButton,
+  },
 };
 
 const discordColor = '#5865F2';
 const googleColor = '#4285F4';
 const redditColor = '#FF5700';
+const emailColor = '#666';
 
 export function DiscordButton(props: ButtonProps) {
   return (
@@ -113,6 +120,23 @@ export function RedditButton(props: ButtonProps) {
             theme.colorScheme === 'dark'
               ? theme.fn.lighten(redditColor, 0.1)
               : theme.fn.darken(redditColor, 0.05),
+        },
+      })}
+    />
+  );
+}
+
+export function EmailButton(props: ButtonProps) {
+  return (
+    <Button
+      {...props}
+      sx={(theme) => ({
+        backgroundColor: emailColor,
+        '&:hover': {
+          backgroundColor:
+            theme.colorScheme === 'dark'
+              ? theme.fn.lighten(emailColor, 0.1)
+              : theme.fn.darken(emailColor, 0.05),
         },
       })}
     />
