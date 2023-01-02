@@ -41,6 +41,14 @@ export function AppFooter() {
             Terms of Service
           </Button>
           <Button
+            component={NextLink}
+            href="/content/privacy"
+            {...buttonProps}
+            px={mobile ? 5 : 'xs'}
+          >
+            Privacy
+          </Button>
+          <Button
             component="a"
             href="https://github.com/civitai/civitai"
             {...buttonProps}
