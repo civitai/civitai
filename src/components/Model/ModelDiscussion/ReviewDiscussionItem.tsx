@@ -207,7 +207,7 @@ export function ReviewDiscussionItem({ review }: Props) {
             withUsername
             linkToProfile
           />
-          <Menu position="bottom-end">
+          <Menu position="bottom-end" withinPortal>
             <Menu.Target>
               <ActionIcon size="xs" variant="subtle">
                 <IconDotsVertical size={14} />

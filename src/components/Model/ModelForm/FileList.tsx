@@ -18,6 +18,7 @@ const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   'Training Data': '.zip',
   Config: '.yaml,.yml',
   VAE: '.pt,.ckpt,.safetensors',
+  'Text Encoder': '.pt',
 };
 
 export function FileList({ parentIndex, form, ...wrapperProps }: Props) {
@@ -130,7 +131,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
 
 const fileTypesByModelType: Record<ModelType, ModelFileType[]> = {
   TextualInversion: ['Model', 'Negative', 'Training Data'],
-  LORA: ['Model', 'Training Data'],
+  LORA: ['Model', 'Text Encoder', 'Training Data'],
   Checkpoint: ['Model', 'Pruned Model', 'Config', 'VAE', 'Training Data'],
   AestheticGradient: ['Model', 'Training Data'],
   Hypernetwork: ['Model', 'Training Data'],

@@ -13,7 +13,6 @@ import {
   Card,
 } from '@mantine/core';
 import { IconDownload, IconHeart, IconStar, IconUpload, IconUsers } from '@tabler/icons';
-import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { GetServerSideProps } from 'next/types';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
@@ -53,20 +52,20 @@ export default function UserPage() {
   const { data: user } = trpc.user.getCreator.useQuery({ username });
 
   const { models: uploads } = user?._count ?? { models: 0 };
-  const rank = user?.rank;
+  const stats = user?.stats;
 
   return (
     <>
-      {user && rank ? (
+      {user && stats ? (
         <Meta
           title={`${user.username} Creator Profile | Civitai`}
-          description={`Average Rating: ${rank.ratingAllTime.toFixed(1)} (${abbreviateNumber(
-            rank.ratingCountAllTime
+          description={`Average Rating: ${stats.ratingAllTime.toFixed(1)} (${abbreviateNumber(
+            stats.ratingCountAllTime
           )}), Models Uploaded: ${abbreviateNumber(uploads)}, Followers: ${abbreviateNumber(
-            rank.followerCountAllTime
+            stats.followerCountAllTime
           )}, Total Likes Received: ${abbreviateNumber(
-            rank.favoriteCountAllTime
-          )}, Total Downloads Received: ${abbreviateNumber(rank.downloadCountAllTime)}. `}
+            stats.favoriteCountAllTime
+          )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
           image={!user.image ? undefined : getEdgeUrl(user.image, { width: 1200 })}
         />
       ) : (
@@ -100,7 +99,7 @@ export default function UserPage() {
                       <Title order={2}>{user.username}</Title>
                       <FollowUserButton userId={user.id} size="md" compact />
                     </Group>
-                    {rank && (
+                    {stats && (
                       <Group spacing="xs">
                         <IconBadge
                           tooltip="Average Rating"
@@ -109,7 +108,7 @@ export default function UserPage() {
                           icon={
                             <Rating
                               size="sm"
-                              value={rank.ratingAllTime}
+                              value={stats.ratingAllTime}
                               readOnly
                               emptySymbol={
                                 theme.colorScheme === 'dark' ? (
@@ -123,16 +122,16 @@ export default function UserPage() {
                             />
                           }
                           variant={
-                            theme.colorScheme === 'dark' && rank.ratingCountAllTime > 0
+                            theme.colorScheme === 'dark' && stats.ratingCountAllTime > 0
                               ? 'filled'
                               : 'light'
                           }
                         >
                           <Text
                             size="sm"
-                            color={rank.ratingCountAllTime > 0 ? undefined : 'dimmed'}
+                            color={stats.ratingCountAllTime > 0 ? undefined : 'dimmed'}
                           >
-                            {abbreviateNumber(rank.ratingCountAllTime)}
+                            {abbreviateNumber(stats.ratingCountAllTime)}
                           </Text>
                         </IconBadge>
                         <IconBadge
@@ -152,7 +151,7 @@ export default function UserPage() {
                           size="lg"
                           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                         >
-                          <Text size="sm">{abbreviateNumber(rank.followerCountAllTime)}</Text>
+                          <Text size="sm">{abbreviateNumber(stats.followerCountAllTime)}</Text>
                         </IconBadge>
                         <IconBadge
                           tooltip="Favorites"
@@ -161,7 +160,7 @@ export default function UserPage() {
                           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                           size="lg"
                         >
-                          <Text size="sm">{abbreviateNumber(rank.favoriteCountAllTime)}</Text>
+                          <Text size="sm">{abbreviateNumber(stats.favoriteCountAllTime)}</Text>
                         </IconBadge>
                         <IconBadge
                           tooltip="Downloads"
@@ -169,7 +168,7 @@ export default function UserPage() {
                           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                           size="lg"
                         >
-                          <Text size="sm">{abbreviateNumber(rank.downloadCountAllTime)}</Text>
+                          <Text size="sm">{abbreviateNumber(stats.downloadCountAllTime)}</Text>
                         </IconBadge>
                       </Group>
                     )}

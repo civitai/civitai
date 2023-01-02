@@ -17,7 +17,7 @@ export const getUserCreator = async ({ username }: { username: string }) => {
           type: true,
         },
       },
-      rank: {
+      stats: {
         select: {
           ratingAllTime: true,
           ratingCountAllTime: true,

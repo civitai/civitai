@@ -101,17 +101,18 @@ export function getDownloadFilename({
   if (!constants.modelFileTypes.includes(file.type as ModelFileType)) return file.name;
   const fileType = file.type as ModelFileType;
 
-  if (model.type === ModelType.TextualInversion) {
+  if (fileType === 'Training Data') {
+    fileName = `${filenamize(model.name)}_${filenamize(modelVersion.name)}_trainingData.zip`;
+  } else if (model.type === ModelType.TextualInversion) {
     const trainedWord = modelVersion.trainedWords[0];
     let fileSuffix = '';
     if (fileType === 'Negative') fileSuffix = '-neg';
 
     if (trainedWord) fileName = `${trainedWord}${fileSuffix}.pt`;
-  } else if (fileType === 'Training Data') {
-    fileName = `${filenamize(model.name)}_${filenamize(modelVersion.name)}_trainingData.zip`;
   } else if (fileType !== 'VAE') {
     let fileSuffix = '';
     if (fileName.includes('-inpainting')) fileSuffix = '-inpainting';
+    else if (fileType === 'Text Encoder') fileSuffix = '_txt';
 
     const ext = file.name.split('.').pop();
     fileName = `${filenamize(model.name)}_${filenamize(modelVersion.name)}${fileSuffix}.${ext}`;
