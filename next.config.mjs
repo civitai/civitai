@@ -34,7 +34,7 @@ export default defineNextConfig({
     return [
       {
         source: '/api/download/training-data/:modelVersionId',
-        destination: '/api/download/models/:modelVersionId?type=TrainingData',
+        destination: '/api/download/models/:modelVersionId?type=Training%20Data',
         permanent: true,
       },
       {
