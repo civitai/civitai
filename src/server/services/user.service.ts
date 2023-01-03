@@ -1,8 +1,19 @@
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
 
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetAllUsersInput, GetByUsernameSchema } from '~/server/schema/user.schema';
+import {
+  DeleteUserInput,
+  GetAllUsersInput,
+  GetByUsernameSchema,
+} from '~/server/schema/user.schema';
+
+// const xprisma = prisma.$extends({
+//   result: {
+//     user
+//   }
+// })
 
 export const getUserCreator = async ({ username }: { username: string }) => {
   return prisma.user.findFirst({
@@ -78,10 +89,6 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
 
 export const updateUserById = ({ id, data }: { id: number; data: Prisma.UserUpdateInput }) => {
   return prisma.user.update({ where: { id }, data });
-};
-
-export const deleteUser = ({ id }: GetByIdInput) => {
-  return prisma.user.delete({ where: { id } });
 };
 
 export const getUserFavoriteModels = ({ id }: { id: number }) => {
@@ -207,4 +214,16 @@ export const toggleHideUser = async ({
 
   await prisma.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
   return;
+};
+
+export const deleteUser = async ({ id, displayName, removeModels }: DeleteUserInput) => {
+  const user = await prisma.user.findFirst({
+    where: { displayName, id },
+    select: { id: true },
+  });
+  if (!user) throw throwNotFoundError('Could not find user');
+  if (removeModels) {
+    await prisma.model.deleteMany({ where: { userId: user.id } });
+  }
+  return await prisma.user.delete({ where: { id: user.id } });
 };

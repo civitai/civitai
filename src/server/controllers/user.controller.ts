@@ -18,6 +18,7 @@ import {
   ToggleFavoriteModelInput,
   ToggleFollowUserSchema,
   GetByUsernameSchema,
+  DeleteUserInput,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
@@ -135,14 +136,14 @@ export const deleteUserHandler = async ({
   input,
 }: {
   ctx: DeepNonNullable<Context>;
-  input: GetByIdInput;
+  input: DeleteUserInput;
 }) => {
   const { id } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
 
   try {
-    const user = await deleteUser({ id });
+    const user = await deleteUser(input);
 
     if (!user) {
       throw throwNotFoundError(`No user with id ${id}`);

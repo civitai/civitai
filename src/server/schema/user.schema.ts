@@ -31,3 +31,10 @@ export const getByUsernameSchema = z.object({
   username: z.string(),
 });
 export type GetByUsernameSchema = z.infer<typeof getByUsernameSchema>;
+
+export type DeleteUserInput = z.infer<typeof deleteUserSchema>;
+export const deleteUserSchema = z.object({
+  id: z.number(),
+  displayName: z.string(),
+  removeModels: z.boolean().optional(),
+});

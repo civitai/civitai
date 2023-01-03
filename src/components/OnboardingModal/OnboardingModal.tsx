@@ -11,7 +11,10 @@ import { trpc } from '~/utils/trpc';
 import { toStringList } from '~/utils/array-helpers';
 
 const schema = z.object({
-  username: z.string(),
+  username: z
+    .string()
+    .min(3)
+    .regex(/^[A-Za-z0-9]*$/, 'The "username" field can only contain letters and numbers.'),
   tos: z.preprocess(
     (val) => (val === false ? null : val),
     z.boolean({
@@ -78,6 +81,7 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
           {!session?.user?.email && (
             <InputText name="email" label="Email" type="email" withAsterisk />
           )}
+          {/* TODO - only accept [a-z][0-9] */}
           <InputText name="username" label="Username" withAsterisk />
           <InputSwitch
             name="showNsfw"

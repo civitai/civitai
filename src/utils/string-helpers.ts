@@ -57,3 +57,10 @@ export function removeTags(str: string) {
   // HTML tag with a null string.
   return str.replace(/(<([^>]+)>)/gi, '');
 }
+
+export function postgresSlugify(str: string) {
+  return str
+    .replace(' ', '_')
+    .replace(/[^a-zA-Z0-9_]/g, '')
+    .toLowerCase();
+}

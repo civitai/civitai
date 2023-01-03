@@ -29,11 +29,12 @@ import { Meta } from '~/components/Meta/Meta';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {
   const ssg = await getServerProxySSGHelpers(ctx);
-  const username = ctx.query.username as string;
+  const username = postgresSlugify(ctx.query.username as string);
   if (username) await ssg.user.getCreator.prefetch({ username });
 
   return {
