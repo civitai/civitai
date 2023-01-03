@@ -47,7 +47,7 @@ export const getServerSideProps: GetServerSideProps = async (ctx) => {
 export default function UserPage() {
   const router = useRouter();
   const theme = useMantineTheme();
-  const username = router.query.username as string;
+  const username = postgresSlugify(router.query.username as string);
   const { classes } = useStyles();
 
   const { data: user } = trpc.user.getCreator.useQuery({ username });
