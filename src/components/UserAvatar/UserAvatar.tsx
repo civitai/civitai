@@ -51,7 +51,7 @@ export function UserAvatar({
           {withUsername && (
             <Group spacing={4}>
               <Text size={textSize} lineClamp={1} weight={500} sx={{ lineHeight: 1.1 }}>
-                {user?.username ?? user?.name}
+                {user?.username}
               </Text>
               {badge}
             </Group>

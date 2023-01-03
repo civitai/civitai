@@ -3,8 +3,8 @@ import { Prisma } from '@prisma/client';
 export const simpleUserSelect = Prisma.validator<Prisma.UserSelect>()({
   id: true,
   username: true,
-  // deletedAt: true,
-  name: true,
+  deletedAt: true,
+  // name: true,
   image: true,
 });
 
