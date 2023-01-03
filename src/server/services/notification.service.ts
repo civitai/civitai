@@ -33,7 +33,7 @@ export const getUserNotifications = async <TSelect extends Prisma.NotificationSe
   });
 
   if (count) {
-    const [items, count] = await Promise.all([
+    const [items, count] = await prisma.$transaction([
       notificationQuery,
       prisma.notification.count({ where }),
     ]);
