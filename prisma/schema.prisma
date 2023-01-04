@@ -3,7 +3,7 @@
 
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = ["filteredRelationCount", "orderByNulls", "interactiveTransactions"]
+  previewFeatures = ["filteredRelationCount", "orderByNulls", "clientExtensions"]
 }
 
 datasource db {
@@ -46,6 +46,7 @@ model User {
   id            Int       @id @default(autoincrement())
   name          String?
   username      String?   @unique @db.Citext
+  // displayName   String?   @db.Citext //[deleted]
   email         String?   @unique
   emailVerified DateTime?
   image         String?
@@ -54,6 +55,7 @@ model User {
   isModerator   Boolean?  @default(false)
   tos           Boolean?  @default(false)
   createdAt     DateTime  @default(now())
+  deletedAt     DateTime?
 
   accounts             Account[]
   sessions             Session[]

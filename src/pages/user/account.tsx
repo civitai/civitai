@@ -15,6 +15,7 @@ import { AccountsCard } from '~/components/Account/AccountsCard';
 import { ApiKeysCard } from '~/components/Account/ApiKeysCard';
 import { CreatorCard } from '~/components/Account/CreatorCard';
 import { NotificationsCard } from '~/components/Account/NotificationsCard';
+import { RemoveAccountCard } from '~/components/Account/RemoveAccountCard';
 
 export default function Account({ providers, isDev = false }: Props) {
   return (
@@ -36,6 +37,7 @@ export default function Account({ providers, isDev = false }: Props) {
           <NotificationsCard />
           <AccountsCard providers={providers} />
           {isDev && <ApiKeysCard />}
+          {/* <RemoveAccountCard /> */}
         </Stack>
       </Container>
     </>

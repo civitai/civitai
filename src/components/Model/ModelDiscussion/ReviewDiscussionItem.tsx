@@ -137,7 +137,7 @@ export function ReviewDiscussionItem({ review }: Props) {
           reaction,
           user: {
             id: currentUser.id,
-            name: currentUser.name ?? '',
+            deletedAt: null,
             username: currentUser.username ?? '',
             image: currentUser.image ?? '',
           },

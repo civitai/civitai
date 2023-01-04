@@ -7,7 +7,10 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 const schema = z.object({
-  username: z.string(),
+  username: z
+    .string()
+    .min(3)
+    .regex(/^[A-Za-z0-9]*$/, 'The "username" field can only contain letters and numbers.'),
   image: z.string().nullable(),
 });
 
@@ -42,7 +45,7 @@ export function ProfileCard() {
           <Title order={2}>Profile</Title>
           {error && (
             <Alert color="red" variant="light">
-              {error.message}
+              {error.data?.code === 'CONFLICT' ? 'That username is already taken' : error.message}
             </Alert>
           )}
           <InputText name="username" label="Username" required />

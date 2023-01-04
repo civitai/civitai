@@ -27,7 +27,7 @@ export const getUserDownloads = async <TSelect extends Prisma.DownloadHistorySel
   });
 
   if (count) {
-    const [items, count] = await Promise.all([
+    const [items, count] = await prisma.$transaction([
       downloadHistoryQuery,
       prisma.downloadHistory.count({ where }),
     ]);

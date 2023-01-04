@@ -25,6 +25,7 @@ import {
   toggleFavoriteModelInput,
   toggleFollowUserSchema,
   userUpsertSchema,
+  deleteUserSchema,
 } from '~/server/schema/user.schema';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
@@ -40,7 +41,7 @@ export const userRouter = router({
   getLists: publicProcedure.input(getByUsernameSchema).query(getUserListsHandler),
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
   update: protectedProcedure.input(userUpsertSchema.partial()).mutation(updateUserHandler),
-  delete: protectedProcedure.input(getByIdSchema).mutation(deleteUserHandler),
+  delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),
   toggleFavorite: protectedProcedure
     .input(toggleFavoriteModelInput)
     .mutation(toggleFavoriteModelHandler),
