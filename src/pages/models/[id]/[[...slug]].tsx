@@ -91,6 +91,7 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { CreativeCommonsLicense } from '~/components/CreativeCommonsLicense/CreativeCommonsLicense';
 
 //TODO - Break model query into multiple queries
 /*
@@ -684,6 +685,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       creativeml-openrail-m
                     </Text>
                   </Text>
+                  <Text weight={500} size="sm" color="dimmed" sx={{ lineHeight: 1 }}>
+                    +
+                  </Text>
+                  <CreativeCommonsLicense size="xs" permissions={model} />
                 </Group>
               )}
               {hasPendingClaimReport && (

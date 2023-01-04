@@ -68,6 +68,10 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
   type: true,
   poi: true,
   nsfw: true,
+  allowNoCredit: true,
+  allowCommercialUse: true,
+  allowDerivatives: true,
+  allowDifferentLicense: true,
   user: {
     select: {
       image: true,
@@ -96,6 +100,10 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   type: true,
   updatedAt: true,
   status: true,
+  allowNoCredit: true,
+  allowCommercialUse: true,
+  allowDerivatives: true,
+  allowDifferentLicense: true,
   reportStats: {
     select: {
       ownershipProcessing: true,

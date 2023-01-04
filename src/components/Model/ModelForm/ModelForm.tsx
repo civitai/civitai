@@ -10,6 +10,7 @@ import {
   Title,
   Alert,
   ThemeIcon,
+  Anchor,
 } from '@mantine/core';
 import { Model, ModelStatus, ModelType, TagTarget } from '@prisma/client';
 import { openConfirmModal } from '@mantine/modals';
@@ -150,7 +151,13 @@ export function ModelForm({ model }: Props) {
   }, [tagsOnModels, tags]);
 
   const mutating = addMutation.isLoading || updateMutation.isLoading;
-  const [poi, nsfw, type] = form.watch(['poi', 'nsfw', 'type']);
+  const [poi, nsfw, type, allowDerivatives, allowNoCredit] = form.watch([
+    'poi',
+    'nsfw',
+    'type',
+    'allowDerivatives',
+    'allowNoCredit',
+  ]);
   const poiNsfw = poi && nsfw;
   const acceptsTrainedWords = ['Checkpoint', 'TextualInversion', 'LORA'].includes(type);
   const isTextualInversion = type === 'TextualInversion';
@@ -184,6 +191,13 @@ export function ModelForm({ model }: Props) {
       const data: CreateModelProps | UpdateModelProps = {
         ...values,
         status: asDraft ? ModelStatus.Draft : values.status,
+        allowCommercialUse: !values.allowNoCredit ? values.allowCommercialUse : true,
+        allowDerivatives: !values.allowNoCredit ? values.allowDerivatives : true,
+        allowDifferentLicense: values.allowNoCredit
+          ? true
+          : values.allowDerivatives
+          ? values.allowDifferentLicense
+          : false,
         tagsOnModels: values.tagsOnModels?.map((name) => {
           const match = tags.find((x) => x.name === name);
           return match ?? { name };
@@ -463,7 +477,7 @@ export function ModelForm({ model }: Props) {
             </Stack>
           </Grid.Col>
           <Grid.Col lg={4}>
-            <Stack sx={{ position: 'sticky', top: 90 }}>
+            <Stack>
               <Paper radius="md" p="xl" withBorder>
                 <Stack>
                   <Title order={4}>Model Properties</Title>
@@ -497,6 +511,41 @@ export function ModelForm({ model }: Props) {
                     clearable
                     searchable
                   />
+                </Stack>
+              </Paper>
+              <Paper radius="md" p="xl" withBorder>
+                <Stack>
+                  <Text size="sm" weight={500} sx={{ lineHeight: 1.2 }}>
+                    {`When using this model, I give permission for users to:`}
+                  </Text>
+                  <InputSwitch name="allowNoCredit" label="Use without any restrictions" />
+                  {!allowNoCredit && (
+                    <>
+                      <InputSwitch name="allowCommercialUse" label="Use for commercial purposes" />
+                      <InputSwitch name="allowDerivatives" label="Make merges with this model" />
+                      {allowDerivatives && (
+                        <InputSwitch
+                          name="allowDifferentLicense"
+                          label="Make merges with a different license"
+                        />
+                      )}
+                    </>
+                  )}
+                  <Text size="xs" color="dimmed" sx={{ lineHeight: 1 }}>
+                    Based on these selections we will assign an appropriate{' '}
+                    <Anchor href="https://creativecommons.org/about/cclicenses/">
+                      Creative Commons License
+                    </Anchor>{' '}
+                    to your model on top of the{' '}
+                    <Anchor href="https://huggingface.co/spaces/CompVis/stable-diffusion-license">
+                      CreativeML Open RAIL-M License
+                    </Anchor>{' '}
+                    required by all Stable Diffusion models.
+                  </Text>
+                </Stack>
+              </Paper>
+              <Paper radius="md" p="xl" withBorder>
+                <Stack>
                   <Text size="sm" weight={500}>
                     {`This model or it's images:`}
                   </Text>
@@ -526,7 +575,7 @@ export function ModelForm({ model }: Props) {
                   </Text>
                 </>
               )}
-              <Group position="right" mt="lg">
+              <Group position="right">
                 <Button
                   variant="outline"
                   onClick={() => form.reset()}
