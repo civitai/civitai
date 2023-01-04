@@ -531,17 +531,6 @@ export function ModelForm({ model }: Props) {
                       )}
                     </>
                   )}
-                  <Text size="xs" color="dimmed" sx={{ lineHeight: 1 }}>
-                    Based on these selections we will assign an appropriate{' '}
-                    <Anchor href="https://creativecommons.org/about/cclicenses/">
-                      Creative Commons License
-                    </Anchor>{' '}
-                    to your model on top of the{' '}
-                    <Anchor href="https://huggingface.co/spaces/CompVis/stable-diffusion-license">
-                      CreativeML Open RAIL-M License
-                    </Anchor>{' '}
-                    required by all Stable Diffusion models.
-                  </Text>
                 </Stack>
               </Paper>
               <Paper radius="md" p="xl" withBorder>

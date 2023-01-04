@@ -1,15 +1,16 @@
-import { Anchor, Button, List, Popover, Text } from '@mantine/core';
-import { IconExternalLink, IconMinus, IconPlus } from '@tabler/icons';
-import Link from 'next/link';
+import { Group, List, Popover, Text } from '@mantine/core';
+import {
+  IconCheck,
+  IconCreativeCommonsBy,
+  IconCreativeCommonsNc,
+  IconCreativeCommonsNd,
+  IconCreativeCommonsSa,
+  IconX,
+} from '@tabler/icons';
 
-export const CreativeCommonsLicense = ({ permissions, size = 'sm' }: Props) => {
+export const PermissionIndicator = ({ permissions, size = 20 }: Props) => {
   const { allowNoCredit, allowCommercialUse, allowDerivatives, allowDifferentLicense } =
     permissions;
-  const license = allowNoCredit
-    ? 'zero/1.0'
-    : `by${allowCommercialUse ? '' : '-nc'}${allowDerivatives ? '' : '-nd'}${
-        !allowDifferentLicense && allowDerivatives ? '-sa' : ''
-      }/4.0`;
 
   const explanation = {
     'Use without crediting this model': allowNoCredit,
@@ -17,20 +18,24 @@ export const CreativeCommonsLicense = ({ permissions, size = 'sm' }: Props) => {
     'Use in merges you share': allowDerivatives,
     'Use a different license when sharing': allowDifferentLicense,
   };
+  const iconProps = { size, stroke: 1.5 };
+  const icons = [
+    !allowNoCredit && <IconCreativeCommonsBy key="by" {...iconProps} />,
+    !allowCommercialUse && <IconCreativeCommonsNc key="nc" {...iconProps} />,
+    !allowDerivatives && <IconCreativeCommonsNd key="nd" {...iconProps} />,
+    !allowDifferentLicense && <IconCreativeCommonsSa key="sa" {...iconProps} />,
+  ].filter(Boolean);
   return (
     <Popover withArrow>
       <Popover.Target>
-        <img
-          style={{ cursor: 'pointer' }}
-          src={`https://licensebuttons.net/l/${license}/${size == 'xs' ? '80x15' : '88x31'}.png`}
-          alt="Creative Commons License"
-        />
+        <Group spacing={0} sx={{ cursor: 'pointer' }}>
+          {icons}
+        </Group>
       </Popover.Target>
       <Popover.Dropdown>
         <Text weight={500}>This model permits users to:</Text>
         <List
           size="xs"
-          mb="sm"
           styles={{
             itemIcon: { marginRight: 4, paddingTop: 2 },
           }}
@@ -43,9 +48,9 @@ export const CreativeCommonsLicense = ({ permissions, size = 'sm' }: Props) => {
               })}
               icon={
                 allowed ? (
-                  <IconPlus style={{ color: 'green' }} size={12} />
+                  <IconCheck style={{ color: 'green' }} size={12} />
                 ) : (
-                  <IconMinus style={{ color: 'red' }} size={12} />
+                  <IconX style={{ color: 'red' }} size={12} />
                 )
               }
             >
@@ -53,17 +58,6 @@ export const CreativeCommonsLicense = ({ permissions, size = 'sm' }: Props) => {
             </List.Item>
           ))}
         </List>
-        <Button
-          component="a"
-          href={`https://creativecommons.org/licenses/${license}/`}
-          target="_blank"
-          size="xs"
-          compact
-          fullWidth
-          rightIcon={<IconExternalLink size={16} />}
-        >
-          Learn More
-        </Button>
       </Popover.Dropdown>
     </Popover>
   );
@@ -71,7 +65,7 @@ export const CreativeCommonsLicense = ({ permissions, size = 'sm' }: Props) => {
 
 type Props = {
   permissions: Permissions;
-  size?: 'xs' | 'sm';
+  size?: number;
 };
 
 type Permissions = {
