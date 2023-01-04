@@ -98,7 +98,6 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
       server: {
         host: env.EMAIL_HOST,
         port: env.EMAIL_PORT,
-        secure: env.EMAIL_SECURE,
         auth: {
           user: env.EMAIL_USER,
           pass: env.EMAIL_PASS,
