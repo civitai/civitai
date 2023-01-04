@@ -25,7 +25,7 @@ export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }
       queryUtils.user.getHiddenUsers.setData(undefined, (old = []) =>
         alreadyHiding
           ? old.filter((item) => item.id !== userId)
-          : [...old, { id: userId, username: null, image: null, name: null }]
+          : [...old, { id: userId, username: null, image: null, deletedAt: null }]
       );
 
       return { prevHidden };

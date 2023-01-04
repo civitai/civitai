@@ -23,7 +23,7 @@ export function FollowUserButton({ userId, onToggleFollow, ...props }: Props) {
       queryUtils.user.getFollowingUsers.setData(undefined, (old = []) =>
         alreadyFollowing
           ? old.filter((item) => item.id !== userId)
-          : [...old, { id: userId, username: null, image: null, name: null }]
+          : [...old, { id: userId, username: null, image: null, deletedAt: null }]
       );
 
       return { prevFollowing };
