@@ -1,8 +1,8 @@
-import { Card } from '@mantine/core';
+import { Card, Group, Title, Button, Stack } from '@mantine/core';
 import { signOut, useSession } from 'next-auth/react';
 import { z } from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Form, useForm } from '~/libs/form';
+import { Form, InputText, useForm } from '~/libs/form';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -17,13 +17,34 @@ export function RemoveAccountCard() {
     },
   });
 
-  const form = useForm({
-    schema: z.object({ displayName: z.string() }),
+  const schema = z.object({
+    username: z.string().superRefine((val, ctx) => {
+      if (val !== user?.username) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'username must match',
+        });
+      }
+    }),
   });
+
+  const form = useForm({ schema });
+
+  const handleSubmit = ({ username }: z.infer<typeof schema>) => {
+    console.log({ username });
+  };
 
   return (
     <Card>
-      <Form form={form}></Form>
+      <Title order={2}>Remove Account</Title>
+      <Form form={form}>
+        <Stack>
+          <InputText name="username" description="Enter your username exactly" />
+          <Group position="right">
+            <Button color="red">Remove Account</Button>
+          </Group>
+        </Stack>
+      </Form>
     </Card>
   );
 }

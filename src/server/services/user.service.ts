@@ -216,9 +216,9 @@ export const toggleHideUser = async ({
   return;
 };
 
-export const deleteUser = async ({ id, displayName, removeModels }: DeleteUserInput) => {
+export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput) => {
   const user = await prisma.user.findFirst({
-    where: { displayName, id },
+    where: { username, id },
     select: { id: true },
   });
   if (!user) throw throwNotFoundError('Could not find user');
