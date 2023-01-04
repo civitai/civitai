@@ -150,7 +150,7 @@ function FileItem({
 }: FileItemProps) {
   const [selectedType, setSelectedType] = useState<ModelFileType>(type);
   const [uploading, setUploading] = useState(false);
-  const isModelType = ['Model', 'PrunedModel'].includes(selectedType);
+  const isModelType = ['Model', 'Pruned Model'].includes(selectedType);
   const isCheckpointModel = modelType === 'Checkpoint';
   const fileTypeOptions = fileTypesByModelType[modelType];
 
