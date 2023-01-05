@@ -86,9 +86,10 @@ export function FileList({ parentIndex, form }: Props) {
     .filter((type) => !['Model', 'Pruned Model'].includes(type));
   const reachedLimit = fields.length >= maxLength;
   const reachedModelLimit =
-    isCheckpointModel && files.filter((item) => item.type === 'Model').length >= 2;
+    isCheckpointModel && files.filter((item) => item.type === 'Model').length >= fileFormatCount;
   const reachedPrunedLimit =
-    isCheckpointModel && files.filter((item) => item.type === 'Pruned Model').length >= 2;
+    isCheckpointModel &&
+    files.filter((item) => item.type === 'Pruned Model').length >= fileFormatCount;
 
   return (
     <Stack spacing="xs">
