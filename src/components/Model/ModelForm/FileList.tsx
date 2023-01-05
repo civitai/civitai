@@ -1,16 +1,18 @@
-import { ActionIcon, Button, Group, Input, InputWrapperProps, Tooltip } from '@mantine/core';
+import { ActionIcon, Anchor, Group, InputWrapperProps, Stack, Tooltip } from '@mantine/core';
 import { ModelFileFormat, ModelType } from '@prisma/client';
-import { IconPlus, IconStar, IconTrash } from '@tabler/icons';
-import startCase from 'lodash/startCase';
+import { IconStar, IconTrash } from '@tabler/icons';
 import { useEffect, useState } from 'react';
 import { useFieldArray, UseFormReturn } from 'react-hook-form';
 
-import { InputFileUpload, InputSelect } from '~/libs/form';
-import { constants, ModelFileType } from '~/server/common/constants';
+import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
+import { InputFileUpload } from '~/libs/form';
+import { ModelFileType } from '~/server/common/constants';
 import { ModelFileInput } from '~/server/schema/model-file.schema';
+import { splitUppercase } from '~/utils/string-helpers';
 
 const fileFormats = Object.values(ModelFileFormat).filter((type) => type !== 'Other');
 const fileFormatCount = fileFormats.length;
+
 const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   Model: '.ckpt,.pt,.safetensors',
   'Pruned Model': '.ckpt,.pt,.safetensors',
@@ -21,13 +23,19 @@ const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   'Text Encoder': '.pt',
 };
 
-export function FileList({ parentIndex, form, ...wrapperProps }: Props) {
+const fileTypesByModelType: Record<ModelType, ModelFileType[]> = {
+  TextualInversion: ['Model', 'Negative', 'Training Data'],
+  LORA: ['Model', 'Text Encoder', 'Training Data'],
+  Checkpoint: ['Model', 'Pruned Model', 'Config', 'VAE', 'Training Data'],
+  AestheticGradient: ['Model', 'Training Data'],
+  Hypernetwork: ['Model', 'Training Data'],
+};
+
+export function FileList({ parentIndex, form }: Props) {
   const files = form.watch(`modelVersions.${parentIndex}.files`) as ModelFileInput[];
   const modelType = form.watch('type') as ModelType;
   const isCheckpointModel = modelType === 'Checkpoint';
-  const availableFileTypes = isCheckpointModel
-    ? constants.modelFileTypes
-    : constants.modelFileTypes.filter((type) => type !== 'Pruned Model');
+  const availableFileTypes = fileTypesByModelType[modelType];
   const fileTypeCount = availableFileTypes.length;
   // We reduce by 2 when is not checkpoint cause we don't need prunedModel
   const maxLength = fileTypeCount + fileFormatCount - (isCheckpointModel ? 0 : 2);
@@ -49,16 +57,15 @@ export function FileList({ parentIndex, form, ...wrapperProps }: Props) {
     });
   };
 
-  const handleTypeChange = (index: number, type: ModelFileInput['type']) => {
-    const matchingFile = files[index];
-    update(index, { ...matchingFile, type, sizeKB: 0, name: '', url: '' });
+  const handleAddFileInput = (type: ModelFileType) => {
+    append({
+      type,
+      url: '',
+      name: '',
+      sizeKB: 0,
+      primary: false,
+    });
   };
-
-  // We only want to check for files that are not model or prunedModel
-  // to prevented the user from selecting the same file type
-  const selectedTypes = files
-    .map(({ type }) => type)
-    .filter((type) => !['Model', 'PrunedModel'].includes(type));
 
   // Check if user changed model type to remove prunedModel files
   useEffect(() => {
@@ -72,54 +79,64 @@ export function FileList({ parentIndex, form, ...wrapperProps }: Props) {
     }
   }, [files, isCheckpointModel, remove]);
 
+  // We only want to check for files that are not model or prunedModel
+  // to prevent the user from selecting the same file type
+  const selectedTypes = files
+    .map(({ type }) => type)
+    .filter((type) => !['Model', 'Pruned Model'].includes(type));
+  const reachedLimit = fields.length >= maxLength;
+  const reachedModelLimit =
+    isCheckpointModel && files.filter((item) => item.type === 'Model').length >= 2;
+  const reachedPrunedLimit =
+    isCheckpointModel && files.filter((item) => item.type === 'Pruned Model').length >= 2;
+
   return (
-    <Input.Wrapper
-      {...wrapperProps}
-      styles={{ label: { width: '100%' } }}
-      label={
-        <Group position="apart">
-          <Input.Label required>Model Files</Input.Label>
-          <Button
-            size="xs"
-            leftIcon={<IconPlus size={16} />}
-            variant="outline"
-            onClick={() =>
-              fields.length < maxLength
-                ? append({
-                    type: constants.modelFileTypes[0],
-                    url: '',
-                    name: '',
-                    sizeKB: 0,
-                    primary: false,
-                  })
-                : undefined
-            }
-            disabled={fields.length >= maxLength}
-            compact
-          >
-            Add File
-          </Button>
-        </Group>
-      }
-      description={`Add multiple files for this version (${fields.length}/${maxLength})`}
-    >
+    <Stack spacing="xs">
       {fields.map(({ id, ...item }, index) => {
         const file = item as ModelFileInput;
+
         return (
-          <FileItem
-            key={id}
-            index={index}
-            parentIndex={parentIndex}
-            onRemoveClick={(index) => remove(index)}
-            onPrimaryClick={handlePrimaryClick}
-            onTypeChange={handleTypeChange}
-            modelType={modelType}
-            selectedTypes={selectedTypes}
-            {...file}
-          />
+          <Stack key={id} spacing={5}>
+            <FileItem
+              {...file}
+              index={index}
+              parentIndex={parentIndex}
+              modelType={modelType}
+              onRemoveClick={(index) => remove(index)}
+              onPrimaryClick={handlePrimaryClick}
+            />
+            {index === 0 && (
+              <Group spacing="xs">
+                {availableFileTypes.map((type, index) => {
+                  if (type === 'Model' && !isCheckpointModel) return null;
+                  const disableModelOption = type === 'Model' && reachedModelLimit;
+                  const disablePrunedOption = type === 'Pruned Model' && reachedPrunedLimit;
+                  const disabled =
+                    reachedLimit ||
+                    selectedTypes.includes(type) ||
+                    disableModelOption ||
+                    disablePrunedOption;
+
+                  return (
+                    <Anchor
+                      key={index}
+                      component="button"
+                      size="xs"
+                      disabled={disabled}
+                      color={disabled ? 'dimmed' : undefined}
+                      sx={{ cursor: disabled ? 'not-allowed' : undefined }}
+                      onClick={!disabled ? () => handleAddFileInput(type) : undefined}
+                    >
+                      {`+ Add ${type}`}
+                    </Anchor>
+                  );
+                })}
+              </Group>
+            )}
+          </Stack>
         );
       })}
-    </Input.Wrapper>
+    </Stack>
   );
 }
 
@@ -129,83 +146,65 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   onLoading?: (loading: boolean) => void;
 };
 
-const fileTypesByModelType: Record<ModelType, ModelFileType[]> = {
-  TextualInversion: ['Model', 'Negative', 'Training Data'],
-  LORA: ['Model', 'Text Encoder', 'Training Data'],
-  Checkpoint: ['Model', 'Pruned Model', 'Config', 'VAE', 'Training Data'],
-  AestheticGradient: ['Model', 'Training Data'],
-  Hypernetwork: ['Model', 'Training Data'],
-};
-
 function FileItem({
   primary,
   type,
   parentIndex,
   index,
   modelType,
-  selectedTypes,
   onRemoveClick,
   onPrimaryClick,
-  onTypeChange,
 }: FileItemProps) {
-  const [selectedType, setSelectedType] = useState<ModelFileType>(type);
   const [uploading, setUploading] = useState(false);
-  const isModelType = ['Model', 'Pruned Model'].includes(selectedType);
-  const isCheckpointModel = modelType === 'Checkpoint';
-  const fileTypeOptions = fileTypesByModelType[modelType];
+  const isFileModelType = ['Model', 'Pruned Model'].includes(type);
 
   return (
-    <Group my={5} spacing={8} noWrap>
-      <InputSelect
-        name={`modelVersions.${parentIndex}.files.${index}.type`}
-        data={fileTypeOptions.map((type) => ({
-          label: type === 'Model' && !isCheckpointModel ? startCase(modelType) : startCase(type),
-          value: type,
-          disabled:
-            (primary && !['Model', 'Pruned Model'].includes(type)) || selectedTypes.includes(type),
-        }))}
-        onChange={(value: ModelFileType) => {
-          setSelectedType(value);
-          onTypeChange(index, value);
-        }}
-        disabled={uploading}
-      />
-      <InputFileUpload
-        name={`modelVersions.${parentIndex}.files.${index}`}
-        placeholder="Pick a file"
-        uploadType={type}
-        accept={mapFileTypeAcceptedFileType[type]}
-        onLoading={setUploading}
-        grow
-        stackUploadProgress
-      />
-      <Tooltip label="Mark as primary">
-        <ActionIcon
-          size="xs"
-          onClick={!primary && isModelType ? () => onPrimaryClick(index) : undefined}
-          sx={{
-            visibility: isModelType ? 'visible' : 'hidden',
-          }}
-          disabled={uploading}
-        >
-          <IconStar
-            color={primary ? 'gold' : undefined}
-            style={{ fill: primary ? 'gold' : undefined }}
-          />
-        </ActionIcon>
-      </Tooltip>
-      <Tooltip label="Remove file">
-        <ActionIcon
-          size="xs"
-          color="red"
-          onClick={() => onRemoveClick(index)}
-          sx={{ visibility: !primary ? 'visible' : 'hidden' }}
-          disabled={uploading}
-        >
-          <IconTrash />
-        </ActionIcon>
-      </Tooltip>
-    </Group>
+    <InputFileUpload
+      label={`${splitUppercase(index > 0 ? type : modelType)} File`}
+      name={`modelVersions.${parentIndex}.files.${index}`}
+      placeholder="Pick a file"
+      uploadType={type}
+      accept={mapFileTypeAcceptedFileType[type]}
+      onLoading={setUploading}
+      extra={
+        <Group spacing={8}>
+          <Tooltip label="Mark as primary">
+            <ActionIcon
+              size="lg"
+              variant="outline"
+              color={primary ? 'yellow' : undefined}
+              disabled={uploading}
+              onClick={!primary && isFileModelType ? () => onPrimaryClick(index) : undefined}
+              sx={{
+                visibility: isFileModelType ? 'visible' : 'hidden',
+              }}
+            >
+              <IconStar size={16} stroke={1.5} style={{ fill: primary ? 'gold' : undefined }} />
+            </ActionIcon>
+          </Tooltip>
+          {index !== 0 && (
+            <PopConfirm
+              message="Are you sure you want to remove this file?"
+              position="bottom-end"
+              onConfirm={!primary ? () => onRemoveClick(index) : undefined}
+              withArrow
+            >
+              <ActionIcon
+                color="red"
+                size="lg"
+                variant="outline"
+                disabled={uploading}
+                onClick={(e) => e.stopPropagation()}
+                sx={{ visibility: !primary ? 'visible' : 'hidden' }}
+              >
+                <IconTrash size={16} stroke={1.5} />
+              </ActionIcon>
+            </PopConfirm>
+          )}
+        </Group>
+      }
+      grow
+    />
   );
 }
 
@@ -214,8 +213,6 @@ type FileItemProps = ModelFileInput & {
   parentIndex: number;
   onRemoveClick: (index: number) => void;
   onPrimaryClick: (index: number) => void;
-  onTypeChange: (index: number, type: ModelFileType) => void;
   modelType: ModelType;
-  selectedTypes: ModelFileType[];
   onLoading?: (index: number, loading: boolean) => void;
 };
