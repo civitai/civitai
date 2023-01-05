@@ -32,6 +32,12 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
       virusScanResult: true,
       scannedAt: true,
       primary: true,
+      hashes: {
+        select: {
+          type: true,
+          hash: true,
+        },
+      },
     },
     orderBy: { primary: 'desc' },
   },

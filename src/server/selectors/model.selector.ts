@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { ModelHashType, Prisma } from '@prisma/client';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
 
@@ -165,14 +165,14 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           scannedAt: true,
           rawScanResult: true,
           primary: true,
+          hashes: {
+            select: {
+              type: true,
+              hash: true,
+            },
+          },
         },
       },
-      // runStrategies: {
-      //   select: {
-      //     id: true,
-      //     partnerId: true,
-      //   },
-      // },
     },
   },
   rank: {

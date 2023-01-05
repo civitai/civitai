@@ -1,7 +1,6 @@
 import { Group, List, Popover, Text } from '@mantine/core';
 import {
   IconCheck,
-  IconCreativeCommonsBy,
   IconCreativeCommonsNc,
   IconCreativeCommonsNd,
   IconCreativeCommonsSa,
