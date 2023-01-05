@@ -6,7 +6,7 @@ import { splitUppercase } from '~/utils/string-helpers';
 import { deleteCookie, setCookie as sc } from 'cookies-next';
 import { immer } from 'zustand/middleware/immer';
 import { modelFilterSchema, useCookies } from '~/providers/CookiesProvider';
-import { Popover, ActionIcon, Stack, Checkbox, Indicator, Divider } from '@mantine/core';
+import { Popover, ActionIcon, Stack, Checkbox, Indicator, Divider, Switch } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons';
 import { z } from 'zod';
 import { BaseModel, constants } from '~/server/common/constants';
@@ -146,12 +146,23 @@ export function InfiniteModelsFilter() {
       <Popover.Dropdown>
         <Stack spacing={0}>
           {showNSFWToggle && (
-            <Checkbox
-              checked={hideNSFW}
-              label="Hide NSFW"
-              size="md"
-              onChange={() => setHideNSFW(!hideNSFW)}
-            />
+            <>
+              <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} />
+              <Switch
+                onLabel="Horny"
+                offLabel="Boring"
+                radius="sm"
+                styles={{
+                  thumb: { transitionDuration: '500ms' },
+                  track: { width: 100 },
+                  trackLabel: { width: '100%', fontSize: 14, transitionDuration: '500ms' },
+                }}
+                my={5}
+                checked={!hideNSFW}
+                size="md"
+                onChange={() => setHideNSFW(!hideNSFW)}
+              />
+            </>
           )}
           <Divider label="Model types" labelProps={{ weight: 'bold' }} />
           <Checkbox.Group
