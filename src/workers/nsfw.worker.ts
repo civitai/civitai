@@ -1,4 +1,5 @@
 //based on https://gist.github.com/YankeeTube/ee96f60f57b9038ee0b703fc6620e7d9
+import { FileWithPath } from '@mantine/dropzone';
 import * as tf from '@tensorflow/tfjs';
 import { setWasmPaths } from '@tensorflow/tfjs-backend-wasm';
 
@@ -21,6 +22,7 @@ const NSFW_CLASSES: Record<number, NSFW_TYPES> = {
   3: 'Porn',
   4: 'Sexy',
 };
+const NSFW = ['Hentai', 'Porn', 'Sexy'];
 
 function nsfwProcess(values: any) {
   const topK = 5;
@@ -50,8 +52,6 @@ function nsfwProcess(values: any) {
 
 async function detectNSFW(bitmap: ImageBitmap) {
   const { width: w, height: h } = bitmap;
-  // const canvas = document.createElement('canvas');
-  // const offScreen = canvas.transferControlToOffscreen()
   const offScreen = new OffscreenCanvas(w, h);
   const ctx = offScreen.getContext('2d') as OffscreenCanvasRenderingContext2D;
   ctx.drawImage(bitmap, 0, 0, w, h);
@@ -71,8 +71,12 @@ async function detectNSFW(bitmap: ImageBitmap) {
   const values = await predictions.data();
   const result = nsfwProcess(values);
   predictions.dispose();
-  console.log(result);
-  self.postMessage(result);
+  return result;
+}
+
+function detectNsfwImage(predictions: PredictionType[]) {
+  const ranked = predictions.sort((a, b) => b.probability - a.probability);
+  return NSFW.includes(ranked[0].className);
 }
 
 async function main() {
@@ -90,17 +94,31 @@ async function main() {
     await result.data();
     result.dispose();
     console.log('warmed up');
-    self.postMessage('warmed up');
+    self.postMessage('ready');
   }
 }
 
 main();
 
-const handleMessage = async ({ data }) => {
-  console.log({ data });
-  const bitmap = await createImageBitmap(data);
-  console.log({ bitmap });
-  detectNSFW(bitmap);
+const handleMessage = async ({
+  data,
+}: // data: { index, file },
+{
+  data: { url: string; file: FileWithPath }[];
+}) => {
+  // console.log({ index, file });
+  const result = await Promise.all(
+    data.map(async ({ url, file }) => {
+      const bitmap = await createImageBitmap(file);
+      const predictions = await detectNSFW(bitmap);
+      // console.log({ predictions });
+      const nsfw = detectNsfwImage(predictions);
+      return { url, nsfw };
+    })
+  );
+  // console.log({ result });
+  self.postMessage(result);
+  // self.postMessage({ index, result });
 };
 
 addEventListener('message', handleMessage);

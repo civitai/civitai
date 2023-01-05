@@ -27,6 +27,8 @@ import {
   Grid,
   Select,
   Tooltip,
+  Loader,
+  Center,
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
@@ -38,14 +40,13 @@ import {
   IconUpload,
   IconX,
 } from '@tabler/icons';
-import { cloneElement, useState } from 'react';
+import { cloneElement, useEffect, useRef, useState } from 'react';
 import { blurHashImage, loadImage } from '../../utils/blurhash';
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getMetadata } from '~/utils/image-metadata';
-import { useClassifyModel } from '~/hooks/useClassifyModel';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -77,10 +78,32 @@ export function ImageUpload({
     // useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  const { isNsfw } = useClassifyModel();
   const { uploadToCF, files: imageFiles } = useCFImageUpload();
   const [files, filesHandlers] = useListState<CustomFile>(Array.isArray(value) ? value : []);
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
+
+  const workerRef = useRef<Worker>();
+  const [workerReady, setWorkerReady] = useState(false);
+  useEffect(() => {
+    setWorkerReady(false);
+    workerRef.current = new Worker(new URL('/src/workers/nsfw.worker.ts', import.meta.url));
+    workerRef.current.addEventListener('message', ({ data }) => {
+      if (typeof data === 'string' && data === 'ready') setWorkerReady(true);
+      else if (Array.isArray(data)) {
+        const result: { url: string; nsfw: boolean }[] = data;
+        filesHandlers.setState((state) => {
+          return [...state].map((file) => ({
+            ...file,
+            nsfw: result.find((x) => x.url === file.url)?.nsfw ?? file.nsfw,
+          }));
+        });
+      }
+    });
+
+    return () => {
+      if (workerRef.current) workerRef.current.terminate();
+    };
+  }, []);
 
   useDidUpdate(() => {
     if (reset > 0) filesHandlers.setState(value);
@@ -92,13 +115,12 @@ export function ImageUpload({
   }, [files]); //eslint-disable-line
 
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
-    if (!isNsfw) return;
+    // workerRef.current?.postMessage(droppedFiles);
     const toUpload = await Promise.all(
       droppedFiles.map(async (file) => {
         const src = URL.createObjectURL(file);
         const meta = await getMetadata(file);
         const img = await loadImage(src);
-        const nsfw = await isNsfw(file, file.type);
         const hashResult = blurHashImage(img);
         return {
           name: file.name,
@@ -120,6 +142,8 @@ export function ImageUpload({
       })
     );
 
+    workerRef.current?.postMessage(uploads.map(({ id, file }) => ({ url: id, file })));
+
     filesHandlers.setState((states) =>
       states.map((state) => {
         const matchingUpload = uploads.find((x) => x.file == state.file);
@@ -133,7 +157,7 @@ export function ImageUpload({
       })
     );
   };
-  const dropzoneDisabled = files.length >= max;
+  const dropzoneDisabled = files.length >= max || !workerReady;
 
   return (
     <Input.Wrapper
@@ -177,14 +201,21 @@ export function ImageUpload({
               <IconPhoto size={50} stroke={1.5} />
             </Dropzone.Idle>
 
-            <div>
-              <Text size="xl" inline>
-                Drag images here or click to select files
-              </Text>
-              <Text size="sm" color="dimmed" inline mt={7}>
-                {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
-              </Text>
-            </div>
+            {!workerReady ? (
+              <Group spacing="xs">
+                <Text>Preparing tensorflow</Text>
+                <Loader variant="dots" />
+              </Group>
+            ) : (
+              <div>
+                <Text size="xl" inline>
+                  Drag images here or click to select files
+                </Text>
+                <Text size="sm" color="dimmed" inline mt={7}>
+                  {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
+                </Text>
+              </div>
+            )}
           </Group>
         </Dropzone>
 
@@ -208,7 +239,8 @@ export function ImageUpload({
                   {files.map((image, index) => {
                     const match = imageFiles.find((file) => image.file === file.file);
                     const { progress } = match ?? { progress: 0 };
-                    const showLoading = match && progress < 100 && !!image.file;
+                    const showLoading =
+                      (match && progress < 100 && !!image.file) || image.nsfw === undefined;
 
                     return (
                       // <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
@@ -220,12 +252,14 @@ export function ImageUpload({
                         id={image.url}
                       >
                         {showLoading && (
-                          <RingProgress
-                            sx={{ position: 'absolute' }}
-                            sections={[{ value: progress, color: 'blue' }]}
-                            size={48}
-                            thickness={4}
-                            roundCaps
+                          <Loader
+                            size="lg"
+                            sx={{
+                              position: 'absolute',
+                              top: '50%',
+                              left: '50%',
+                              transform: 'translate(-50%,-50%)',
+                            }}
                           />
                         )}
                         <Group
@@ -239,6 +273,7 @@ export function ImageUpload({
                             <ActionIcon
                               color={image.nsfw ? 'red' : undefined}
                               variant="filled"
+                              disabled={image.nsfw === undefined}
                               onClick={() =>
                                 filesHandlers.setItem(index, { ...image, nsfw: !image.nsfw })
                               }
