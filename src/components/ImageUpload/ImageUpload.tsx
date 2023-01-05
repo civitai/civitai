@@ -15,7 +15,6 @@ import {
   Group,
   Input,
   InputWrapperProps,
-  RingProgress,
   Text,
   Stack,
   Title,
@@ -55,7 +54,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   onChange?: (value: Array<CustomFile>) => void;
   loading?: boolean;
   withMeta?: boolean;
-  reset: number;
+  reset?: number;
 };
 
 //TODO File Safety: Limit to the specific file extensions we want to allow
@@ -67,7 +66,7 @@ export function ImageUpload({
   hasPrimaryImage,
   loading = false,
   withMeta = true,
-  reset,
+  reset = 0,
   ...inputWrapperProps
 }: Props) {
   const { classes, theme, cx } = useStyles();

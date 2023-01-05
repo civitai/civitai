@@ -22,7 +22,7 @@ const NSFW_CLASSES: Record<number, NSFW_TYPES> = {
   3: 'Porn',
   4: 'Sexy',
 };
-const NSFW = ['Hentai', 'Porn', 'Sexy'];
+const NSFW = ['Hentai', 'Porn'];
 
 function nsfwProcess(values: any) {
   const topK = 5;
@@ -111,7 +111,7 @@ const handleMessage = async ({
       data.map(async ({ url, file }) => {
         const bitmap = await createImageBitmap(file);
         const predictions = await detectNSFW(bitmap);
-        // console.log({ predictions });
+        console.log({ predictions });
         const nsfw = detectNsfwImage(predictions);
         return { url, nsfw };
       })

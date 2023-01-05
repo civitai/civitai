@@ -53,6 +53,11 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
 
+/**NOTES**
+  - If a model depicts an actual person, it cannot have nsfw content
+  - If all of a models images are nsfw, then the model will be marked as nsfw
+*/
+
 const schema = modelSchema.extend({
   tagsOnModels: z.string().array(),
   modelVersions: z
@@ -90,6 +95,7 @@ export function ModelForm({ model }: Props) {
   const addMutation = trpc.model.add.useMutation();
   const updateMutation = trpc.model.update.useMutation();
   const [uploading, setUploading] = useState(false);
+  const [nsfwPoi, setNsfwPoi] = useState();
 
   const defaultModelFile = {
     name: '',
@@ -144,6 +150,30 @@ export function ModelForm({ model }: Props) {
   });
 
   const tagsOnModels = form.watch('tagsOnModels');
+
+  const checkNsfwContent = () => {
+    const isActualPerson = form.getValues('poi');
+    const isModelNsfw = form.getValues('nsfw');
+    const hasNsfwImages = form
+      .getValues('modelVersions')
+      .flatMap((version) => version.images)
+      .some((image) => image.nsfw);
+
+    if (isActualPerson && (isModelNsfw || hasNsfwImages)) {
+    }
+  };
+
+  // const handleSetNsfwPoi = ({
+  //   poi,
+  //   nsfw,
+  //   modelVersions,
+  // }: {
+  //   poi?: boolean;
+  //   nsfw?: boolean;
+  //   modelVersions: ModelById['modelVersions'];
+  // }) => {
+  //   const hasNsfwImages = modelVersions.flatMap((version) => version.images).some(image => image);
+  // };
 
   const tagsData = useMemo(() => {
     return [...tags.map((x) => x.name), ...(tagsOnModels ?? [])?.filter(isDefined)];
@@ -504,6 +534,14 @@ export function ModelForm({ model }: Props) {
                     name="poi"
                     label="Depict an actual person"
                     description="For Example: Tom Cruise or Tom Cruise as Maverick"
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      const isModelNsfw = form.getValues('nsfw');
+                      const hasNsfwImages = form
+                        .getValues('modelVersions')
+                        .flatMap((version) => version.images)
+                        .some((image) => image.nsfw);
+                    }}
                   />
                   <InputCheckbox name="nsfw" label="Are NSFW" />
                 </Stack>
