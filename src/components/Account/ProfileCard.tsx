@@ -10,7 +10,7 @@ const schema = z.object({
   username: z
     .string()
     .min(3)
-    .regex(/^[A-Za-z0-9]*$/, 'The "username" field can only contain letters and numbers.'),
+    .regex(/^[A-Za-z0-9_]*$/, 'The "username" field can only contain letters, numbers, and _.'),
   image: z.string().nullable(),
 });
 
