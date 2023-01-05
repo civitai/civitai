@@ -73,15 +73,18 @@ function Home() {
                     Welcome to Civitai!
                   </Text>
                   <Text size="sm" className={classes.welcomeText}>
-                    Browse, share, and review custom Stable Diffusion AI art models.
+                    Browse, share, and review custom AI art models,{' '}
+                    <Text component="a" variant="link" href="/content/guides/what-is-civitai">
+                      learn more...
+                    </Text>
                   </Text>
                 </Stack>
               </Group>
             </Alert>
           )}
-          <Group position="apart">
+          <Group position="apart" spacing={0}>
             <InfiniteModelsSort />
-            <Group spacing="xs">
+            <Group spacing={4}>
               <InfiniteModelsPeriod />
               <InfiniteModelsFilter />
             </Group>

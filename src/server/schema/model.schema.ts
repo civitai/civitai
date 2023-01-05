@@ -32,6 +32,7 @@ export const getAllModelsSchema = z.object({
       if (!rel) return undefined;
       return Array.isArray(rel) ? rel : [rel];
     }),
+  hideNSFW: z.boolean().optional().default(false),
   sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   rating: z

@@ -46,6 +46,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     period = MetricTimeframe.AllTime,
     rating,
     favorites,
+    hideNSFW,
   },
   select,
   user: sessionUser,
@@ -89,7 +90,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
         : undefined,
     user: username ?? user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
-    nsfw: !canViewNsfw ? { equals: false } : undefined,
+    nsfw: !canViewNsfw || hideNSFW ? { equals: false } : undefined,
     rank: rating
       ? {
           AND: [{ ratingAllTime: { gte: rating } }, { ratingAllTime: { lt: rating + 1 } }],
