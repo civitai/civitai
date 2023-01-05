@@ -9,18 +9,15 @@ import {
 } from '@tabler/icons';
 
 export const PermissionIndicator = ({ permissions, size = 20 }: Props) => {
-  const { allowNoCredit, allowCommercialUse, allowDerivatives, allowDifferentLicense } =
-    permissions;
+  const { allowCommercialUse, allowDerivatives, allowDifferentLicense } = permissions;
 
   const explanation = {
-    'Use without crediting this model': allowNoCredit,
     'Use this model for commercial purposes': allowCommercialUse,
     'Use in merges you share': allowDerivatives,
     'Use a different license when sharing': allowDifferentLicense,
   };
   const iconProps = { size, stroke: 1.5 };
   const icons = [
-    !allowNoCredit && <IconCreativeCommonsBy key="by" {...iconProps} />,
     !allowCommercialUse && <IconCreativeCommonsNc key="nc" {...iconProps} />,
     !allowDerivatives && <IconCreativeCommonsNd key="nd" {...iconProps} />,
     !allowDifferentLicense && <IconCreativeCommonsSa key="sa" {...iconProps} />,
