@@ -6,7 +6,16 @@ import { splitUppercase } from '~/utils/string-helpers';
 import { deleteCookie, setCookie as sc } from 'cookies-next';
 import { immer } from 'zustand/middleware/immer';
 import { modelFilterSchema, useCookies } from '~/providers/CookiesProvider';
-import { Popover, ActionIcon, Stack, Checkbox, Indicator, Divider, Switch } from '@mantine/core';
+import {
+  Popover,
+  ActionIcon,
+  Stack,
+  Checkbox,
+  Indicator,
+  Divider,
+  Switch,
+  SegmentedControl,
+} from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons';
 import { z } from 'zod';
 import { BaseModel, constants } from '~/server/common/constants';
@@ -148,19 +157,26 @@ export function InfiniteModelsFilter() {
           {showNSFWToggle && (
             <>
               <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} />
-              <Switch
-                onLabel="Horny"
-                offLabel="Boring"
-                radius="sm"
-                styles={{
-                  thumb: { transitionDuration: '500ms' },
-                  track: { width: 100 },
-                  trackLabel: { width: '100%', fontSize: 14, transitionDuration: '500ms' },
-                }}
+              <SegmentedControl
                 my={5}
-                checked={!hideNSFW}
-                size="md"
-                onChange={() => setHideNSFW(!hideNSFW)}
+                value={!hideNSFW ? 'horny' : 'boring'}
+                size="xs"
+                color="blue"
+                styles={(theme) => ({
+                  root: {
+                    border: `1px solid ${
+                      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+                    }`,
+                    background: 'none',
+                  },
+                })}
+                data={[
+                  { label: 'Boring', value: 'boring' },
+                  { label: 'Horny', value: 'horny' },
+                ]}
+                onChange={(value) => {
+                  setHideNSFW(value === 'boring');
+                }}
               />
             </>
           )}
