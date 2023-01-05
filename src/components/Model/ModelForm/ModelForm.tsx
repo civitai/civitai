@@ -114,10 +114,6 @@ export function ModelForm({ model }: Props) {
 
   const defaultValues: z.infer<typeof schema> = {
     ...model,
-    allowNoCredit: true,
-    allowCommercialUse: true,
-    allowDerivatives: true,
-    allowDifferentLicense: true,
     name: model?.name ?? '',
     type: model?.type ?? ModelType.Checkpoint,
     status: model?.status ?? ModelStatus.Published,

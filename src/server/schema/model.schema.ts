@@ -56,10 +56,10 @@ export const modelSchema = z.object({
   tagsOnModels: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   poi: z.boolean().optional(),
-  allowNoCredit: z.boolean(),
-  allowCommercialUse: z.boolean(),
-  allowDerivatives: z.boolean(),
-  allowDifferentLicense: z.boolean(),
+  allowNoCredit: z.boolean().optional(),
+  allowCommercialUse: z.boolean().optional(),
+  allowDerivatives: z.boolean().optional(),
+  allowDifferentLicense: z.boolean().optional(),
   modelVersions: z
     .array(modelVersionUpsertSchema)
     .min(1, 'At least one model version is required.'),
