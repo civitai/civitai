@@ -35,7 +35,13 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       throw throwNotFoundError(`No model with id ${input.id}`);
     }
 
-    return model;
+    return {
+      ...model,
+      modelVersions: model.modelVersions.map((version) => ({
+        ...version,
+        images: version.images.flatMap((x) => x.image),
+      })),
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

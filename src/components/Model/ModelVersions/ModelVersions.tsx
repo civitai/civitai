@@ -129,7 +129,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
     },
   ];
 
-  const versionImages = version.images.map((x) => x.image);
+  const versionImages = version.images;
   const imagesLimit = mobile ? VERSION_IMAGES_LIMIT / 2 : VERSION_IMAGES_LIMIT;
   const primaryFile = version.files.find((file) => file.primary === true);
   const secondaryFiles = version.files.filter((file) => !file.primary);

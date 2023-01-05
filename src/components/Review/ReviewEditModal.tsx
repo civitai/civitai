@@ -15,6 +15,12 @@ import { ReviewUpsertInput, reviewUpsertSchema } from '~/server/schema/review.sc
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
+/**NOTES**
+  TODO
+    - if the model for the review depicts an actual person, the review shouldn't include nsfw images
+      - disable the submit button and show a message
+*/
+
 type ReviewModelProps = {
   review: ReviewUpsertInput;
 };

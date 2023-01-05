@@ -26,7 +26,7 @@ import {
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { useRouter } from 'next/router';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
 
@@ -78,6 +78,7 @@ const schema = modelSchema.extend({
     )
     .min(1, 'At least one model version is required.'),
 });
+type FormSchema = z.infer<typeof schema>;
 
 type CreateModelProps = z.infer<typeof modelSchema>;
 type UpdateModelProps = Omit<CreateModelProps, 'id'> & { id: number };
@@ -96,7 +97,6 @@ export function ModelForm({ model }: Props) {
   const addMutation = trpc.model.add.useMutation();
   const updateMutation = trpc.model.update.useMutation();
   const [uploading, setUploading] = useState(false);
-  const [nsfwPoi, setNsfwPoi] = useState();
 
   const defaultModelFile = {
     name: '',
@@ -106,7 +106,7 @@ export function ModelForm({ model }: Props) {
     primary: true,
   };
 
-  const defaultModelVersion: z.infer<typeof schema>['modelVersions'][number] = {
+  const defaultModelVersion: FormSchema['modelVersions'][number] = {
     name: '',
     description: null,
     epochs: null,
@@ -118,7 +118,7 @@ export function ModelForm({ model }: Props) {
     files: [defaultModelFile],
   };
 
-  const defaultValues: z.infer<typeof schema> = {
+  const defaultValues: FormSchema = {
     ...model,
     name: model?.name ?? '',
     type: model?.type ?? ModelType.Checkpoint,
@@ -131,7 +131,7 @@ export function ModelForm({ model }: Props) {
         trainedWords: trainedWords,
         skipTrainedWords: !trainedWords.length,
         // HOTFIX: Casting image.meta type issue with generated prisma schema
-        images: images.map(({ image }) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
+        images: images.map((image) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
         // HOTFIX: Casting files to defaultModelFile[] to avoid type confusion and accept room for error
         files: files.length > 0 ? (files as typeof defaultModelFile[]) : [defaultModelFile],
       })
@@ -152,47 +152,56 @@ export function ModelForm({ model }: Props) {
 
   const tagsOnModels = form.watch('tagsOnModels');
 
-  const checkNsfwContent = () => {
-    const isActualPerson = form.getValues('poi');
-    const isModelNsfw = form.getValues('nsfw');
-    const hasNsfwImages = form
-      .getValues('modelVersions')
-      .flatMap((version) => version.images)
-      .some((image) => image.nsfw);
+  // #region [poiNsfw]
+  function getIsNsfwPoi({
+    poi,
+    nsfw,
+    images,
+  }: {
+    poi?: boolean;
+    nsfw?: boolean;
+    images?: { nsfw?: boolean }[];
+  }) {
+    const hasNsfwImages = images?.some((image) => image?.nsfw);
+    return poi && (nsfw || hasNsfwImages);
+  }
 
-    if (isActualPerson && (isModelNsfw || hasNsfwImages)) {
-    }
-  };
-
-  // const handleSetNsfwPoi = ({
-  //   poi,
-  //   nsfw,
-  //   modelVersions,
-  // }: {
-  //   poi?: boolean;
-  //   nsfw?: boolean;
-  //   modelVersions: ModelById['modelVersions'];
-  // }) => {
-  //   const hasNsfwImages = modelVersions.flatMap((version) => version.images).some(image => image);
-  // };
+  const [nsfwPoi, setNsfwPoi] = useState(
+    getIsNsfwPoi({ ...defaultValues, images: defaultValues.modelVersions.flatMap((v) => v.images) })
+  );
+  useEffect(() => {
+    const subscription = form.watch((value, { name, type }) => {
+      const match = name?.match(/modelVersions\.[0-9]\.images/);
+      if (name === 'poi' || name === 'nsfw' || match || name === undefined) {
+        const { poi, nsfw, modelVersions } = value;
+        setNsfwPoi(
+          getIsNsfwPoi({
+            poi,
+            nsfw,
+            images: modelVersions?.flatMap((v) => v?.images)?.filter(isDefined),
+          })
+        );
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [form]);
+  // #endregion
 
   const tagsData = useMemo(() => {
     return [...tags.map((x) => x.name), ...(tagsOnModels ?? [])?.filter(isDefined)];
   }, [tagsOnModels, tags]);
 
   const mutating = addMutation.isLoading || updateMutation.isLoading;
-  const [poi, nsfw, type, allowDerivatives, allowNoCredit] = form.watch([
-    'poi',
-    'nsfw',
+  const [type, allowDerivatives, allowNoCredit] = form.watch([
     'type',
     'allowDerivatives',
     'allowNoCredit',
   ]);
-  const poiNsfw = poi && nsfw;
+
   const acceptsTrainedWords = ['Checkpoint', 'TextualInversion', 'LORA'].includes(type);
   const isTextualInversion = type === 'TextualInversion';
 
-  const handleSubmit = (values: z.infer<typeof schema>) => {
+  const handleSubmit = (values: FormSchema) => {
     function runMutation(options = { asDraft: false }) {
       const { asDraft } = options;
 
@@ -572,19 +581,11 @@ export function ModelForm({ model }: Props) {
                     name="poi"
                     label="Depict an actual person"
                     description="For Example: Tom Cruise or Tom Cruise as Maverick"
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      const isModelNsfw = form.getValues('nsfw');
-                      const hasNsfwImages = form
-                        .getValues('modelVersions')
-                        .flatMap((version) => version.images)
-                        .some((image) => image.nsfw);
-                    }}
                   />
                   <InputCheckbox name="nsfw" label="Are NSFW" />
                 </Stack>
               </Paper>
-              {poiNsfw && (
+              {nsfwPoi && (
                 <>
                   <Alert color="red" pl={10}>
                     <Group noWrap spacing={10}>
@@ -610,7 +611,7 @@ export function ModelForm({ model }: Props) {
                 >
                   Discard changes
                 </Button>
-                <Button type="submit" loading={mutating || uploading} disabled={poiNsfw}>
+                <Button type="submit" loading={mutating || uploading} disabled={nsfwPoi}>
                   {uploading ? 'Uploading...' : mutating ? 'Saving...' : 'Save'}
                 </Button>
               </Group>

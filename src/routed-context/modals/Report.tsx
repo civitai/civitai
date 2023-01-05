@@ -26,7 +26,6 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const reports = [
   {

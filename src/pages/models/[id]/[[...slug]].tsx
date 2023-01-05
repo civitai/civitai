@@ -293,9 +293,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       title={`${model.name} | Civitai`}
       description={removeTags(model.description ?? '')}
       image={
-        nsfw || latestVersion?.images[0]?.image.url == null
+        nsfw || latestVersion?.images[0]?.url == null
           ? undefined
-          : getEdgeUrl(latestVersion.images[0].image.url, { width: 1200 })
+          : getEdgeUrl(latestVersion.images[0].url, { width: 1200 })
       }
     />
   );
@@ -748,7 +748,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
                       loop
                     >
-                      {latestVersion?.images.map(({ image }, index) => (
+                      {latestVersion?.images.map((image, index) => (
                         <Carousel.Slide key={image.id}>
                           <Center style={{ height: '100%' }}>
                             {/* <Media.Placeholder>

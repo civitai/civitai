@@ -25,7 +25,7 @@ export default createRoutedContext({
         opened={context.opened}
         onClose={context.close}
         initialSlide={initialSlide}
-        images={modelVersion?.images.map((x) => x.image)}
+        images={modelVersion?.images}
       />
     );
   },
