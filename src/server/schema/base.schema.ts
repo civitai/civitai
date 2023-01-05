@@ -9,3 +9,7 @@ export const getAllQuerySchema = z.object({
   query: z.string().optional(),
 });
 export type GetAllSchema = z.infer<typeof getAllQuerySchema>;
+
+// export const isEntity = <T extends { id?: number }>(
+//   entity: T
+// ): entity is Omit<T, 'id'> & { id: number } => !!entity.id;

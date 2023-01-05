@@ -222,6 +222,7 @@ export const updateModel = async ({
               height: true,
               hash: true,
               url: true,
+              nsfw: true,
             },
           },
         },
@@ -359,7 +360,7 @@ export const updateModel = async ({
                   index,
                   image: { create: image },
                 })),
-                update: imagesToUpdate.map(({ index, meta, ...image }) => ({
+                update: imagesToUpdate.map(({ index, meta, nsfw, ...image }) => ({
                   where: {
                     imageId_modelVersionId: {
                       imageId: image.id as number,
@@ -370,6 +371,7 @@ export const updateModel = async ({
                     index,
                     image: {
                       update: {
+                        nsfw,
                         meta,
                       },
                     },

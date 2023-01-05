@@ -25,6 +25,7 @@ declare global {
     height?: number | null;
     width?: number | null;
     hash?: string;
+    nsfw?: boolean;
   };
 
   type DeepNonNullable<T> = { [P in keyof T]-?: NonNullable<T[P]> } & NonNullable<T>;

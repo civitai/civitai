@@ -26,6 +26,7 @@ export const imageSchema = z.object({
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
+  nsfw: z.boolean().optional(),
 });
 
 export type ImageUploadProps = z.infer<typeof imageSchema>;

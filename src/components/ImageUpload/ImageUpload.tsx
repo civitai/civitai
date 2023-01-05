@@ -26,10 +26,18 @@ import {
   NumberInput,
   Grid,
   Select,
+  Tooltip,
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
-import { IconPencil, IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons';
+import {
+  IconPencil,
+  IconPhoto,
+  IconRating18Plus,
+  IconTrash,
+  IconUpload,
+  IconX,
+} from '@tabler/icons';
 import { cloneElement, useState } from 'react';
 import { blurHashImage, loadImage } from '../../utils/blurhash';
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
@@ -37,7 +45,7 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getMetadata } from '~/utils/image-metadata';
-import isEqual from 'lodash/isEqual';
+import { useClassifyModel } from '~/hooks/useClassifyModel';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -46,6 +54,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   onChange?: (value: Array<CustomFile>) => void;
   loading?: boolean;
   withMeta?: boolean;
+  reset: number;
 };
 
 //TODO File Safety: Limit to the specific file extensions we want to allow
@@ -57,6 +66,7 @@ export function ImageUpload({
   hasPrimaryImage,
   loading = false,
   withMeta = true,
+  reset,
   ...inputWrapperProps
 }: Props) {
   const { classes, theme, cx } = useStyles();
@@ -67,16 +77,14 @@ export function ImageUpload({
     // useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
+  // const { isNsfw } = useClassifyModel();
   const { uploadToCF, files: imageFiles } = useCFImageUpload();
   const [files, filesHandlers] = useListState<CustomFile>(Array.isArray(value) ? value : []);
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
 
-  // Disabled this because it seemed to cause state loop...
   useDidUpdate(() => {
-    const shouldReset = !isEqual(value, files);
-    // console.log('did update', { shouldReset });
-    if (shouldReset) filesHandlers.setState(value);
-  }, [value]);
+    if (reset > 0) filesHandlers.setState(value);
+  }, [reset]);
 
   useDidUpdate(() => {
     if (files) onChange?.(files);
@@ -84,11 +92,13 @@ export function ImageUpload({
   }, [files]); //eslint-disable-line
 
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
+    // if (!isNsfw) return;
     const toUpload = await Promise.all(
       droppedFiles.map(async (file) => {
         const src = URL.createObjectURL(file);
         const meta = await getMetadata(file);
         const img = await loadImage(src);
+        // const nsfw = await isNsfw(img, file.type);
         const hashResult = blurHashImage(img);
         return {
           name: file.name,
@@ -225,6 +235,17 @@ export function ImageUpload({
                           p={4}
                           spacing={4}
                         >
+                          <Tooltip label="Toggle NSFW">
+                            <ActionIcon
+                              color={image.nsfw ? 'red' : undefined}
+                              variant="filled"
+                              onClick={() =>
+                                filesHandlers.setItem(index, { ...image, nsfw: !image.nsfw })
+                              }
+                            >
+                              <IconRating18Plus />
+                            </ActionIcon>
+                          </Tooltip>
                           {withMeta && (
                             <ImageMetaPopover
                               meta={image.meta}
