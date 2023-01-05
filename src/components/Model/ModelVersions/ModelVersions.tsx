@@ -33,6 +33,7 @@ import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { ModelFileType } from '~/server/common/constants';
+import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 
 const VERSION_IMAGES_LIMIT = 8;
 
@@ -78,6 +79,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
   const modelId = Number(router.query.id);
   const mobile = useIsMobile();
   const { openContext } = useRoutedContext();
+  const hashes = version.files.find((file) => file.primary === true)?.hashes;
 
   const versionDetails: DescriptionTableProps['items'] = [
     {
@@ -92,6 +94,11 @@ function TabContent({ version, nsfw }: TabContentProps) {
     { label: 'Downloads', value: (version.rank?.downloadCountAllTime ?? 0).toLocaleString() },
     { label: 'Uploaded', value: formatDate(version.createdAt) },
     { label: 'Base Model', value: version.baseModel },
+    {
+      label: 'Hash',
+      value: !!hashes?.length && <ModelHash hashes={hashes} />,
+      visible: !!hashes?.length,
+    },
     { label: 'Steps', value: version.steps?.toLocaleString() ?? 0, visible: !!version.steps },
     { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0, visible: !!version.epochs },
     {
@@ -173,14 +180,16 @@ function TabContent({ version, nsfw }: TabContentProps) {
           </Group>
 
           <DescriptionTable items={versionDetails} labelWidth="30%" />
-          <Text size={16} weight={500}>
-            About this version
-          </Text>
-          {version.description ? (
-            <ContentClamp>
-              <RenderHtml html={version.description} />
-            </ContentClamp>
-          ) : null}
+          {version.description && (
+            <>
+              <Text size={16} weight={500}>
+                About this version
+              </Text>
+              <ContentClamp>
+                <RenderHtml html={version.description} />
+              </ContentClamp>
+            </>
+          )}
         </Stack>
       </Grid.Col>
       <Grid.Col xs={12} md={8} orderMd={1}>
