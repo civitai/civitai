@@ -88,7 +88,9 @@ export function ImageUpload({
     setWorkerReady(false);
     workerRef.current = new Worker(new URL('/src/workers/nsfw.worker.ts', import.meta.url));
     workerRef.current.addEventListener('message', ({ data }) => {
+      // handle worker ready
       if (typeof data === 'string' && data === 'ready') setWorkerReady(true);
+      // handle worker result
       else if (Array.isArray(data)) {
         const result: { url: string; nsfw: boolean }[] = data;
         filesHandlers.setState((state) => {
@@ -97,6 +99,13 @@ export function ImageUpload({
             nsfw: result.find((x) => x.url === file.url)?.nsfw ?? file.nsfw,
           }));
         });
+      }
+      // handle worker error
+      else if (typeof data === 'object' && data.type === 'error') {
+        console.error(data.error);
+        filesHandlers.setState((state) =>
+          [...state].map((file) => ({ ...file, nsfw: file.nsfw ?? false }))
+        );
       }
     });
 

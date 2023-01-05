@@ -106,19 +106,20 @@ const handleMessage = async ({
 {
   data: { url: string; file: FileWithPath }[];
 }) => {
-  // console.log({ index, file });
-  const result = await Promise.all(
-    data.map(async ({ url, file }) => {
-      const bitmap = await createImageBitmap(file);
-      const predictions = await detectNSFW(bitmap);
-      // console.log({ predictions });
-      const nsfw = detectNsfwImage(predictions);
-      return { url, nsfw };
-    })
-  );
-  // console.log({ result });
-  self.postMessage(result);
-  // self.postMessage({ index, result });
+  try {
+    const result = await Promise.all(
+      data.map(async ({ url, file }) => {
+        const bitmap = await createImageBitmap(file);
+        const predictions = await detectNSFW(bitmap);
+        // console.log({ predictions });
+        const nsfw = detectNsfwImage(predictions);
+        return { url, nsfw };
+      })
+    );
+    self.postMessage(result);
+  } catch (error) {
+    self.postMessage({ type: 'error', error });
+  }
 };
 
 addEventListener('message', handleMessage);
