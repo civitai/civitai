@@ -68,7 +68,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
         {
           modelVersions: {
             some: {
-              baseModel: baseModels?.length ? { in: baseModels } : undefined,
               files: query
                 ? {
                     some: {
@@ -98,6 +97,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       : undefined,
     favoriteModels: favorites ? { some: { userId: sessionUser?.id } } : undefined,
     AND: AND.length ? AND : undefined,
+    modelVersions: baseModels?.length ? { some: { baseModel: { in: baseModels } } } : undefined,
   };
 
   const items = await prisma.model.findMany({
