@@ -77,7 +77,7 @@ export function ImageUpload({
     // useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  // const { isNsfw } = useClassifyModel();
+  const { isNsfw } = useClassifyModel();
   const { uploadToCF, files: imageFiles } = useCFImageUpload();
   const [files, filesHandlers] = useListState<CustomFile>(Array.isArray(value) ? value : []);
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
@@ -92,13 +92,13 @@ export function ImageUpload({
   }, [files]); //eslint-disable-line
 
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
-    // if (!isNsfw) return;
+    if (!isNsfw) return;
     const toUpload = await Promise.all(
       droppedFiles.map(async (file) => {
         const src = URL.createObjectURL(file);
         const meta = await getMetadata(file);
         const img = await loadImage(src);
-        // const nsfw = await isNsfw(img, file.type);
+        const nsfw = await isNsfw(file, file.type);
         const hashResult = blurHashImage(img);
         return {
           name: file.name,

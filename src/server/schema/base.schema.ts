@@ -10,6 +10,11 @@ export const getAllQuerySchema = z.object({
 });
 export type GetAllSchema = z.infer<typeof getAllQuerySchema>;
 
-// export const isEntity = <T extends { id?: number }>(
+// type BaseInterface = {
+//   id?: number;
+// } & Record<string, unknown>;
+// type OmitId<T extends BaseInterface> = Omit<T, 'id'>;
+
+// export const isEntity = <T extends BaseInterface>(
 //   entity: T
-// ): entity is Omit<T, 'id'> & { id: number } => !!entity.id;
+// ): entity is OmitId<T> & { id: number } => !!entity.id;
