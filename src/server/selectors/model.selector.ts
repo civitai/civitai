@@ -142,7 +142,6 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
         },
       },
       files: {
-        orderBy: { primary: 'desc' },
         select: {
           id: true,
           url: true,
@@ -156,7 +155,6 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           virusScanMessage: true,
           scannedAt: true,
           rawScanResult: true,
-          primary: true,
         },
       },
       // runStrategies: {

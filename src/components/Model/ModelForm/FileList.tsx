@@ -1,6 +1,6 @@
-import { ActionIcon, Anchor, Group, InputWrapperProps, Stack, Tooltip } from '@mantine/core';
+import { ActionIcon, Anchor, Group, InputWrapperProps, Stack } from '@mantine/core';
 import { ModelFileFormat, ModelType } from '@prisma/client';
-import { IconStar, IconTrash } from '@tabler/icons';
+import { IconTrash } from '@tabler/icons';
 import { useEffect, useState } from 'react';
 import { useFieldArray, UseFormReturn } from 'react-hook-form';
 
@@ -40,7 +40,7 @@ export function FileList({ parentIndex, form }: Props) {
   // We reduce by 2 when is not checkpoint cause we don't need prunedModel
   const maxLength = fileTypeCount + fileFormatCount - (isCheckpointModel ? 0 : 2);
 
-  const { fields, append, remove, update } = useFieldArray({
+  const { fields, append, remove } = useFieldArray({
     control: form.control,
     name: `modelVersions.${parentIndex}.files`,
     rules: {
@@ -50,20 +50,12 @@ export function FileList({ parentIndex, form }: Props) {
     },
   });
 
-  const handlePrimaryClick = (index: number) => {
-    fields.map(({ id, ...field }, i) => {
-      const matchingFile = files[i];
-      update(i, { ...matchingFile, ...field, primary: index === i });
-    });
-  };
-
   const handleAddFileInput = (type: ModelFileType) => {
     append({
       type,
       url: '',
       name: '',
       sizeKB: 0,
-      primary: false,
     });
   };
 
@@ -104,7 +96,6 @@ export function FileList({ parentIndex, form }: Props) {
               parentIndex={parentIndex}
               modelType={modelType}
               onRemoveClick={(index) => remove(index)}
-              onPrimaryClick={handlePrimaryClick}
             />
             {index === 0 && (
               <Group spacing="xs">
@@ -147,17 +138,8 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   onLoading?: (loading: boolean) => void;
 };
 
-function FileItem({
-  primary,
-  type,
-  parentIndex,
-  index,
-  modelType,
-  onRemoveClick,
-  onPrimaryClick,
-}: FileItemProps) {
+function FileItem({ type, parentIndex, index, modelType, onRemoveClick }: FileItemProps) {
   const [uploading, setUploading] = useState(false);
-  const isFileModelType = ['Model', 'Pruned Model'].includes(type);
 
   return (
     <InputFileUpload
@@ -169,35 +151,14 @@ function FileItem({
       onLoading={setUploading}
       extra={
         <Group spacing={8}>
-          <Tooltip label="Mark as primary">
-            <ActionIcon
-              size="lg"
-              variant="outline"
-              color={primary ? 'yellow' : undefined}
-              disabled={uploading}
-              onClick={!primary && isFileModelType ? () => onPrimaryClick(index) : undefined}
-              sx={{
-                visibility: isFileModelType ? 'visible' : 'hidden',
-              }}
-            >
-              <IconStar size={16} stroke={1.5} style={{ fill: primary ? 'gold' : undefined }} />
-            </ActionIcon>
-          </Tooltip>
           {index !== 0 && (
             <PopConfirm
               message="Are you sure you want to remove this file?"
               position="bottom-end"
-              onConfirm={!primary ? () => onRemoveClick(index) : undefined}
+              onConfirm={() => onRemoveClick(index)}
               withArrow
             >
-              <ActionIcon
-                color="red"
-                size="lg"
-                variant="outline"
-                disabled={uploading}
-                onClick={(e) => e.stopPropagation()}
-                sx={{ visibility: !primary ? 'visible' : 'hidden' }}
-              >
+              <ActionIcon color="red" size="lg" variant="outline" disabled={uploading}>
                 <IconTrash size={16} stroke={1.5} />
               </ActionIcon>
             </PopConfirm>
@@ -213,7 +174,6 @@ type FileItemProps = ModelFileInput & {
   index: number;
   parentIndex: number;
   onRemoveClick: (index: number) => void;
-  onPrimaryClick: (index: number) => void;
   modelType: ModelType;
   onLoading?: (index: number, loading: boolean) => void;
 };

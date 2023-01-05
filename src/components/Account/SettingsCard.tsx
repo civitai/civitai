@@ -1,9 +1,12 @@
-import { Card, Stack, Switch, Title } from '@mantine/core';
+import { Card, Select, Stack, Switch, Title } from '@mantine/core';
+import { ModelFileFormat } from '@prisma/client';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { reloadSession } from '~/utils/next-auth-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+
+const validModelFormats = Object.values(ModelFileFormat).filter((format) => format !== 'Other');
 
 export function SettingsCard() {
   const user = useCurrentUser();
@@ -18,25 +21,45 @@ export function SettingsCard() {
     },
   });
 
+  if (!user) return null;
+
   return (
     <Card withBorder>
       <Stack>
         <Title order={2}>Browsing Settings</Title>
+        <Select
+          label="Preferred Model Format"
+          name="fileFormat"
+          data={validModelFormats}
+          defaultValue={user.preferredModelFormat ?? ModelFileFormat.SafeTensor}
+          onChange={(value: ModelFileFormat) =>
+            mutate({ id: user.id, preferredModelFormat: value })
+          }
+          disabled={isLoading}
+        />
+        <Select
+          label="Preferred Model Size"
+          name="fileFormat"
+          data={['Full', 'Pruned']}
+          defaultValue={user.preferredPrunedModel ? 'Pruned' : 'Full'}
+          onChange={(value) => mutate({ id: user.id, preferredPrunedModel: value === 'Pruned' })}
+          disabled={isLoading}
+        />
         <Switch
           name="showNsfw"
           label="Show me NSFW content"
           description="If you are not of legal age to view NSFW content, please do not enable this option"
-          defaultChecked={user?.showNsfw}
+          defaultChecked={user.showNsfw}
           disabled={isLoading}
-          onChange={(e) => mutate({ id: user?.id, showNsfw: e.target.checked })}
+          onChange={(e) => mutate({ id: user.id, showNsfw: e.target.checked })}
         />
-        {user?.showNsfw && (
+        {user.showNsfw && (
           <Switch
             name="blurNsfw"
             label="Blur NSFW content"
-            defaultChecked={user?.blurNsfw}
+            defaultChecked={user.blurNsfw}
             disabled={isLoading}
-            onChange={(e) => mutate({ id: user?.id, blurNsfw: e.target.checked })}
+            onChange={(e) => mutate({ id: user.id, blurNsfw: e.target.checked })}
           />
         )}
       </Stack>

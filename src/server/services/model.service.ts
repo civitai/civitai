@@ -228,7 +228,7 @@ export const updateModel = async ({
       },
       trainedWords: true,
       files: {
-        select: { id: true, type: true, url: true, name: true, sizeKB: true, primary: true },
+        select: { id: true, type: true, url: true, name: true, sizeKB: true },
       },
     },
   });
