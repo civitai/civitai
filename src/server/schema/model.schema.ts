@@ -6,6 +6,7 @@ import { ModelSort } from '~/server/common/enums';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { postgresSlugify } from '~/utils/string-helpers';
 
 export const getAllModelsSchema = z.object({
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).optional(),
@@ -15,7 +16,10 @@ export const getAllModelsSchema = z.object({
   tag: z.string().optional(),
   tagname: z.string().optional(),
   user: z.string().optional(),
-  username: z.string().optional(),
+  username: z
+    .string()
+    .transform((data) => postgresSlugify(data))
+    .optional(),
   types: z
     .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
     .optional()
