@@ -188,7 +188,7 @@ export function ImageUpload({
               : undefined,
           })}
           disabled={dropzoneDisabled}
-          loading={loading}
+          // loading={loading}
         >
           <Group position="center" spacing="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
             <Dropzone.Accept>

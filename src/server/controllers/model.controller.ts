@@ -74,6 +74,7 @@ export const getModelsInfiniteHandler = async ({
         take: 1,
         select: {
           images: {
+            // TODO: orderby: [{...nsfw},{index: 'asc'}]
             orderBy: {
               index: 'asc',
             },
@@ -271,4 +272,29 @@ export const getModelReportDetailsHandler = async ({ input: { id } }: { input: G
       select: { userId: true, reportStats: { select: { ownershipPending: true } } },
     });
   } catch (error) {}
+};
+
+export const getModelDetailsForReviewHandler = async ({
+  input: { id },
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  try {
+    const model = getModel({
+      input: { id },
+      user: ctx.user,
+      select: {
+        poi: true,
+        modelVersions: {
+          select: { id: true, name: true },
+        },
+      },
+    });
+    if (!model) throw throwNotFoundError();
+    return model;
+  } catch (error) {
+    throw throwDbError(error);
+  }
 };

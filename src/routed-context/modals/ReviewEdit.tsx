@@ -1,4 +1,5 @@
-import { Button, Group, LoadingOverlay, Modal, Stack } from '@mantine/core';
+import { Alert, Button, Group, LoadingOverlay, Modal, Stack, ThemeIcon, Text } from '@mantine/core';
+import { IconExclamationMark } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
@@ -16,6 +17,7 @@ import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { ReviewUpsertInput, reviewUpsertSchema } from '~/server/schema/review.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 export default createRoutedContext({
   schema: z.object({
@@ -36,7 +38,8 @@ export default createRoutedContext({
       { id: reviewId ?? 0 },
       { enabled: !!reviewId, keepPreviousData: false }
     );
-    const { data: versions = [] } = trpc.model.getVersions.useQuery({ id: modelId });
+    // const { data: versions = [] } = trpc.model.getVersions.useQuery({ id: modelId });
+    const { data: modelDetail } = trpc.model.getModelDetailsForReview.useQuery({ id: modelId });
     const { mutate, isLoading } = trpc.review.upsert.useMutation();
 
     const loadingReview = (reviewLoading || reviewRefetching) && !!reviewId;
@@ -54,6 +57,20 @@ export default createRoutedContext({
     useEffect(() => {
       if (review && !loadingReview) form.reset(review as any);  // eslint-disable-line
     }, [review, loadingReview]) //eslint-disable-line
+
+
+    const [nsfwPoi, setNsfwPoi] = useState(false);
+    useEffect(() => {
+      const subscription = form.watch((value, { name, type }) => {
+        if (!modelDetail) return;
+        if (name === 'nsfw' || name === 'images' || name === undefined) {
+          const { nsfw, images } = value;
+          const hasNsfwImages = images?.filter(isDefined).some((x) => x.nsfw) ?? false;
+          setNsfwPoi(modelDetail.poi && (nsfw || hasNsfwImages));
+        }
+      });
+      return () => subscription.unsubscribe();
+    }, [form, modelDetail]);
 
     const handleSubmit = (data: ReviewUpsertInput) => {
       mutate(data, {
@@ -84,7 +101,10 @@ export default createRoutedContext({
           <Stack>
             <InputSelect
               name="modelVersionId"
-              data={versions.map(({ id, name }) => ({ label: name, value: id }))}
+              data={
+                modelDetail?.modelVersions?.map(({ id, name }) => ({ label: name, value: id })) ??
+                []
+              }
               label="Version of the model"
               placeholder="Select a version"
               withAsterisk
@@ -103,12 +123,34 @@ export default createRoutedContext({
               loading={uploading}
               onChange={(values) => setUploading(values.some((value) => value.file))}
             />
+            {/* TODO.Briant - remove nsfw flag since it's based on images now */}
             <InputCheckbox name="nsfw" label="This review or images associated with it are NSFW" />
+            {nsfwPoi && (
+              <>
+                <Alert color="red" pl={10}>
+                  <Group noWrap spacing={10}>
+                    <ThemeIcon color="red">
+                      <IconExclamationMark />
+                    </ThemeIcon>
+                    <Stack spacing={0}>
+                      <Text size="xs" sx={{ lineHeight: 1.2 }}>
+                        The model that this review is based on depicts an actual person. NSFW
+                        content depicting actual people is not permitted.
+                      </Text>
+                    </Stack>
+                  </Group>
+                </Alert>
+                <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
+                  Please revise the content of this listing to ensure no actual person is depicted
+                  in an NSFW context out of respect for the individual.
+                </Text>
+              </>
+            )}
             <Group position="apart">
               <Button variant="default" onClick={() => context.close()} disabled={isLoading}>
                 Cancel
               </Button>
-              <Button type="submit" loading={isLoading || uploading}>
+              <Button type="submit" loading={isLoading || uploading} disabled={nsfwPoi}>
                 {uploading ? 'Uploading...' : isLoading ? 'Saving...' : 'Save'}
               </Button>
             </Group>

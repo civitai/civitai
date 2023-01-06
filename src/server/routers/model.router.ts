@@ -1,4 +1,7 @@
-import { getModelReportDetailsHandler } from './../controllers/model.controller';
+import {
+  getModelDetailsForReviewHandler,
+  getModelReportDetailsHandler,
+} from './../controllers/model.controller';
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
@@ -92,4 +95,7 @@ export const modelRouter = router({
     .mutation(unpublishModelHandler),
   // TODO - TEMP HACK for reporting modal
   getModelReportDetails: publicProcedure.input(getByIdSchema).query(getModelReportDetailsHandler),
+  getModelDetailsForReview: publicProcedure
+    .input(getByIdSchema)
+    .query(getModelDetailsForReviewHandler),
 });

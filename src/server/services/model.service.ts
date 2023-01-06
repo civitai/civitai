@@ -167,9 +167,10 @@ export const createModel = async ({
   return prisma.model.create({
     data: {
       ...data,
-      nsfw:
-        modelVersions.flatMap((version) => version.images).every((image) => image.nsfw) ??
-        data.nsfw,
+      //TODO - if all images are nsfw and !data.nsfw, then data.nsfw needs to be true
+      // nsfw:
+      //   modelVersions.flatMap((version) => version.images).every((image) => image.nsfw) ??
+      //   data.nsfw,
       publishedAt: data.status === ModelStatus.Published ? new Date() : null,
       lastVersionAt: new Date(),
       userId,
@@ -283,9 +284,10 @@ export const updateModel = async ({
     where: { id },
     data: {
       ...data,
-      nsfw:
-        modelVersions.flatMap((version) => version.images).every((image) => image.nsfw) ??
-        data.nsfw,
+      //TODO - if all images are nsfw and !data.nsfw, then data.nsfw needs to be true
+      // nsfw:
+      //   modelVersions.flatMap((version) => version.images).every((image) => image.nsfw) ??
+      //   data.nsfw,
       status: data.status,
       publishedAt:
         data.status === ModelStatus.Published && currentModel?.status !== ModelStatus.Published

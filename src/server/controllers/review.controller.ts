@@ -1,7 +1,7 @@
+import { GetByIdInput } from './../schema/base.schema';
 import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
-import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllReviewsInput,
   GetReviewReactionsInput,
