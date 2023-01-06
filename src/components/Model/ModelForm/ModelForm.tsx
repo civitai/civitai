@@ -10,18 +10,22 @@ import {
   Title,
   Alert,
   ThemeIcon,
-  Anchor,
+  Divider,
 } from '@mantine/core';
-import { Model, ModelStatus, ModelType, TagTarget } from '@prisma/client';
+import { CommercialUse, Model, ModelStatus, ModelType, TagTarget } from '@prisma/client';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconArrowDown,
   IconArrowLeft,
   IconArrowUp,
+  IconCurrencyDollarOff,
   IconExclamationMark,
   IconInfoCircle,
+  IconBrush,
+  IconPhoto,
   IconPlus,
+  IconShoppingCart,
   IconTrash,
 } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
@@ -39,6 +43,7 @@ import {
   InputMultiSelect,
   InputNumber,
   InputRTE,
+  InputSegmentedControl,
   InputSelect,
   InputSwitch,
   InputText,
@@ -192,13 +197,7 @@ export function ModelForm({ model }: Props) {
       const data: CreateModelProps | UpdateModelProps = {
         ...values,
         status: asDraft ? ModelStatus.Draft : values.status,
-        allowCommercialUse: !values.allowNoCredit ? values.allowCommercialUse : true,
-        allowDerivatives: !values.allowNoCredit ? values.allowDerivatives : true,
-        allowDifferentLicense: values.allowNoCredit
-          ? true
-          : values.allowDerivatives
-          ? values.allowDifferentLicense
-          : false,
+        allowDifferentLicense: values.allowDerivatives ? values.allowDifferentLicense : false,
         tagsOnModels: values.tagsOnModels?.map((name) => {
           const match = tags.find((x) => x.name === name);
           return match ?? { name };
@@ -532,23 +531,68 @@ export function ModelForm({ model }: Props) {
                 </Stack>
               </Paper>
               <Paper radius="md" p="xl" withBorder>
-                <Stack>
-                  <Text size="sm" weight={500} sx={{ lineHeight: 1.2 }}>
+                <Stack spacing="xs">
+                  <Text size="sm" weight={500} sx={{ lineHeight: 1.2 }} mb="xs">
                     {`When using this model, I give permission for users to:`}
                   </Text>
-                  <InputSwitch name="allowNoCredit" label="Use without any restrictions" />
-                  {!allowNoCredit && (
-                    <>
-                      <InputSwitch name="allowCommercialUse" label="Use for commercial purposes" />
-                      <InputSwitch name="allowDerivatives" label="Make merges with this model" />
-                      {allowDerivatives && (
-                        <InputSwitch
-                          name="allowDifferentLicense"
-                          label="Make merges with a different license"
-                        />
-                      )}
-                    </>
+                  <InputCheckbox name="allowNoCredit" label="Use without crediting me" />
+                  <InputCheckbox name="allowDerivatives" label="Share merges of this model" />
+                  {allowDerivatives && (
+                    <InputCheckbox
+                      name="allowDifferentLicense"
+                      label="Use different permissions on merges"
+                    />
                   )}
+
+                  <Divider label="Commercial Use" labelProps={{ weight: 'bold' }} />
+                  <InputSegmentedControl
+                    name="allowCommercialUse"
+                    orientation="vertical"
+                    fullWidth
+                    color="blue"
+                    styles={(theme) => ({
+                      root: {
+                        border: `1px solid ${
+                          theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+                        }`,
+                        background: 'none',
+                      },
+                    })}
+                    data={[
+                      {
+                        value: CommercialUse.None,
+                        label: (
+                          <Group>
+                            <IconCurrencyDollarOff size={16} /> None
+                          </Group>
+                        ),
+                      },
+                      {
+                        value: CommercialUse.Image,
+                        label: (
+                          <Group>
+                            <IconPhoto size={16} /> Sell generated images
+                          </Group>
+                        ),
+                      },
+                      {
+                        value: CommercialUse.Rent,
+                        label: (
+                          <Group>
+                            <IconBrush size={16} /> Use on generation services
+                          </Group>
+                        ),
+                      },
+                      {
+                        value: CommercialUse.Sell,
+                        label: (
+                          <Group>
+                            <IconShoppingCart size={16} /> Sell this model or merges
+                          </Group>
+                        ),
+                      },
+                    ]}
+                  />
                 </Stack>
               </Paper>
               <Paper radius="md" p="xl" withBorder>
