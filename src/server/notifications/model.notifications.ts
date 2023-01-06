@@ -57,8 +57,7 @@ export const modelNotifications = createNotificationProcessor({
         'model-download-milestone' "type",
         details
       FROM model_milestone
-      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
-      WHERE no."userId" IS NULL;
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-download-milestone');
     `,
   },
   'model-like-milestone': {
@@ -112,8 +111,7 @@ export const modelNotifications = createNotificationProcessor({
         'model-like-milestone' "type",
         details
       FROM model_milestone
-      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
-      WHERE no."userId" IS NULL;
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-like-milestone');
     `,
   },
   'new-model-version': {
@@ -143,8 +141,7 @@ export const modelNotifications = createNotificationProcessor({
         'new-model-version' "type",
         details
       FROM new_model_version
-      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
-      WHERE no."userId" IS NULL;
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-model-version');
     `,
   },
   'new-model-from-following': {
@@ -177,8 +174,7 @@ export const modelNotifications = createNotificationProcessor({
         'new-model-from-following' "type",
         details
       FROM new_model_from_following
-      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
-      WHERE no."userId" IS NULL;
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-model-from-following');
     `,
   },
 });

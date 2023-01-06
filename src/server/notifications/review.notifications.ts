@@ -33,13 +33,12 @@ export const reviewNotifications = createNotificationProcessor({
         'new-review' "type",
         details
       FROM new_reviews
-      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
-      WHERE no."userId" IS NULL;`,
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review');`,
   },
   'review-reminder': {
     displayName: 'Review Reminders',
     prepareMessage: ({ details }) => ({
-      message: `Don't forget to review ${details.modelName}`,
+      message: `Remember to review "${details.modelName}"`,
       url: `/models/${details.modelId}?modal=reviewEdit`,
     }),
     prepareQuery: ({ lastSent }) => `
@@ -72,7 +71,8 @@ export const reviewNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'review-reminder' "type",
         details
-      FROM de_duped;
+      FROM de_duped
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'review-reminder');
     `,
   },
 });

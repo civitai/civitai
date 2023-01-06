@@ -57,8 +57,7 @@ export const reactionNotifications = createNotificationProcessor({
         'comment-reaction-milestone' "type",
         details
       FROM reaction_milestone
-      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
-      WHERE no."userId" IS NULL;
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'comment-reaction-milestone');
     `,
   },
   'review-reaction-milestone': {
@@ -113,8 +112,7 @@ export const reactionNotifications = createNotificationProcessor({
         'review-reaction-milestone' "type",
         details
       FROM reaction_milestone
-      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
-      WHERE no."userId" IS NULL;
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'review-reaction-milestone');
     `,
   },
 });

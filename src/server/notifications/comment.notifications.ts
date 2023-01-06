@@ -34,8 +34,7 @@ export const commentNotifications = createNotificationProcessor({
         'new-comment' "type",
         details
       FROM new_comments
-      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
-      WHERE no."userId" IS NULL;
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment');
     `,
   },
   'new-comment-response': {
@@ -72,8 +71,7 @@ export const commentNotifications = createNotificationProcessor({
         'new-comment-response' "type",
         details
       FROM new_comment_response
-      LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
-      WHERE no."userId" IS NULL;
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment-response');
     `,
   },
   'new-review-response': {
@@ -107,7 +105,8 @@ export const commentNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-review-response' "type",
         details
-      FROM new_review_response;
+      FROM new_review_response
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review-response');
     `,
   },
 });
