@@ -20,6 +20,7 @@ import {
   IconArrowLeft,
   IconArrowUp,
   IconExclamationMark,
+  IconInfoCircle,
   IconPlus,
   IconTrash,
 } from '@tabler/icons';
@@ -53,6 +54,7 @@ import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const schema = modelSchema.extend({
   tagsOnModels: z.string().array(),
@@ -332,6 +334,7 @@ export function ModelForm({ model }: Props) {
                 const trainedWords = form.watch(`modelVersions.${index}.trainedWords`) ?? [];
                 const skipTrainedWords =
                   form.watch(`modelVersions.${index}.skipTrainedWords`) ?? false;
+                const name = form.watch(`modelVersions.${index}.name`) ?? '';
 
                 return (
                   <Paper
@@ -344,45 +347,61 @@ export function ModelForm({ model }: Props) {
                     <Stack style={{ position: 'relative' }}>
                       <Grid gutter="md">
                         <Grid.Col span={12}>
-                          <Group noWrap align="flex-end" spacing="xs">
-                            <InputText
-                              name={`modelVersions.${index}.name`}
-                              label="Name"
-                              placeholder="Version Name"
-                              withAsterisk
-                              style={{ flex: 1 }}
-                            />
-                            {fields.length > 1 && (
-                              <>
-                                {index < fields.length - 1 && (
+                          <Stack>
+                            <Group noWrap align="flex-end" spacing="xs">
+                              <InputText
+                                name={`modelVersions.${index}.name`}
+                                label="Name"
+                                placeholder="Version Name"
+                                withAsterisk
+                                style={{ flex: 1 }}
+                              />
+                              {fields.length > 1 && (
+                                <>
+                                  {index < fields.length - 1 && (
+                                    <ActionIcon
+                                      variant="default"
+                                      onClick={() => swap(index, index + 1)}
+                                      size="lg"
+                                    >
+                                      <IconArrowDown size={16} />
+                                    </ActionIcon>
+                                  )}
+                                  {index > 0 && (
+                                    <ActionIcon
+                                      variant="default"
+                                      onClick={() => swap(index, index - 1)}
+                                      size="lg"
+                                    >
+                                      <IconArrowUp size={16} />
+                                    </ActionIcon>
+                                  )}
                                   <ActionIcon
-                                    variant="default"
-                                    onClick={() => swap(index, index + 1)}
+                                    color="red"
+                                    onClick={() => remove(index)}
+                                    variant="outline"
                                     size="lg"
                                   >
-                                    <IconArrowDown size={16} />
+                                    <IconTrash size={16} stroke={1.5} />
                                   </ActionIcon>
-                                )}
-                                {index > 0 && (
-                                  <ActionIcon
-                                    variant="default"
-                                    onClick={() => swap(index, index - 1)}
-                                    size="lg"
-                                  >
-                                    <IconArrowUp size={16} />
-                                  </ActionIcon>
-                                )}
-                                <ActionIcon
-                                  color="red"
-                                  onClick={() => remove(index)}
-                                  variant="outline"
-                                  size="lg"
-                                >
-                                  <IconTrash size={16} stroke={1.5} />
-                                </ActionIcon>
-                              </>
+                                </>
+                              )}
+                            </Group>
+                            {name && name.toLowerCase().includes('safetensor') && (
+                              <AlertWithIcon icon={<IconInfoCircle />}>
+                                You can attach the SafeTensor file to an existing version, just add
+                                a model file 😉
+                              </AlertWithIcon>
                             )}
-                          </Group>
+                            {name &&
+                              (name.toLowerCase().includes('ckpt') ||
+                                name.toLowerCase().includes('pickle')) && (
+                                <AlertWithIcon icon={<IconInfoCircle />}>
+                                  You can attach the ckpt file to an existing version, just add a
+                                  model file 😉
+                                </AlertWithIcon>
+                              )}
+                          </Stack>
                         </Grid.Col>
                         <Grid.Col span={12}>
                           <Group noWrap align="flex-end" spacing="xs">
