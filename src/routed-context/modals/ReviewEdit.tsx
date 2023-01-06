@@ -123,8 +123,6 @@ export default createRoutedContext({
               loading={uploading}
               onChange={(values) => setUploading(values.some((value) => value.file))}
             />
-            {/* TODO.Briant - remove nsfw flag since it's based on images now */}
-            <InputCheckbox name="nsfw" label="This review or images associated with it are NSFW" />
             {nsfwPoi && (
               <>
                 <Alert color="red" pl={10}>

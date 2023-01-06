@@ -30,7 +30,7 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   const showNsfw = ctx.user?.showNsfw ?? true;
-  const prioritizeSafeImages = !ctx.user;
+  const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
   try {
     const model = await getModel({
       input,
@@ -62,7 +62,8 @@ export const getModelsInfiniteHandler = async ({
   input: GetAllModelsOutput;
   ctx: Context;
 }) => {
-  const prioritizeSafeImages = input.hideNSFW || (ctx.user?.showNsfw ?? false) === false;
+  const prioritizeSafeImages =
+    input.hideNSFW || (ctx.user?.showNsfw ?? false) === false || ctx.user?.blurNsfw;
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
   const { items } = await getModels({
