@@ -98,94 +98,94 @@ export default function UserPage() {
                   <Stack spacing="xs">
                     <Group position="apart">
                       <Title order={2}>{user.username}</Title>
-                      <Group spacing="xs">
-                        {user.rank?.ratingMonthRank && user.rank.ratingMonthRank <= 100 && (
-                          <IconBadge
-                            size="lg"
-                            tooltip="User Rank"
-                            color="yellow"
-                            href={`/leaderboard?position=${user.rank.ratingMonthRank}`}
-                            icon={<IconCrown size={18} />}
-                          >
-                            <Text size="sm">{user.rank.ratingMonthRank}</Text>
-                          </IconBadge>
-                        )}
-                        <FollowUserButton userId={user.id} size="md" compact />
-                      </Group>
+                      <FollowUserButton userId={user.id} size="md" compact />
                     </Group>
-                    {stats && (
-                      <Group spacing="xs">
+                    <Group spacing="xs">
+                      {user.rank?.ratingMonthRank && user.rank.ratingMonthRank <= 100 && (
                         <IconBadge
-                          tooltip="Average Rating"
-                          sx={{ userSelect: 'none' }}
                           size="lg"
-                          icon={
-                            <Rating
-                              size="sm"
-                              value={stats.ratingAllTime}
-                              readOnly
-                              emptySymbol={
-                                theme.colorScheme === 'dark' ? (
-                                  <IconStar
-                                    size={18}
-                                    fill="rgba(255,255,255,.3)"
-                                    color="transparent"
-                                  />
-                                ) : undefined
-                              }
-                            />
-                          }
-                          variant={
-                            theme.colorScheme === 'dark' && stats.ratingCountAllTime > 0
-                              ? 'filled'
-                              : 'light'
-                          }
+                          tooltip="User Rank"
+                          color="yellow"
+                          href={`/leaderboard?position=${user.rank.ratingMonthRank}`}
+                          icon={<IconCrown size={18} />}
                         >
-                          <Text
-                            size="sm"
-                            color={stats.ratingCountAllTime > 0 ? undefined : 'dimmed'}
+                          <Text size="sm">{user.rank.ratingMonthRank}</Text>
+                        </IconBadge>
+                      )}
+                      {stats && (
+                        <>
+                          <IconBadge
+                            tooltip="Average Rating"
+                            sx={{ userSelect: 'none' }}
+                            size="lg"
+                            icon={
+                              <Rating
+                                size="sm"
+                                value={stats.ratingAllTime}
+                                readOnly
+                                emptySymbol={
+                                  theme.colorScheme === 'dark' ? (
+                                    <IconStar
+                                      size={18}
+                                      fill="rgba(255,255,255,.3)"
+                                      color="transparent"
+                                    />
+                                  ) : undefined
+                                }
+                              />
+                            }
+                            variant={
+                              theme.colorScheme === 'dark' && stats.ratingCountAllTime > 0
+                                ? 'filled'
+                                : 'light'
+                            }
                           >
-                            {abbreviateNumber(stats.ratingCountAllTime)}
-                          </Text>
-                        </IconBadge>
-                        <IconBadge
-                          tooltip="Uploads"
-                          icon={<IconUpload size={16} />}
-                          color="gray"
-                          size="lg"
-                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        >
-                          <Text size="sm">{abbreviateNumber(uploads)}</Text>
-                        </IconBadge>
-                        <IconBadge
-                          tooltip="Followers"
-                          icon={<IconUsers size={16} />}
-                          href={`${user.username}/followers`}
-                          color="gray"
-                          size="lg"
-                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        >
-                          <Text size="sm">{abbreviateNumber(stats.followerCountAllTime)}</Text>
-                        </IconBadge>
-                        <IconBadge
-                          tooltip="Favorites"
-                          icon={<IconHeart size={16} />}
-                          color="gray"
-                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                          size="lg"
-                        >
-                          <Text size="sm">{abbreviateNumber(stats.favoriteCountAllTime)}</Text>
-                        </IconBadge>
-                        <IconBadge
-                          tooltip="Downloads"
-                          icon={<IconDownload size={16} />}
-                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                          size="lg"
-                        >
-                          <Text size="sm">{abbreviateNumber(stats.downloadCountAllTime)}</Text>
-                        </IconBadge>
-                      </Group>
-                    )}
+                            <Text
+                              size="sm"
+                              color={stats.ratingCountAllTime > 0 ? undefined : 'dimmed'}
+                            >
+                              {abbreviateNumber(stats.ratingCountAllTime)}
+                            </Text>
+                          </IconBadge>
+                          <IconBadge
+                            tooltip="Uploads"
+                            icon={<IconUpload size={16} />}
+                            color="gray"
+                            size="lg"
+                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                          >
+                            <Text size="sm">{abbreviateNumber(uploads)}</Text>
+                          </IconBadge>
+                          <IconBadge
+                            tooltip="Followers"
+                            icon={<IconUsers size={16} />}
+                            href={`${user.username}/followers`}
+                            color="gray"
+                            size="lg"
+                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                          >
+                            <Text size="sm">{abbreviateNumber(stats.followerCountAllTime)}</Text>
+                          </IconBadge>
+                          <IconBadge
+                            tooltip="Favorites"
+                            icon={<IconHeart size={16} />}
+                            color="gray"
+                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                            size="lg"
+                          >
+                            <Text size="sm">{abbreviateNumber(stats.favoriteCountAllTime)}</Text>
+                          </IconBadge>
+                          <IconBadge
+                            tooltip="Downloads"
+                            icon={<IconDownload size={16} />}
+                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                            size="lg"
+                          >
+                            <Text size="sm">{abbreviateNumber(stats.downloadCountAllTime)}</Text>
+                          </IconBadge>
+                        </>
+                      )}
+                    </Group>
                     {!!user.links?.length && (
                       <Group spacing={0}>
                         {sortDomainLinks(user.links)?.map((link, index) => (

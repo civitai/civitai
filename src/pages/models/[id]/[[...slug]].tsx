@@ -434,7 +434,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Text>
             </Group>
           </Link>
-          <Group spacing="xs">
+          <Group spacing={4} noWrap>
             {model.user.rank?.ratingMonthRank && model.user.rank.ratingMonthRank <= 100 && (
               <IconBadge
                 tooltip="User Rank"

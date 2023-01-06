@@ -12,6 +12,7 @@ import { LeaderboardGetAll } from '~/types/router';
 const useStyles = createStyles((theme) => ({
   creatorCard: {
     '&.active': {
+      // TODO Justin: change this to set shadow color instead
       borderColor: theme.colors.blue[8],
     },
     '&:hover': {
