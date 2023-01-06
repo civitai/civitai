@@ -27,6 +27,7 @@ export function FileInputUpload({
   onLoading,
   value,
   error,
+  extra,
   fileName = value?.name,
   grow = false,
   stackUploadProgress = false,
@@ -44,7 +45,7 @@ export function FileInputUpload({
   };
 
   const [fileTypeError, setFileTypeError] = useState('');
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
 
   useDidUpdate(() => {
     const shouldUpdate = !isEqual(value, state);
@@ -82,7 +83,6 @@ export function FileInputUpload({
           type: uploadType,
           url,
           name: file.name,
-          primary: state?.primary ?? false,
         };
         setState(value);
         onChange?.(value);
@@ -103,29 +103,33 @@ export function FileInputUpload({
   );
 
   return (
-    <Stack sx={grow ? { flexGrow: 1 } : undefined} className={classes.stackedProgress}>
-      <FileInput
-        {...props}
-        error={error ?? fileTypeError}
-        icon={<IconUpload size={16} />}
-        onChange={handleOnChange}
-        value={file ?? localFile}
-        rightSection={
-          file && (
-            <>
-              {status === 'success' && <IconCircleCheck color="green" size={24} />}
-              {status === 'uploading' && (
-                <IconBan
-                  style={{ cursor: 'pointer' }}
-                  color="red"
-                  size={24}
-                  onClick={() => abort()}
-                />
-              )}
-            </>
-          )
-        }
-      />
+    <Stack className={cx(stackUploadProgress && classes.stackedProgress, grow && classes.grow)}>
+      <Group spacing="xs" align="flex-end" noWrap>
+        <FileInput
+          {...props}
+          error={error ?? fileTypeError}
+          icon={<IconUpload size={16} />}
+          onChange={handleOnChange}
+          value={file ?? localFile}
+          className={cx(grow && classes.grow)}
+          rightSection={
+            file && (
+              <>
+                {status === 'success' && <IconCircleCheck color="green" size={24} />}
+                {status === 'uploading' && (
+                  <IconBan
+                    style={{ cursor: 'pointer' }}
+                    color="red"
+                    size={24}
+                    onClick={() => abort()}
+                  />
+                )}
+              </>
+            )
+          }
+        />
+        {extra}
+      </Group>
       {file && (
         <>
           {status === 'uploading' &&
@@ -193,6 +197,7 @@ type Props = Omit<FileInputProps, 'icon' | 'onChange' | 'value'> & {
   fileName?: string;
   grow?: boolean;
   stackUploadProgress?: boolean;
+  extra?: React.ReactNode;
 };
 
 const useStyles = createStyles(() => ({
@@ -228,5 +233,8 @@ const useStyles = createStyles(() => ({
     color: '#fff',
     textShadow: '0 0 2px #000',
     fontWeight: 500,
+  },
+  grow: {
+    flexGrow: 1,
   },
 }));

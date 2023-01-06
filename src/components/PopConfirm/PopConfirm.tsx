@@ -12,7 +12,7 @@ export function PopConfirm({
   message: React.ReactNode;
   onConfirm?: () => void;
   onCancel?: () => void;
-} & PopoverProps) {
+} & Omit<PopoverProps, 'opened' | 'onChange'>) {
   const [opened, setOpened] = useState(false);
 
   const handleCancel = () => {
@@ -26,13 +26,15 @@ export function PopConfirm({
   };
 
   return (
-    <Popover opened={opened} onClose={() => setOpened(false)} {...popoverProps}>
-      <Popover.Target>{React.cloneElement(children)}</Popover.Target>
+    <Popover {...popoverProps} opened={opened} onChange={setOpened}>
+      <Popover.Target>
+        {React.cloneElement(children, { onClick: () => setOpened((o) => !o) })}
+      </Popover.Target>
       <Popover.Dropdown>
         <Stack>
           {message}
           <Group position="right">
-            <Button compact onClick={handleCancel}>
+            <Button variant="outline" compact onClick={handleCancel}>
               No
             </Button>
             <Button compact onClick={handleConfirm}>

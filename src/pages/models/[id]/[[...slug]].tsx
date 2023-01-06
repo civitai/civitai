@@ -29,7 +29,6 @@ import { ModelStatus, ModelType } from '@prisma/client';
 import {
   IconAlertCircle,
   IconArrowsSort,
-  IconBallpen,
   IconBan,
   IconDotsVertical,
   IconDownload,
@@ -38,7 +37,6 @@ import {
   IconFilter,
   IconFlag,
   IconHeart,
-  IconInfoCircle,
   IconLicense,
   IconMessage,
   IconMessageCircle2,
@@ -47,7 +45,6 @@ import {
 } from '@tabler/icons';
 import startCase from 'lodash/startCase';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
-import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
@@ -91,6 +88,9 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ModelFileType } from '~/server/common/constants';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 
 //TODO - Break model query into multiple queries
@@ -149,7 +149,7 @@ const useStyles = createStyles((theme) => ({
 export default function ModelDetail(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
   const router = useRouter();
-  const { data: session } = useSession();
+  const currentUser = useCurrentUser();
   const { classes } = useStyles();
   const mobile = useIsMobile();
   const queryUtils = trpc.useContext();
@@ -170,13 +170,13 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({ id });
   const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery(undefined, {
-    enabled: !!session,
+    enabled: !!currentUser,
     cacheTime: Infinity,
     staleTime: Infinity,
   });
 
   const showNsfwRequested = router.query.showNsfw !== 'true';
-  const userNotBlurringNsfw = session?.user?.blurNsfw !== false;
+  const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
   const nsfw = userNotBlurringNsfw && showNsfwRequested && model?.nsfw === true;
   const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
@@ -242,8 +242,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
   });
 
-  const isModerator = session?.user?.isModerator ?? false;
-  const isOwner = model?.user.id === session?.user?.id || isModerator;
+  const isModerator = currentUser?.isModerator ?? false;
+  const isOwner = model?.user.id === currentUser?.id || isModerator;
 
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
@@ -254,29 +254,15 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         router.replace({ pathname: route, query: { ...queryParams, model: id } }, as, {
           shallow: true,
         });
+
         return false;
       }
+
       return true;
     });
 
     return () => router.beforePopState(() => true);
   }, [router, id]); // Add any state variables to dependencies array if needed.
-
-  // Latest version is the first one based on sorting (createdAt - desc)
-  const latestVersion = model?.modelVersions[0];
-  const secondaryFiles = latestVersion?.files?.filter((file) => !file.primary) ?? [];
-  const primaryFile = latestVersion?.files?.find((file) => file.primary === true);
-  const inaccurate = model?.modelVersions.some((version) => version.inaccurate);
-  const hasPendingClaimReport = model?.reportStats && model.reportStats.ownershipProcessing > 0;
-  const hasNegativeEmbed =
-    model?.type === ModelType.TextualInversion &&
-    latestVersion &&
-    latestVersion.files.some((x) => x.type === 'Negative');
-
-  const hasConfig =
-    model?.type === ModelType.Checkpoint &&
-    latestVersion &&
-    latestVersion.files.some((x) => x.type === 'Config');
 
   if (loadingModel)
     return (
@@ -286,7 +272,30 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         </Center>
       </Container>
     );
+
   if (!model) return <NotFound />;
+
+  // Latest version is the first one based on sorting (createdAt - desc)
+  const latestVersion = model.modelVersions[0];
+  const primaryFile = getPrimaryFile(latestVersion?.files, {
+    format: currentUser?.preferredModelFormat,
+    type: currentUser?.preferredPrunedModel ? 'Pruned Model' : undefined,
+  });
+  const secondaryFiles = latestVersion?.files?.filter((file) => file.id !== primaryFile?.id) ?? [];
+  const inaccurate = model.modelVersions.some((version) => version.inaccurate);
+  const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
+
+  let hasNegativeEmbed = false;
+  let hasConfig = false;
+  let hasVAE = false;
+  if (latestVersion) {
+    for (const file of latestVersion.files) {
+      if (model.type === ModelType.TextualInversion && file.type === 'Negative')
+        hasNegativeEmbed = true;
+      else if (model.type === ModelType.Checkpoint && file.type === 'Config') hasConfig = true;
+      else if (model.type === ModelType.Checkpoint && file.type === 'VAE') hasVAE = true;
+    }
+  }
 
   const meta = (
     <Meta
@@ -301,7 +310,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   );
 
   if (!!edit && model && isOwner) return <ModelForm model={model} />;
-  if (model.nsfw && !session)
+  if (model.nsfw && !currentUser)
     return (
       <>
         {meta}
@@ -357,7 +366,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       label: 'Type',
       value: (
         <Group spacing="xs">
-          <Badge radius="sm">{splitUppercase(model?.type)}</Badge>
+          <Badge radius="sm">{splitUppercase(model.type)}</Badge>
           {model?.status !== ModelStatus.Published && (
             <Badge color="yellow" radius="sm">
               {model.status}
@@ -368,15 +377,15 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
     {
       label: 'Downloads',
-      value: <Text>{(model?.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>,
+      value: <Text>{(model.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>,
     },
     {
       label: 'Last Update',
-      value: <Text>{formatDate(model?.updatedAt)}</Text>,
+      value: <Text>{formatDate(model.updatedAt)}</Text>,
     },
     {
       label: 'Versions',
-      value: <Text>{model?.modelVersions.length}</Text>,
+      value: <Text>{model.modelVersions.length}</Text>,
     },
     {
       label: 'Base Model',
@@ -491,7 +500,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Menu.Target>
 
               <Menu.Dropdown>
-                {session && isOwner && published && (
+                {currentUser && isOwner && published && (
                   <Menu.Item
                     icon={<IconBan size={14} stroke={1.5} />}
                     color="yellow"
@@ -501,7 +510,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     Unpublish
                   </Menu.Item>
                 )}
-                {session && isOwner && (
+                {currentUser && isOwner && (
                   <>
                     <Menu.Item
                       color={theme.colors.red[6]}
@@ -520,7 +529,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     </Menu.Item>
                   </>
                 )}
-                {(!session || !isOwner || isModerator) && (
+                {(!currentUser || !isOwner || isModerator) && (
                   <LoginRedirect reason="report-model">
                     <Menu.Item
                       icon={<IconFlag size={14} stroke={1.5} />}
@@ -532,7 +541,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     </Menu.Item>
                   </LoginRedirect>
                 )}
-                {session && <HideUserButton as="menu-item" userId={model.user.id} />}
+                {currentUser && <HideUserButton as="menu-item" userId={model.user.id} />}
               </Menu.Dropdown>
             </Menu>
           </Group>
@@ -664,7 +673,28 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       >
                         config file
                       </Anchor>
-                      , download and place along side the checkpoint.
+                      , download and place it along side the checkpoint.
+                    </Text>
+                  </Group>
+                </Alert>
+              )}
+              {hasVAE && (
+                <Alert radius="sm" pl={10}>
+                  <Group spacing="xs" noWrap>
+                    <ThemeIcon>
+                      <IconAlertCircle />
+                    </ThemeIcon>
+                    <Text size="xs" sx={{ lineHeight: 1.1 }}>
+                      This checkpoint includes a{' '}
+                      <Anchor
+                        href={createModelFileDownloadUrl({
+                          versionId: latestVersion.id,
+                          type: 'VAE',
+                        })}
+                      >
+                        VAE
+                      </Anchor>
+                      , download and place it along side the checkpoint.
                     </Text>
                   </Group>
                 </Alert>

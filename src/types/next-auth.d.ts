@@ -1,3 +1,4 @@
+import { ModelFileFormat } from '@prisma/client';
 import { DefaultSession } from 'next-auth';
 
 interface ExtendedUser {
@@ -8,6 +9,8 @@ interface ExtendedUser {
   tos?: boolean;
   isModerator?: boolean;
   email?: string;
+  preferredModelFormat?: ModelFileFormat;
+  preferredPrunedModel?: boolean;
 }
 
 declare module 'next-auth' {
