@@ -36,7 +36,6 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
   const fileWhere: Prisma.ModelFileWhereInput = {};
   if (type) fileWhere.type = type;
   if (format) fileWhere.format = format;
-  if (!type && !format) fileWhere.primary = true;
 
   const modelVersion = await prisma.modelVersion.findFirst({
     where: { id: modelVersionId },

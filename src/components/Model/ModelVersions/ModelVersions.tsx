@@ -34,6 +34,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { ModelFileType } from '~/server/common/constants';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
 
 const VERSION_IMAGES_LIMIT = 8;
 
@@ -79,7 +80,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
   const modelId = Number(router.query.id);
   const mobile = useIsMobile();
   const { openContext } = useRoutedContext();
-  const hashes = version.files.find((file) => file.primary === true)?.hashes;
+  const hashes = getPrimaryFile(version.files)?.hashes;
 
   const versionDetails: DescriptionTableProps['items'] = [
     {
@@ -131,8 +132,8 @@ function TabContent({ version, nsfw }: TabContentProps) {
 
   const versionImages = version.images.map((x) => x.image);
   const imagesLimit = mobile ? VERSION_IMAGES_LIMIT / 2 : VERSION_IMAGES_LIMIT;
-  const primaryFile = version.files.find((file) => file.primary === true);
-  const secondaryFiles = version.files.filter((file) => !file.primary);
+  const primaryFile = getPrimaryFile(version.files);
+  const secondaryFiles = version.files.filter((file) => file != primaryFile);
 
   return (
     <Grid gutter="xl">
