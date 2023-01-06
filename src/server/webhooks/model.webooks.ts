@@ -1,7 +1,7 @@
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getAllModelsWithVersionsSelect } from '~/server/selectors/model.selector';
-import { isPrimaryFile } from '~/server/utils/model-helpers';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';
 
@@ -28,7 +28,7 @@ export const modelWebhooks = createWebhookProcessor({
         tags: tagsOnModels.map(({ tag }) => tag.name),
         modelVersions: modelVersions
           .map(({ images, files, ...version }) => {
-            const primaryFile = files.find((file) => isPrimaryFile({ file }));
+            const primaryFile = getPrimaryFile(files);
             if (!primaryFile) return null;
 
             return {

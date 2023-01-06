@@ -1,4 +1,4 @@
-import { Card, Select, Stack, Switch, Title } from '@mantine/core';
+import { Card, Divider, Group, Select, Stack, Switch, Title } from '@mantine/core';
 import { ModelFileFormat } from '@prisma/client';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -27,24 +27,6 @@ export function SettingsCard() {
     <Card withBorder>
       <Stack>
         <Title order={2}>Browsing Settings</Title>
-        <Select
-          label="Preferred Model Format"
-          name="fileFormat"
-          data={validModelFormats}
-          defaultValue={user.preferredModelFormat ?? ModelFileFormat.SafeTensor}
-          onChange={(value: ModelFileFormat) =>
-            mutate({ id: user.id, preferredModelFormat: value })
-          }
-          disabled={isLoading}
-        />
-        <Select
-          label="Preferred Model Size"
-          name="fileFormat"
-          data={['Full', 'Pruned']}
-          defaultValue={user.preferredPrunedModel ? 'Pruned' : 'Full'}
-          onChange={(value) => mutate({ id: user.id, preferredPrunedModel: value === 'Pruned' })}
-          disabled={isLoading}
-        />
         <Switch
           name="showNsfw"
           label="Show me NSFW content"
@@ -62,6 +44,27 @@ export function SettingsCard() {
             onChange={(e) => mutate({ id: user.id, blurNsfw: e.target.checked })}
           />
         )}
+        <Divider label="Model File Preferences" mb={-12} />
+        <Group noWrap grow>
+          <Select
+            label="Preferred Format"
+            name="fileFormat"
+            data={validModelFormats}
+            defaultValue={user.preferredModelFormat ?? ModelFileFormat.SafeTensor}
+            onChange={(value: ModelFileFormat) =>
+              mutate({ id: user.id, preferredModelFormat: value })
+            }
+            disabled={isLoading}
+          />
+          <Select
+            label="Preferred Size"
+            name="fileFormat"
+            data={['Full', 'Pruned']}
+            defaultValue={user.preferredPrunedModel ? 'Pruned' : 'Full'}
+            onChange={(value) => mutate({ id: user.id, preferredPrunedModel: value === 'Pruned' })}
+            disabled={isLoading}
+          />
+        </Group>
       </Stack>
     </Card>
   );

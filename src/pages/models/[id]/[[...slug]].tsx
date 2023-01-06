@@ -90,7 +90,7 @@ import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton
 import { ReportEntity } from '~/server/schema/report.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ModelFileType } from '~/server/common/constants';
-import { isPrimaryFile } from '~/server/utils/model-helpers';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
 
 //TODO - Break model query into multiple queries
 /*
@@ -277,12 +277,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model.modelVersions[0];
   const preferredFormat = currentUser?.preferredModelFormat ?? 'SafeTensor';
-  const preferredModelFile: ModelFileType = currentUser?.preferredPrunedModel
-    ? 'Pruned Model'
-    : 'Model';
-  const primaryFile = latestVersion?.files?.find((file) =>
-    isPrimaryFile({ file, preferredFormat, preferredModelFile })
-  );
+  const preferredType: ModelFileType = currentUser?.preferredPrunedModel ? 'Pruned Model' : 'Model';
+  const primaryFile = getPrimaryFile(latestVersion?.files, { preferredFormat, preferredType });
   const secondaryFiles = latestVersion?.files?.filter((file) => file.id !== primaryFile?.id) ?? [];
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;

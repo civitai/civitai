@@ -7,7 +7,7 @@ import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { isPrimaryFile } from '~/server/utils/model-helpers';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -26,7 +26,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
         tags: tagsOnModels.map(({ tag }) => tag.name),
         modelVersions: modelVersions
           .map(({ images, files, ...version }) => {
-            const primaryFile = files.find((file) => isPrimaryFile({ file }));
+            const primaryFile = getPrimaryFile(files);
             if (!primaryFile) return null;
 
             return {
