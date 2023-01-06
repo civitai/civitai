@@ -378,7 +378,7 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
         },
         _count: { select: { models: true } },
       },
-      // TODO leaderRank: change orderBy to be leaderRank when available
+      // TODO Justin: change orderBy to be leaderRank when available
       // make sure to add it in `model.selector.ts#L:119`
       // and `user.service.ts#L:40`
       orderBy: { rank: { ratingMonthRank: 'asc' } },
