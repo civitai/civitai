@@ -91,12 +91,12 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
           <InputText name="username" label="Username" withAsterisk />
           <InputSwitch
             name="showNsfw"
-            label="Show me NSFW content"
-            description="If you are not of legal age to view NSFW content, please do not enable this option"
+            label="Show me adult content"
+            description="If you are not of legal age to view adult content, please do not enable this option"
           />
           <InputSwitch
             name="blurNsfw"
-            label="Blur NSFW content"
+            label="Blur adult content"
             visible={({ showNsfw }) => !!showNsfw}
           />
 

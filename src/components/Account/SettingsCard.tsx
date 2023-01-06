@@ -29,8 +29,8 @@ export function SettingsCard() {
         <Title order={2}>Browsing Settings</Title>
         <Switch
           name="showNsfw"
-          label="Show me NSFW content"
-          description="If you are not of legal age to view NSFW content, please do not enable this option"
+          label="Show me adult content"
+          description="If you are not of legal age to view adult content, please do not enable this option"
           defaultChecked={user.showNsfw}
           disabled={isLoading}
           onChange={(e) => mutate({ id: user.id, showNsfw: e.target.checked })}
@@ -38,7 +38,7 @@ export function SettingsCard() {
         {user.showNsfw && (
           <Switch
             name="blurNsfw"
-            label="Blur NSFW content"
+            label="Blur adult content"
             defaultChecked={user.blurNsfw}
             disabled={isLoading}
             onChange={(e) => mutate({ id: user.id, blurNsfw: e.target.checked })}

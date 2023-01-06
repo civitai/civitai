@@ -159,7 +159,7 @@ export function InfiniteModelsFilter() {
               <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} />
               <SegmentedControl
                 my={5}
-                value={!hideNSFW ? 'horny' : 'boring'}
+                value={!hideNSFW ? 'nsfw' : 'sfw'}
                 size="xs"
                 color="blue"
                 styles={(theme) => ({
@@ -171,11 +171,11 @@ export function InfiniteModelsFilter() {
                   },
                 })}
                 data={[
-                  { label: 'Boring', value: 'boring' },
-                  { label: 'Horny', value: 'horny' },
+                  { label: 'Safe', value: 'sfw' },
+                  { label: 'Adult', value: 'nsfw' },
                 ]}
                 onChange={(value) => {
-                  setHideNSFW(value === 'boring');
+                  setHideNSFW(value === 'sfw');
                 }}
               />
             </>
