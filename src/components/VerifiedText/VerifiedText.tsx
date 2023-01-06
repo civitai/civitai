@@ -58,16 +58,13 @@ export function VerifiedText({ file, iconOnly }: Props) {
   const scannedDate = !scannedAt ? null : dayjs(scannedAt);
 
   return (
-    <Group spacing={4}>
+    <Group spacing={4} noWrap>
       <ThemeIcon color={color} size="xs">
         {icon}
       </ThemeIcon>
       {!iconOnly ? (
         <Text color="dimmed" size="xs">
-          <Text component="span">
-            <span className={classes.hideSm}>File </span>
-            {verified ? 'Verified' : 'Unverified'}:{' '}
-          </Text>
+          <Text component="span">{verified ? 'Verified' : 'Unverified'}: </Text>
           <Popover withArrow width={350} position="bottom" withinPortal>
             <Popover.Target>
               <Text component="a" sx={{ cursor: 'pointer' }}>

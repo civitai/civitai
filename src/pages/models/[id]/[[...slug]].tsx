@@ -281,7 +281,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     format: currentUser?.preferredModelFormat,
     type: currentUser?.preferredPrunedModel ? 'Pruned Model' : undefined,
   });
-  const secondaryFiles = latestVersion?.files?.filter((file) => file.id !== primaryFile?.id) ?? [];
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
 
@@ -585,7 +584,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       })}
                       leftIcon={<IconDownload size={16} />}
                       disabled={!primaryFile}
-                      menuItems={secondaryFiles.map((file, index) => (
+                      menuItems={latestVersion?.files.map((file, index) => (
                         <Menu.Item
                           key={index}
                           component="a"
@@ -611,9 +610,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       </Text>
                     </MultiActionButton>
                     {primaryFile && (
-                      <Group position="apart">
+                      <Group position="apart" noWrap spacing={0}>
                         <VerifiedText file={primaryFile} />
                         <Text size="xs" color="dimmed">
+                          {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
                           {primaryFile.format}
                         </Text>
                       </Group>

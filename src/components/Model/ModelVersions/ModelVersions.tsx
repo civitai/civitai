@@ -35,6 +35,7 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { ModelFileType } from '~/server/common/constants';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const VERSION_IMAGES_LIMIT = 8;
 
@@ -79,6 +80,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
   const router = useRouter();
   const modelId = Number(router.query.id);
   const mobile = useIsMobile();
+  const currentUser = useCurrentUser();
   const { openContext } = useRoutedContext();
   const hashes = getPrimaryFile(version.files)?.hashes;
 
@@ -132,8 +134,10 @@ function TabContent({ version, nsfw }: TabContentProps) {
 
   const versionImages = version.images.map((x) => x.image);
   const imagesLimit = mobile ? VERSION_IMAGES_LIMIT / 2 : VERSION_IMAGES_LIMIT;
-  const primaryFile = getPrimaryFile(version.files);
-  const secondaryFiles = version.files.filter((file) => file != primaryFile);
+  const primaryFile = getPrimaryFile(version.files, {
+    format: currentUser?.preferredModelFormat,
+    type: currentUser?.preferredPrunedModel ? 'Pruned Model' : undefined,
+  });
 
   return (
     <Grid gutter="xl">
@@ -146,7 +150,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 component="a"
                 href={createModelFileDownloadUrl({ versionId: version.id, primary: true })}
                 disabled={!primaryFile}
-                menuItems={secondaryFiles.map((file, index) => (
+                menuItems={version.files.map((file, index) => (
                   <Menu.Item
                     key={index}
                     component="a"
@@ -169,9 +173,10 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
               </MultiActionButton>
               {primaryFile && (
-                <Group position="apart">
+                <Group position="apart" noWrap spacing={0}>
                   <VerifiedText file={primaryFile} />
                   <Text size="xs" color="dimmed">
+                    {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
                     {primaryFile.format}
                   </Text>
                 </Group>
