@@ -91,95 +91,97 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
   },
 });
 
-export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
-  id: true,
-  name: true,
-  description: true,
-  poi: true,
-  nsfw: true,
-  type: true,
-  updatedAt: true,
-  status: true,
-  allowNoCredit: true,
-  allowCommercialUse: true,
-  allowDerivatives: true,
-  allowDifferentLicense: true,
-  reportStats: {
-    select: {
-      ownershipProcessing: true,
+export const modelWithDetailsSelect = (includeNSFW = true, prioritizeSafeImages = false) =>
+  Prisma.validator<Prisma.ModelSelect>()({
+    id: true,
+    name: true,
+    description: true,
+    poi: true,
+    nsfw: true,
+    type: true,
+    updatedAt: true,
+    status: true,
+    allowNoCredit: true,
+    allowCommercialUse: true,
+    allowDerivatives: true,
+    allowDifferentLicense: true,
+    reportStats: {
+      select: {
+        ownershipProcessing: true,
+      },
     },
-  },
-  user: {
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      image: true,
-      username: true,
+    user: {
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+        username: true,
+      },
     },
-  },
-  modelVersions: {
-    orderBy: { index: 'asc' },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      steps: true,
-      epochs: true,
-      createdAt: true,
-      updatedAt: true,
-      trainedWords: true,
-      inaccurate: true,
-      baseModel: true,
-      images: {
-        orderBy: {
-          index: 'asc',
+    modelVersions: {
+      orderBy: { index: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        steps: true,
+        epochs: true,
+        createdAt: true,
+        updatedAt: true,
+        trainedWords: true,
+        inaccurate: true,
+        baseModel: true,
+        images: {
+          orderBy: prioritizeSafeImages
+            ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
+            : [{ index: 'asc' }],
+          select: {
+            index: true,
+            image: {
+              select: imageSelect,
+            },
+          },
+          where: includeNSFW ? undefined : { image: { nsfw: false } },
         },
-        select: {
-          index: true,
-          image: {
-            select: imageSelect,
+        rank: {
+          select: {
+            downloadCountAllTime: true,
+            ratingCountAllTime: true,
+            ratingAllTime: true,
           },
         },
-      },
-      rank: {
-        select: {
-          downloadCountAllTime: true,
-          ratingCountAllTime: true,
-          ratingAllTime: true,
-        },
-      },
-      files: {
-        select: {
-          id: true,
-          url: true,
-          sizeKB: true,
-          name: true,
-          type: true,
-          format: true,
-          pickleScanResult: true,
-          pickleScanMessage: true,
-          virusScanResult: true,
-          virusScanMessage: true,
-          scannedAt: true,
-          rawScanResult: true,
-          hashes: {
-            select: {
-              type: true,
-              hash: true,
+        files: {
+          select: {
+            id: true,
+            url: true,
+            sizeKB: true,
+            name: true,
+            type: true,
+            format: true,
+            pickleScanResult: true,
+            pickleScanMessage: true,
+            virusScanResult: true,
+            virusScanMessage: true,
+            scannedAt: true,
+            rawScanResult: true,
+            hashes: {
+              select: {
+                type: true,
+                hash: true,
+              },
             },
           },
         },
       },
     },
-  },
-  rank: {
-    select: {
-      downloadCountAllTime: true,
-      ratingCountAllTime: true,
-      ratingAllTime: true,
-      favoriteCountAllTime: true,
+    rank: {
+      select: {
+        downloadCountAllTime: true,
+        ratingCountAllTime: true,
+        ratingAllTime: true,
+        favoriteCountAllTime: true,
+      },
     },
-  },
-  tagsOnModels: { select: { tag: true } },
-});
+    tagsOnModels: { select: { tag: true } },
+  });

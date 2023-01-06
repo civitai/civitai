@@ -20,6 +20,7 @@ import {
   getReviewById,
 } from '~/server/services/review.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { env } from '~/env/server.mjs';
 
 export const getReviewsInfiniteHandler = async ({
   input,
@@ -30,11 +31,13 @@ export const getReviewsInfiniteHandler = async ({
 }) => {
   input.limit = input.limit ?? 20;
   const limit = input.limit + 1;
+  const canViewNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+  const prioritizeSafeImages = !ctx.user;
 
   const reviews = await getReviews({
     input: { ...input, limit },
     user: ctx.user,
-    select: getAllReviewsSelect,
+    select: getAllReviewsSelect(canViewNsfw, prioritizeSafeImages),
   });
 
   let nextCursor: number | undefined;
@@ -169,11 +172,19 @@ export const toggleExcludeHandler = async ({
 };
 
 export type ReviewDetails = AsyncReturnType<typeof getReviewDetailsHandler>;
-export const getReviewDetailsHandler = async ({ input: { id } }: { input: GetByIdInput }) => {
+export const getReviewDetailsHandler = async ({
+  input: { id },
+  ctx: { user },
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
+    const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+    const prioritizeSafeImages = !user;
     const result = await getReviewById({
       id,
-      select: reviewDetailSelect,
+      select: reviewDetailSelect(canViewNsfw, prioritizeSafeImages),
     });
 
     if (!result) throw throwNotFoundError(`No review with id ${id}`);
