@@ -29,8 +29,14 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
+  const showNsfw = ctx.user?.showNsfw ?? true;
+  const prioritizeSafeImages = !ctx.user;
   try {
-    const model = await getModel({ input, user: ctx.user, select: modelWithDetailsSelect });
+    const model = await getModel({
+      input,
+      user: ctx.user,
+      select: modelWithDetailsSelect(showNsfw, prioritizeSafeImages),
+    });
     if (!model) {
       throw throwNotFoundError(`No model with id ${input.id}`);
     }
@@ -56,6 +62,7 @@ export const getModelsInfiniteHandler = async ({
   input: GetAllModelsOutput;
   ctx: Context;
 }) => {
+  const prioritizeSafeImages = input.hideNSFW || (ctx.user?.showNsfw ?? false) === false;
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
   const { items } = await getModels({
@@ -74,10 +81,9 @@ export const getModelsInfiniteHandler = async ({
         take: 1,
         select: {
           images: {
-            // TODO: orderby: [{...nsfw},{index: 'asc'}]
-            orderBy: {
-              index: 'asc',
-            },
+            orderBy: prioritizeSafeImages
+              ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
+              : [{ index: 'asc' }],
             take: 1,
             select: {
               image: {
