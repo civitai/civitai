@@ -256,7 +256,6 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
 
   const updateUserMetrics = async () => {
     await prisma.$executeRawUnsafe(`
-      -- Get all user engagements that have happened since then that affect metrics
       WITH recent_engagements AS
       (
         SELECT
@@ -270,6 +269,21 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           a."targetUserId" AS user_id
         FROM "UserEngagement" a
         WHERE (a."createdAt" > '${lastUpdate}')
+
+        UNION
+
+        SELECT
+          "userId"
+        FROM "ModelVersion" mv
+        JOIN "Model" m ON mv."modelId" = m.id
+        WHERE (mv."createdAt" > '${lastUpdate}' OR m."publishedAt" > '${lastUpdate}')
+
+        UNION
+
+        SELECT
+          "userId"
+        FROM "Review" r
+        WHERE (r."createdAt" > '${lastUpdate}')
       ),
       -- Get all affected users
       affected_users AS
@@ -282,7 +296,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
 
       -- upsert metrics for all affected users
       -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "UserMetric" ("userId", timeframe, "followingCount", "followerCount", "hiddenCount")
+      INSERT INTO "UserMetric" ("userId", timeframe, "followingCount", "followerCount", "hiddenCount", "uploadCount", "reviewCount")
       SELECT
         m.user_id,
         tf.timeframe,
@@ -306,11 +320,25 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           WHEN tf.timeframe = 'Month' THEN month_hidden_count
           WHEN tf.timeframe = 'Week' THEN week_hidden_count
           WHEN tf.timeframe = 'Day' THEN day_hidden_count
-        END AS hidden_count
+        END AS hidden_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN upload_count
+          WHEN tf.timeframe = 'Year' THEN year_upload_count
+          WHEN tf.timeframe = 'Month' THEN month_upload_count
+          WHEN tf.timeframe = 'Week' THEN week_upload_count
+          WHEN tf.timeframe = 'Day' THEN day_upload_count
+        END AS upload_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN review_count
+          WHEN tf.timeframe = 'Year' THEN year_review_count
+          WHEN tf.timeframe = 'Month' THEN month_review_count
+          WHEN tf.timeframe = 'Week' THEN week_review_count
+          WHEN tf.timeframe = 'Day' THEN day_review_count
+        END AS review_count
       FROM
       (
         SELECT
-          m.user_id,
+          a.user_id,
           COALESCE(fs.following_count, 0) AS following_count,
           COALESCE(fs.year_following_count, 0) AS year_following_count,
           COALESCE(fs.month_following_count, 0) AS month_following_count,
@@ -325,8 +353,18 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           COALESCE(ft.year_hidden_count, 0) AS year_hidden_count,
           COALESCE(ft.month_hidden_count, 0) AS month_hidden_count,
           COALESCE(ft.week_hidden_count, 0) AS week_hidden_count,
-          COALESCE(ft.day_hidden_count, 0) AS day_hidden_count
-        FROM affected_users m
+          COALESCE(ft.day_hidden_count, 0) AS day_hidden_count,
+          COALESCE(u.upload_count, 0) AS upload_count,
+          COALESCE(u.year_upload_count, 0) AS year_upload_count,
+          COALESCE(u.month_upload_count, 0) AS month_upload_count,
+          COALESCE(u.week_upload_count, 0) AS week_upload_count,
+          COALESCE(u.day_upload_count, 0) AS day_upload_count,
+          COALESCE(r.review_count, 0) AS review_count,
+          COALESCE(r.year_review_count, 0) AS year_review_count,
+          COALESCE(r.month_review_count, 0) AS month_review_count,
+          COALESCE(r.week_review_count, 0) AS week_review_count,
+          COALESCE(r.day_review_count, 0) AS day_review_count
+        FROM affected_users a
         LEFT JOIN (
           SELECT
             ue."userId" AS user_id,
@@ -337,29 +375,53 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
             SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_following_count
           FROM "UserEngagement" ue
           GROUP BY ue."userId"
-        ) fs ON m.user_id = fs.user_id
+        ) fs ON a.user_id = fs.user_id
         LEFT JOIN (
           SELECT
-            ue."targetUserId" AS user_id,
-            SUM(IIF(ue.type = 'Follow', 1, 0)) AS follower_count,
+            m2."userId" user_id,
+            COUNT(*) upload_count,
+            SUM(IIF(mv."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_upload_count,
+            SUM(IIF(mv."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_upload_count,
+            SUM(IIF(mv."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_upload_count,
+            SUM(IIF(mv."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_upload_count
+          FROM "ModelVersion" mv
+          JOIN "Model" m2 ON mv."modelId" = m2.id
+          WHERE m2.status = 'Published'
+          GROUP BY m2."userId"
+        ) u ON u.user_id = a.user_id
+        LEFT JOIN (
+          SELECT
+            "userId" user_id,
+            COUNT(*) review_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_review_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_review_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_review_count,
+            SUM(IIF("createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_review_count
+          FROM "Review"
+          GROUP BY "userId"
+        ) r ON r.user_id = a.user_id
+        LEFT JOIN (
+          SELECT
+            ue."targetUserId"                                                                      AS user_id,
+            SUM(IIF(ue.type = 'Follow', 1, 0))                                                     AS follower_count,
             SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_follower_count,
-            SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_follower_count,
-            SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_follower_count,
-            SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_follower_count,
-            SUM(IIF(ue.type = 'Hide', 1, 0)) AS hidden_count,
-            SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_hidden_count,
-            SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_hidden_count,
-            SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_hidden_count,
-            SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_hidden_count
+            SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '30 days'), 1, 0))  AS month_follower_count,
+            SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '7 days'), 1, 0))   AS week_follower_count,
+            SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '1 days'), 1, 0))   AS day_follower_count,
+            SUM(IIF(ue.type = 'Hide', 1, 0))                                                       AS hidden_count,
+            SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '365 days'), 1, 0))   AS year_hidden_count,
+            SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '30 days'), 1, 0))    AS month_hidden_count,
+            SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '7 days'), 1, 0))     AS week_hidden_count,
+            SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '1 days'), 1, 0))     AS day_hidden_count
           FROM "UserEngagement" ue
           GROUP BY ue."targetUserId"
-        ) ft ON m.user_id = ft.user_id
+        ) ft ON a.user_id = ft.user_id
       ) m
       CROSS JOIN (
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       ON CONFLICT ("userId", timeframe) DO UPDATE
-        SET "followerCount" = EXCLUDED."followerCount", "followingCount" = EXCLUDED."followingCount", "hiddenCount" = EXCLUDED."hiddenCount";
+        SET "followerCount" = EXCLUDED."followerCount", "followingCount" = EXCLUDED."followingCount", "hiddenCount" = EXCLUDED."hiddenCount", "uploadCount" = EXCLUDED."uploadCount", "reviewCount" = EXCLUDED."reviewCount";
     `);
   };
 
