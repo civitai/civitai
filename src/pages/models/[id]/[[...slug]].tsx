@@ -277,21 +277,25 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model.modelVersions[0];
-  const preferredFormat = currentUser?.preferredModelFormat ?? 'SafeTensor';
-  const preferredType: ModelFileType = currentUser?.preferredPrunedModel ? 'Pruned Model' : 'Model';
-  const primaryFile = getPrimaryFile(latestVersion?.files, { preferredFormat, preferredType });
+  const primaryFile = getPrimaryFile(latestVersion?.files, {
+    format: currentUser?.preferredModelFormat,
+    type: currentUser?.preferredPrunedModel ? 'Pruned Model' : undefined,
+  });
   const secondaryFiles = latestVersion?.files?.filter((file) => file.id !== primaryFile?.id) ?? [];
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
-  const hasNegativeEmbed =
-    model.type === ModelType.TextualInversion &&
-    latestVersion &&
-    latestVersion.files.some((x) => x.type === 'Negative');
 
-  const hasConfig =
-    model.type === ModelType.Checkpoint &&
-    latestVersion &&
-    latestVersion.files.some((x) => x.type === 'Config');
+  let hasNegativeEmbed = false;
+  let hasConfig = false;
+  let hasVAE = false;
+  if (latestVersion) {
+    for (const file of latestVersion.files) {
+      if (model.type === ModelType.TextualInversion && file.type === 'Negative')
+        hasNegativeEmbed = true;
+      else if (model.type === ModelType.Checkpoint && file.type === 'Config') hasConfig = true;
+      else if (model.type === ModelType.Checkpoint && file.type === 'VAE') hasVAE = true;
+    }
+  }
 
   const meta = (
     <Meta
@@ -669,7 +673,28 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       >
                         config file
                       </Anchor>
-                      , download and place along side the checkpoint.
+                      , download and place it along side the checkpoint.
+                    </Text>
+                  </Group>
+                </Alert>
+              )}
+              {hasVAE && (
+                <Alert radius="sm" pl={10}>
+                  <Group spacing="xs" noWrap>
+                    <ThemeIcon>
+                      <IconAlertCircle />
+                    </ThemeIcon>
+                    <Text size="xs" sx={{ lineHeight: 1.1 }}>
+                      This checkpoint includes a{' '}
+                      <Anchor
+                        href={createModelFileDownloadUrl({
+                          versionId: latestVersion.id,
+                          type: 'VAE',
+                        })}
+                      >
+                        VAE
+                      </Anchor>
+                      , download and place it along side the checkpoint.
                     </Text>
                   </Group>
                 </Alert>

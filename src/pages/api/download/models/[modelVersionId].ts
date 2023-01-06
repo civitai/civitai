@@ -9,6 +9,7 @@ import { filenamize } from '~/utils/string-helpers';
 import { getGetUrl } from '~/utils/s3-utils';
 import requestIp from 'request-ip';
 import { constants, ModelFileType } from '~/server/common/constants';
+import { defaultFilePreferences, getPrimaryFile } from '~/server/utils/model-helpers';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -24,13 +25,13 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
   ).split(',');
   if (ip && blacklist.includes(ip)) return res.status(403).json({ error: 'Forbidden' });
 
-  const results = schema.safeParse(req.query);
-  if (!results.success)
+  const queryResults = schema.safeParse(req.query);
+  if (!queryResults.success)
     return res
       .status(400)
-      .json({ error: `Invalid id: ${results.error.flatten().fieldErrors.modelVersionId}` });
+      .json({ error: `Invalid id: ${queryResults.error.flatten().fieldErrors.modelVersionId}` });
 
-  const { type, modelVersionId, format } = results.data;
+  const { type, modelVersionId, format } = queryResults.data;
   if (!modelVersionId) return res.status(400).json({ error: 'Missing modelVersionId' });
 
   const fileWhere: Prisma.ModelFileWhereInput = {};
@@ -44,13 +45,21 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
       model: { select: { id: true, name: true, type: true } },
       name: true,
       trainedWords: true,
-      files: { where: fileWhere, select: { url: true, name: true, type: true } },
+      files: { where: fileWhere, select: { url: true, name: true, type: true, format: true } },
     },
   });
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
-  if (!modelVersion.files.length) return res.status(404).json({ error: 'Model file not found' });
 
   const session = await getServerAuthSession({ req, res });
+  const file =
+    type != null || format != null
+      ? modelVersion.files[0]
+      : getPrimaryFile(modelVersion.files, {
+          type: session?.user?.preferredPrunedModel ? 'Pruned Model' : undefined,
+          format: session?.user?.preferredModelFormat,
+        });
+  if (!file) return res.status(404).json({ error: 'Model file not found' });
+
   const userId = session?.user?.id;
   if (!env.UNAUTHENTICATED_DOWNLOAD && !userId) {
     if (req.headers['content-type'] === 'application/json')
@@ -81,7 +90,6 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
     return res.status(500).json({ error: 'Invalid database operation', cause: error });
   }
 
-  const [file] = modelVersion.files;
   const fileName = getDownloadFilename({ model: modelVersion.model, modelVersion, file });
   const { url } = await getGetUrl(file.url, { fileName });
   res.redirect(url);

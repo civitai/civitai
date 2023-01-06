@@ -41,9 +41,7 @@ export const userRouter = router({
   getNotificationSettings: protectedProcedure.query(getNotificationSettingsHandler),
   getLists: publicProcedure.input(getByUsernameSchema).query(getUserListsHandler),
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
-  update: protectedProcedure
-    .input(userUpsertSchema.partial().extend({ id: z.number() }))
-    .mutation(updateUserHandler),
+  update: protectedProcedure.input(userUpsertSchema.partial()).mutation(updateUserHandler),
   delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),
   toggleFavorite: protectedProcedure
     .input(toggleFavoriteModelInput)
