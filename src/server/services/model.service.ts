@@ -46,6 +46,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     period = MetricTimeframe.AllTime,
     rating,
     favorites,
+    hideNSFW,
   },
   select,
   user: sessionUser,
@@ -68,7 +69,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
         {
           modelVersions: {
             some: {
-              baseModel: baseModels?.length ? { in: baseModels } : undefined,
               files: query
                 ? {
                     some: {
@@ -90,7 +90,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
         : undefined,
     user: username ?? user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
-    nsfw: !canViewNsfw ? { equals: false } : undefined,
+    nsfw: !canViewNsfw || hideNSFW ? { equals: false } : undefined,
     rank: rating
       ? {
           AND: [{ ratingAllTime: { gte: rating } }, { ratingAllTime: { lt: rating + 1 } }],
@@ -98,6 +98,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       : undefined,
     favoriteModels: favorites ? { some: { userId: sessionUser?.id } } : undefined,
     AND: AND.length ? AND : undefined,
+    modelVersions: baseModels?.length ? { some: { baseModel: { in: baseModels } } } : undefined,
   };
 
   const items = await prisma.model.findMany({
@@ -251,7 +252,7 @@ export const updateModel = async ({
       },
       trainedWords: true,
       files: {
-        select: { id: true, type: true, url: true, name: true, sizeKB: true, primary: true },
+        select: { id: true, type: true, url: true, name: true, sizeKB: true },
       },
     },
   });

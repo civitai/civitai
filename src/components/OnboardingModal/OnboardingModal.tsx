@@ -74,25 +74,32 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
 
   return (
     <Stack>
-      {alerts.length > 0 ? <Alert variant="light">{`Please ${toStringList(alerts)}`}</Alert> : null}
+      {alerts.length > 0 ? (
+        <Alert variant="light">{`Please take a moment to review your user settings below and ${toStringList(
+          alerts
+        )}`}</Alert>
+      ) : null}
+      <Text mt={-12} mb={-10} size="xs" color="dimmed">
+        You can change these at any time from your Account Settings
+      </Text>
 
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
           {!session?.user?.email && (
             <InputText name="email" label="Email" type="email" withAsterisk />
           )}
-          {/* TODO - only accept [a-z][0-9] */}
           <InputText name="username" label="Username" withAsterisk />
           <InputSwitch
             name="showNsfw"
-            label="Show me NSFW content"
-            description="If you are not of legal age to view NSFW content, please do not enable this option"
+            label="Show me adult content"
+            description="If you are not of legal age to view adult content, please do not enable this option"
           />
           <InputSwitch
             name="blurNsfw"
-            label="Blur NSFW content"
+            label="Blur adult content"
             visible={({ showNsfw }) => !!showNsfw}
           />
+
           {!session.user.tos && (
             <InputCheckbox
               name="tos"

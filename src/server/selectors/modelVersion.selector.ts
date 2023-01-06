@@ -31,7 +31,6 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
       pickleScanMessage: true,
       virusScanResult: true,
       scannedAt: true,
-      primary: true,
       hashes: {
         select: {
           type: true,
@@ -39,6 +38,5 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
         },
       },
     },
-    orderBy: { primary: 'desc' },
   },
 });

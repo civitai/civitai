@@ -1,3 +1,4 @@
+import { ModelFileFormat } from '@prisma/client';
 import { z } from 'zod';
 
 export const getUserByUsernameSchema = z.object({
@@ -12,12 +13,14 @@ export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
 
 export const userUpsertSchema = z.object({
   id: z.number(),
-  username: z.string().optional(),
-  showNsfw: z.boolean().optional(),
-  blurNsfw: z.boolean().optional(),
-  tos: z.boolean().optional(),
-  image: z.string().nullable().optional(),
-  email: z.string().email().optional(),
+  username: z.string(),
+  showNsfw: z.boolean(),
+  blurNsfw: z.boolean(),
+  tos: z.boolean(),
+  image: z.string().nullable(),
+  email: z.string().email(),
+  preferredModelFormat: z.nativeEnum(ModelFileFormat),
+  preferredPrunedModel: z.boolean(),
 });
 export type UserUpsertInput = z.input<typeof userUpsertSchema>;
 
@@ -27,9 +30,7 @@ export type ToggleFavoriteModelInput = z.infer<typeof toggleFavoriteModelInput>;
 export const toggleFollowUserSchema = z.object({ targetUserId: z.number() });
 export type ToggleFollowUserSchema = z.infer<typeof toggleFollowUserSchema>;
 
-export const getByUsernameSchema = z.object({
-  username: z.string(),
-});
+export const getByUsernameSchema = z.object({ username: z.string() });
 export type GetByUsernameSchema = z.infer<typeof getByUsernameSchema>;
 
 export type DeleteUserInput = z.infer<typeof deleteUserSchema>;

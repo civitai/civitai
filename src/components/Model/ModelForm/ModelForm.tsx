@@ -103,7 +103,6 @@ export function ModelForm({ model }: Props) {
     url: '',
     sizeKB: 0,
     type: constants.modelFileTypes[0] as ModelFileType,
-    primary: true,
   };
 
   const defaultModelVersion: FormSchema['modelVersions'][number] = {

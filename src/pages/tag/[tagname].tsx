@@ -1,5 +1,4 @@
 import { Container, Stack, Group, createStyles, Box, Center, Title, Text } from '@mantine/core';
-import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { GetServerSideProps } from 'next/types';
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
@@ -8,6 +7,7 @@ import {
   InfiniteModelsPeriod,
   InfiniteModelsFilter,
 } from '~/components/InfiniteModels/InfiniteModelsFilters';
+import { Meta } from '~/components/Meta/Meta';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { trpc } from '~/utils/trpc';
 
@@ -33,9 +33,10 @@ export default function TagPage() {
 
   return (
     <>
-      <Head>
-        <meta name="description" content="Community driven AI model sharing tool" />
-      </Head>
+      <Meta
+        title={`${tag?.name} Stable Diffusion AI Models | Civitai`}
+        description={`Browse ${tag?.name} Stable Diffusion models, checkpoints, hypernetworks, textual inversions, embeddings, Aesthetic Gradients, and LORAs`}
+      />
       {tag && (
         <Box className={classes.banner} mb="md">
           <Center>

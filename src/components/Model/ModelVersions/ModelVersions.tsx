@@ -34,6 +34,8 @@ import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { ModelFileType } from '~/server/common/constants';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const VERSION_IMAGES_LIMIT = 8;
 
@@ -78,8 +80,9 @@ function TabContent({ version, nsfw }: TabContentProps) {
   const router = useRouter();
   const modelId = Number(router.query.id);
   const mobile = useIsMobile();
+  const currentUser = useCurrentUser();
   const { openContext } = useRoutedContext();
-  const hashes = version.files.find((file) => file.primary === true)?.hashes;
+  const hashes = getPrimaryFile(version.files)?.hashes;
 
   const versionDetails: DescriptionTableProps['items'] = [
     {
@@ -94,11 +97,6 @@ function TabContent({ version, nsfw }: TabContentProps) {
     { label: 'Downloads', value: (version.rank?.downloadCountAllTime ?? 0).toLocaleString() },
     { label: 'Uploaded', value: formatDate(version.createdAt) },
     { label: 'Base Model', value: version.baseModel },
-    {
-      label: 'Hash',
-      value: !!hashes?.length && <ModelHash hashes={hashes} />,
-      visible: !!hashes?.length,
-    },
     { label: 'Steps', value: version.steps?.toLocaleString() ?? 0, visible: !!version.steps },
     { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0, visible: !!version.epochs },
     {
@@ -127,12 +125,19 @@ function TabContent({ version, nsfw }: TabContentProps) {
       ),
       visible: !!version.files?.find((file) => (file.type as ModelFileType) === 'Training Data'),
     },
+    {
+      label: 'Hash',
+      value: !!hashes?.length && <ModelHash hashes={hashes} />,
+      visible: !!hashes?.length,
+    },
   ];
 
   const versionImages = version.images;
   const imagesLimit = mobile ? VERSION_IMAGES_LIMIT / 2 : VERSION_IMAGES_LIMIT;
-  const primaryFile = version.files.find((file) => file.primary === true);
-  const secondaryFiles = version.files.filter((file) => !file.primary);
+  const primaryFile = getPrimaryFile(version.files, {
+    format: currentUser?.preferredModelFormat,
+    type: currentUser?.preferredPrunedModel ? 'Pruned Model' : undefined,
+  });
 
   return (
     <Grid gutter="xl">
@@ -145,7 +150,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 component="a"
                 href={createModelFileDownloadUrl({ versionId: version.id, primary: true })}
                 disabled={!primaryFile}
-                menuItems={secondaryFiles.map((file, index) => (
+                menuItems={version.files.map((file, index) => (
                   <Menu.Item
                     key={index}
                     component="a"
@@ -168,9 +173,10 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
               </MultiActionButton>
               {primaryFile && (
-                <Group position="apart">
+                <Group position="apart" noWrap spacing={0}>
                   <VerifiedText file={primaryFile} />
                   <Text size="xs" color="dimmed">
+                    {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
                     {primaryFile.format}
                   </Text>
                 </Group>

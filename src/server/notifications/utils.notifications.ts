@@ -4,6 +4,7 @@ import { modelNotifications } from '~/server/notifications/model.notifications';
 import { reactionNotifications } from '~/server/notifications/reaction.notifications';
 import { reviewNotifications } from '~/server/notifications/review.notifications';
 import { systemNotifications } from '~/server/notifications/system.notifications';
+import { userJourneyNotifications } from '~/server/notifications/user-journey.notifications';
 
 export const notificationProcessors = {
   ...modelNotifications,
@@ -11,6 +12,7 @@ export const notificationProcessors = {
   ...commentNotifications,
   ...reactionNotifications,
   ...systemNotifications,
+  ...userJourneyNotifications,
 };
 
 export function getNotificationMessage(notification: BareNotification) {
@@ -21,8 +23,8 @@ export function getNotificationMessage(notification: BareNotification) {
 
 export function getNotificationTypes() {
   const notificationTypes: Record<string, string> = {};
-  for (const [type, { displayName }] of Object.entries(notificationProcessors)) {
-    notificationTypes[type] = displayName;
+  for (const [type, { displayName, toggleable }] of Object.entries(notificationProcessors)) {
+    if (toggleable !== false) notificationTypes[type] = displayName;
   }
   return notificationTypes;
 }

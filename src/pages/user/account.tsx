@@ -3,19 +3,16 @@ import { GetServerSideProps } from 'next';
 import { getProviders } from 'next-auth/react';
 import React from 'react';
 
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-
-import { Meta } from '~/components/Meta/Meta';
-
-import { env } from '~/env/server.mjs';
-import { ProfileCard } from '~/components/Account/ProfileCard';
-import { SettingsCard } from '~/components/Account/SettingsCard';
-import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { AccountsCard } from '~/components/Account/AccountsCard';
 import { ApiKeysCard } from '~/components/Account/ApiKeysCard';
 import { CreatorCard } from '~/components/Account/CreatorCard';
+import { Meta } from '~/components/Meta/Meta';
 import { NotificationsCard } from '~/components/Account/NotificationsCard';
-import { RemoveAccountCard } from '~/components/Account/RemoveAccountCard';
+import { ProfileCard } from '~/components/Account/ProfileCard';
+import { SettingsCard } from '~/components/Account/SettingsCard';
+import { env } from '~/env/server.mjs';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 
 export default function Account({ providers, isDev = false }: Props) {
   return (
@@ -37,7 +34,6 @@ export default function Account({ providers, isDev = false }: Props) {
           <NotificationsCard />
           <AccountsCard providers={providers} />
           {isDev && <ApiKeysCard />}
-          {/* <RemoveAccountCard /> */}
         </Stack>
       </Container>
     </>

@@ -6,11 +6,21 @@ import { splitUppercase } from '~/utils/string-helpers';
 import { deleteCookie, setCookie as sc } from 'cookies-next';
 import { immer } from 'zustand/middleware/immer';
 import { modelFilterSchema, useCookies } from '~/providers/CookiesProvider';
-import { Popover, ActionIcon, Stack, Checkbox, Indicator, Divider } from '@mantine/core';
-import { IconFilter } from '@tabler/icons';
+import {
+  Popover,
+  ActionIcon,
+  Stack,
+  Checkbox,
+  Indicator,
+  Divider,
+  Switch,
+  SegmentedControl,
+} from '@mantine/core';
+import { IconChevronDown, IconFilter } from '@tabler/icons';
 import { z } from 'zod';
 import { BaseModel, constants } from '~/server/common/constants';
 import dayjs from 'dayjs';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const setCookie = (key: string, data: any) => // eslint-disable-line
   sc(key, data, {
@@ -25,6 +35,7 @@ export const useFilters = create<{
   setPeriod: (period?: MetricTimeframe) => void;
   setTypes: (types?: ModelType[]) => void;
   setBaseModels: (baseModels?: BaseModel[]) => void;
+  setHideNSFW: (includeNSFW?: boolean) => void;
 }>()(
   immer((set, get) => ({//eslint-disable-line
     filters: {},
@@ -52,6 +63,12 @@ export const useFilters = create<{
         !!baseModels?.length ? setCookie('f_baseModels', baseModels) : deleteCookie('f_baseModels');
       });
     },
+    setHideNSFW: (hideNSFW) => {
+      set((state) => {
+        state.filters.hideNSFW = hideNSFW;
+        hideNSFW ? setCookie('f_hideNSFW', hideNSFW) : deleteCookie('f_hideNSFW');
+      });
+    },
   }))
 );
 
@@ -61,10 +78,11 @@ export const useInfiniteModelsFilters = () => {
     period = constants.modelFilterDefaults.period,
     baseModels,
     types,
+    hideNSFW,
   } = useCookies().models;
 
   const filters = useFilters((state) => state.filters);
-  return { limit: 100, sort, period, types, baseModels, ...filters };
+  return { limit: 100, sort, period, types, baseModels, hideNSFW, ...filters };
 };
 
 const sortOptions = Object.values(ModelSort);
@@ -105,12 +123,16 @@ export function InfiniteModelsPeriod() {
 
 export function InfiniteModelsFilter() {
   const cookies = useCookies().models;
+  const user = useCurrentUser();
   const setTypes = useFilters((state) => state.setTypes);
   const types = useFilters((state) => state.filters.types ?? cookies.types ?? []);
   const setBaseModels = useFilters((state) => state.setBaseModels);
   const baseModels = useFilters((state) => state.filters.baseModels ?? cookies.baseModels ?? []);
+  const hideNSFW = useFilters((state) => state.filters.hideNSFW ?? cookies.hideNSFW ?? false);
+  const setHideNSFW = useFilters((state) => state.setHideNSFW);
+  const showNSFWToggle = !user || user.showNsfw;
 
-  const filterLength = types.length + baseModels.length;
+  const filterLength = types.length + baseModels.length + (showNSFWToggle && hideNSFW ? 1 : 0);
 
   return (
     <Popover withArrow>
@@ -124,16 +146,43 @@ export function InfiniteModelsFilter() {
           inline
           zIndex={10}
         >
-          <ActionIcon color="dark" variant="transparent">
-            <IconFilter size={24} />
+          <ActionIcon color="dark" variant="transparent" sx={{ width: 40 }}>
+            <IconFilter size={20} stroke={2.5} />
+            <IconChevronDown size={16} stroke={3} />
           </ActionIcon>
         </Indicator>
       </Popover.Target>
       <Popover.Dropdown>
-        <Stack>
+        <Stack spacing={0}>
+          {showNSFWToggle && (
+            <>
+              <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} />
+              <SegmentedControl
+                my={5}
+                value={!hideNSFW ? 'nsfw' : 'sfw'}
+                size="xs"
+                color="blue"
+                styles={(theme) => ({
+                  root: {
+                    border: `1px solid ${
+                      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+                    }`,
+                    background: 'none',
+                  },
+                })}
+                data={[
+                  { label: 'Safe', value: 'sfw' },
+                  { label: 'Adult', value: 'nsfw' },
+                ]}
+                onChange={(value) => {
+                  setHideNSFW(value === 'sfw');
+                }}
+              />
+            </>
+          )}
+          <Divider label="Model types" labelProps={{ weight: 'bold' }} />
           <Checkbox.Group
             value={types}
-            label="Model types"
             orientation="vertical"
             spacing="xs"
             size="md"
@@ -143,10 +192,9 @@ export function InfiniteModelsFilter() {
               <Checkbox key={index} value={type} label={splitUppercase(type)} />
             ))}
           </Checkbox.Group>
-          <Divider />
+          <Divider label="Base model" labelProps={{ weight: 'bold' }} />
           <Checkbox.Group
             value={baseModels}
-            label="Base model"
             orientation="vertical"
             spacing="xs"
             size="md"

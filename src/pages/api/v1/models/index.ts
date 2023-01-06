@@ -8,6 +8,7 @@ import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
@@ -29,21 +30,20 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
         tags: tagsOnModels.map(({ tag }) => tag.name),
         modelVersions: modelVersions
           .map(({ images, files, ...version }) => {
-            const hasPrimary = files.findIndex((file) => file.primary) > -1;
-            if (!hasPrimary) return null;
+            const primaryFile = getPrimaryFile(files);
+            if (!primaryFile) return null;
 
             return {
               ...version,
-              files: files.map(({ primary, hashes, ...file }) => ({
+              files: files.map(({ hashes, ...file }) => ({
                 ...file,
                 name: getDownloadFilename({ model, modelVersion: version, file }),
-                primary: primary === true ? primary : undefined,
                 hashes: hashesAsObject(hashes),
                 downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,
                   format: file.format,
-                  primary,
+                  primary: primaryFile.id === file.id,
                 })}`,
               })),
               images: images.map(({ image: { url, ...image } }) => ({

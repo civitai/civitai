@@ -43,8 +43,10 @@ function Home() {
   return (
     <>
       <Meta
-        title={`Civitai ${!session ? `| Every model in one place` : ''}`}
-        description={`Civitai is a platform for Stable Diffusion AI Art models. We have a collection of over 1000 models from over 50 creators. We also have a collection of over 145 reviews from the community along with 100+ images with prompts to get you started.`}
+        title={`Civitai ${
+          !session ? `| Stable Diffusion models, embeddings, hypernetworks and more` : ''
+        }`}
+        description={`Civitai is a platform for Stable Diffusion AI Art models. We have a collection of over 1,700 models from 250+ creators. We also have a collection of 1200 reviews from the community along with 12,000+ images with prompts to get you started.`}
       />
       <Container size="xl">
         {router.query.username && typeof router.query.username === 'string' && (
@@ -73,15 +75,18 @@ function Home() {
                     Welcome to Civitai!
                   </Text>
                   <Text size="sm" className={classes.welcomeText}>
-                    Browse, share, and review custom Stable Diffusion AI art models.
+                    Browse, share, and review custom AI art models,{' '}
+                    <Text component="a" variant="link" href="/content/guides/what-is-civitai">
+                      learn more...
+                    </Text>
                   </Text>
                 </Stack>
               </Group>
             </Alert>
           )}
-          <Group position="apart">
+          <Group position="apart" spacing={0}>
             <InfiniteModelsSort />
-            <Group spacing="xs">
+            <Group spacing={4}>
               <InfiniteModelsPeriod />
               <InfiniteModelsFilter />
             </Group>

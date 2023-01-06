@@ -8,6 +8,7 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { prisma } from '~/server/db/client';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
 
 const schema = z.object({ id: z.preprocess((val) => Number(val), z.number()) });
 
@@ -38,21 +39,20 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   );
 
   const { images, files, model, ...version } = modelVersion;
-  const hasPrimary = files.findIndex((file) => file.primary) > -1;
-  if (!hasPrimary) return res.status(404).json({ error: 'Missing model file' });
+  const primaryFile = getPrimaryFile(files);
+  if (!primaryFile) return res.status(404).json({ error: 'Missing model file' });
 
   res.status(200).json({
     ...version,
     model,
-    files: files.map(({ primary, ...file }) => ({
+    files: files.map((file) => ({
       ...file,
       name: getDownloadFilename({ model, modelVersion: version, file }),
-      primary: primary === true ? primary : undefined,
       downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
         versionId: version.id,
         type: file.type,
         format: file.format,
-        primary,
+        primary: primaryFile.id === file.id,
       })}`,
     })),
     images: images.map(({ image: { url, ...image } }) => ({
