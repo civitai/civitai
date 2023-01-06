@@ -34,7 +34,7 @@ export function PopConfirm({
         <Stack>
           {message}
           <Group position="right">
-            <Button compact onClick={handleCancel}>
+            <Button variant="outline" compact onClick={handleCancel}>
               No
             </Button>
             <Button compact onClick={handleConfirm}>
