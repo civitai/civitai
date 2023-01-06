@@ -46,6 +46,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     period = MetricTimeframe.AllTime,
     rating,
     favorites,
+    hideNSFW,
   },
   select,
   user: sessionUser,
@@ -57,29 +58,47 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   count?: boolean;
 }) => {
   const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+  const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
+  if (!sessionUser?.isModerator) {
+    AND.push({ OR: [{ status: ModelStatus.Published }, { user: { id: sessionUser?.id } }] });
+  }
+  if (query) {
+    AND.push({
+      OR: [
+        { name: { contains: query, mode: 'insensitive' } },
+        {
+          modelVersions: {
+            some: {
+              files: query
+                ? {
+                    some: {
+                      hashes: { some: { hash: { equals: query, mode: 'insensitive' } } },
+                    },
+                  }
+                : undefined,
+            },
+          },
+        },
+      ],
+    });
+  }
+
   const where: Prisma.ModelWhereInput = {
-    name: query ? { contains: query, mode: 'insensitive' } : undefined,
     tagsOnModels:
       tagname ?? tag
         ? { some: { tag: { name: { equals: tagname ?? tag, mode: 'insensitive' } } } }
         : undefined,
     user: username ?? user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
-    nsfw: !canViewNsfw ? { equals: false } : undefined,
+    nsfw: !canViewNsfw || hideNSFW ? { equals: false } : undefined,
     rank: rating
       ? {
           AND: [{ ratingAllTime: { gte: rating } }, { ratingAllTime: { lt: rating + 1 } }],
         }
       : undefined,
-    OR: !sessionUser?.isModerator
-      ? [{ status: ModelStatus.Published }, { user: { id: sessionUser?.id } }]
-      : undefined,
     favoriteModels: favorites ? { some: { userId: sessionUser?.id } } : undefined,
-    modelVersions: {
-      some: {
-        baseModel: baseModels?.length ? { in: baseModels } : undefined,
-      },
-    },
+    AND: AND.length ? AND : undefined,
+    modelVersions: baseModels?.length ? { some: { baseModel: { in: baseModels } } } : undefined,
   };
 
   const items = await prisma.model.findMany({

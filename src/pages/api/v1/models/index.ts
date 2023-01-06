@@ -1,3 +1,4 @@
+import { ModelHashType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
@@ -9,6 +10,9 @@ import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
+
+const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
+  hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const apiCaller = appRouter.createCaller({ user: undefined });
@@ -31,9 +35,10 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
             return {
               ...version,
-              files: files.map((file) => ({
+              files: files.map(({ hashes, ...file }) => ({
                 ...file,
                 name: getDownloadFilename({ model, modelVersion: version, file }),
+                hashes: hashesAsObject(hashes),
                 downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,

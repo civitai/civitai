@@ -1,5 +1,6 @@
 type NotificationProcessor = {
   displayName: string;
+  toggleable?: boolean;
   prepareQuery?: (input: NotificationProcessorRunInput) => string;
   prepareMessage: (notification: BareNotification) => NotificationMessage;
 };
@@ -11,6 +12,7 @@ export type BareNotification = {
 type NotificationMessage = {
   message: string;
   url?: string;
+  target?: '_blank' | '_self';
 };
 export type NotificationProcessorRunInput = {
   lastSent: string;

@@ -25,13 +25,11 @@ export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => 
       skip,
       query,
       target: entityType,
-      select: withModels
-        ? {
-            id: true,
-            name: true,
-            tagsOnModels: { select: { modelId: true } },
-          }
-        : { id: true, name: true },
+      select: {
+        id: true,
+        name: true,
+        tagsOnModels: withModels ? { select: { modelId: true } } : undefined,
+      },
     });
 
     return getPagingData(results, take, page);

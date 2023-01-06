@@ -9,6 +9,7 @@ export const modelFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).optional(),
   types: z.nativeEnum(ModelType).array().optional(),
   baseModels: z.enum(constants.baseModels).array().optional(),
+  hideNSFW: z.boolean().optional(),
 });
 
 export const questionsFilterSchema = z.object({
@@ -44,6 +45,7 @@ export function parseCookies(
       period: cookies?.['f_period'],
       types: cookies?.['f_types'],
       baseModels: cookies?.['f_baseModels'],
+      hideNSFW: cookies?.['f_hideNSFW'],
     },
     questions: {
       sort: cookies?.['q_sort'],
@@ -63,6 +65,7 @@ const zodParse = z
           period: z.string(),
           types: z.string(),
           baseModels: z.string(),
+          hideNSFW: z.string(),
         })
         .partial(),
       questions: z
@@ -81,6 +84,7 @@ const zodParse = z
           ...models,
           types: !!models.types ? JSON.parse(decodeURIComponent(models.types)) : [],
           baseModels: !!models.baseModels ? JSON.parse(decodeURIComponent(models.baseModels)) : [],
+          hideNSFW: models?.hideNSFW === 'true',
         },
         questions,
       } as CookiesContext)

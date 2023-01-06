@@ -75,7 +75,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { QS } from '~/utils/qs';
-import { splitUppercase, removeTags, slugit } from '~/utils/string-helpers';
+import { splitUppercase, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
@@ -91,6 +91,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ModelFileType } from '~/server/common/constants';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 
 //TODO - Break model query into multiple queries
 /*
@@ -422,7 +423,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       label: 'Uploaded By',
       value: model.user && (
         <Group align="center" position="apart" noWrap>
-          <Link href={`/user/${slugit(model.user.username ?? '')}`} passHref>
+          <Link href={`/user/${model.user.username}`} passHref>
             <Group spacing={4}>
               <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
               <Text size="sm" variant="link" component="a" style={{ cursor: 'pointer' }}>
@@ -689,6 +690,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       creativeml-openrail-m
                     </Text>
                   </Text>
+                  <PermissionIndicator permissions={model} />
                 </Group>
               )}
               {hasPendingClaimReport && (

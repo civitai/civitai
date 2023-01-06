@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { ModelHashType, Prisma } from '@prisma/client';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
 
@@ -68,6 +68,10 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
   type: true,
   poi: true,
   nsfw: true,
+  allowNoCredit: true,
+  allowCommercialUse: true,
+  allowDerivatives: true,
+  allowDifferentLicense: true,
   user: {
     select: {
       image: true,
@@ -96,6 +100,10 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   type: true,
   updatedAt: true,
   status: true,
+  allowNoCredit: true,
+  allowCommercialUse: true,
+  allowDerivatives: true,
+  allowDifferentLicense: true,
   reportStats: {
     select: {
       ownershipProcessing: true,
@@ -155,14 +163,15 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           virusScanMessage: true,
           scannedAt: true,
           rawScanResult: true,
+          primary: true,
+          hashes: {
+            select: {
+              type: true,
+              hash: true,
+            },
+          },
         },
       },
-      // runStrategies: {
-      //   select: {
-      //     id: true,
-      //     partnerId: true,
-      //   },
-      // },
     },
   },
   rank: {

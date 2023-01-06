@@ -4,7 +4,6 @@ export const simpleUserSelect = Prisma.validator<Prisma.UserSelect>()({
   id: true,
   username: true,
   deletedAt: true,
-  // name: true,
   image: true,
 });
 

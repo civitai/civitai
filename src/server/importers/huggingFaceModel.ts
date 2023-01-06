@@ -6,6 +6,7 @@ import { markdownToHtml } from '~/utils/markdown-helpers';
 import { bytesToKB } from '~/utils/number-helpers';
 import { imageToBlurhash } from '~/utils/image-utils';
 import { getModelFileFormat } from '~/utils/file-helpers';
+import { date } from 'zod';
 
 // Find match for URL like: https://huggingface.co/nitrosocke/Arcane-Diffusion
 const hfModelRegex = /^https:\/\/huggingface\.co\/([\w\-\.]+)\/([\w\-\.]+)/;
@@ -144,6 +145,7 @@ export async function importModelFromHuggingFace(
             fromImportId: importId,
             type,
             userId,
+            lastVersionAt: new Date(),
           },
           select: { id: true, modelVersions: { select: { files: true, images: true } } },
         });

@@ -27,6 +27,7 @@ export function NotificationList({
 
         const handleClick = () => {
           if (!details.url) return;
+          if (details.target === '_blank') return window.open(details.url, '_blank');
           const [pathname] = router.asPath.split('?');
           const [notificationPathname, query] = details.url.split('?');
           if (pathname !== notificationPathname) {
@@ -75,7 +76,7 @@ export function NotificationList({
               })}
             >
               <Stack spacing={0}>
-                <Text size={textSize} weight="bold" lineClamp={2}>
+                <Text size={textSize} weight="bold" lineClamp={3}>
                   {details.message}
                 </Text>
                 <Text size="xs" color="dimmed">

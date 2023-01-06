@@ -36,4 +36,13 @@ export const reviewNotifications = createNotificationProcessor({
       LEFT JOIN "UserNotificationSettings" no ON no."userId" = "ownerId"
       WHERE no."userId" IS NULL;`,
   },
+  'review-reminder': {
+    displayName: 'Review Reminders',
+    prepareMessage: ({ details }) => ({
+      message: `Don't forget to review ${details.modelName} ${details.modelVersionName}`,
+      url: `/models/${details.modelId}?modal=reviewEdit`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+    `,
+  },
 });

@@ -24,7 +24,7 @@ export function SelectMenu<T extends string | number>({
           <Text weight={700} transform="uppercase">
             {label}
           </Text>
-          <IconChevronDown />
+          <IconChevronDown size={16} stroke={3} />
         </Group>
       </Menu.Target>
       <Menu.Dropdown>

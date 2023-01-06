@@ -6,6 +6,7 @@ import { ModelSort } from '~/server/common/enums';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { postgresSlugify } from '~/utils/string-helpers';
 
 export const getAllModelsSchema = z.object({
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).optional(),
@@ -15,7 +16,10 @@ export const getAllModelsSchema = z.object({
   tag: z.string().optional(),
   tagname: z.string().optional(),
   user: z.string().optional(),
-  username: z.string().optional(),
+  username: z
+    .string()
+    .transform((data) => postgresSlugify(data))
+    .optional(),
   types: z
     .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
     .optional()
@@ -28,6 +32,7 @@ export const getAllModelsSchema = z.object({
       if (!rel) return undefined;
       return Array.isArray(rel) ? rel : [rel];
     }),
+  hideNSFW: z.boolean().optional().default(false),
   sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   rating: z
@@ -52,6 +57,10 @@ export const modelSchema = z.object({
   tagsOnModels: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   poi: z.boolean().optional(),
+  allowNoCredit: z.boolean().optional(),
+  allowCommercialUse: z.boolean().optional(),
+  allowDerivatives: z.boolean().optional(),
+  allowDifferentLicense: z.boolean().optional(),
   modelVersions: z
     .array(modelVersionUpsertSchema)
     .min(1, 'At least one model version is required.'),

@@ -14,7 +14,7 @@ const schema = z.object({
   username: z
     .string()
     .min(3)
-    .regex(/^[A-Za-z0-9]*$/, 'The "username" field can only contain letters and numbers.'),
+    .regex(/^[A-Za-z0-9_]*$/, 'The "username" field can only contain letters, numbers, and _.'),
   tos: z.preprocess(
     (val) => (val === false ? null : val),
     z.boolean({
@@ -74,14 +74,20 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
 
   return (
     <Stack>
-      {alerts.length > 0 ? <Alert variant="light">{`Please ${toStringList(alerts)}`}</Alert> : null}
+      {alerts.length > 0 ? (
+        <Alert variant="light">{`Please take a moment to review your user settings below and ${toStringList(
+          alerts
+        )}`}</Alert>
+      ) : null}
+      <Text mt={-12} mb={-10} size="xs" color="dimmed">
+        You can change these at any time from your Account Settings
+      </Text>
 
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
           {!session?.user?.email && (
             <InputText name="email" label="Email" type="email" withAsterisk />
           )}
-          {/* TODO - only accept [a-z][0-9] */}
           <InputText name="username" label="Username" withAsterisk />
           <InputSwitch
             name="showNsfw"
@@ -93,6 +99,7 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
             label="Blur NSFW content"
             visible={({ showNsfw }) => !!showNsfw}
           />
+
           {!session.user.tos && (
             <InputCheckbox
               name="tos"
