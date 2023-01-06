@@ -89,7 +89,6 @@ import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ModelFileType } from '~/server/common/constants';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 
@@ -298,7 +297,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   const meta = (
     <Meta
-      title={`${model.name} | Civitai`}
+      title={`${model.name} | Stable Diffusion ${model.type} | Civitai`}
       description={removeTags(model.description ?? '')}
       image={
         nsfw || latestVersion?.images[0]?.image.url == null
