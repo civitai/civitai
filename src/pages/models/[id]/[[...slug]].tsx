@@ -30,6 +30,7 @@ import {
   IconAlertCircle,
   IconArrowsSort,
   IconBan,
+  IconCrown,
   IconDotsVertical,
   IconDownload,
   IconEdit,
@@ -433,7 +434,20 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Text>
             </Group>
           </Link>
-          <FollowUserButton userId={model.user.id} size="xs" compact />
+          <Group spacing="xs">
+            {model.user.rank?.ratingMonthRank && model.user.rank.ratingMonthRank <= 100 && (
+              <IconBadge
+                tooltip="User Rank"
+                size="sm"
+                color="yellow"
+                href={`/leaderboard?position=${model.user.rank.ratingMonthRank}`}
+                icon={<IconCrown size={14} />}
+              >
+                <Text size="xs">{model.user.rank?.ratingMonthRank}</Text>
+              </IconBadge>
+            )}
+            <FollowUserButton userId={model.user.id} size="xs" compact />
+          </Group>
         </Group>
       ),
     },

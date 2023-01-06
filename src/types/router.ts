@@ -27,3 +27,6 @@ export type NotificationGetAllItem = NotificationGetAll['items'][number];
 type DownloadRouter = RouterOutput['download'];
 export type DownloadGetAll = DownloadRouter['getAllByUser'];
 export type DownloadGetAllItem = DownloadGetAll['items'][number];
+
+type UserRouter = RouterOutput['user'];
+export type LeaderboardGetAll = UserRouter['getLeaderboard'];

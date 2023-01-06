@@ -14,6 +14,7 @@ import { NextLink } from '@mantine/next';
 import { IconListCheck, IconSettings } from '@tabler/icons';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
+import { Meta } from '~/components/Meta/Meta';
 
 import { NotificationList } from '~/components/Notifications/NotificationList';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -54,55 +55,58 @@ export default function Notifications() {
   }, [fetchNextPage, inView]);
 
   return (
-    <Container size="sm">
-      <Grid gutter="xl" align="center">
-        <Grid.Col span={12}>
-          <Group position="apart">
-            <Title order={1}>Notifications</Title>
-            <Group spacing={8}>
-              <Tooltip label="Mark all as read" position="bottom">
-                <ActionIcon size="lg" onClick={() => handleMarkAsRead({ all: true })}>
-                  <IconListCheck />
-                </ActionIcon>
-              </Tooltip>
-              <Tooltip label="Notification settings" position="bottom">
-                <ActionIcon
-                  component={NextLink}
-                  size="lg"
-                  href="/user/account#notification-settings"
-                >
-                  <IconSettings />
-                </ActionIcon>
-              </Tooltip>
+    <>
+      <Meta title="Notifications | Civitai" />
+      <Container size="sm">
+        <Grid gutter="xl" align="center">
+          <Grid.Col span={12}>
+            <Group position="apart">
+              <Title order={1}>Notifications</Title>
+              <Group spacing={8}>
+                <Tooltip label="Mark all as read" position="bottom">
+                  <ActionIcon size="lg" onClick={() => handleMarkAsRead({ all: true })}>
+                    <IconListCheck />
+                  </ActionIcon>
+                </Tooltip>
+                <Tooltip label="Notification settings" position="bottom">
+                  <ActionIcon
+                    component={NextLink}
+                    size="lg"
+                    href="/user/account#notification-settings"
+                  >
+                    <IconSettings />
+                  </ActionIcon>
+                </Tooltip>
+              </Group>
             </Group>
-          </Group>
-        </Grid.Col>
-        <Grid.Col span={12} px={0}>
-          {isLoading ? (
-            <Center>
-              <Loader />
-            </Center>
-          ) : notifications.length > 0 ? (
-            <Stack>
-              <NotificationList
-                items={notifications}
-                onItemClick={(notification) => handleMarkAsRead(notification)}
-                textSize="md"
-                withDivider
-              />
-              {!isLoading && hasNextPage && (
-                <Group position="center" ref={ref}>
-                  <Loader />
-                </Group>
-              )}
-            </Stack>
-          ) : (
-            <Center>
-              <Text>All caught up! Nothing to see here</Text>
-            </Center>
-          )}
-        </Grid.Col>
-      </Grid>
-    </Container>
+          </Grid.Col>
+          <Grid.Col span={12} px={0}>
+            {isLoading ? (
+              <Center>
+                <Loader />
+              </Center>
+            ) : notifications.length > 0 ? (
+              <Stack>
+                <NotificationList
+                  items={notifications}
+                  onItemClick={(notification) => handleMarkAsRead(notification)}
+                  textSize="md"
+                  withDivider
+                />
+                {!isLoading && hasNextPage && (
+                  <Group position="center" ref={ref}>
+                    <Loader />
+                  </Group>
+                )}
+              </Stack>
+            ) : (
+              <Center>
+                <Text>All caught up! Nothing to see here</Text>
+              </Center>
+            )}
+          </Grid.Col>
+        </Grid>
+      </Container>
+    </>
   );
 }

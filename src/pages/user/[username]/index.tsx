@@ -12,7 +12,7 @@ import {
   useMantineTheme,
   Card,
 } from '@mantine/core';
-import { IconDownload, IconHeart, IconStar, IconUpload, IconUsers } from '@tabler/icons';
+import { IconCrown, IconDownload, IconHeart, IconStar, IconUpload, IconUsers } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import { GetServerSideProps } from 'next/types';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
@@ -98,7 +98,20 @@ export default function UserPage() {
                   <Stack spacing="xs">
                     <Group position="apart">
                       <Title order={2}>{user.username}</Title>
-                      <FollowUserButton userId={user.id} size="md" compact />
+                      <Group spacing="xs">
+                        {user.rank?.ratingMonthRank && user.rank.ratingMonthRank <= 100 && (
+                          <IconBadge
+                            size="lg"
+                            tooltip="User Rank"
+                            color="yellow"
+                            href={`/leaderboard?position=${user.rank.ratingMonthRank}`}
+                            icon={<IconCrown size={18} />}
+                          >
+                            <Text size="sm">{user.rank.ratingMonthRank}</Text>
+                          </IconBadge>
+                        )}
+                        <FollowUserButton userId={user.id} size="md" compact />
+                      </Group>
                     </Group>
                     {stats && (
                       <Group spacing="xs">

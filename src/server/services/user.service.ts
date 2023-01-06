@@ -37,6 +37,7 @@ export const getUserCreator = async ({ username }: { username: string }) => {
           followerCountAllTime: true,
         },
       },
+      rank: { select: { ratingMonthRank: true } },
       _count: {
         select: {
           models: true,
@@ -113,6 +114,8 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
   take,
   skip,
   select,
+  orderBy,
+  excludeIds = [],
   count = false,
 }: {
   select: TSelect;
@@ -120,6 +123,8 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
   take?: number;
   skip?: number;
   count?: boolean;
+  orderBy?: Prisma.UserFindManyArgs['orderBy'];
+  excludeIds?: number[];
 }) => {
   const where: Prisma.UserWhereInput = {
     username: query
@@ -129,12 +134,14 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
         }
       : undefined,
     models: { some: {} },
+    id: excludeIds.length ? { notIn: excludeIds } : undefined,
   };
   const items = await prisma.user.findMany({
     take,
     skip,
     select,
     where,
+    orderBy,
   });
 
   if (count) {
