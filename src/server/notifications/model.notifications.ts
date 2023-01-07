@@ -164,7 +164,7 @@ export const modelNotifications = createNotificationProcessor({
           ) "details"
         FROM "Model" m
         JOIN "User" u ON u.id = m."userId"
-        JOIN "UserEngagement" ue ON ue."targetUserId" = m."userId" AND m."publishedAt" >= ue."createdAt"
+        JOIN "UserEngagement" ue ON ue."targetUserId" = m."userId" AND m."publishedAt" >= ue."createdAt" AND ue.type = 'Follow'
         WHERE m."publishedAt" > '${lastSent}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")
