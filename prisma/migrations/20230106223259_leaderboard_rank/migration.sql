@@ -117,11 +117,10 @@ SELECT
   ROW_NUMBER() OVER (ORDER BY
     IIF ("userId" = -1, -100::double precision,
 	    (
-	      ("downloadCountMonth" * 0.5) +
-		    ("ratingCountMonth" * 0.3) +
-		    ("ratingMonth" * 0.5) +
-		    ("favoriteCountMonth" * 0.5)
-	    ) / (0.5 + 0.3 + 0.5 + 0.5)
+	      ("downloadCountMonth" / 100 * 1) +
+		    ("ratingMonth" * "ratingCountMonth" * 10) +
+		    ("favoriteCountMonth" * 5)
+	    ) / (1 + 10 + 5)
 	  )
   DESC, "userId") AS "leaderboardRank",
   ROW_NUMBER() OVER (ORDER BY "downloadCountDay" DESC, "ratingDay" DESC, "ratingCountDay" DESC, "favoriteCountDay" DESC, "userId") AS "downloadCountDayRank",

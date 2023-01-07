@@ -12,8 +12,8 @@ import { LeaderboardGetAll } from '~/types/router';
 const useStyles = createStyles((theme) => ({
   creatorCard: {
     '&.active': {
-      // TODO Justin: change this to set shadow color instead
       borderColor: theme.colors.blue[8],
+      boxShadow: `0 0 10px ${theme.colors.blue[8]}`,
     },
     '&:hover': {
       backgroundColor:
@@ -42,7 +42,6 @@ export function CreatorList({ items }: Props) {
     <Stack>
       {items.map((creator, index) => {
         const { stats } = creator;
-        const { models: uploads } = creator?._count ?? { models: 0 };
 
         const rankPosition = index + 1;
         const isTop3 = rankPosition <= 3;
@@ -103,7 +102,6 @@ export function CreatorList({ items }: Props) {
                           }}
                           favorite={stats.favoriteCountMonth}
                           downloads={stats.downloadCountMonth}
-                          uploads={uploads}
                           size={mobile ? 'sm' : 'lg'}
                         />
                       )}

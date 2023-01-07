@@ -25,6 +25,7 @@ import {
   InfiniteModelsPeriod,
   InfiniteModelsFilter,
 } from '~/components/InfiniteModels/InfiniteModelsFilters';
+import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { Meta } from '~/components/Meta/Meta';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { sortDomainLinks } from '~/utils/domain-link';
@@ -101,17 +102,7 @@ export default function UserPage() {
                       <FollowUserButton userId={user.id} size="md" compact />
                     </Group>
                     <Group spacing="xs">
-                      {user.rank?.ratingMonthRank && user.rank.ratingMonthRank <= 100 && (
-                        <IconBadge
-                          size="lg"
-                          tooltip="User Rank"
-                          color="yellow"
-                          href={`/leaderboard?position=${user.rank.ratingMonthRank}`}
-                          icon={<IconCrown size={18} />}
-                        >
-                          <Text size="sm">{user.rank.ratingMonthRank}</Text>
-                        </IconBadge>
-                      )}
+                      <RankBadge rank={user.rank?.leaderboardRank} size="lg" />
                       {stats && (
                         <>
                           <IconBadge

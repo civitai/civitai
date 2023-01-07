@@ -37,7 +37,7 @@ export const getUserCreator = async ({ username }: { username: string }) => {
           followerCountAllTime: true,
         },
       },
-      rank: { select: { ratingMonthRank: true } },
+      rank: { select: { leaderboardRank: true } },
       _count: {
         select: {
           models: true,

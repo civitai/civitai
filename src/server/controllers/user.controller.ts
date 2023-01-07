@@ -374,14 +374,11 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
             ratingCountMonth: true,
             downloadCountMonth: true,
             favoriteCountMonth: true,
+            uploadCountMonth: true,
           },
         },
-        _count: { select: { models: true } },
       },
-      // TODO Justin: change orderBy to be leaderRank when available
-      // make sure to add it in `model.selector.ts#L:119`
-      // and `user.service.ts#L:40`
-      orderBy: { rank: { ratingMonthRank: 'asc' } },
+      orderBy: { rank: { leaderboardRank: 'asc' } },
     });
 
     return items;

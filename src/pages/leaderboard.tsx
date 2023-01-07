@@ -1,4 +1,15 @@
-import { Container, Grid, Stack, Text, Title } from '@mantine/core';
+import {
+  ActionIcon,
+  Code,
+  Container,
+  Grid,
+  Group,
+  Popover,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
+import { IconInfoCircle } from '@tabler/icons';
 import { GetServerSideProps } from 'next';
 
 import { CreatorList } from '~/components/Leaderboard/CreatorList';
@@ -28,9 +39,29 @@ export default function Leaderboard() {
           <Grid.Col span={12}>
             <Stack spacing={0}>
               <Title order={1}>Creators Leaderboard</Title>
-              <Text color="dimmed" size="lg">
-                Climp up to the top by engaging with the community
-              </Text>
+              <Group spacing={5}>
+                <Text color="dimmed" size="lg">
+                  Climb to the top by engaging the community
+                </Text>
+                <Popover withArrow>
+                  <Popover.Target>
+                    <ActionIcon variant="transparent" size="sm">
+                      <IconInfoCircle />
+                    </ActionIcon>
+                  </Popover.Target>
+                  <Popover.Dropdown>
+                    <Stack spacing={4}>
+                      <Text weight={500}>Rank is calculated based on:</Text>
+                      <Code block color="blue">
+                        {`(downloads / 100) +\n(averageRating * ratingCount * 10) +\n(favorites * 5)`}
+                      </Code>
+                      <Text color="dimmed" size="xs">
+                        Only the last 30 days are considered
+                      </Text>
+                    </Stack>
+                  </Popover.Dropdown>
+                </Popover>
+              </Group>
             </Stack>
           </Grid.Col>
           <Grid.Col span={12}>{data.length > 0 ? <CreatorList items={data} /> : null}</Grid.Col>

@@ -116,7 +116,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       email: true,
       image: true,
       username: true,
-      rank: { select: { ratingMonthRank: true } },
+      rank: { select: { leaderboardRank: true } },
     },
   },
   modelVersions: {

@@ -1043,6 +1043,16 @@ model ModelVersionRank {
 model UserStat {
   user                  User  @relation(fields: [userId], references: [id], onDelete: NoAction)
   userId                Int   @id
+  uploadCountDay        Int
+  uploadCountWeek       Int
+  uploadCountMonth      Int
+  uploadCountYear       Int
+  uploadCountAllTime    Int
+  reviewCountDay        Int
+  reviewCountWeek       Int
+  reviewCountMonth      Int
+  reviewCountYear       Int
+  reviewCountAllTime    Int
   downloadCountDay      Int
   downloadCountWeek     Int
   downloadCountMonth    Int
@@ -1109,6 +1119,7 @@ model UserRank {
   favoriteCountMonthRank   Int
   favoriteCountYearRank    Int
   favoriteCountAllTimeRank Int
+  leaderboardRank          Int
 }
 
 /// @view

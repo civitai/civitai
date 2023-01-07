@@ -92,6 +92,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
+import { RankBadge } from '~/components/Leaderboard/RankBadge';
 
 //TODO - Break model query into multiple queries
 /*
@@ -435,17 +436,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             </Group>
           </Link>
           <Group spacing={4} noWrap>
-            {model.user.rank?.ratingMonthRank && model.user.rank.ratingMonthRank <= 100 && (
-              <IconBadge
-                tooltip="User Rank"
-                size="sm"
-                color="yellow"
-                href={`/leaderboard?position=${model.user.rank.ratingMonthRank}`}
-                icon={<IconCrown size={14} />}
-              >
-                <Text size="xs">{model.user.rank?.ratingMonthRank}</Text>
-              </IconBadge>
-            )}
+            <RankBadge size="md" textSize="xs" rank={model.user.rank?.leaderboardRank} />
             <FollowUserButton userId={model.user.id} size="xs" compact />
           </Group>
         </Group>
