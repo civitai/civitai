@@ -13,10 +13,10 @@ import {
   Checkbox,
   Indicator,
   Divider,
-  Switch,
   SegmentedControl,
+  Button,
 } from '@mantine/core';
-import { IconChevronDown, IconFilter } from '@tabler/icons';
+import { IconChevronDown, IconFilter, IconFilterOff, IconX } from '@tabler/icons';
 import { z } from 'zod';
 import { BaseModel, constants } from '~/server/common/constants';
 import dayjs from 'dayjs';
@@ -133,6 +133,11 @@ export function InfiniteModelsFilter() {
   const showNSFWToggle = !user || user.showNsfw;
 
   const filterLength = types.length + baseModels.length + (showNSFWToggle && hideNSFW ? 1 : 0);
+  const handleClear = () => {
+    setTypes([]);
+    setBaseModels([]);
+    setHideNSFW(false);
+  };
 
   return (
     <Popover withArrow>
@@ -204,6 +209,11 @@ export function InfiniteModelsFilter() {
               <Checkbox key={index} value={baseModel} label={baseModel} />
             ))}
           </Checkbox.Group>
+          {filterLength > 0 && (
+            <Button mt="xs" compact onClick={handleClear} leftIcon={<IconFilterOff size={20} />}>
+              Clear Filters
+            </Button>
+          )}
         </Stack>
       </Popover.Dropdown>
     </Popover>
