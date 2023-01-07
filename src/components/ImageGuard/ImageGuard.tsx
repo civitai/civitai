@@ -67,7 +67,7 @@ const useImageGuardContext = () => {
 type ImageGuardProps = {
   images: ImageModel[];
   connect?: Connection;
-  render: (image: ImageModel, index?: number) => React.ReactNode;
+  render: (image: ImageModel, index: number) => React.ReactNode;
   /** Make all images nsfw by default */
   nsfw?: boolean;
 };

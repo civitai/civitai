@@ -210,54 +210,56 @@ function TabContent({ version, nsfw }: TabContentProps) {
           ]}
         >
           <ImageGuard
-            images={versionImages.slice(0, imagesLimit)}
+            images={versionImages}
             nsfw={nsfw}
             connect={{ entityId: modelId, entityType: 'model' }}
-            render={(image, index) => (
-              <ImageGuard.Content>
-                {({ status }) => (
-                  <Box
-                    style={{ position: 'relative' }}
-                    sx={{
-                      height: '100%',
-                      width: '100%',
-                      figure: { height: '100%', display: 'flex' },
-                      ...(index === 0 && !mobile
-                        ? {
-                            gridColumn: '1/3',
-                            gridRow: '1/3',
-                            figure: { height: '100%', display: 'flex' },
-                          }
-                        : {}),
-                    }}
-                  >
-                    {status === 'hide' && (
-                      <AbsoluteCenter zIndex={10}>
-                        <SensitiveContent />
-                        <ImageGuard.ShowAll>
-                          <Button>Click to view</Button>
-                        </ImageGuard.ShowAll>
-                      </AbsoluteCenter>
-                    )}
-                    <ImagePreview
-                      key={index}
-                      image={image}
-                      edgeImageProps={{ width: 400 }}
-                      nsfw={status === 'hide'}
-                      radius="md"
-                      aspectRatio={1}
-                      onClick={() =>
-                        openContext('modelVersionLightbox', {
-                          initialSlide: index,
-                          modelVersionId: version.id,
-                        })
-                      }
-                      withMeta
-                    />
-                  </Box>
-                )}
-              </ImageGuard.Content>
-            )}
+            render={(image, index) =>
+              index < imagesLimit ? (
+                <ImageGuard.Content>
+                  {({ status }) => (
+                    <Box
+                      style={{ position: 'relative' }}
+                      sx={{
+                        height: '100%',
+                        width: '100%',
+                        figure: { height: '100%', display: 'flex' },
+                        ...(index === 0 && !mobile
+                          ? {
+                              gridColumn: '1/3',
+                              gridRow: '1/3',
+                              figure: { height: '100%', display: 'flex' },
+                            }
+                          : {}),
+                      }}
+                    >
+                      {status === 'hide' && (
+                        <AbsoluteCenter zIndex={10}>
+                          <SensitiveContent />
+                          <ImageGuard.ShowAll>
+                            <Button>Click to view</Button>
+                          </ImageGuard.ShowAll>
+                        </AbsoluteCenter>
+                      )}
+                      <ImagePreview
+                        key={index}
+                        image={image}
+                        edgeImageProps={{ width: 400 }}
+                        nsfw={status === 'hide'}
+                        radius="md"
+                        aspectRatio={1}
+                        onClick={() =>
+                          openContext('modelVersionLightbox', {
+                            initialSlide: index,
+                            modelVersionId: version.id,
+                          })
+                        }
+                        withMeta
+                      />
+                    </Box>
+                  )}
+                </ImageGuard.Content>
+              ) : null
+            }
           />
           {versionImages.length > imagesLimit ? (
             <Button
