@@ -691,21 +691,23 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               )}
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
-                <Group position="right" spacing="xs">
-                  <IconLicense size={16} />
-                  <Text size="xs" color="dimmed">
-                    License:{' '}
-                    <Text
-                      component="a"
-                      href="https://huggingface.co/spaces/CompVis/stable-diffusion-license"
-                      rel="nofollow"
-                      td="underline"
-                      target="_blank"
-                    >
-                      creativeml-openrail-m
+                <Group position="apart" align="flex-start">
+                  <Group spacing="xs">
+                    <IconLicense size={16} />
+                    <Text size="xs" color="dimmed">
+                      License:{' '}
+                      <Text
+                        component="a"
+                        href="https://huggingface.co/spaces/CompVis/stable-diffusion-license"
+                        rel="nofollow"
+                        td="underline"
+                        target="_blank"
+                      >
+                        creativeml-openrail-m
+                      </Text>
                     </Text>
-                  </Text>
-                  <PermissionIndicator permissions={model} />
+                  </Group>
+                  <PermissionIndicator spacing={5} size={28} permissions={model} />
                 </Group>
               )}
               {hasPendingClaimReport && (

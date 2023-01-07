@@ -1,4 +1,4 @@
-import { Group, List, Popover, Text } from '@mantine/core';
+import { Group, GroupProps, List, Popover, Text } from '@mantine/core';
 import { CommercialUse } from '@prisma/client';
 import {
   IconBrushOff,
@@ -11,7 +11,7 @@ import {
   IconX,
 } from '@tabler/icons';
 
-export const PermissionIndicator = ({ permissions, size = 20 }: Props) => {
+export const PermissionIndicator = ({ permissions, size = 20, spacing = 2 }: Props) => {
   const { allowNoCredit, allowCommercialUse, allowDerivatives, allowDifferentLicense } =
     permissions;
   const canSellImages =
@@ -41,7 +41,7 @@ export const PermissionIndicator = ({ permissions, size = 20 }: Props) => {
   return (
     <Popover withArrow>
       <Popover.Target>
-        <Group spacing={2} sx={{ cursor: 'pointer' }}>
+        <Group spacing={spacing} sx={{ cursor: 'pointer' }}>
           {icons}
         </Group>
       </Popover.Target>
@@ -79,6 +79,7 @@ export const PermissionIndicator = ({ permissions, size = 20 }: Props) => {
 type Props = {
   permissions: Permissions;
   size?: number;
+  spacing?: GroupProps['spacing'];
 };
 
 type Permissions = {
