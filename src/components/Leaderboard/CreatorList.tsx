@@ -6,7 +6,6 @@ import { useEffect } from 'react';
 
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { LeaderboardGetAll } from '~/types/router';
 
 const useStyles = createStyles((theme) => ({
@@ -17,9 +16,7 @@ const useStyles = createStyles((theme) => ({
     },
     '&:hover': {
       backgroundColor:
-        theme.colorScheme === 'dark'
-          ? theme.fn.lighten(theme.colors.dark[4], 0.05)
-          : theme.fn.darken(theme.colors.gray[0], 0.05),
+        theme.colorScheme === 'dark' ? 'rgba(255,255,255, 0.03)' : 'rgba(0,0,0, 0.01)',
     },
   },
 }));
@@ -27,7 +24,6 @@ const useStyles = createStyles((theme) => ({
 export function CreatorList({ items }: Props) {
   const { classes, theme, cx } = useStyles();
   const router = useRouter();
-  const mobile = useIsMobile();
 
   const { position } = router.query;
 
@@ -73,13 +69,13 @@ export function CreatorList({ items }: Props) {
                         />
                       ) : null}
                       <Text
-                        size={mobile ? 'sm' : 'lg'}
+                        size="lg"
                         weight="bold"
                         sx={
                           isTop3
                             ? {
                                 position: 'absolute',
-                                top: mobile ? '55%' : '60%', // Slight vertical offset to center in icon
+                                top: '55%', // Slight vertical offset to center in icon
                                 left: '50%',
                                 transform: 'translate(-50%, -50%)',
                                 lineHeight: 1,
@@ -93,7 +89,7 @@ export function CreatorList({ items }: Props) {
                   </Grid.Col>
                   <Grid.Col span={10}>
                     <Stack spacing={8}>
-                      <UserAvatar user={creator} size="md" withUsername />
+                      <UserAvatar user={creator} textSize="lg" size="md" withUsername />
                       {stats && (
                         <UserStatBadges
                           rating={{
@@ -102,7 +98,7 @@ export function CreatorList({ items }: Props) {
                           }}
                           favorite={stats.favoriteCountMonth}
                           downloads={stats.downloadCountMonth}
-                          size={mobile ? 'sm' : 'lg'}
+                          size="lg"
                         />
                       )}
                     </Stack>

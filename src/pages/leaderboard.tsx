@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Code,
   Container,
+  createStyles,
   Grid,
   Group,
   Popover,
@@ -30,17 +31,26 @@ export const getServerSideProps: GetServerSideProps = async (ctx) => {
 
 export default function Leaderboard() {
   const { data = [] } = trpc.user.getLeaderboard.useQuery({ limit: 100 });
+  const { classes } = useStyles();
 
   return (
     <>
-      <Meta title="Creators Leaderboard | Civitai" />
+      <Meta
+        title="Creators Leaderboard | Civitai"
+        description={`The top creators of Stable Diffusion models this month are ${data
+          .slice(0, 10)
+          .map((x, i) => `${i + 1}. ${x.username}`)
+          .join(', ')}... Check out the full leaderboard.`}
+      />
       <Container size="xs">
         <Grid gutter="xl">
           <Grid.Col span={12}>
             <Stack spacing={0}>
-              <Title order={1}>Creators Leaderboard</Title>
+              <Title className={classes.title} order={1}>
+                Creators Leaderboard
+              </Title>
               <Group spacing={5}>
-                <Text color="dimmed" size="lg">
+                <Text className={classes.slogan} color="dimmed" size="lg">
                   Climb to the top by engaging the community
                 </Text>
                 <Popover withArrow>
@@ -70,3 +80,16 @@ export default function Leaderboard() {
     </>
   );
 }
+
+const useStyles = createStyles((theme) => ({
+  title: {
+    [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
+      fontSize: 28,
+    },
+  },
+  slogan: {
+    [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
+      fontSize: theme.fontSizes.sm,
+    },
+  },
+}));

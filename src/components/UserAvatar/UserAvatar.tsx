@@ -34,8 +34,11 @@ export function UserAvatar({
   size = 'sm',
   spacing = 8,
   linkToProfile = false,
+  textSize,
+  subTextSize,
 }: Props) {
-  const { textSize, subTextSize } = mapAvatarTextSize[size];
+  textSize ??= mapAvatarTextSize[size].textSize;
+  subTextSize ??= mapAvatarTextSize[size].subTextSize;
   const avatar = (
     <Group align="center" spacing={spacing} noWrap>
       <Avatar
@@ -89,4 +92,6 @@ type Props = {
   spacing?: MantineNumberSize;
   badge?: React.ReactElement<BadgeProps> | null;
   linkToProfile?: boolean;
+  textSize?: MantineSize;
+  subTextSize?: MantineSize;
 };
