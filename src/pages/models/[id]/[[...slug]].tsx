@@ -30,6 +30,7 @@ import {
   IconAlertCircle,
   IconArrowsSort,
   IconBan,
+  IconCrown,
   IconDotsVertical,
   IconDownload,
   IconEdit,
@@ -91,6 +92,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
+import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 //TODO - Break model query into multiple queries
@@ -434,7 +436,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Text>
             </Group>
           </Link>
-          <FollowUserButton userId={model.user.id} size="xs" compact />
+          <Group spacing={4} noWrap>
+            <RankBadge size="md" textSize="xs" rank={model.user.rank?.leaderboardRank} />
+            <FollowUserButton userId={model.user.id} size="xs" compact />
+          </Group>
         </Group>
       ),
     },

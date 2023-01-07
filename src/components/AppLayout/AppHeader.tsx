@@ -17,6 +17,7 @@ import {
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import {
+  IconCrown,
   IconFile,
   IconHeart,
   IconHistory,
@@ -287,6 +288,21 @@ export function AppHeader({ links }: Props) {
           </Link>,
         ],
     ...menuItems,
+
+    <Link key="leaderboard-menu-item" href="/leaderboard" passHref>
+      <Anchor
+        className={cx(classes.link, {
+          [classes.linkActive]: router.asPath.includes('/leaderboard'),
+        })}
+        variant="text"
+        onClick={() => closeBurger()}
+      >
+        <Group align="center" spacing="xs">
+          <IconCrown stroke={1.5} />
+          Leaderboard
+        </Group>
+      </Anchor>
+    </Link>,
     <UnstyledButton
       key="theme-switcher"
       className={classes.link}
@@ -454,6 +470,13 @@ export function AppHeader({ links }: Props) {
                   </Menu.Item>
                 )}
 
+                <Menu.Item
+                  icon={<IconCrown size={14} stroke={1.5} />}
+                  component={NextLink}
+                  href="/leaderboard"
+                >
+                  Leaderboard
+                </Menu.Item>
                 <Menu.Item
                   closeMenuOnClick={false}
                   icon={<IconPalette size={14} stroke={1.5} />}

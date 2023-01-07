@@ -347,3 +347,42 @@ export const toggleHideUserHandler = async ({
     throw throwDbError(error);
   }
 };
+
+export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) => {
+  const { limit: take = DEFAULT_PAGE_SIZE, query, page } = input;
+  const skip = page ? (page - 1) * take : undefined;
+
+  try {
+    const { items } = await getCreators({
+      query,
+      take,
+      skip,
+      excludeIds: [-1], // Exclude civitai user
+      select: {
+        id: true,
+        image: true,
+        username: true,
+        links: {
+          select: {
+            url: true,
+            type: true,
+          },
+        },
+        stats: {
+          select: {
+            ratingMonth: true,
+            ratingCountMonth: true,
+            downloadCountMonth: true,
+            favoriteCountMonth: true,
+            uploadCountMonth: true,
+          },
+        },
+      },
+      orderBy: { rank: { leaderboardRank: 'asc' } },
+    });
+
+    return items;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
