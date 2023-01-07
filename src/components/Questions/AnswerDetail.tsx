@@ -50,6 +50,7 @@ export function AnswerDetail({
             subText={<DaysFromNow date={answer.createdAt} />}
             subTextForce
             withUsername
+            linkToProfile
           />
           {/* TODO - menu item for reporting */}
           {(isOwner || isModerator) && (

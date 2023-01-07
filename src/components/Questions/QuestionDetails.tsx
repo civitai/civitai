@@ -107,6 +107,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
           subText={<DaysFromNow date={question.createdAt} />}
           subTextForce
           withUsername
+          linkToProfile
         />
         <RenderHtml html={question.content} />
         <Group spacing="xs" position="apart">
