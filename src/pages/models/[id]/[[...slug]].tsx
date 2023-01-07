@@ -20,7 +20,6 @@ import {
   ThemeIcon,
   Tooltip,
   Rating,
-  Card,
   Anchor,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -82,7 +81,6 @@ import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { scrollToTop } from '~/utils/scroll-utils';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
-import { SFW } from '~/components/Media/SFW';
 import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -91,6 +89,9 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
+import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 
 //TODO - Break model query into multiple queries
 /*
@@ -744,84 +745,55 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             })}
           >
             <Stack>
-              <SFW type="model" id={model.id} nsfw={model.nsfw}>
-                {({ nsfw, showNsfw }) => (
-                  <>
-                    <SFW.Placeholder>
-                      <Card
-                        p="md"
-                        radius="sm"
-                        withBorder
-                        sx={{
-                          position: 'absolute',
-                          top: '50%',
-                          left: '50%',
-                          transform: 'translate(-50%,-50%)',
-                          zIndex: 10,
-                        }}
-                      >
-                        <Stack>
-                          <Text>This model has been marked NSFW</Text>
-                          <SFW.Toggle>
-                            <Button>Click to view</Button>
-                          </SFW.Toggle>
-                        </Stack>
-                      </Card>
-                    </SFW.Placeholder>
-                    <Carousel
-                      slideSize="50%"
-                      breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
-                      slideGap="xl"
-                      align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
-                      slidesToScroll={mobile ? 1 : 2}
-                      withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
-                      loop
-                    >
-                      {latestVersion?.images.map((image, index) => (
-                        <Carousel.Slide key={image.id}>
-                          <Center style={{ height: '100%' }}>
-                            {/* <Media.Placeholder>
-                              <AspectRatio
-                                ratio={(image?.width ?? 1) / (image?.height ?? 1)}
-                                style={{ height: 400 }}
-                              >
-                                <MediaHash
-                                  {...image}
-                                  style={{ height: '300px', width: '300px', position: 'relative' }}
-                                />
-                              </AspectRatio>
-                            </Media.Placeholder>
-                            <Media.Content>
-                              <EdgeImage
-                                src={image.url}
-                                alt={image.name ?? undefined}
-                                width={450}
-                                placeholder="empty"
-                                style={{ width: '100%', zIndex: 2, position: 'relative' }}
+              <Carousel
+                slideSize="50%"
+                breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
+                slideGap="xl"
+                align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
+                slidesToScroll={mobile ? 1 : 2}
+                withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+                loop
+              >
+                <ImageGuard
+                  images={latestVersion.images}
+                  nsfw={model.nsfw}
+                  connect={{ entityId: model.id, entityType: 'model' }}
+                  render={(image, index) => (
+                    <Carousel.Slide>
+                      <Center style={{ height: '100%', width: '100%' }}>
+                        <ImageGuard.Content>
+                          {({ status }) => (
+                            <>
+                              {status === 'hide' && (
+                                <AbsoluteCenter zIndex={10}>
+                                  <SensitiveContent />
+                                  <ImageGuard.ShowAll>
+                                    <Button>Click to view</Button>
+                                  </ImageGuard.ShowAll>
+                                </AbsoluteCenter>
+                              )}
+                              <ImagePreview
+                                image={image}
+                                edgeImageProps={{ width: 400 }}
+                                nsfw={status === 'hide'}
+                                radius="md"
+                                onClick={() =>
+                                  openContext('modelVersionLightbox', {
+                                    modelVersionId: latestVersion.id,
+                                    initialSlide: index,
+                                  })
+                                }
+                                style={{ width: '100%' }}
+                                withMeta
                               />
-                            </Media.Content> */}
-                            <ImagePreview
-                              image={image}
-                              edgeImageProps={{ width: 400 }}
-                              nsfw={nsfw && !showNsfw}
-                              radius="md"
-                              onClick={() =>
-                                openContext('modelVersionLightbox', {
-                                  modelVersionId: latestVersion.id,
-                                  initialSlide: index,
-                                })
-                              }
-                              style={{ width: '100%' }}
-                              withMeta
-                            />
-                          </Center>
-                        </Carousel.Slide>
-                      ))}
-                    </Carousel>
-                  </>
-                )}
-              </SFW>
-
+                            </>
+                          )}
+                        </ImageGuard.Content>
+                      </Center>
+                    </Carousel.Slide>
+                  )}
+                />
+              </Carousel>
               {model.description ? (
                 <ContentClamp maxHeight={300}>
                   <RenderHtml html={model.description} />

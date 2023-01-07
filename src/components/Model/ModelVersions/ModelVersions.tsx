@@ -7,8 +7,8 @@ import {
   Tabs,
   Text,
   Group,
-  Card,
   Menu,
+  Box,
 } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { startCase } from 'lodash';
@@ -20,7 +20,6 @@ import {
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { SFW } from '~/components/Media/SFW';
 import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RunButton } from '~/components/RunStrategy/RunButton';
@@ -36,6 +35,9 @@ import { ModelFileType } from '~/server/common/constants';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
+import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 
 const VERSION_IMAGES_LIMIT = 8;
 
@@ -199,53 +201,23 @@ function TabContent({ version, nsfw }: TabContentProps) {
         </Stack>
       </Grid.Col>
       <Grid.Col xs={12} md={8} orderMd={1}>
-        <SFW type="model" id={modelId} nsfw={nsfw}>
-          {({ nsfw, showNsfw }) => (
-            <>
-              {nsfw && !showNsfw && (
-                <Card
-                  p="md"
-                  radius="sm"
-                  withBorder
-                  sx={{
-                    position: 'absolute',
-                    top: '50%',
-                    left: '50%',
-                    transform: 'translate(-50%,-50%)',
-                    zIndex: 10,
-                  }}
-                >
-                  <Stack>
-                    <Text>This model has been marked NSFW</Text>
-                    <SFW.Toggle>
-                      <Button>Click to view</Button>
-                    </SFW.Toggle>
-                  </Stack>
-                </Card>
-              )}
-              <SimpleGrid
-                breakpoints={[
-                  { minWidth: 'xs', cols: 1 },
-                  { minWidth: 'sm', cols: 2 },
-                  { minWidth: 'md', cols: 3 },
-                  { minWidth: 'lg', cols: 4 },
-                ]}
-              >
-                {versionImages.slice(0, imagesLimit).map((image, index) => (
-                  <ImagePreview
-                    key={index}
-                    image={image}
-                    edgeImageProps={{ width: 400 }}
-                    nsfw={nsfw && !showNsfw}
-                    radius="md"
-                    aspectRatio={1}
-                    onClick={() =>
-                      openContext('modelVersionLightbox', {
-                        initialSlide: index,
-                        modelVersionId: version.id,
-                      })
-                    }
-                    withMeta
+        <SimpleGrid
+          breakpoints={[
+            { minWidth: 'xs', cols: 1 },
+            { minWidth: 'sm', cols: 2 },
+            { minWidth: 'md', cols: 3 },
+            { minWidth: 'lg', cols: 4 },
+          ]}
+        >
+          <ImageGuard
+            images={versionImages.slice(0, imagesLimit)}
+            nsfw={nsfw}
+            connect={{ entityId: modelId, entityType: 'model' }}
+            render={(image, index) => (
+              <ImageGuard.Content>
+                {({ status }) => (
+                  <Box
+                    style={{ position: 'relative' }}
                     sx={{
                       height: '100%',
                       width: '100%',
@@ -258,27 +230,50 @@ function TabContent({ version, nsfw }: TabContentProps) {
                           }
                         : {}),
                     }}
-                  />
-                ))}
-                {versionImages.length > imagesLimit ? (
-                  <Button
-                    variant="outline"
-                    sx={!mobile ? { height: '100%' } : undefined}
-                    onClick={() =>
-                      openContext('modelVersionLightbox', {
-                        initialSlide: imagesLimit,
-                        modelVersionId: version.id,
-                      })
-                    }
-                    // disabled={nsfw && !showNsfw}
                   >
-                    View more
-                  </Button>
-                ) : null}
-              </SimpleGrid>
-            </>
-          )}
-        </SFW>
+                    {status === 'hide' && (
+                      <AbsoluteCenter zIndex={10}>
+                        <SensitiveContent />
+                        <ImageGuard.ShowAll>
+                          <Button>Click to view</Button>
+                        </ImageGuard.ShowAll>
+                      </AbsoluteCenter>
+                    )}
+                    <ImagePreview
+                      key={index}
+                      image={image}
+                      edgeImageProps={{ width: 400 }}
+                      nsfw={status === 'hide'}
+                      radius="md"
+                      aspectRatio={1}
+                      onClick={() =>
+                        openContext('modelVersionLightbox', {
+                          initialSlide: index,
+                          modelVersionId: version.id,
+                        })
+                      }
+                      withMeta
+                    />
+                  </Box>
+                )}
+              </ImageGuard.Content>
+            )}
+          />
+          {versionImages.length > imagesLimit ? (
+            <Button
+              variant="outline"
+              sx={!mobile ? { height: '100%' } : undefined}
+              onClick={() =>
+                openContext('modelVersionLightbox', {
+                  initialSlide: imagesLimit,
+                  modelVersionId: version.id,
+                })
+              }
+            >
+              View more
+            </Button>
+          ) : null}
+        </SimpleGrid>
       </Grid.Col>
     </Grid>
   );

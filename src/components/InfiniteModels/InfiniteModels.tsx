@@ -450,7 +450,7 @@ const MasonryItem = ({
                 <ImageGuard
                   images={[image]}
                   connect={{ entityId: id, entityType: 'model' }}
-                  nsfw={nsfw}
+                  nsfw={nsfw ?? image.nsfw} // if the image is nsfw, then most/all of the model is nsfw
                   render={(image) => (
                     <Box sx={{ position: 'relative' }}>
                       {contextMenuItems.length > 0 && (
@@ -482,22 +482,23 @@ const MasonryItem = ({
                         </Menu>
                       )}
                       <ImageGuard.ToggleConnect>
-                        {/* {({status}) => <Badge>{status === 'on' ? 'Hide' : 'Show'}</Badge>} */}
-                        <Badge
-                          color="red"
-                          variant="filled"
-                          size="sm"
-                          sx={(theme) => ({
-                            cursor: 'pointer',
-                            userSelect: 'none',
-                            position: 'absolute',
-                            top: theme.spacing.xs,
-                            left: theme.spacing.xs,
-                            zIndex: 10,
-                          })}
-                        >
-                          toggle
-                        </Badge>
+                        {({ status }) => (
+                          <Badge
+                            color="red"
+                            variant="filled"
+                            size="sm"
+                            sx={(theme) => ({
+                              cursor: 'pointer',
+                              userSelect: 'none',
+                              position: 'absolute',
+                              top: theme.spacing.xs,
+                              left: theme.spacing.xs,
+                              zIndex: 10,
+                            })}
+                          >
+                            {status}
+                          </Badge>
+                        )}
                       </ImageGuard.ToggleConnect>
                       <ImageGuard.Unsafe>
                         <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>

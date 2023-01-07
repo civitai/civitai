@@ -127,6 +127,15 @@ function ImageGuardContentProvider({
   );
 }
 
+ImageGuard.Content = function Content({ children }: ToggleProps) {
+  const { image } = useImageGuardContentContext();
+  const showImage = useStore((state) => state.showingImages[image.id.toString()]);
+
+  if (!image.nsfw) return children({ status: 'show' });
+
+  return children({ status: !showImage ? 'hide' : 'show' });
+};
+
 ImageGuard.Unsafe = function Unsafe({ children }: { children: React.ReactNode }) {
   const { image } = useImageGuardContentContext();
   const showImage = useStore((state) => state.showingImages[image.id.toString()] ?? false);
@@ -142,28 +151,41 @@ ImageGuard.Safe = function Safe({ children }: { children: React.ReactNode }) {
   return image.nsfw && !showImage ? null : <>{children}</>;
 };
 
-ImageGuard.ToggleImage = function ToggleImage({ children }: { children: React.ReactElement }) {
+type ToggleStatus = 'show' | 'hide';
+type ToggleProps = {
+  children: ({ status }: { status: ToggleStatus }) => React.ReactElement;
+};
+
+ImageGuard.ToggleImage = function ToggleImage({ children }: ToggleProps) {
   const { image } = useImageGuardContentContext();
+  const showImage = useStore((state) => state.showingImages[image.id.toString()]);
   const toggleImage = useStore((state) => state.toggleImage);
 
   if (!image.nsfw) return null;
 
   return (
     <ImageGuardPopover>
-      {cloneElement(children, { onClick: () => toggleImage(image.id) })}
+      {cloneElement(children({ status: showImage ? 'hide' : 'show' }), {
+        onClick: () => toggleImage(image.id),
+      })}
     </ImageGuardPopover>
   );
 };
 
-ImageGuard.ToggleConnect = function ToggleConnect({ children }: { children: React.ReactElement }) {
+ImageGuard.ToggleConnect = function ToggleConnect({ children }: ToggleProps) {
   const { connect, nsfw } = useImageGuardContext();
+  const showConnect = useStore((state) =>
+    connect ? state.showingConnections[getConnectionKey(connect)] : false
+  );
   const toggleConnect = useStore((state) => state.toggleConnection);
 
   if (!connect || !nsfw) return null;
 
   return (
     <ImageGuardPopover>
-      {cloneElement(children, { onClick: () => toggleConnect(connect) })}
+      {cloneElement(children({ status: showConnect ? 'hide' : 'show' }), {
+        onClick: () => toggleConnect(connect),
+      })}
     </ImageGuardPopover>
   );
 };
@@ -171,13 +193,15 @@ ImageGuard.ToggleConnect = function ToggleConnect({ children }: { children: Reac
 ImageGuard.ShowAll = function ShowAll({ children }: { children: React.ReactElement }) {
   const { images } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
-  const showImages = useStore((state) => state.showImages);
+  const setShowImages = useStore((state) => state.showImages);
 
   if (!image.nsfw) return null;
 
   return (
     <ImageGuardPopover>
-      {cloneElement(children, { onClick: () => showImages(images.map((x) => x.id)) })}
+      {cloneElement(children, {
+        onClick: () => setShowImages(images.map((x) => x.id)),
+      })}
     </ImageGuardPopover>
   );
 };

@@ -4,23 +4,24 @@ import {
   Loader,
   Modal,
   Center,
-  AspectRatio,
   Grid,
   Group,
   Rating,
   Stack,
   CloseButton,
   Alert,
+  Button,
 } from '@mantine/core';
 import { useRef } from 'react';
 import { z } from 'zod';
+import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 
 import CommentSection from '~/components/CommentSection/CommentSection';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { SFW } from '~/components/Media/SFW';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
@@ -164,7 +165,48 @@ export default createRoutedContext({
               </Grid.Col>
               {hasImages ? (
                 <Grid.Col span={12} sx={{ position: 'relative' }}>
-                  <SFW type="review" id={review.id} nsfw={review.nsfw}>
+                  <Carousel
+                    align="center"
+                    slidesToScroll={1}
+                    slideSize="100%"
+                    withControls={hasMultipleImages}
+                    getEmblaApi={(embla) => (emblaRef.current = embla)}
+                    loop
+                  >
+                    <ImageGuard
+                      images={review.images}
+                      render={(image, index) => (
+                        <Carousel.Slide key={image.id}>
+                          <Center style={{ height: '100%' }}>
+                            <ImageGuard.Content>
+                              {({ status }) => (
+                                <>
+                                  {status === 'hide' && (
+                                    <AbsoluteCenter zIndex={10}>
+                                      <SensitiveContent />
+                                      <ImageGuard.ShowAll>
+                                        <Button>Click to view</Button>
+                                      </ImageGuard.ShowAll>
+                                    </AbsoluteCenter>
+                                  )}
+                                  <ImagePreview
+                                    image={image}
+                                    aspectRatio={0}
+                                    edgeImageProps={{ height: 400 }}
+                                    radius="md"
+                                    withMeta
+                                    nsfw={status === 'hide'}
+                                  />
+                                </>
+                              )}
+                            </ImageGuard.Content>
+                          </Center>
+                        </Carousel.Slide>
+                      )}
+                    />
+                  </Carousel>
+
+                  {/* <SFW type="review" id={review.id} nsfw={review.nsfw}>
                     <SFW.ToggleNsfw
                       placeholder={
                         <AspectRatio ratio={16 / 9} style={{ height: 400 }}>
@@ -174,7 +216,7 @@ export default createRoutedContext({
                     />
                     <SFW.Count count={review.images.length} />
                     <SFW.Content>{carousel}</SFW.Content>
-                  </SFW>
+                  </SFW> */}
                 </Grid.Col>
               ) : null}
               <Grid.Col span={12} py={0}>
