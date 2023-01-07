@@ -764,6 +764,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                         <ImageGuard.Content>
                           {({ status }) => (
                             <>
+                              {/* TODO.Justin - styling */}
                               {status === 'hide' && (
                                 <AbsoluteCenter zIndex={10}>
                                   <SensitiveContent />

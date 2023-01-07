@@ -232,6 +232,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
                           : {}),
                       }}
                     >
+                      {/* TODO.Justin - styling */}
                       {status === 'hide' && (
                         <AbsoluteCenter zIndex={10}>
                           <SensitiveContent />

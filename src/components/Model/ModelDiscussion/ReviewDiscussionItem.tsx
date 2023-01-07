@@ -255,6 +255,7 @@ export function ReviewDiscussionItem({ review }: Props) {
                   <ImageGuard.Content>
                     {({ status }) => (
                       <>
+                        {/* TODO.Justin - styling */}
                         {status === 'hide' && (
                           <AbsoluteCenter zIndex={10}>
                             <SensitiveContent />

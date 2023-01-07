@@ -181,6 +181,7 @@ export default createRoutedContext({
                             <ImageGuard.Content>
                               {({ status }) => (
                                 <>
+                                  {/* TODO.Justin - styling */}
                                   {status === 'hide' && (
                                     <AbsoluteCenter zIndex={10}>
                                       <SensitiveContent />
