@@ -18,7 +18,13 @@ export const ModelHash = ({ hashes, initialType = 'AutoV1', color = 'gray' }: Pr
         variant="outline"
         color={color}
         px={6}
-        sx={{ width: 60, borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: 0 }}
+        sx={{
+          width: 60,
+          borderTopRightRadius: 0,
+          borderBottomRightRadius: 0,
+          borderRight: 0,
+          whiteSpace: 'nowrap',
+        }}
       >
         {type}
       </Badge>
@@ -32,7 +38,7 @@ export const ModelHash = ({ hashes, initialType = 'AutoV1', color = 'gray' }: Pr
               sx={{
                 cursor: 'pointer',
                 overflow: 'hidden',
-                width: 100,
+                width: 80,
                 borderTopLeftRadius: 0,
                 borderBottomLeftRadius: 0,
                 borderTopRightRadius: hasMore ? 0 : undefined,

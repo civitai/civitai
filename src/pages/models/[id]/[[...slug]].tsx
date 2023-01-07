@@ -427,11 +427,21 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     {
       label: 'Uploaded By',
       value: model.user && (
-        <Group align="center" position="apart" noWrap>
+        <Group align="center" position="apart">
           <Link href={`/user/${model.user.username}`} passHref>
-            <Group spacing={4}>
+            <Group spacing={4} noWrap sx={{ flex: 1, overflow: 'hidden' }}>
               <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
-              <Text size="sm" variant="link" component="a" style={{ cursor: 'pointer' }}>
+              <Text
+                size="sm"
+                variant="link"
+                component="a"
+                sx={{
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
                 {model.user.username}
               </Text>
             </Group>
@@ -691,10 +701,14 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               )}
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
-                <Group position="apart" align="flex-start">
-                  <Group spacing="xs">
+                <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>
+                  <Group spacing="xs" noWrap style={{ flex: 1, overflow: 'hidden' }}>
                     <IconLicense size={16} />
-                    <Text size="xs" color="dimmed">
+                    <Text
+                      size="xs"
+                      color="dimmed"
+                      sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                    >
                       License:{' '}
                       <Text
                         component="a"
