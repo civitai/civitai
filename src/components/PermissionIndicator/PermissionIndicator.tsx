@@ -1,30 +1,47 @@
 import { Group, List, Popover, Text } from '@mantine/core';
+import { CommercialUse } from '@prisma/client';
 import {
+  IconBrushOff,
   IconCheck,
-  IconCreativeCommonsNc,
-  IconCreativeCommonsNd,
-  IconCreativeCommonsSa,
+  IconExchangeOff,
+  IconPhotoOff,
+  IconRotate2,
+  IconShoppingCartOff,
+  IconUserCheck,
   IconX,
 } from '@tabler/icons';
 
 export const PermissionIndicator = ({ permissions, size = 20 }: Props) => {
-  const { allowCommercialUse, allowDerivatives, allowDifferentLicense } = permissions;
+  const { allowNoCredit, allowCommercialUse, allowDerivatives, allowDifferentLicense } =
+    permissions;
+  const canSellImages =
+    allowCommercialUse === 'Image' ||
+    allowCommercialUse === 'Rent' ||
+    allowCommercialUse === 'Sell';
+  const canRent = allowCommercialUse === 'Rent' || allowCommercialUse === 'Sell';
+  const canSell = allowCommercialUse === 'Sell';
 
   const explanation = {
-    'Use this model for commercial purposes': allowCommercialUse,
-    'Use in merges you share': allowDerivatives,
-    'Use a different license when sharing': allowDifferentLicense,
+    'Use the model without crediting the creator': allowNoCredit,
+    'Sell images they generate': canSellImages,
+    'Run on services that generate images for money': canRent,
+    'Share merges using this model': allowDerivatives,
+    'Sell this model or merges using this model': canSell,
+    'Have different permissions when sharing merges': allowDifferentLicense,
   };
   const iconProps = { size, stroke: 1.5 };
   const icons = [
-    !allowCommercialUse && <IconCreativeCommonsNc key="nc" {...iconProps} />,
-    !allowDerivatives && <IconCreativeCommonsNd key="nd" {...iconProps} />,
-    !allowDifferentLicense && <IconCreativeCommonsSa key="sa" {...iconProps} />,
+    !allowNoCredit && <IconUserCheck key="by" {...iconProps} />,
+    !canSellImages && <IconPhotoOff key="no-images" {...iconProps} />,
+    !canRent && <IconBrushOff key="no-rent" {...iconProps} />,
+    !canSell && <IconShoppingCartOff key="no-sell" {...iconProps} />,
+    !allowDerivatives && <IconExchangeOff key="no-merges" {...iconProps} />,
+    !allowDifferentLicense && <IconRotate2 key="sa" {...iconProps} />,
   ].filter(Boolean);
   return (
     <Popover withArrow>
       <Popover.Target>
-        <Group spacing={0} sx={{ cursor: 'pointer' }}>
+        <Group spacing={2} sx={{ cursor: 'pointer' }}>
           {icons}
         </Group>
       </Popover.Target>
@@ -44,9 +61,9 @@ export const PermissionIndicator = ({ permissions, size = 20 }: Props) => {
               })}
               icon={
                 allowed ? (
-                  <IconCheck style={{ color: 'green' }} size={12} />
+                  <IconCheck style={{ color: 'green' }} size={12} stroke={4} />
                 ) : (
-                  <IconX style={{ color: 'red' }} size={12} />
+                  <IconX style={{ color: 'red' }} size={12} stroke={3} />
                 )
               }
             >
@@ -66,7 +83,7 @@ type Props = {
 
 type Permissions = {
   allowNoCredit: boolean;
-  allowCommercialUse: boolean;
+  allowCommercialUse: CommercialUse;
   allowDerivatives: boolean;
   allowDifferentLicense: boolean;
 };

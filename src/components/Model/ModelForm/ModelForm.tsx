@@ -10,17 +10,22 @@ import {
   Title,
   Alert,
   ThemeIcon,
-  Anchor,
+  Divider,
 } from '@mantine/core';
-import { Model, ModelStatus, ModelType, TagTarget } from '@prisma/client';
+import { CommercialUse, Model, ModelStatus, ModelType, TagTarget } from '@prisma/client';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconArrowDown,
   IconArrowLeft,
   IconArrowUp,
+  IconCurrencyDollarOff,
   IconExclamationMark,
+  IconInfoCircle,
+  IconBrush,
+  IconPhoto,
   IconPlus,
+  IconShoppingCart,
   IconTrash,
 } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
@@ -38,6 +43,7 @@ import {
   InputMultiSelect,
   InputNumber,
   InputRTE,
+  InputSegmentedControl,
   InputSelect,
   InputSwitch,
   InputText,
@@ -53,6 +59,7 @@ import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const schema = modelSchema.extend({
   tagsOnModels: z.string().array(),
@@ -190,13 +197,7 @@ export function ModelForm({ model }: Props) {
       const data: CreateModelProps | UpdateModelProps = {
         ...values,
         status: asDraft ? ModelStatus.Draft : values.status,
-        allowCommercialUse: !values.allowNoCredit ? values.allowCommercialUse : true,
-        allowDerivatives: !values.allowNoCredit ? values.allowDerivatives : true,
-        allowDifferentLicense: values.allowNoCredit
-          ? true
-          : values.allowDerivatives
-          ? values.allowDifferentLicense
-          : false,
+        allowDifferentLicense: values.allowDerivatives ? values.allowDifferentLicense : false,
         tagsOnModels: values.tagsOnModels?.map((name) => {
           const match = tags.find((x) => x.name === name);
           return match ?? { name };
@@ -332,6 +333,7 @@ export function ModelForm({ model }: Props) {
                 const trainedWords = form.watch(`modelVersions.${index}.trainedWords`) ?? [];
                 const skipTrainedWords =
                   form.watch(`modelVersions.${index}.skipTrainedWords`) ?? false;
+                const name = form.watch(`modelVersions.${index}.name`) ?? '';
 
                 return (
                   <Paper
@@ -344,45 +346,61 @@ export function ModelForm({ model }: Props) {
                     <Stack style={{ position: 'relative' }}>
                       <Grid gutter="md">
                         <Grid.Col span={12}>
-                          <Group noWrap align="flex-end" spacing="xs">
-                            <InputText
-                              name={`modelVersions.${index}.name`}
-                              label="Name"
-                              placeholder="Version Name"
-                              withAsterisk
-                              style={{ flex: 1 }}
-                            />
-                            {fields.length > 1 && (
-                              <>
-                                {index < fields.length - 1 && (
+                          <Stack>
+                            <Group noWrap align="flex-end" spacing="xs">
+                              <InputText
+                                name={`modelVersions.${index}.name`}
+                                label="Name"
+                                placeholder="Version Name"
+                                withAsterisk
+                                style={{ flex: 1 }}
+                              />
+                              {fields.length > 1 && (
+                                <>
+                                  {index < fields.length - 1 && (
+                                    <ActionIcon
+                                      variant="default"
+                                      onClick={() => swap(index, index + 1)}
+                                      size="lg"
+                                    >
+                                      <IconArrowDown size={16} />
+                                    </ActionIcon>
+                                  )}
+                                  {index > 0 && (
+                                    <ActionIcon
+                                      variant="default"
+                                      onClick={() => swap(index, index - 1)}
+                                      size="lg"
+                                    >
+                                      <IconArrowUp size={16} />
+                                    </ActionIcon>
+                                  )}
                                   <ActionIcon
-                                    variant="default"
-                                    onClick={() => swap(index, index + 1)}
+                                    color="red"
+                                    onClick={() => remove(index)}
+                                    variant="outline"
                                     size="lg"
                                   >
-                                    <IconArrowDown size={16} />
+                                    <IconTrash size={16} stroke={1.5} />
                                   </ActionIcon>
-                                )}
-                                {index > 0 && (
-                                  <ActionIcon
-                                    variant="default"
-                                    onClick={() => swap(index, index - 1)}
-                                    size="lg"
-                                  >
-                                    <IconArrowUp size={16} />
-                                  </ActionIcon>
-                                )}
-                                <ActionIcon
-                                  color="red"
-                                  onClick={() => remove(index)}
-                                  variant="outline"
-                                  size="lg"
-                                >
-                                  <IconTrash size={16} stroke={1.5} />
-                                </ActionIcon>
-                              </>
+                                </>
+                              )}
+                            </Group>
+                            {name && name.toLowerCase().includes('safetensor') && (
+                              <AlertWithIcon icon={<IconInfoCircle />}>
+                                You can attach the SafeTensor file to an existing version, just add
+                                a model file 😉
+                              </AlertWithIcon>
                             )}
-                          </Group>
+                            {name &&
+                              (name.toLowerCase().includes('ckpt') ||
+                                name.toLowerCase().includes('pickle')) && (
+                                <AlertWithIcon icon={<IconInfoCircle />}>
+                                  You can attach the ckpt file to an existing version, just add a
+                                  model file 😉
+                                </AlertWithIcon>
+                              )}
+                          </Stack>
                         </Grid.Col>
                         <Grid.Col span={12}>
                           <Group noWrap align="flex-end" spacing="xs">
@@ -513,23 +531,68 @@ export function ModelForm({ model }: Props) {
                 </Stack>
               </Paper>
               <Paper radius="md" p="xl" withBorder>
-                <Stack>
-                  <Text size="sm" weight={500} sx={{ lineHeight: 1.2 }}>
+                <Stack spacing="xs">
+                  <Text size="sm" weight={500} sx={{ lineHeight: 1.2 }} mb="xs">
                     {`When using this model, I give permission for users to:`}
                   </Text>
-                  <InputSwitch name="allowNoCredit" label="Use without any restrictions" />
-                  {!allowNoCredit && (
-                    <>
-                      <InputSwitch name="allowCommercialUse" label="Use for commercial purposes" />
-                      <InputSwitch name="allowDerivatives" label="Make merges with this model" />
-                      {allowDerivatives && (
-                        <InputSwitch
-                          name="allowDifferentLicense"
-                          label="Make merges with a different license"
-                        />
-                      )}
-                    </>
+                  <InputCheckbox name="allowNoCredit" label="Use without crediting me" />
+                  <InputCheckbox name="allowDerivatives" label="Share merges of this model" />
+                  {allowDerivatives && (
+                    <InputCheckbox
+                      name="allowDifferentLicense"
+                      label="Use different permissions on merges"
+                    />
                   )}
+
+                  <Divider label="Commercial Use" labelProps={{ weight: 'bold' }} />
+                  <InputSegmentedControl
+                    name="allowCommercialUse"
+                    orientation="vertical"
+                    fullWidth
+                    color="blue"
+                    styles={(theme) => ({
+                      root: {
+                        border: `1px solid ${
+                          theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+                        }`,
+                        background: 'none',
+                      },
+                    })}
+                    data={[
+                      {
+                        value: CommercialUse.None,
+                        label: (
+                          <Group>
+                            <IconCurrencyDollarOff size={16} /> None
+                          </Group>
+                        ),
+                      },
+                      {
+                        value: CommercialUse.Image,
+                        label: (
+                          <Group>
+                            <IconPhoto size={16} /> Sell generated images
+                          </Group>
+                        ),
+                      },
+                      {
+                        value: CommercialUse.Rent,
+                        label: (
+                          <Group>
+                            <IconBrush size={16} /> Use on generation services
+                          </Group>
+                        ),
+                      },
+                      {
+                        value: CommercialUse.Sell,
+                        label: (
+                          <Group>
+                            <IconShoppingCart size={16} /> Sell this model or merges
+                          </Group>
+                        ),
+                      },
+                    ]}
+                  />
                 </Stack>
               </Paper>
               <Paper radius="md" p="xl" withBorder>

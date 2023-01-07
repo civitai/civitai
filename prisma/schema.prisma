@@ -185,6 +185,13 @@ enum ModelStatus {
   GatherInterest
 }
 
+enum CommercialUse {
+  None
+  Image
+  Rent
+  Sell
+}
+
 model Model {
   id            Int         @id @default(autoincrement())
   name          String
@@ -205,10 +212,10 @@ model Model {
   meta          Json        @default("{}")
 
   // Licensing
-  allowNoCredit         Boolean @default(true)
-  allowCommercialUse    Boolean @default(true)
-  allowDerivatives      Boolean @default(true)
-  allowDifferentLicense Boolean @default(true)
+  allowNoCredit         Boolean       @default(true)
+  allowCommercialUse    CommercialUse @default(Sell)
+  allowDerivatives      Boolean       @default(true)
+  allowDifferentLicense Boolean       @default(true)
 
   modelVersions  ModelVersion[]
   reviews        Review[]
