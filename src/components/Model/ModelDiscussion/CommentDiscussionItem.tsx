@@ -13,10 +13,10 @@ import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CommentGetAllItem } from '~/types/router';
-import { daysFromNow } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 
 export function CommentDiscussionItem({ comment }: Props) {
   const { openContext } = useRoutedContext();
@@ -114,7 +114,8 @@ export function CommentDiscussionItem({ comment }: Props) {
         <Group spacing={4}>
           <UserAvatar
             user={comment.user}
-            subText={daysFromNow(comment.createdAt)}
+            subText={<DaysFromNow date={comment.createdAt} />}
+            subTextForce
             badge={
               comment.user.id === model?.user.id ? (
                 <Badge size="xs" color="violet">

@@ -1,7 +1,6 @@
 import { ActionIcon, Button, Group, Menu, Stack, useMantineTheme, Card } from '@mantine/core';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { GetAnswersProps } from '~/server/controllers/answer.controller';
-import { daysFromNow } from '~/utils/date-helpers';
 import { useState } from 'react';
 import { AnswerForm } from '~/components/Questions/AnswerForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -15,6 +14,7 @@ import { QuestionDetailProps } from '~/server/controllers/question.controller';
 import { ReactionBadge } from '~/components/Questions/ReactionBadge';
 import { trpc } from '~/utils/trpc';
 import { QuestionAnswerComments } from '~/components/Questions/QuestionAnswerComments';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 
 export function AnswerDetail({
   answer,
@@ -47,7 +47,8 @@ export function AnswerDetail({
         <Group position="apart">
           <UserAvatar
             user={answer.user}
-            subText={`${daysFromNow(answer.createdAt)}`}
+            subText={<DaysFromNow date={answer.createdAt} />}
+            subTextForce
             withUsername
           />
           {/* TODO - menu item for reporting */}

@@ -3,6 +3,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag } from '@tabler/icons';
 import Link from 'next/link';
 import { useState } from 'react';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
@@ -14,7 +15,6 @@ import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { CommentGetCommentsById } from '~/types/router';
-import { daysFromNow } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -169,7 +169,7 @@ export function CommentSectionItem({ comment, modelId }: Props) {
                 </Badge>
               ) : null}
               <Text color="dimmed" size="xs">
-                {daysFromNow(comment.createdAt)}
+                <DaysFromNow date={comment.createdAt} />
               </Text>
             </Group>
             {!isEditing ? (

@@ -27,7 +27,8 @@ const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSiz
 export function UserAvatar({
   user,
   withUsername,
-  subText: subText,
+  subText,
+  subTextForce = false,
   avatarProps,
   badge,
   size = 'sm',
@@ -56,7 +57,7 @@ export function UserAvatar({
               {badge}
             </Group>
           )}
-          {subText && typeof subText === 'string' ? (
+          {subText && (typeof subText === 'string' || subTextForce) ? (
             <Text size={subTextSize} color="dimmed">
               {subText}
             </Text>
@@ -83,6 +84,7 @@ type Props = {
   withLink?: boolean;
   avatarProps?: AvatarProps;
   subText?: React.ReactNode;
+  subTextForce?: boolean;
   size?: MantineSize;
   spacing?: MantineNumberSize;
   badge?: React.ReactElement<BadgeProps> | null;

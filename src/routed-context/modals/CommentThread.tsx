@@ -2,13 +2,13 @@ import { Badge, Modal, Group, CloseButton, Alert, Center, Loader, Stack } from '
 import { z } from 'zod';
 
 import CommentSection from '~/components/CommentSection/CommentSection';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
-import { daysFromNow } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
 export default createRoutedContext({
@@ -89,7 +89,8 @@ export default createRoutedContext({
             <Group position="apart" align="flex-start">
               <UserAvatar
                 user={comment.user}
-                subText={daysFromNow(comment.createdAt)}
+                subText={<DaysFromNow date={comment.createdAt} />}
+                subTextForce
                 badge={
                   comment.user.id === model?.user.id ? (
                     <Badge size="xs" color="violet">
