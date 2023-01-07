@@ -152,24 +152,28 @@ function TabContent({ version, nsfw }: TabContentProps) {
                 component="a"
                 href={createModelFileDownloadUrl({ versionId: version.id, primary: true })}
                 disabled={!primaryFile}
-                menuItems={version.files.map((file, index) => (
-                  <Menu.Item
-                    key={index}
-                    component="a"
-                    py={4}
-                    icon={<VerifiedText file={file} iconOnly />}
-                    href={createModelFileDownloadUrl({
-                      versionId: version.id,
-                      type: file.type,
-                      format: file.format,
-                    })}
-                    download
-                  >
-                    {`${startCase(file.type)}${
-                      ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.format : ''
-                    } (${formatKBytes(file.sizeKB)})`}
-                  </Menu.Item>
-                ))}
+                menuItems={
+                  version.files.length === 1
+                    ? []
+                    : version.files.map((file, index) => (
+                        <Menu.Item
+                          key={index}
+                          component="a"
+                          py={4}
+                          icon={<VerifiedText file={file} iconOnly />}
+                          href={createModelFileDownloadUrl({
+                            versionId: version.id,
+                            type: file.type,
+                            format: file.format,
+                          })}
+                          download
+                        >
+                          {`${startCase(file.type)}${
+                            ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.format : ''
+                          } (${formatKBytes(file.sizeKB)})`}
+                        </Menu.Item>
+                      ))
+                }
                 download
               >
                 {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}

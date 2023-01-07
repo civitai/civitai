@@ -1,4 +1,4 @@
-import { ModelType, ModelStatus, MetricTimeframe } from '@prisma/client';
+import { ModelType, ModelStatus, MetricTimeframe, CommercialUse } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
@@ -58,7 +58,7 @@ export const modelSchema = z.object({
   nsfw: z.boolean().optional(),
   poi: z.boolean().optional(),
   allowNoCredit: z.boolean().optional(),
-  allowCommercialUse: z.boolean().optional(),
+  allowCommercialUse: z.nativeEnum(CommercialUse).optional(),
   allowDerivatives: z.boolean().optional(),
   allowDifferentLicense: z.boolean().optional(),
   modelVersions: z

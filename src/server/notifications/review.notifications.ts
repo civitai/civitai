@@ -53,8 +53,8 @@ export const reviewNotifications = createNotificationProcessor({
       FROM "UserActivity" ua
       JOIN "Model" m ON m.id = CAST(details->>'modelId' AS int)
       WHERE ua."userId" IS NOT NULL
-        AND ua."createdAt" >= '${lastSent}'::timestamp-INTERVAL '72 hour'
-        AND ua."createdAt" <= CURRENT_DATE-INTERVAL '71.5 hour'
+        AND ua."createdAt" >= CURRENT_DATE-INTERVAL '72 hour'
+        AND ua."createdAt" <= CURRENT_DATE-INTERVAL '71.75 hour'
         AND NOT EXISTS (SELECT 1 FROM "Review" r WHERE "modelId" = m.id AND r."userId" = ua."userId")
       ), de_duped AS (
         SELECT

@@ -116,6 +116,8 @@ model UserMetric {
   followingCount Int             @default(0)
   followerCount  Int             @default(0)
   hiddenCount    Int             @default(0)
+  uploadCount    Int             @default(0)
+  reviewCount    Int             @default(0)
 
   @@id([userId, timeframe])
 }
@@ -183,6 +185,13 @@ enum ModelStatus {
   GatherInterest
 }
 
+enum CommercialUse {
+  None
+  Image
+  Rent
+  Sell
+}
+
 model Model {
   id            Int         @id @default(autoincrement())
   name          String
@@ -203,10 +212,10 @@ model Model {
   meta          Json        @default("{}")
 
   // Licensing
-  allowNoCredit         Boolean @default(true)
-  allowCommercialUse    Boolean @default(true)
-  allowDerivatives      Boolean @default(true)
-  allowDifferentLicense Boolean @default(true)
+  allowNoCredit         Boolean       @default(true)
+  allowCommercialUse    CommercialUse @default(Sell)
+  allowDerivatives      Boolean       @default(true)
+  allowDifferentLicense Boolean       @default(true)
 
   modelVersions  ModelVersion[]
   reviews        Review[]
@@ -1041,6 +1050,16 @@ model ModelVersionRank {
 model UserStat {
   user                  User  @relation(fields: [userId], references: [id], onDelete: NoAction)
   userId                Int   @id
+  uploadCountDay        Int
+  uploadCountWeek       Int
+  uploadCountMonth      Int
+  uploadCountYear       Int
+  uploadCountAllTime    Int
+  reviewCountDay        Int
+  reviewCountWeek       Int
+  reviewCountMonth      Int
+  reviewCountYear       Int
+  reviewCountAllTime    Int
   downloadCountDay      Int
   downloadCountWeek     Int
   downloadCountMonth    Int
@@ -1107,6 +1126,7 @@ model UserRank {
   favoriteCountMonthRank   Int
   favoriteCountYearRank    Int
   favoriteCountAllTimeRank Int
+  leaderboardRank          Int
 }
 
 /// @view

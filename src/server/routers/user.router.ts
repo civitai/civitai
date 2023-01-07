@@ -1,6 +1,6 @@
-import { z } from 'zod';
 import {
   checkUserNotificationsHandler,
+  getLeaderboardHandler,
   getNotificationSettingsHandler,
   getUserCreatorHandler,
   getUserFollowingListHandler,
@@ -40,6 +40,7 @@ export const userRouter = router({
   getCreators: publicProcedure.input(getAllQuerySchema.partial()).query(getCreatorsHandler),
   getNotificationSettings: protectedProcedure.query(getNotificationSettingsHandler),
   getLists: publicProcedure.input(getByUsernameSchema).query(getUserListsHandler),
+  getLeaderboard: publicProcedure.input(getAllQuerySchema).query(getLeaderboardHandler),
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
   update: protectedProcedure.input(userUpsertSchema.partial()).mutation(updateUserHandler),
   delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),

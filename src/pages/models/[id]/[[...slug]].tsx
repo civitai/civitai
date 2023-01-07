@@ -92,6 +92,8 @@ import { PermissionIndicator } from '~/components/PermissionIndicator/Permission
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
+import { RankBadge } from '~/components/Leaderboard/RankBadge';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 //TODO - Break model query into multiple queries
 /*
@@ -434,7 +436,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Text>
             </Group>
           </Link>
-          <FollowUserButton userId={model.user.id} size="xs" compact />
+          <Group spacing={4} noWrap>
+            <RankBadge size="md" textSize="xs" rank={model.user.rank?.leaderboardRank} />
+            <FollowUserButton userId={model.user.id} size="xs" compact />
+          </Group>
         </Group>
       ),
     },
@@ -584,24 +589,30 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       })}
                       leftIcon={<IconDownload size={16} />}
                       disabled={!primaryFile}
-                      menuItems={latestVersion?.files.map((file, index) => (
-                        <Menu.Item
-                          key={index}
-                          component="a"
-                          py={4}
-                          icon={<VerifiedText file={file} iconOnly />}
-                          href={createModelFileDownloadUrl({
-                            versionId: latestVersion.id,
-                            type: file.type,
-                            format: file.format,
-                          })}
-                          download
-                        >
-                          {`${startCase(file.type)}${
-                            ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.format : ''
-                          } (${formatKBytes(file.sizeKB)})`}
-                        </Menu.Item>
-                      ))}
+                      menuItems={
+                        latestVersion?.files.length > 1
+                          ? latestVersion?.files.map((file, index) => (
+                              <Menu.Item
+                                key={index}
+                                component="a"
+                                py={4}
+                                icon={<VerifiedText file={file} iconOnly />}
+                                href={createModelFileDownloadUrl({
+                                  versionId: latestVersion.id,
+                                  type: file.type,
+                                  format: file.format,
+                                })}
+                                download
+                              >
+                                {`${startCase(file.type)}${
+                                  ['Model', 'Pruned Model'].includes(file.type)
+                                    ? ' ' + file.format
+                                    : ''
+                                } (${formatKBytes(file.sizeKB)})`}
+                              </Menu.Item>
+                            ))
+                          : []
+                      }
                       menuTooltip="Other Downloads"
                       download
                     >
@@ -637,67 +648,46 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 </Group>
               )}
               {hasNegativeEmbed && (
-                <Alert radius="sm" pl={10}>
-                  <Group spacing="xs" noWrap>
-                    <ThemeIcon>
-                      <IconAlertCircle />
-                    </ThemeIcon>
-                    <Text size="xs" sx={{ lineHeight: 1.1 }}>
-                      This Textual Inversion includes a{' '}
-                      <Anchor
-                        href={createModelFileDownloadUrl({
-                          versionId: latestVersion.id,
-                          type: 'Negative',
-                        })}
-                      >
-                        Negative embed
-                      </Anchor>
-                      , install the negative and use it in the negative prompt for full effect.
-                    </Text>
-                  </Group>
-                </Alert>
+                <AlertWithIcon icon={<IconAlertCircle />}>
+                  This Textual Inversion includes a{' '}
+                  <Anchor
+                    href={createModelFileDownloadUrl({
+                      versionId: latestVersion.id,
+                      type: 'Negative',
+                    })}
+                  >
+                    Negative embed
+                  </Anchor>
+                  , install the negative and use it in the negative prompt for full effect.
+                </AlertWithIcon>
               )}
               {hasConfig && (
-                <Alert radius="sm" pl={10}>
-                  <Group spacing="xs" noWrap>
-                    <ThemeIcon>
-                      <IconAlertCircle />
-                    </ThemeIcon>
-                    <Text size="xs" sx={{ lineHeight: 1.1 }}>
-                      This checkpoint includes a{' '}
-                      <Anchor
-                        href={createModelFileDownloadUrl({
-                          versionId: latestVersion.id,
-                          type: 'Config',
-                        })}
-                      >
-                        config file
-                      </Anchor>
-                      , download and place it along side the checkpoint.
-                    </Text>
-                  </Group>
-                </Alert>
+                <AlertWithIcon icon={<IconAlertCircle />}>
+                  This checkpoint includes a{' '}
+                  <Anchor
+                    href={createModelFileDownloadUrl({
+                      versionId: latestVersion.id,
+                      type: 'Config',
+                    })}
+                  >
+                    config file
+                  </Anchor>
+                  , download and place it along side the checkpoint.
+                </AlertWithIcon>
               )}
               {hasVAE && (
-                <Alert radius="sm" pl={10}>
-                  <Group spacing="xs" noWrap>
-                    <ThemeIcon>
-                      <IconAlertCircle />
-                    </ThemeIcon>
-                    <Text size="xs" sx={{ lineHeight: 1.1 }}>
-                      This checkpoint includes a{' '}
-                      <Anchor
-                        href={createModelFileDownloadUrl({
-                          versionId: latestVersion.id,
-                          type: 'VAE',
-                        })}
-                      >
-                        VAE
-                      </Anchor>
-                      , download and place it along side the checkpoint.
-                    </Text>
-                  </Group>
-                </Alert>
+                <AlertWithIcon icon={<IconAlertCircle />}>
+                  This checkpoint includes a{' '}
+                  <Anchor
+                    href={createModelFileDownloadUrl({
+                      versionId: latestVersion.id,
+                      type: 'VAE',
+                    })}
+                  >
+                    VAE
+                  </Anchor>
+                  , download and place it along side the checkpoint.
+                </AlertWithIcon>
               )}
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
@@ -719,16 +709,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 </Group>
               )}
               {hasPendingClaimReport && (
-                <Alert>
-                  <Group spacing="xs" noWrap>
-                    <ThemeIcon size="lg">
-                      <IconMessageCircle2 />
-                    </ThemeIcon>
-                    <Text size="xs" sx={{ lineHeight: 1.1 }}>
-                      {`A verified artist believes this model was fine-tuned on their art. We're discussing this with the model creator and artist`}
-                    </Text>
-                  </Group>
-                </Alert>
+                <AlertWithIcon icon={<IconMessageCircle2 />}>
+                  {`A verified artist believes this model was fine-tuned on their art. We're discussing this with the model creator and artist`}
+                </AlertWithIcon>
               )}
             </Stack>
           </Grid.Col>
