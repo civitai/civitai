@@ -1,5 +1,6 @@
 import { Prisma, ReviewReactions } from '@prisma/client';
 import { SessionUser } from 'next-auth';
+
 import { env } from '~/env/server.mjs';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
@@ -11,24 +12,26 @@ import {
 } from '~/server/schema/comment.schema';
 import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
+import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 export const getComments = async <TSelect extends Prisma.CommentSelect>({
-  input: { limit, page, cursor, modelId, userId, filterBy, sort },
+  input: { limit = DEFAULT_PAGE_SIZE, page, cursor, modelId, userId, filterBy, sort },
   user,
   select,
+  includeNsfw = false,
 }: {
   input: GetAllCommentsSchema;
   select: TSelect;
   user?: SessionUser;
+  includeNsfw?: boolean;
 }) => {
-  const take = limit ?? 10;
-  const skip = page && take ? (page - 1) * take : undefined;
-  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+  const skip = page ? (page - 1) * limit : undefined;
+  const canViewNsfw = (includeNsfw || user?.showNsfw) ?? env.UNAUTHENTICATE_LIST_NSFW;
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
   return await prisma.comment.findMany({
-    take,
+    take: limit,
     skip,
     cursor: cursor ? { id: cursor } : undefined,
     where: {

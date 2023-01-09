@@ -177,11 +177,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     staleTime: Infinity,
   });
 
-  const showNsfwRequested = router.query.showNsfw !== 'true';
-  const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
-  const nsfw = userNotBlurringNsfw && showNsfwRequested && model?.nsfw === true;
-  const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
-
   const deleteMutation = trpc.model.delete.useMutation({
     onSuccess() {
       showSuccessNotification({
@@ -244,9 +239,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
   });
 
-  const isModerator = currentUser?.isModerator ?? false;
-  const isOwner = model?.user.id === currentUser?.id || isModerator;
-
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
     router.beforePopState(({ as }) => {
@@ -276,6 +268,13 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     );
 
   if (!model) return <NotFound />;
+
+  const isModerator = currentUser?.isModerator ?? false;
+  const isOwner = model.user.id === currentUser?.id || isModerator;
+  const showNsfwRequested = router.query.showNsfw !== 'true';
+  const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
+  const nsfw = userNotBlurringNsfw && showNsfwRequested && model.nsfw === true;
+  const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model.modelVersions[0];
