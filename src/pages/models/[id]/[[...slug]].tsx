@@ -30,7 +30,6 @@ import {
   IconAlertCircle,
   IconArrowsSort,
   IconBan,
-  IconCrown,
   IconDotsVertical,
   IconDownload,
   IconEdit,

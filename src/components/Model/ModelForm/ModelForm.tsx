@@ -35,6 +35,7 @@ import React, { useMemo, useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
 
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { FileList } from '~/components/Model/ModelForm/FileList';
 import {
   Form,
@@ -49,6 +50,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
+import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
 import { modelSchema } from '~/server/schema/model.schema';
 import { ModelFileInput, modelFileSchema } from '~/server/schema/model-file.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
@@ -58,8 +60,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 
 const schema = modelSchema.extend({
   tagsOnModels: z.string().array(),
@@ -150,6 +151,9 @@ export function ModelForm({ model }: Props) {
     rules: { minLength: 1, required: true },
   });
 
+  const { isDirty } = form.formState;
+  useCatchNavigation({ unsavedChanges: isDirty });
+
   const tagsOnModels = form.watch('tagsOnModels');
 
   const tagsData = useMemo(() => {
@@ -157,12 +161,11 @@ export function ModelForm({ model }: Props) {
   }, [tagsOnModels, tags]);
 
   const mutating = addMutation.isLoading || updateMutation.isLoading;
-  const [poi, nsfw, type, allowDerivatives, allowNoCredit] = form.watch([
+  const [poi, nsfw, type, allowDerivatives] = form.watch([
     'poi',
     'nsfw',
     'type',
     'allowDerivatives',
-    'allowNoCredit',
   ]);
   const poiNsfw = poi && nsfw;
   const acceptsTrainedWords = ['Checkpoint', 'TextualInversion', 'LORA'].includes(type);
@@ -630,7 +633,7 @@ export function ModelForm({ model }: Props) {
                 <Button
                   variant="outline"
                   onClick={() => form.reset()}
-                  disabled={!form.formState.isDirty || mutating}
+                  disabled={!isDirty || mutating}
                 >
                   Discard changes
                 </Button>
