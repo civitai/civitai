@@ -14,6 +14,14 @@ export const imageMetaSchema = z
   .partial()
   .passthrough();
 
+export const imageAnalysisSchema = z.object({
+  drawing: z.number(),
+  hentai: z.number(),
+  neutral: z.number(),
+  porn: z.number(),
+  sexy: z.number(),
+});
+
 export const imageSchema = z.object({
   id: z.number().optional(),
   name: z.string().nullish(),
@@ -27,6 +35,7 @@ export const imageSchema = z.object({
   height: z.number().nullish(),
   width: z.number().nullish(),
   nsfw: z.boolean().optional(),
+  analysis: imageAnalysisSchema.optional(),
 });
 
 export type ImageUploadProps = z.infer<typeof imageSchema>;

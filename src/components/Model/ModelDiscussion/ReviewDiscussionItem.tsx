@@ -1,5 +1,16 @@
 import { Carousel } from '@mantine/carousel';
-import { ActionIcon, Badge, Button, Card, Group, Menu, Rating, Stack, Text } from '@mantine/core';
+import {
+  ActionIcon,
+  AspectRatio,
+  Badge,
+  Button,
+  Card,
+  Group,
+  Menu,
+  Rating,
+  Stack,
+  Text,
+} from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { ReviewReactions } from '@prisma/client';
 import {
@@ -30,6 +41,8 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { ShowHide } from '~/components/ShowHide/ShowHide';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 export function ReviewDiscussionItem({ review }: Props) {
   const { openContext } = useRoutedContext();
@@ -258,34 +271,32 @@ export function ReviewDiscussionItem({ review }: Props) {
               connect={{ entityType: 'review', entityId: review.id }}
               render={(image, index) => (
                 <Carousel.Slide>
-                  <ImageGuard.Content>
-                    {({ status }) => (
-                      <>
-                        {/* TODO.Justin - styling */}
-                        {status === 'hide' && (
-                          <AbsoluteCenter zIndex={10}>
-                            <SensitiveContent />
-                            <ImageGuard.ToggleConnect>
-                              {() => <Button>Click to view</Button>}
-                            </ImageGuard.ToggleConnect>
-                          </AbsoluteCenter>
-                        )}
-                        <ImagePreview
-                          image={image}
-                          edgeImageProps={{ width: 400 }}
-                          aspectRatio={1}
-                          nsfw={status === 'hide'}
-                          onClick={() =>
-                            openContext('reviewLightbox', {
-                              initialSlide: index,
-                              reviewId: review.id,
-                            })
-                          }
-                          withMeta
-                        />
-                      </>
-                    )}
-                  </ImageGuard.Content>
+                  <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                  <ImageGuard.Unsafe>
+                    <AspectRatio
+                      ratio={1}
+                      sx={{
+                        width: '100%',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <MediaHash {...image} />
+                    </AspectRatio>
+                  </ImageGuard.Unsafe>
+                  <ImageGuard.Safe>
+                    <ImagePreview
+                      image={image}
+                      edgeImageProps={{ width: 400 }}
+                      aspectRatio={1}
+                      onClick={() =>
+                        openContext('reviewLightbox', {
+                          initialSlide: index,
+                          reviewId: review.id,
+                        })
+                      }
+                      withMeta
+                    />
+                  </ImageGuard.Safe>
                 </Carousel.Slide>
               )}
             />

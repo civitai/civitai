@@ -82,9 +82,9 @@ export function ImageGuard({
   const user = useCurrentUser();
   const shouldBlur = user?.blurNsfw ?? true;
 
-  const showConnection = useStore((state) =>
-    connect ? state.showingConnections[getConnectionKey(connect)] : undefined
-  );
+  // const showConnection = useStore((state) =>
+  //   connect ? state.showingConnections[getConnectionKey(connect)] : undefined
+  // );
 
   // alter image nsfw - only allow to be true if shouldBlur is true
   const images = initialImages.map((image) => {
@@ -93,14 +93,14 @@ export function ImageGuard({
   });
 
   // if the showConnection is true, set nsfw = false for all images
-  const connectedImages =
-    showConnection !== undefined
-      ? images.map((image) => ({ ...image, nsfw: showConnection ? false : image.nsfw }))
-      : images;
+  // const connectedImages =
+  //   showConnection !== undefined
+  //     ? images.map((image) => ({ ...image, nsfw: showConnection ? false : image.nsfw }))
+  //     : images;
 
   return (
-    <ImageGuardCtx.Provider value={{ images: connectedImages, nsfw: globalNsfw, connect }}>
-      {connectedImages.map((image, index) => (
+    <ImageGuardCtx.Provider value={{ images, nsfw: globalNsfw, connect }}>
+      {images.map((image, index) => (
         <ImageGuardContentProvider key={index} image={image}>
           {render(image, index)}
         </ImageGuardContentProvider>
@@ -129,27 +129,44 @@ function ImageGuardContentProvider({
 }
 
 ImageGuard.Content = function Content({ children }: ToggleProps) {
+  const { connect } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
   const showImage = useStore((state) => state.showingImages[image.id.toString()]);
+  const showConnection = useStore((state) =>
+    connect ? state.showingConnections[getConnectionKey(connect)] : undefined
+  );
 
   if (!image.nsfw) return children({ status: 'show' });
+  const showing = showConnection ?? showImage;
 
-  return children({ status: !showImage ? 'hide' : 'show' });
+  // if(showConnection || showImage) return children({status: 'show'})
+
+  return children({ status: showing ? 'show' : 'hide' });
 };
 
 ImageGuard.Unsafe = function Unsafe({ children }: { children: React.ReactNode }) {
+  const { connect } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
   const showImage = useStore((state) => state.showingImages[image.id.toString()] ?? false);
+  const showConnection = useStore((state) =>
+    connect ? state.showingConnections[getConnectionKey(connect)] : undefined
+  );
+  const showing = showConnection ?? showImage;
 
   if (!image.nsfw) return null;
-  return image.nsfw && !showImage ? <>{children}</> : null;
+  return image.nsfw && !showing ? <>{children}</> : null;
 };
 
 ImageGuard.Safe = function Safe({ children }: { children: React.ReactNode }) {
+  const { connect } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
   const showImage = useStore((state) => state.showingImages[image.id.toString()] ?? false);
+  const showConnection = useStore((state) =>
+    connect ? state.showingConnections[getConnectionKey(connect)] : undefined
+  );
+  const showing = showConnection ?? showImage;
 
-  return image.nsfw && !showImage ? null : <>{children}</>;
+  return image.nsfw && !showing ? null : <>{children}</>;
 };
 
 type ToggleStatus = 'show' | 'hide';
@@ -177,16 +194,18 @@ type ToggleProps = {
 ImageGuard.ToggleConnect = function ToggleConnect({ children }: ToggleProps) {
   const { connect, nsfw } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
+  const showImage = useStore((state) => state.showingImages[image.id.toString()] ?? false);
   const showConnect = useStore((state) =>
     connect ? state.showingConnections[getConnectionKey(connect)] : false
   );
   const toggleConnect = useStore((state) => state.toggleConnection);
 
   if (!connect || (!nsfw && !image.nsfw)) return null;
+  const showing = showConnect ?? showImage;
 
   return (
     <ImageGuardPopover>
-      {cloneElement(children({ status: showConnect ? 'hide' : 'show' }), {
+      {cloneElement(children({ status: showing ? 'hide' : 'show' }), {
         onClick: () => toggleConnect(connect),
       })}
     </ImageGuardPopover>

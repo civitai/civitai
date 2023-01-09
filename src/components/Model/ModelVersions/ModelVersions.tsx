@@ -38,6 +38,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
+import { ShowHide } from '~/components/ShowHide/ShowHide';
 
 const VERSION_IMAGES_LIMIT = 8;
 
@@ -237,14 +238,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
                       }}
                     >
                       {/* TODO.Justin - styling */}
-                      {status === 'hide' && (
-                        <AbsoluteCenter zIndex={10}>
-                          {index === 0 && <SensitiveContent />}
-                          <ImageGuard.ToggleConnect>
-                            {() => <Button>Click to view</Button>}
-                          </ImageGuard.ToggleConnect>
-                        </AbsoluteCenter>
-                      )}
+                      <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
                       <ImagePreview
                         key={index}
                         image={image}

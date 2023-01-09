@@ -21,6 +21,7 @@ import {
   Tooltip,
   Rating,
   Anchor,
+  AspectRatio,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
@@ -94,6 +95,9 @@ import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ShowHide } from '~/components/ShowHide/ShowHide';
+import { Blurhash } from 'react-blurhash';
 
 //TODO - Break model query into multiple queries
 /*
@@ -760,35 +764,36 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   render={(image, index) => (
                     <Carousel.Slide>
                       <Center style={{ height: '100%', width: '100%' }}>
-                        <ImageGuard.Content>
-                          {({ status }) => (
-                            <>
-                              {/* TODO.Justin - styling */}
-                              {status === 'hide' && (
-                                <AbsoluteCenter zIndex={10}>
-                                  <SensitiveContent />
-                                  <ImageGuard.ToggleConnect>
-                                    {() => <Button>Click to view</Button>}
-                                  </ImageGuard.ToggleConnect>
-                                </AbsoluteCenter>
-                              )}
-                              <ImagePreview
-                                image={image}
-                                edgeImageProps={{ width: 400 }}
-                                nsfw={status === 'hide'}
-                                radius="md"
-                                onClick={() =>
-                                  openContext('modelVersionLightbox', {
-                                    modelVersionId: latestVersion.id,
-                                    initialSlide: index,
-                                  })
-                                }
-                                style={{ width: '100%' }}
-                                withMeta
-                              />
-                            </>
-                          )}
-                        </ImageGuard.Content>
+                        <div style={{ width: '100%', position: 'relative' }}>
+                          <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                          <ImageGuard.Unsafe>
+                            <AspectRatio
+                              ratio={(image.width ?? 1) / (image.height ?? 1)}
+                              sx={(theme) => ({
+                                width: '100%',
+                                borderRadius: theme.radius.md,
+                                overflow: 'hidden',
+                              })}
+                            >
+                              <MediaHash {...image} />
+                            </AspectRatio>
+                          </ImageGuard.Unsafe>
+                          <ImageGuard.Safe>
+                            <ImagePreview
+                              image={image}
+                              edgeImageProps={{ width: 400 }}
+                              radius="md"
+                              onClick={() =>
+                                openContext('modelVersionLightbox', {
+                                  modelVersionId: latestVersion.id,
+                                  initialSlide: index,
+                                })
+                              }
+                              style={{ width: '100%' }}
+                              withMeta
+                            />
+                          </ImageGuard.Safe>
+                        </div>
                       </Center>
                     </Carousel.Slide>
                   )}

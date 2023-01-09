@@ -23,6 +23,7 @@ import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
+import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageModel } from '~/server/selectors/image.selector';
 
@@ -128,32 +129,30 @@ export function Lightbox({
                             bottom: 0,
                           }}
                         >
-                          <ImageGuard.Unsafe>
-                            <AbsoluteCenter>
-                              <ImageGuard.ToggleConnect>
-                                {() => <Button>Click to view NSFW</Button>}
-                              </ImageGuard.ToggleConnect>
-                            </AbsoluteCenter>
-                            <AspectRatio
-                              ratio={width / height}
-                              sx={{
-                                maxHeight: '100%',
-                                maxWidth: '100%',
-                                height,
-                                width,
-                              }}
-                            >
-                              <MediaHash {...image} />
-                            </AspectRatio>
-                          </ImageGuard.Unsafe>
-                          <ImageGuard.Safe>
-                            <EdgeImage
-                              src={image.url}
-                              alt={image.name ?? undefined}
-                              style={{ maxHeight: '100%', maxWidth: '100%' }}
-                              width={width}
-                            />
-                          </ImageGuard.Safe>
+                          <div style={{ position: 'relative' }}>
+                            <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                            <ImageGuard.Unsafe>
+                              <AspectRatio
+                                ratio={width / height}
+                                sx={{
+                                  maxHeight: '100%',
+                                  maxWidth: '100%',
+                                  height,
+                                  width,
+                                }}
+                              >
+                                <MediaHash {...image} />
+                              </AspectRatio>
+                            </ImageGuard.Unsafe>
+                            <ImageGuard.Safe>
+                              <EdgeImage
+                                src={image.url}
+                                alt={image.name ?? undefined}
+                                style={{ maxHeight: '100%', maxWidth: '100%' }}
+                                width={width}
+                              />
+                            </ImageGuard.Safe>
+                          </div>
                         </Center>
                       </Carousel.Slide>
                     );

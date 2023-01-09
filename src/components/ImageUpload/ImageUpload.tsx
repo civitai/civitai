@@ -27,7 +27,6 @@ import {
   Select,
   Tooltip,
   Loader,
-  Center,
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
@@ -44,8 +43,9 @@ import { blurHashImage, loadImage } from '../../utils/blurhash';
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import useIsClient from '~/hooks/useIsClient';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { getMetadata } from '~/utils/image-metadata';
+import { imageAnalysisSchema, ImageMetaProps } from '~/server/schema/image.schema';
+import { auditMetaData, getMetadata } from '~/utils/image-metadata';
+import { z } from 'zod';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -78,25 +78,37 @@ export function ImageUpload({
   );
 
   const { uploadToCF, files: imageFiles } = useCFImageUpload();
+  // const {uploadToCf, data, uploading, peeping,} = use
+  const [toUpload, setToUpload] = useState<CustomFile[]>();
   const [files, filesHandlers] = useListState<CustomFile>(Array.isArray(value) ? value : []);
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
 
-  const workerRef = useRef<Worker>();
+  const workerRef = useRef<SharedWorker>();
   const [workerReady, setWorkerReady] = useState(false);
   useEffect(() => {
     setWorkerReady(false);
-    workerRef.current = new Worker(new URL('/src/workers/nsfw.worker.ts', import.meta.url));
-    workerRef.current.addEventListener('message', ({ data }) => {
+    workerRef.current = new SharedWorker(new URL('/src/workers/nsfw.worker.ts', import.meta.url), {
+      name: 'tom',
+    });
+    workerRef.current.port.onmessage = function ({ data }) {
       // handle worker ready
       if (typeof data === 'string' && data === 'ready') setWorkerReady(true);
       // handle worker result
       else if (Array.isArray(data)) {
-        const result: { url: string; nsfw: boolean }[] = data;
+        const results: {
+          url: string;
+          analysis: z.infer<typeof imageAnalysisSchema>;
+          nsfw: boolean;
+        }[] = data;
         filesHandlers.setState((state) => {
-          return [...state].map((file) => ({
-            ...file,
-            nsfw: result.find((x) => x.url === file.url)?.nsfw ?? file.nsfw,
-          }));
+          return [...state].map((file) => {
+            const tomsFindings = results.find((x) => x.url === file.url);
+            return {
+              ...file,
+              nsfw: tomsFindings?.nsfw ?? file.nsfw,
+              analysis: tomsFindings?.analysis,
+            };
+          });
         });
       }
       // handle worker error
@@ -106,12 +118,8 @@ export function ImageUpload({
           [...state].map((file) => ({ ...file, nsfw: file.nsfw ?? false }))
         );
       }
-    });
-
-    return () => {
-      if (workerRef.current) workerRef.current.terminate();
     };
-  }, []);
+  }, []); //eslint-disable-line
 
   useDidUpdate(() => {
     if (reset > 0) filesHandlers.setState(value);
@@ -141,7 +149,14 @@ export function ImageUpload({
       })
     );
 
-    filesHandlers.setState((current) => [...current, ...toUpload]);
+    //TODO - only audit nsfw items
+    filesHandlers.setState((current) => [
+      ...current,
+      ...toUpload.filter((item) => {
+        const result = auditMetaData(item.meta);
+        return result.success;
+      }),
+    ]);
 
     const uploads = await Promise.all(
       toUpload.map(async ({ url, file, previewUrl }) => {
@@ -150,7 +165,8 @@ export function ImageUpload({
       })
     );
 
-    workerRef.current?.postMessage(uploads.map(({ id, file }) => ({ url: id, file })));
+    //TODO - don't upload until nsfw-check and audit have occurred
+    workerRef.current?.port.postMessage(uploads.map(({ id, file }) => ({ url: id, file })));
 
     filesHandlers.setState((states) =>
       states.map((state) => {

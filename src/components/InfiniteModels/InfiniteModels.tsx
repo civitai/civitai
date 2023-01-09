@@ -52,6 +52,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { SFW } from '~/components/Media/SFW';
+import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
@@ -481,25 +482,7 @@ const MasonryItem = ({
                           <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
                         </Menu>
                       )}
-                      <ImageGuard.ToggleConnect>
-                        {({ status }) => (
-                          <Badge
-                            color="red"
-                            variant="filled"
-                            size="sm"
-                            sx={(theme) => ({
-                              cursor: 'pointer',
-                              userSelect: 'none',
-                              position: 'absolute',
-                              top: theme.spacing.xs,
-                              left: theme.spacing.xs,
-                              zIndex: 10,
-                            })}
-                          >
-                            {status}
-                          </Badge>
-                        )}
-                      </ImageGuard.ToggleConnect>
+                      <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
                       <ImageGuard.Unsafe>
                         <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                           <MediaHash {...image} />
@@ -517,51 +500,6 @@ const MasonryItem = ({
                     </Box>
                   )}
                 />
-                {/* <SFW type="model" id={id} nsfw={nsfw} sx={{ height: '100%', width: '100%' }}>
-                  <SFW.ToggleNsfw />
-                  {contextMenuItems.length > 0 && (
-                    <Menu>
-                      <Menu.Target>
-                        <ActionIcon
-                          variant="transparent"
-                          p={0}
-                        onClick={(e: any) => { //eslint-disable-line
-                            e.preventDefault();
-                            e.stopPropagation();
-                          }}
-                          sx={{
-                            width: 30,
-                            position: 'absolute',
-                            top: 10,
-                            right: 4,
-                            zIndex: 8,
-                          }}
-                        >
-                          <IconDotsVertical
-                            size={24}
-                            color="#fff"
-                            style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                          />
-                        </ActionIcon>
-                      </Menu.Target>
-                      <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
-                    </Menu>
-                  )}
-                  <SFW.Placeholder>
-                    <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
-                      <MediaHash {...image} />
-                    </AspectRatio>
-                  </SFW.Placeholder>
-                  <SFW.Content>
-                    <EdgeImage
-                      src={image.url}
-                      alt={image.name ?? undefined}
-                      width={450}
-                      placeholder="empty"
-                      style={{ width: '100%', zIndex: 2, position: 'relative' }}
-                    />
-                  </SFW.Content>
-                </SFW> */}
                 <Box p="xs" className={classes.content}>
                   {onTwoLines ? twoLine : oneLine}
                 </Box>

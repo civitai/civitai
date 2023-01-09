@@ -11,6 +11,7 @@ import {
   CloseButton,
   Alert,
   Button,
+  AspectRatio,
 } from '@mantine/core';
 import { useRef } from 'react';
 import { z } from 'zod';
@@ -29,6 +30,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { trpc } from '~/utils/trpc';
+import { ShowHide } from '~/components/ShowHide/ShowHide';
 
 const TRANSITION_DURATION = 200;
 
@@ -178,35 +180,49 @@ export default createRoutedContext({
                     <ImageGuard
                       images={review.images}
                       connect={{ entityType: 'review', entityId: review.id }}
-                      render={(image, index) => (
-                        <Carousel.Slide key={image.id}>
-                          <Center style={{ height: '100%' }}>
-                            <ImageGuard.Content>
-                              {({ status }) => (
-                                <>
-                                  {/* TODO.Justin - styling */}
-                                  {status === 'hide' && (
-                                    <AbsoluteCenter zIndex={10}>
-                                      <SensitiveContent />
-                                      <ImageGuard.ToggleConnect>
-                                        {() => <Button>Click to view</Button>}
-                                      </ImageGuard.ToggleConnect>
-                                    </AbsoluteCenter>
-                                  )}
+                      render={(image) => {
+                        const width = image.width ?? 1;
+                        const height = image.height ?? 1;
+                        const screenHeight = 400;
+                        // const parsedWidth = width * (400 / width);
+                        const parsedWidth = screenHeight * (width / height);
+                        return (
+                          <Carousel.Slide key={image.id}>
+                            <Center style={{ height: '100%' }}>
+                              <div
+                                style={{
+                                  position: 'relative',
+                                  height: '100%',
+                                  width: parsedWidth,
+                                }}
+                              >
+                                <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                                <ImageGuard.Unsafe>
+                                  <AspectRatio
+                                    ratio={(image.width ?? 1) / (image.height ?? 1)}
+                                    sx={(theme) => ({
+                                      height: '100%',
+                                      borderRadius: theme.radius.md,
+                                      overflow: 'hidden',
+                                    })}
+                                  >
+                                    <MediaHash {...image} />
+                                  </AspectRatio>
+                                </ImageGuard.Unsafe>
+                                <ImageGuard.Safe>
                                   <ImagePreview
                                     image={image}
                                     aspectRatio={0}
-                                    edgeImageProps={{ height: 400 }}
+                                    edgeImageProps={{ height: screenHeight }}
                                     radius="md"
                                     withMeta
-                                    nsfw={status === 'hide'}
                                   />
-                                </>
-                              )}
-                            </ImageGuard.Content>
-                          </Center>
-                        </Carousel.Slide>
-                      )}
+                                </ImageGuard.Safe>
+                              </div>
+                            </Center>
+                          </Carousel.Slide>
+                        );
+                      }}
                     />
                   </Carousel>
 
