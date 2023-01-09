@@ -6,7 +6,8 @@ type Props = { unsavedChanges?: boolean };
 export function useCatchNavigation({ unsavedChanges = false }: Props) {
   const router = useRouter();
 
-  // Display alert when closing tab/window if form is dirty
+  // Display alert when closing tab/window or navigating out,
+  // if there are unsaved changes
   useEffect(() => {
     const warningMessage = 'All unsaved changes will be lost. Are you sure you want to exit?';
     function handleWindowClose(event: BeforeUnloadEvent) {
