@@ -767,9 +767,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                               {status === 'hide' && (
                                 <AbsoluteCenter zIndex={10}>
                                   <SensitiveContent />
-                                  <ImageGuard.ShowAll>
-                                    <Button>Click to view</Button>
-                                  </ImageGuard.ShowAll>
+                                  <ImageGuard.ToggleConnect>
+                                    {() => <Button>Click to view</Button>}
+                                  </ImageGuard.ToggleConnect>
                                 </AbsoluteCenter>
                               )}
                               <ImagePreview

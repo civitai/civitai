@@ -177,6 +177,7 @@ export default createRoutedContext({
                   >
                     <ImageGuard
                       images={review.images}
+                      connect={{ entityType: 'review', entityId: review.id }}
                       render={(image, index) => (
                         <Carousel.Slide key={image.id}>
                           <Center style={{ height: '100%' }}>
@@ -187,9 +188,9 @@ export default createRoutedContext({
                                   {status === 'hide' && (
                                     <AbsoluteCenter zIndex={10}>
                                       <SensitiveContent />
-                                      <ImageGuard.ShowAll>
-                                        <Button>Click to view</Button>
-                                      </ImageGuard.ShowAll>
+                                      <ImageGuard.ToggleConnect>
+                                        {() => <Button>Click to view</Button>}
+                                      </ImageGuard.ToggleConnect>
                                     </AbsoluteCenter>
                                   )}
                                   <ImagePreview

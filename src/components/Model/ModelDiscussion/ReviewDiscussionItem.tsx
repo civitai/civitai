@@ -255,6 +255,7 @@ export function ReviewDiscussionItem({ review }: Props) {
           <Carousel withControls={hasMultipleImages} draggable={hasMultipleImages} loop>
             <ImageGuard
               images={review.images}
+              connect={{ entityType: 'review', entityId: review.id }}
               render={(image, index) => (
                 <Carousel.Slide>
                   <ImageGuard.Content>
@@ -264,9 +265,9 @@ export function ReviewDiscussionItem({ review }: Props) {
                         {status === 'hide' && (
                           <AbsoluteCenter zIndex={10}>
                             <SensitiveContent />
-                            <ImageGuard.ShowAll>
-                              <Button>Click to view</Button>
-                            </ImageGuard.ShowAll>
+                            <ImageGuard.ToggleConnect>
+                              {() => <Button>Click to view</Button>}
+                            </ImageGuard.ToggleConnect>
                           </AbsoluteCenter>
                         )}
                         <ImagePreview

@@ -240,9 +240,9 @@ function TabContent({ version, nsfw }: TabContentProps) {
                       {status === 'hide' && (
                         <AbsoluteCenter zIndex={10}>
                           <SensitiveContent />
-                          <ImageGuard.ShowAll>
-                            <Button>Click to view</Button>
-                          </ImageGuard.ShowAll>
+                          <ImageGuard.ToggleConnect>
+                            {() => <Button>Click to view</Button>}
+                          </ImageGuard.ToggleConnect>
                         </AbsoluteCenter>
                       )}
                       <ImagePreview

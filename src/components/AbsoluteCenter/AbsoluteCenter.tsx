@@ -14,7 +14,7 @@ export function AbsoluteCenter({
   );
 }
 
-const useStyles = createStyles((theme, { zIndex }: { zIndex?: number }) => ({
+const useStyles = createStyles((theme, { zIndex = 10 }: { zIndex?: number }) => ({
   root: {
     position: 'absolute',
     top: '50%',
