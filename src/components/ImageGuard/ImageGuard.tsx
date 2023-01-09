@@ -7,7 +7,7 @@ import create from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageModel } from '~/server/selectors/image.selector';
-type Connection = {
+export type ImageGuardConnect = {
   entityType: 'model' | 'review';
   entityId: number;
 };
@@ -17,9 +17,10 @@ type SfwStore = {
   showingImages: Record<string, boolean>;
   toggleImage: (id: number) => void;
   showImages: (ids: number[]) => void;
-  toggleConnection: ({ entityType, entityId }: Connection) => void;
+  toggleConnection: ({ entityType, entityId }: ImageGuardConnect) => void;
 };
-const getConnectionKey = ({ entityId, entityType }: Connection) => `${entityId}_${entityType}`;
+const getConnectionKey = ({ entityId, entityType }: ImageGuardConnect) =>
+  `${entityId}_${entityType}`;
 const useStore = create<SfwStore>()(
   immer((set) => ({
     showingConnections: {},
@@ -49,7 +50,7 @@ const useStore = create<SfwStore>()(
 type ImageGuardState = {
   images: ImageModel[];
   nsfw?: boolean;
-  connect?: Connection;
+  connect?: ImageGuardConnect;
 };
 const ImageGuardCtx = createContext<ImageGuardState>({} as any);
 const useImageGuardContext = () => {
@@ -66,7 +67,7 @@ const useImageGuardContext = () => {
 
 type ImageGuardProps = {
   images: ImageModel[];
-  connect?: Connection;
+  connect?: ImageGuardConnect;
   render: (image: ImageModel, index: number) => React.ReactNode;
   /** Make all images nsfw by default */
   nsfw?: boolean;

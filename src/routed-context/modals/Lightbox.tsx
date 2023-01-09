@@ -20,10 +20,9 @@ import { IconMinus, IconInfoCircle } from '@tabler/icons';
 import { useState, useRef } from 'react';
 import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
-import { MediaTypes } from '~/components/Media/sfwContext';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageModel } from '~/server/selectors/image.selector';
 
@@ -31,8 +30,7 @@ type LightboxProps = {
   nsfw?: boolean;
   initialSlide?: number;
   images?: ImageModel[];
-  id: number;
-  type: MediaTypes;
+  connect: ImageGuardConnect;
 };
 
 export function Lightbox({
@@ -41,8 +39,7 @@ export function Lightbox({
   opened,
   onClose,
   nsfw,
-  id,
-  type,
+  connect,
   ...props
 }: Omit<ModalProps, 'children' | 'id'> & LightboxProps) {
   const theme = useMantineTheme();
@@ -114,7 +111,7 @@ export function Lightbox({
               >
                 <ImageGuard
                   images={images}
-                  connect={{ entityType: type, entityId: id }}
+                  connect={connect}
                   nsfw={nsfw}
                   render={(image) => {
                     const width = image?.width ?? 1200;

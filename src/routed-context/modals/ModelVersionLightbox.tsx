@@ -19,13 +19,12 @@ export default createRoutedContext({
 
     return (
       <Lightbox
-        id={id}
-        type="model"
         nsfw={data?.nsfw}
         opened={context.opened}
         onClose={context.close}
         initialSlide={initialSlide}
         images={modelVersion?.images}
+        connect={{ entityId: id, entityType: 'model' }}
       />
     );
   },
