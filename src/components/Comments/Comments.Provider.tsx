@@ -20,6 +20,7 @@ import React, { useState } from 'react';
 import { createContext, useMemo } from 'react';
 import { CommentForm } from '~/components/Comments/CommentForm';
 import { DeleteComment } from '~/components/Comments/DeleteComment';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -28,7 +29,6 @@ import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { InfiniteCommentResults } from '~/server/controllers/commentv2.controller';
 import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { daysFromNow } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
 /*
@@ -179,7 +179,7 @@ Comments.ListItem = function CommentDetail({
               </Anchor>
             </Link>
             <Text color="dimmed" size="xs">
-              {daysFromNow(comment.createdAt)}
+              {<DaysFromNow date={comment.createdAt} />}
             </Text>
           </Group>
           <Menu position="bottom-end">

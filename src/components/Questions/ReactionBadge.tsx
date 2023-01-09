@@ -12,7 +12,7 @@ export function ReactionBadge({
   return !tooltip ? (
     button
   ) : (
-    <Tooltip label={tooltip} withArrow openDelay={200} color="dark">
+    <Tooltip label={tooltip} withArrow withinPortal openDelay={200} color="dark">
       {button}
     </Tooltip>
   );

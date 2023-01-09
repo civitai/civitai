@@ -1,9 +1,9 @@
 import { Stack, Text, List, MantineSize } from '@mantine/core';
 import { useRouter } from 'next/router';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 
 import { getNotificationMessage } from '~/server/notifications/utils.notifications';
 import { NotificationGetAll } from '~/types/router';
-import { daysFromNow } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 
 export function NotificationList({
@@ -80,7 +80,7 @@ export function NotificationList({
                   {details.message}
                 </Text>
                 <Text size="xs" color="dimmed">
-                  {daysFromNow(notification.createdAt)}
+                  <DaysFromNow date={notification.createdAt} />
                 </Text>
               </Stack>
             </List.Item>

@@ -1,4 +1,3 @@
-import camelCase from 'lodash/camelCase';
 import truncate from 'lodash/truncate';
 import slugify from 'slugify';
 
@@ -31,8 +30,24 @@ export function generateToken(length: number) {
   return result;
 }
 
+// camelcase but keep all caps words as is
+export function camelCase(str: string) {
+  return str
+    .split(/[\s_-]+/)
+    .map((word, index) => {
+      if (index === 0) return word.toLowerCase();
+      else if (word.toUpperCase() === word) return word;
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join('');
+}
+
 export function filenamize(value: string, length = 20) {
-  return truncate(camelCase(value.replace(/[^a-z0-9]/gi, '_')), { length, omission: '' });
+  value = value.replace(/[']/gi, '').replace(/[^a-z0-9]/gi, '_');
+  // adjust length to be length + number of _ in value
+  const underscoreCount = (value.match(/_/g) || []).length;
+  length = length + underscoreCount;
+  return camelCase(truncate(value, { length, separator: '_', omission: '' }));
 }
 
 /**

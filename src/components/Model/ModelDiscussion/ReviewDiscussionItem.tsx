@@ -23,13 +23,13 @@ import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ReviewGetAllItem } from '~/types/router';
-import { daysFromNow } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 
 export function ReviewDiscussionItem({ review }: Props) {
   const { openContext } = useRoutedContext();
@@ -164,7 +164,12 @@ export function ReviewDiscussionItem({ review }: Props) {
         <Group align="flex-start" position="apart" noWrap>
           <UserAvatar
             user={review.user}
-            subText={`${daysFromNow(review.createdAt)} - ${review.modelVersion?.name}`}
+            subText={
+              <>
+                <DaysFromNow date={review.createdAt} /> - {review.modelVersion?.name}
+              </>
+            }
+            subTextForce
             badge={
               review.user.id === model?.user.id ? (
                 <Badge size="xs" color="violet">

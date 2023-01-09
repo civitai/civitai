@@ -18,6 +18,8 @@ import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 
 import CommentSection from '~/components/CommentSection/CommentSection';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -26,7 +28,6 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
-import { daysFromNow } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
 const TRANSITION_DURATION = 200;
@@ -142,7 +143,8 @@ export default createRoutedContext({
               <Group spacing="xs" align="center">
                 <UserAvatar
                   user={review.user}
-                  subText={daysFromNow(review.createdAt)}
+                  subText={<DaysFromNow date={review.createdAt} />}
+                  subTextForce
                   badge={
                     review.user.id === model?.user.id ? (
                       <Badge size="xs" color="violet">

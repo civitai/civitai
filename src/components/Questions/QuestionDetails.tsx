@@ -18,7 +18,6 @@ import { ReactionBadge } from '~/components/Questions/ReactionBadge';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { QuestionDetailProps } from '~/server/controllers/question.controller';
-import { daysFromNow } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { useState } from 'react';
 import { IconDotsVertical, IconEdit, IconMessageCircle, IconTrash } from '@tabler/icons';
@@ -27,6 +26,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink } from '@mantine/next';
 import { DeleteQuestion } from '~/components/Questions/DeleteQuestion';
 import { QuestionAnswerComments } from '~/components/Questions/QuestionAnswerComments';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 
 export function QuestionDetails({ question }: { question: QuestionDetailProps }) {
   const user = useCurrentUser();
@@ -104,8 +104,10 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
       <Stack>
         <UserAvatar
           user={question.user}
-          subText={`${daysFromNow(question.createdAt)}`}
+          subText={<DaysFromNow date={question.createdAt} />}
+          subTextForce
           withUsername
+          linkToProfile
         />
         <RenderHtml html={question.content} />
         <Group spacing="xs" position="apart">
