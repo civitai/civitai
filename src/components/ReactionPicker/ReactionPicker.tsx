@@ -84,7 +84,7 @@ function ReactionBadge({ reaction, reactions }: ReactionBadgeProps) {
   const canClick = user && !disabled;
 
   return (
-    <Tooltip label={tooltip} withArrow>
+    <Tooltip label={tooltip} withArrow withinPortal>
       <Button
         size="xs"
         radius="xl"
