@@ -31,7 +31,7 @@ import {
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { useRouter } from 'next/router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
 
@@ -60,6 +60,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 
 const schema = modelSchema.extend({
   tagsOnModels: z.string().array(),
@@ -149,6 +150,9 @@ export function ModelForm({ model }: Props) {
     name: 'modelVersions',
     rules: { minLength: 1, required: true },
   });
+
+  const { isDirty } = form.formState;
+  useCatchNavigation({ unsavedChanges: isDirty });
 
   const tagsOnModels = form.watch('tagsOnModels');
 
@@ -282,50 +286,10 @@ export function ModelForm({ model }: Props) {
     }
   };
 
-  const { isDirty } = form.formState;
-
-  const handleGoBackClick = () => {
-    if (isDirty) {
-      return openConfirmModal({
-        title: (
-          <Group spacing="xs">
-            <IconAlertTriangle color="gold" />
-            Leave form?
-          </Group>
-        ),
-        centered: true,
-        children: 'All unsaved changes will be lost, do you wish to continue?',
-        labels: { cancel: 'No', confirm: 'Yes' },
-        onConfirm: () => router.back(),
-      });
-    }
-
-    return router.back();
-  };
-
-  // Display alert when closing tab/window if form is dirty
-  useEffect(() => {
-    function handlePreventClosing(event: BeforeUnloadEvent) {
-      event.preventDefault();
-
-      return (event.returnValue =
-        'All unsaved changes will be lost. Are you sure you want to exit?');
-    }
-
-    // Should only be set when form is dirty to avoid hit on performance
-    // @see https://developer.mozilla.org/en-US/docs/Web/API/Window/beforeunload_event#usage_notes
-    if (isDirty) window.addEventListener('beforeunload', handlePreventClosing);
-    else window.removeEventListener('beforeunload', handlePreventClosing);
-
-    return () => {
-      window.removeEventListener('beforeunload', handlePreventClosing);
-    };
-  }, [isDirty]);
-
   return (
     <Container>
       <Group spacing="lg" mb="lg">
-        <ActionIcon variant="outline" size="lg" onClick={handleGoBackClick}>
+        <ActionIcon variant="outline" size="lg" onClick={() => router.back()}>
           <IconArrowLeft size={20} stroke={1.5} />
         </ActionIcon>
         <Title order={3}>{model ? 'Editing model' : 'Upload model'}</Title>
