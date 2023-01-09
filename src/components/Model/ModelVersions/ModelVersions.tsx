@@ -239,7 +239,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
                       {/* TODO.Justin - styling */}
                       {status === 'hide' && (
                         <AbsoluteCenter zIndex={10}>
-                          <SensitiveContent />
+                          {index === 0 && <SensitiveContent />}
                           <ImageGuard.ToggleConnect>
                             {() => <Button>Click to view</Button>}
                           </ImageGuard.ToggleConnect>
