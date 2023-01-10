@@ -1,6 +1,6 @@
 import { CloseButton, Group, TextInput, TextInputProps } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
-import { forwardRef, RefObject, useRef } from 'react';
+import { forwardRef, useRef } from 'react';
 
 type ClearableTextInputProps = TextInputProps & {
   clearable?: boolean;
@@ -10,7 +10,7 @@ type ClearableTextInputProps = TextInputProps & {
 export const ClearableTextInput = forwardRef<HTMLInputElement, ClearableTextInputProps>(
   ({ clearable = true, rightSection, onClear, ...props }, ref) => {
     const inputRef = useRef<HTMLInputElement>(null);
-    const mergedRef = useMergedRef(ref, inputRef) as unknown;
+    const mergedRef = useMergedRef(ref, inputRef);
 
     const closeButton = props.value && (
       <CloseButton
@@ -30,7 +30,7 @@ export const ClearableTextInput = forwardRef<HTMLInputElement, ClearableTextInpu
     );
     return (
       <TextInput
-        ref={mergedRef as RefObject<HTMLInputElement>}
+        ref={mergedRef}
         {...props}
         rightSection={
           (clearable || rightSection) && (
