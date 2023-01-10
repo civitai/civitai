@@ -1,14 +1,21 @@
-import { Popover, Text, Stack, Box, NavLink, Group, Badge } from '@mantine/core';
-import { useDebouncedState } from '@mantine/hooks';
-import { IconSearch } from '@tabler/icons';
-import { useState, useRef, useEffect } from 'react';
-import { trpc } from '~/utils/trpc';
-import { ClearableTextInput } from './../ClearableTextInput/ClearableTextInput';
+import { Text, Box, Group, Badge, SelectItemProps, BadgeProps } from '@mantine/core';
 import { useForm } from '@mantine/form';
+import { useHotkeys, useDebouncedState } from '@mantine/hooks';
+import { TagTarget } from '@prisma/client';
+import { IconSearch } from '@tabler/icons';
 import { useRouter } from 'next/router';
+import { useRef, useEffect, useMemo, forwardRef } from 'react';
+
+import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { useModelFilters } from '~/hooks/useModelFilters';
 import { slugit } from '~/utils/string-helpers';
-import { TagTarget } from '@prisma/client';
+import { trpc } from '~/utils/trpc';
+
+type CustomAutocompleteItem = {
+  value: string;
+  group: 'Models' | 'Users' | 'Tags';
+  badge?: React.ReactElement<BadgeProps> | null;
+};
 
 const limit = 3;
 
@@ -18,60 +25,59 @@ export function ListSearch({ onSearch }: Props) {
     filters: { tag, query, username },
     setFilters,
   } = useModelFilters();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [focused, setFocused] = useState(false);
-  const [value, setValue] = useDebouncedState('', 100);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [value, setValue] = useDebouncedState('', 300);
 
   const form = useForm({
-    initialValues: {
-      query: '',
-    },
+    initialValues: { query: '' },
   });
 
   useEffect(() => {
     setValue('');
-    setFocused(false);
-  }, [router]);  // eslint-disable-line
+  }, [router]); // eslint-disable-line
 
   useEffect(() => {
     form.setValues({
       query:
         router.route === '/' ? query ?? (tag ? `#${tag}` : username ? `@${username}` : '') : '',
     });
-  }, [router.route, query, tag]); //eslint-disable-line
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.route, query, tag, username]);
+
+  useHotkeys([['mod+K', () => searchRef.current?.focus()]]);
 
   const canQueryUsers = value.startsWith('@') ? value.length > 1 : !value.startsWith('#');
   const parseUserQuery = (query: string) =>
-    query.startsWith('@') ? query.substring(1).toLowerCase() : query.toLowerCase();
+    query.startsWith('@') ? query.substring(1).toLowerCase().trim() : query.toLowerCase();
 
   const { data: users } = trpc.user.getAll.useQuery(
     { query: parseUserQuery(value), limit },
-    { enabled: !!value.length && canQueryUsers, keepPreviousData: true }
+    { enabled: !!value.length && canQueryUsers }
   );
 
   const canQueryTags = value.startsWith('#') ? value.length > 1 : !value.startsWith('@');
   const parseTagQuery = (query: string) =>
-    query.startsWith('#') ? query.substring(1).toLowerCase() : query.toLowerCase();
+    query.startsWith('#') ? query.substring(1).toLowerCase().trim() : query.toLowerCase();
 
   const { data: tags } = trpc.tag.getAll.useQuery(
     { query: parseTagQuery(value), limit, entityType: TagTarget.Model },
-    { enabled: !!value.length && canQueryTags, keepPreviousData: true }
+    { enabled: !!value.length && canQueryTags }
   );
 
   const canQueryModels = !value.startsWith('#') && !value.startsWith('@');
   const { data: models } = trpc.model.getAllPagedSimple.useQuery(
     { query: parseTagQuery(value), limit },
-    { enabled: !!value.length && canQueryModels, keepPreviousData: true }
+    { enabled: !!value.length && canQueryModels }
   );
 
-  const handleSetTags = (query: string) => {
+  const handleSetTag = (query: string) => {
     const parsedQuery = parseTagQuery(query);
     const tag = tags?.items.find((x) => x.name.toLowerCase() === parsedQuery);
     if (!tag) return;
     router.push(`/tag/${tag.name.toLowerCase()}`);
   };
 
-  const handleSetUsers = (query: string) => {
+  const handleSetUser = (query: string) => {
     const parsedQuery = parseUserQuery(query);
     const user = users?.find((x) => x.username?.toLowerCase() === parsedQuery);
     if (!user) return;
@@ -92,121 +98,84 @@ export function ListSearch({ onSearch }: Props) {
     setFilters((state) => ({ ...state, tag: undefined, query: undefined, username: undefined }));
   };
 
-  const hasQueriedTags = tags?.items.some((x) => {
-    const parsedQuery = parseTagQuery(value);
-    return !!parsedQuery.length ? x.name.toLowerCase().includes(parsedQuery) : false;
-  });
-
-  const hasQueriedUsers = users?.some((x) => {
-    const parsedQuery = parseUserQuery(value);
-    return !!parsedQuery.length ? x.username?.toLowerCase().includes(parsedQuery) : false;
-  });
-
-  const hasQueriedModels = models?.items.some((x) =>
-    x.name.toLowerCase().includes(value.toLowerCase())
+  const autocompleteData = useMemo(
+    () =>
+      ([] as CustomAutocompleteItem[])
+        .concat(
+          models?.items.map((model) => ({
+            value: model.name,
+            group: 'Models',
+            badge: model.nsfw ? <Badge color="red">NSFW</Badge> : null,
+          })) ?? []
+        )
+        .concat(users?.map((user) => ({ value: user.username as string, group: 'Users' })) ?? [])
+        .concat(tags?.items.map((tag) => ({ value: tag.name, group: 'Tags' })) ?? []),
+    [models?.items, tags?.items, users]
   );
 
   return (
-    <Popover
-      opened={focused && !!value.length && (hasQueriedTags || hasQueriedUsers || hasQueriedModels)}
-      width="target"
-      transition="pop"
+    <form
+      onSubmit={form.onSubmit(({ query }) => {
+        if (query.startsWith('#')) handleSetTag(query);
+        else if (query.startsWith('@')) handleSetUser(query);
+        else handleSetQuery(query);
+        searchRef.current?.blur();
+      })}
     >
-      <Popover.Target>
-        <form
-          onSubmit={form.onSubmit(({ query }) => {
-            if (query.startsWith('#')) handleSetTags(query);
-            else handleSetQuery(query);
-            inputRef.current?.blur();
-          })}
-        >
-          <ClearableTextInput
-            icon={<IconSearch />}
-            placeholder="Search models, #tags, @users"
-            {...form.getInputProps('query')}
-            onFocus={() => setFocused(true)}
-            // onBlur={() => setFocused(false)}
-            onChange={(e) => {
-              const query = e.target.value;
-              form.setValues({ query });
-              setValue(query);
-              onSearch?.(query);
-            }}
-            onClear={handleClear}
-            autoComplete="off"
-            ref={inputRef}
-          />
-        </form>
-      </Popover.Target>
-      <Popover.Dropdown px={0}>
-        <Stack spacing="lg">
-          {models?.items.some((x) => x.name.toLowerCase().includes(value.toLowerCase())) && (
-            <Stack spacing={5}>
-              <Text size="sm" weight={700} color="dimmed" px="xs">
-                Models
-              </Text>
-              <Box>
-                {models.items.map((model) => (
-                  <NavLink
-                    key={model.id}
-                    label={
-                      <Group noWrap spacing="xs">
-                        <Text lineClamp={1}>{model.name}</Text>{' '}
-                        {model.nsfw && <Badge color="red">NSFW</Badge>}
-                      </Group>
-                    }
-                    onClick={() => {
-                      handleSetModel(model.name);
-                    }}
-                  />
-                ))}
-              </Box>
-            </Stack>
-          )}
-          {users?.some((x) => x.username?.toLowerCase().includes(parseUserQuery(value))) && (
-            <Stack spacing={5}>
-              <Text size="sm" weight={700} color="dimmed" px="xs">
-                Users
-              </Text>
-              <Box>
-                {users.map(
-                  ({ id, username }) =>
-                    username && (
-                      <NavLink
-                        key={id}
-                        label={`@ ${username}`}
-                        onClick={() => {
-                          handleSetUsers(username);
-                        }}
-                      />
-                    )
-                )}
-              </Box>
-            </Stack>
-          )}
+      <ClearableAutoComplete
+        {...form.getInputProps('query')}
+        ref={searchRef}
+        placeholder="Search models, #tags, @users"
+        limit={10}
+        icon={<IconSearch />}
+        data={autocompleteData}
+        onClear={handleClear}
+        onChange={(query) => {
+          form.setValues({ query });
+          setValue(query);
+          onSearch?.(query);
+        }}
+        itemComponent={SearchItem}
+        onItemSubmit={(item: CustomAutocompleteItem) => {
+          const { value, group } = item;
+          if (group === 'Models') handleSetModel(value);
+          else if (group === 'Users') handleSetUser(value);
+          else if (group === 'Tags') handleSetTag(value);
+        }}
+        filter={(value) => {
+          if (value.startsWith('@')) {
+            const parsed = parseUserQuery(value.toLowerCase().trim());
+            return users?.some((user) => user.username?.toLowerCase().includes(parsed));
+          }
+          if (value.startsWith('#')) {
+            const parsed = parseTagQuery(value.toLowerCase().trim());
+            return tags?.items.some((tag) => tag.name.toLowerCase().includes(parsed));
+          }
 
-          {tags?.items.some((x) => x.name.toLowerCase().includes(parseTagQuery(value))) && (
-            <Stack spacing={5}>
-              <Text size="sm" weight={700} color="dimmed" px="xs">
-                Tags
-              </Text>
-              <Box>
-                {tags.items.map((tag) => (
-                  <NavLink
-                    key={tag.id}
-                    label={`# ${tag.name}`}
-                    onClick={() => {
-                      handleSetTags(tag.name);
-                    }}
-                  />
-                ))}
-              </Box>
-            </Stack>
-          )}
-        </Stack>
-      </Popover.Dropdown>
-    </Popover>
+          return true;
+        }}
+        clearable
+      />
+    </form>
   );
 }
 
 type Props = { onSearch?: (value: string) => void };
+
+const SearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
+  ({ group, value, badge, ...props }, ref) => {
+    return (
+      <Box ref={ref} {...props} key={`${group}-${value}`}>
+        <Group noWrap spacing="xs">
+          <Text lineClamp={1}>
+            {group === 'Users' ? `@ ${value}` : group === 'Tags' ? `# ${value}` : value}
+          </Text>
+          {badge}
+        </Group>
+      </Box>
+    );
+  }
+);
+SearchItem.displayName = 'SearchItem';
+
+type SearchItemProps = SelectItemProps & CustomAutocompleteItem;
