@@ -14,32 +14,36 @@ import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
-export const getComments = async <TSelect extends Prisma.CommentSelect>({
+export const getComments = <TSelect extends Prisma.CommentSelect>({
   input: { limit = DEFAULT_PAGE_SIZE, page, cursor, modelId, userId, filterBy, sort },
   user,
   select,
-  includeNsfw = false,
 }: {
   input: GetAllCommentsSchema;
   select: TSelect;
   user?: SessionUser;
-  includeNsfw?: boolean;
 }) => {
   const skip = page ? (page - 1) * limit : undefined;
-  const canViewNsfw = (includeNsfw || user?.showNsfw) ?? env.UNAUTHENTICATE_LIST_NSFW;
+  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
-  return await prisma.comment.findMany({
+  return prisma.comment.findMany({
     take: limit,
     skip,
     cursor: cursor ? { id: cursor } : undefined,
     where: {
       modelId,
       userId,
-      nsfw: canViewNsfw ? (filterBy?.includes(ReviewFilter.NSFW) ? true : undefined) : false,
       reviewId: { equals: null },
       parentId: { equals: null },
+      OR: [
+        {
+          userId: { not: user?.id },
+          nsfw: canViewNsfw ? (filterBy?.includes(ReviewFilter.NSFW) ? true : undefined) : false,
+        },
+        { userId: user?.id },
+      ],
     },
     orderBy: {
       createdAt:
@@ -80,7 +84,7 @@ export const getUserReactionByCommentId = ({
   return prisma.commentReaction.findFirst({ where: { reaction, userId, commentId } });
 };
 
-export const createOrUpdateComment = async ({
+export const createOrUpdateComment = ({
   ownerId,
   ...input
 }: CommentUpsertInput & { ownerId: number }) => {
@@ -99,8 +103,8 @@ export const createOrUpdateComment = async ({
   });
 };
 
-export const deleteCommentById = async ({ id }: GetByIdInput) => {
-  return await prisma.comment.delete({
+export const deleteCommentById = ({ id }: GetByIdInput) => {
+  return prisma.comment.delete({
     where: { id },
   });
 };

@@ -14,7 +14,7 @@ import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 import { getAllReviewsSelect } from '~/server/selectors/review.selector';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
-export const getReviews = async <TSelect extends Prisma.ReviewSelect>({
+export const getReviews = <TSelect extends Prisma.ReviewSelect>({
   input: {
     limit = DEFAULT_PAGE_SIZE,
     page,
@@ -27,17 +27,15 @@ export const getReviews = async <TSelect extends Prisma.ReviewSelect>({
   },
   user,
   select,
-  includeNsfw = false,
 }: {
   input: GetAllReviewsInput;
   select: TSelect;
   user?: SessionUser;
-  includeNsfw?: boolean;
 }) => {
   const skip = page ? (page - 1) * limit : undefined;
-  const canViewNsfw = (includeNsfw || user?.showNsfw) ?? env.UNAUTHENTICATE_LIST_NSFW;
+  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
 
-  return await prisma.review.findMany({
+  return prisma.review.findMany({
     take: limit,
     skip,
     cursor: cursor ? { id: cursor } : undefined,
@@ -45,8 +43,14 @@ export const getReviews = async <TSelect extends Prisma.ReviewSelect>({
       modelId,
       modelVersionId,
       userId,
-      nsfw: canViewNsfw ? (filterBy?.includes(ReviewFilter.NSFW) ? true : undefined) : false,
       imagesOnReviews: filterBy?.includes(ReviewFilter.IncludesImages) ? { some: {} } : undefined,
+      OR: [
+        {
+          userId: { not: user?.id },
+          nsfw: canViewNsfw ? (filterBy?.includes(ReviewFilter.NSFW) ? true : undefined) : false,
+        },
+        { userId: user?.id },
+      ],
     },
     orderBy: {
       createdAt:

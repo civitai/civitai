@@ -10,7 +10,6 @@ import {
 } from '~/server/schema/review.schema';
 import { commentDetailSelect } from '~/server/selectors/comment.selector';
 import { getAllReviewsSelect, reviewDetailSelect } from '~/server/selectors/review.selector';
-import { getModel } from '~/server/services/model.service';
 import {
   getReviewReactions,
   getReviews,
@@ -33,20 +32,10 @@ export const getReviewsInfiniteHandler = async ({
   input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
   const limit = input.limit + 1;
   const { user } = ctx;
-
-  const model = await getModel({
-    input: { id: input.modelId as number },
-    user,
-    select: { user: { select: { id: true } } },
-  });
-  if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
-
-  const isModelOwner = model.user.id === user?.id;
   const reviews = await getReviews({
     input: { ...input, limit },
     user,
     select: getAllReviewsSelect,
-    includeNsfw: isModelOwner,
   });
 
   let nextCursor: number | undefined;

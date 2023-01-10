@@ -18,7 +18,6 @@ import {
   getUserReactionByCommentId,
   updateCommentById,
 } from '~/server/services/comment.service';
-import { getModel } from '~/server/services/model.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
@@ -32,20 +31,10 @@ export const getCommentsInfiniteHandler = async ({
   input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
   const limit = input.limit + 1;
   const { user } = ctx;
-
-  const model = await getModel({
-    input: { id: input.modelId as number },
-    user,
-    select: { user: { select: { id: true } } },
-  });
-  if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
-
-  const isModelOwner = model.user.id === user?.id;
   const comments = await getComments({
     input: { ...input, limit },
-    user: ctx.user,
+    user,
     select: getAllCommentsSelect,
-    includeNsfw: isModelOwner,
   });
 
   let nextCursor: number | undefined;
