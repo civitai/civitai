@@ -1,3 +1,4 @@
+import { ModelHashType } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
@@ -9,6 +10,9 @@ import { prisma } from '~/server/db/client';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+
+const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
+  hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
 
 const schema = z.object({ id: z.preprocess((val) => Number(val), z.number()) });
 
@@ -45,9 +49,11 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   res.status(200).json({
     ...version,
     model,
-    files: files.map((file) => ({
+    files: files.map(({ hashes, ...file }) => ({
       ...file,
+      hashes: hashesAsObject(hashes),
       name: getDownloadFilename({ model, modelVersion: version, file }),
+      primary: primaryFile.id === file.id,
       downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
         versionId: version.id,
         type: file.type,
