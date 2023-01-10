@@ -91,6 +91,7 @@ model User {
   commentV2Reactions   CommentV2Reaction[]
   answerVotes          AnswerVote[]
   downloads            DownloadHistory[]
+  tagsEngaged          TagEngagement[]
 }
 
 enum UserEngagementType {
@@ -539,6 +540,7 @@ model Tag {
 
   tagsOnModels   TagsOnModels[]
   TagsOnQuestion TagsOnQuestions[]
+  usersEngaged   TagEngagement[]
 
   @@unique([name, target])
 }
@@ -847,6 +849,22 @@ model CommentV2Reaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([commentId, userId, reaction])
+}
+
+enum TagEngagementType {
+  Hide
+  Follow
+}
+
+model TagEngagement {
+  userId    Int
+  user      User              @relation(fields: [userId], references: [id])
+  tagId     Int
+  tag       Tag               @relation(fields: [tagId], references: [id])
+  type      TagEngagementType
+  createdAt DateTime          @default(now())
+
+  @@id([userId, tagId])
 }
 
 /// @view

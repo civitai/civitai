@@ -43,6 +43,7 @@ export const getAllModelsSchema = z.object({
     (val) => val === true || val === 'true',
     z.boolean().optional().default(false)
   ),
+  excludedTagIds: z.array(z.number()).optional(),
 });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;

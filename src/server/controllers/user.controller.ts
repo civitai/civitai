@@ -6,6 +6,7 @@ import {
   getUserFavoriteModelByModelId,
   getUserFavoriteModels,
   getUserUnreadNotificationsCount,
+  toggleBlockedTag,
   toggleFollowUser,
   toggleHideUser,
 } from '~/server/services/user.service';
@@ -19,6 +20,8 @@ import {
   ToggleFollowUserSchema,
   GetByUsernameSchema,
   DeleteUserInput,
+  ToggleBlockedTagSchema,
+  GetUserTagsSchema,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
@@ -382,6 +385,51 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
     });
 
     return items;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getUserTagsHandler = async ({
+  input,
+  ctx,
+}: {
+  input?: GetUserTagsSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id } = ctx.user;
+    const user = await getUserById({
+      id,
+      select: {
+        tagsEngaged: {
+          where: input ? { type: input.type } : undefined,
+          select: {
+            tag: { select: { id: true, name: true } },
+            type: !!input?.type ? true : undefined,
+          },
+        },
+      },
+    });
+    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    return user.tagsEngaged.map(({ tag }) => tag);
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const toggleBlockedTagHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleBlockedTagSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    return toggleBlockedTag({ ...input, userId });
   } catch (error) {
     throw throwDbError(error);
   }

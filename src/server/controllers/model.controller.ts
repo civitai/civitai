@@ -26,6 +26,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { getUserById } from '~/server/services/user.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -52,8 +53,20 @@ export const getModelsInfiniteHandler = async ({
 }) => {
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
+
+  // Get blockedTags for currentUser to exclude from models query
+  let excludedTagIds: number[] | undefined;
+  if (ctx.user) {
+    const { id: userId } = ctx.user;
+    const user = await getUserById({
+      id: userId,
+      select: { tagsEngaged: { where: { type: 'Hide' }, select: { tagId: true } } },
+    });
+    excludedTagIds = user?.tagsEngaged.map(({ tagId }) => tagId);
+  }
+
   const { items } = await getModels({
-    input: { ...input, take },
+    input: { ...input, take, excludedTagIds },
     user: ctx.user,
     select: {
       id: true,
