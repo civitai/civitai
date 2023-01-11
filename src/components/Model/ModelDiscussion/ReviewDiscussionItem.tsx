@@ -24,10 +24,8 @@ import {
 } from '@tabler/icons';
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { SFW } from '~/components/Media/SFW';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -39,7 +37,12 @@ import { ReviewGetAllItem } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
+import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { ShowHide } from '~/components/ShowHide/ShowHide';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 export function ReviewDiscussionItem({ review }: Props) {
   const { openContext } = useRoutedContext();
@@ -167,28 +170,6 @@ export function ReviewDiscussionItem({ review }: Props) {
 
   const hasImages = review.images.length > 0;
   const hasMultipleImages = review.images.length > 1;
-  const firstImage = hasImages ? review.images[0] : undefined;
-
-  const carousel = (
-    <Carousel withControls={hasMultipleImages} draggable={hasMultipleImages} loop>
-      {review.images.map((image, index) => (
-        <Carousel.Slide key={image.id}>
-          <ImagePreview
-            image={image}
-            edgeImageProps={{ width: 400 }}
-            aspectRatio={1}
-            onClick={() =>
-              openContext('reviewLightbox', {
-                initialSlide: index,
-                reviewId: review.id,
-              })
-            }
-            withMeta
-          />
-        </Carousel.Slide>
-      ))}
-    </Carousel>
-  );
 
   return (
     <Card radius="md" p="md" withBorder>
@@ -284,15 +265,42 @@ export function ReviewDiscussionItem({ review }: Props) {
       </Stack>
       {hasImages && (
         <Card.Section mb="sm" style={{ position: 'relative' }}>
-          <SFW type="review" id={review.id} nsfw={review.nsfw}>
-            <SFW.ToggleNsfw
-              placeholder={
-                <AspectRatio ratio={1}>{firstImage && <MediaHash {...firstImage} />}</AspectRatio>
-              }
+          <Carousel withControls={hasMultipleImages} draggable={hasMultipleImages} loop>
+            <ImageGuard
+              images={review.images}
+              connect={{ entityType: 'review', entityId: review.id }}
+              render={(image, index) => (
+                <Carousel.Slide>
+                  <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                  <ImageGuard.Unsafe>
+                    <AspectRatio
+                      ratio={1}
+                      sx={{
+                        width: '100%',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <MediaHash {...image} />
+                    </AspectRatio>
+                  </ImageGuard.Unsafe>
+                  <ImageGuard.Safe>
+                    <ImagePreview
+                      image={image}
+                      edgeImageProps={{ width: 400 }}
+                      aspectRatio={1}
+                      onClick={() =>
+                        openContext('reviewLightbox', {
+                          initialSlide: index,
+                          reviewId: review.id,
+                        })
+                      }
+                      withMeta
+                    />
+                  </ImageGuard.Safe>
+                </Carousel.Slide>
+              )}
             />
-            <SFW.Count count={review.images.length} />
-            <SFW.Content>{carousel}</SFW.Content>
-          </SFW>
+          </Carousel>
         </Card.Section>
       )}
 

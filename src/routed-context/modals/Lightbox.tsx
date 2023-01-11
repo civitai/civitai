@@ -10,8 +10,6 @@ import {
   CloseButton,
   Paper,
   Stack,
-  Card,
-  Text,
   Button,
   Center,
   Loader,
@@ -20,11 +18,12 @@ import {
 import { useHotkeys } from '@mantine/hooks';
 import { IconMinus, IconInfoCircle } from '@tabler/icons';
 import { useState, useRef } from 'react';
+import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
-import { SFW } from '~/components/Media/SFW';
-import { MediaTypes } from '~/components/Media/sfwContext';
+import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageModel } from '~/server/selectors/image.selector';
 
@@ -32,8 +31,7 @@ type LightboxProps = {
   nsfw?: boolean;
   initialSlide?: number;
   images?: ImageModel[];
-  id: number;
-  type: MediaTypes;
+  connect: ImageGuardConnect;
 };
 
 export function Lightbox({
@@ -42,8 +40,7 @@ export function Lightbox({
   opened,
   onClose,
   nsfw,
-  id,
-  type,
+  connect,
   ...props
 }: Omit<ModalProps, 'children' | 'id'> & LightboxProps) {
   const theme = useMantineTheme();
@@ -91,33 +88,7 @@ export function Lightbox({
               <Loader />
             </Center>
           ) : (
-            <SFW
-              type={type}
-              id={id}
-              nsfw={nsfw}
-              sx={{ width: '100%', height: '100%', display: 'flex' }}
-            >
-              <SFW.Placeholder>
-                <Card
-                  p="md"
-                  radius="sm"
-                  withBorder
-                  sx={{
-                    position: 'absolute',
-                    top: '50%',
-                    left: '50%',
-                    transform: 'translate(-50%,-50%)',
-                    zIndex: 10,
-                  }}
-                >
-                  <Stack>
-                    <Text>{`This ${type}  has been marked NSFW`}</Text>
-                    <SFW.Toggle>
-                      <Button>Click to view</Button>
-                    </SFW.Toggle>
-                  </Stack>
-                </Card>
-              </SFW.Placeholder>
+            <Box sx={{ width: '100%', height: '100%', display: 'flex' }}>
               <Carousel
                 height="100%"
                 sx={{ flex: 1 }}
@@ -139,45 +110,54 @@ export function Lightbox({
                   },
                 }}
               >
-                {images.map((image) => {
-                  const width = image?.width ?? 1200;
-                  const height = image?.height ?? 1200;
-                  return (
-                    <Carousel.Slide key={image.url}>
-                      <Center
-                        sx={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                        }}
-                      >
-                        <SFW.Placeholder>
-                          <AspectRatio
-                            ratio={width / height}
-                            sx={{
-                              maxHeight: '100%',
-                              maxWidth: '100%',
-                              height,
-                              width,
-                            }}
-                          >
-                            <MediaHash {...image} />
-                          </AspectRatio>
-                        </SFW.Placeholder>
-                        <SFW.Content>
-                          <EdgeImage
-                            src={image.url}
-                            alt={image.name ?? undefined}
-                            style={{ maxHeight: '100%', maxWidth: '100%' }}
-                            width={width}
-                          />
-                        </SFW.Content>
-                      </Center>
-                    </Carousel.Slide>
-                  );
-                })}
+                <ImageGuard
+                  images={images}
+                  connect={connect}
+                  nsfw={nsfw}
+                  render={(image) => {
+                    const width = image?.width ?? 1200;
+                    const height = image?.height ?? 1200;
+
+                    return (
+                      <Carousel.Slide key={image.url}>
+                        <Center
+                          sx={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                          }}
+                        >
+                          <div style={{ position: 'relative' }}>
+                            <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                            <ImageGuard.Unsafe>
+                              <AspectRatio
+                                ratio={width / height}
+                                sx={{
+                                  maxHeight: '100%',
+                                  maxWidth: '100%',
+                                  height,
+                                  width,
+                                }}
+                              >
+                                <MediaHash {...image} />
+                              </AspectRatio>
+                            </ImageGuard.Unsafe>
+                            <ImageGuard.Safe>
+                              <EdgeImage
+                                src={image.url}
+                                alt={image.name ?? undefined}
+                                style={{ maxHeight: '100%', maxWidth: '100%' }}
+                                width={width}
+                              />
+                            </ImageGuard.Safe>
+                          </div>
+                        </Center>
+                      </Carousel.Slide>
+                    );
+                  }}
+                />
               </Carousel>
               {images[index]?.meta && (
                 <Paper
@@ -198,7 +178,7 @@ export function Lightbox({
                   </Stack>
                 </Paper>
               )}
-            </SFW>
+            </Box>
           )}
         </Box>
       </MantineProvider>

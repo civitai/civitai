@@ -4,29 +4,33 @@ import {
   Loader,
   Modal,
   Center,
-  AspectRatio,
   Grid,
   Group,
   Rating,
   Stack,
   CloseButton,
   Alert,
+  Button,
+  AspectRatio,
 } from '@mantine/core';
 import { useRef } from 'react';
 import { z } from 'zod';
+import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 
 import CommentSection from '~/components/CommentSection/CommentSection';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { SFW } from '~/components/Media/SFW';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { trpc } from '~/utils/trpc';
+import { ShowHide } from '~/components/ShowHide/ShowHide';
 
 const TRANSITION_DURATION = 200;
 
@@ -165,7 +169,64 @@ export default createRoutedContext({
               </Grid.Col>
               {hasImages ? (
                 <Grid.Col span={12} sx={{ position: 'relative' }}>
-                  <SFW type="review" id={review.id} nsfw={review.nsfw}>
+                  <Carousel
+                    align="center"
+                    slidesToScroll={1}
+                    slideSize="100%"
+                    withControls={hasMultipleImages}
+                    getEmblaApi={(embla) => (emblaRef.current = embla)}
+                    loop
+                  >
+                    <ImageGuard
+                      images={review.images}
+                      connect={{ entityType: 'review', entityId: review.id }}
+                      render={(image) => {
+                        const width = image.width ?? 1;
+                        const height = image.height ?? 1;
+                        const screenHeight = 400;
+                        // const parsedWidth = width * (400 / width);
+                        const parsedWidth = screenHeight * (width / height);
+                        return (
+                          <Carousel.Slide key={image.id}>
+                            <Center style={{ height: '100%' }}>
+                              <div
+                                style={{
+                                  position: 'relative',
+                                  height: '100%',
+                                  width: parsedWidth,
+                                }}
+                              >
+                                <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                                <ImageGuard.Unsafe>
+                                  <AspectRatio
+                                    ratio={(image.width ?? 1) / (image.height ?? 1)}
+                                    sx={(theme) => ({
+                                      height: '100%',
+                                      borderRadius: theme.radius.md,
+                                      overflow: 'hidden',
+                                    })}
+                                  >
+                                    <MediaHash {...image} />
+                                  </AspectRatio>
+                                </ImageGuard.Unsafe>
+                                <ImageGuard.Safe>
+                                  <ImagePreview
+                                    image={image}
+                                    aspectRatio={0}
+                                    edgeImageProps={{ height: screenHeight }}
+                                    radius="md"
+                                    withMeta
+                                  />
+                                </ImageGuard.Safe>
+                              </div>
+                            </Center>
+                          </Carousel.Slide>
+                        );
+                      }}
+                    />
+                  </Carousel>
+
+                  {/* <SFW type="review" id={review.id} nsfw={review.nsfw}>
                     <SFW.ToggleNsfw
                       placeholder={
                         <AspectRatio ratio={16 / 9} style={{ height: 400 }}>
@@ -175,7 +236,7 @@ export default createRoutedContext({
                     />
                     <SFW.Count count={review.images.length} />
                     <SFW.Content>{carousel}</SFW.Content>
-                  </SFW>
+                  </SFW> */}
                 </Grid.Col>
               ) : null}
               <Grid.Col span={12} py={0}>

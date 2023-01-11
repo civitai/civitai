@@ -9,3 +9,12 @@ export const getAllQuerySchema = z.object({
   query: z.string().optional(),
 });
 export type GetAllSchema = z.infer<typeof getAllQuerySchema>;
+
+// type BaseInterface = {
+//   id?: number;
+// } & Record<string, unknown>;
+// type OmitId<T extends BaseInterface> = Omit<T, 'id'>;
+
+// export const isEntity = <T extends BaseInterface>(
+//   entity: T
+// ): entity is OmitId<T> & { id: number } => !!entity.id;

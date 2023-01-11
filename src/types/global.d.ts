@@ -25,6 +25,11 @@ declare global {
     height?: number | null;
     width?: number | null;
     hash?: string;
+    nsfw?: boolean;
+    // navigation properties
+    uuid?: string;
+    analysis?: ImageAnalysisInput;
+    status?: 'processing' | 'uploading' | 'complete' | 'blocked' | 'error';
   };
 
   type DeepNonNullable<T> = { [P in keyof T]-?: NonNullable<T[P]> } & NonNullable<T>;

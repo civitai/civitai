@@ -165,11 +165,20 @@ export const createModel = async ({
   // Upsert ModelFiles: separate function
   // 👆 Ideally the whole thing will only be this many lines
   //    All of the logic would be in the separate functions
+  const allImagesNSFW = modelVersions
+    .flatMap((version) => version.images)
+    .every((image) => image.nsfw);
+
   return prisma.model.create({
     data: {
       ...data,
+      //TODO - if all images are nsfw and !data.nsfw, then data.nsfw needs to be true
+      // nsfw:
+      //   modelVersions.flatMap((version) => version.images).every((image) => image.nsfw) ??
+      //   data.nsfw,
       publishedAt: data.status === ModelStatus.Published ? new Date() : null,
       lastVersionAt: new Date(),
+      nsfw: data.nsfw || allImagesNSFW,
       userId,
       modelVersions: {
         create: modelVersions.map(({ images, files, ...version }, versionIndex) => ({
@@ -241,6 +250,7 @@ export const updateModel = async ({
               height: true,
               hash: true,
               url: true,
+              nsfw: true,
             },
           },
         },
@@ -276,10 +286,15 @@ export const updateModel = async ({
   const versionIds = modelVersions.map((version) => version.id).filter(Boolean) as number[];
   const hasNewVersions = modelVersions.some((x) => !x.id);
 
+  const allImagesNSFW = modelVersions
+    .flatMap((version) => version.images)
+    .every((image) => image.nsfw);
+
   const model = await prisma.model.update({
     where: { id },
     data: {
       ...data,
+      nsfw: data.nsfw || allImagesNSFW,
       status: data.status,
       publishedAt:
         data.status === ModelStatus.Published && currentModel?.status !== ModelStatus.Published
@@ -378,7 +393,7 @@ export const updateModel = async ({
                   index,
                   image: { create: image },
                 })),
-                update: imagesToUpdate.map(({ index, meta, ...image }) => ({
+                update: imagesToUpdate.map(({ index, meta, nsfw, ...image }) => ({
                   where: {
                     imageId_modelVersionId: {
                       imageId: image.id as number,
@@ -389,6 +404,7 @@ export const updateModel = async ({
                     index,
                     image: {
                       update: {
+                        nsfw,
                         meta,
                       },
                     },

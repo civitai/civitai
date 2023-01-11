@@ -47,10 +47,12 @@ import { z } from 'zod';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { SFW } from '~/components/Media/SFW';
+import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
@@ -446,51 +448,58 @@ const MasonryItem = ({
             {inView && (
               <>
                 <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} />
-                <SFW type="model" id={id} nsfw={nsfw} sx={{ height: '100%', width: '100%' }}>
-                  <SFW.ToggleNsfw />
-                  {contextMenuItems.length > 0 && (
-                    <Menu>
-                      <Menu.Target>
-                        <ActionIcon
-                          variant="transparent"
-                          p={0}
-                        onClick={(e: any) => { //eslint-disable-line
-                            e.preventDefault();
-                            e.stopPropagation();
-                          }}
-                          sx={{
-                            width: 30,
-                            position: 'absolute',
-                            top: 10,
-                            right: 4,
-                            zIndex: 8,
-                          }}
-                        >
-                          <IconDotsVertical
-                            size={24}
-                            color="#fff"
-                            style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                          />
-                        </ActionIcon>
-                      </Menu.Target>
-                      <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
-                    </Menu>
+                <ImageGuard
+                  images={[image]}
+                  connect={{ entityId: id, entityType: 'model' }}
+                  nsfw={nsfw ?? image.nsfw} // if the image is nsfw, then most/all of the model is nsfw
+                  render={(image) => (
+                    <Box sx={{ position: 'relative' }}>
+                      {contextMenuItems.length > 0 && (
+                        <Menu>
+                          <Menu.Target>
+                            <ActionIcon
+                              variant="transparent"
+                              p={0}
+                              onClick={(e: React.MouseEvent) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                              }}
+                              sx={{
+                                width: 30,
+                                position: 'absolute',
+                                top: 10,
+                                right: 4,
+                                zIndex: 8,
+                              }}
+                            >
+                              <IconDotsVertical
+                                size={24}
+                                color="#fff"
+                                style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                              />
+                            </ActionIcon>
+                          </Menu.Target>
+                          <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
+                        </Menu>
+                      )}
+                      <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                      <ImageGuard.Unsafe>
+                        <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                          <MediaHash {...image} />
+                        </AspectRatio>
+                      </ImageGuard.Unsafe>
+                      <ImageGuard.Safe>
+                        <EdgeImage
+                          src={image.url}
+                          alt={image.name ?? undefined}
+                          width={450}
+                          placeholder="empty"
+                          style={{ width: '100%', zIndex: 2, position: 'relative' }}
+                        />
+                      </ImageGuard.Safe>
+                    </Box>
                   )}
-                  <SFW.Placeholder>
-                    <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
-                      <MediaHash {...image} />
-                    </AspectRatio>
-                  </SFW.Placeholder>
-                  <SFW.Content>
-                    <EdgeImage
-                      src={image.url}
-                      alt={image.name ?? undefined}
-                      width={450}
-                      placeholder="empty"
-                      style={{ width: '100%', zIndex: 2, position: 'relative' }}
-                    />
-                  </SFW.Content>
-                </SFW>
+                />
                 <Box p="xs" className={classes.content}>
                   {onTwoLines ? twoLine : oneLine}
                 </Box>

@@ -26,16 +26,41 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { env } from '~/env/server.mjs';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
+  const showNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+  const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
   try {
-    const model = await getModel({ input, user: ctx.user, select: modelWithDetailsSelect });
+    const model = await getModel({
+      input,
+      user: ctx.user,
+      select: modelWithDetailsSelect(showNsfw),
+    });
     if (!model) {
       throw throwNotFoundError(`No model with id ${input.id}`);
     }
 
-    return model;
+    const isOwnerOrModerator = model.user.id === ctx.user?.id || ctx.user?.isModerator;
+
+    return {
+      ...model,
+      modelVersions: model.modelVersions.map((version) => {
+        const images =
+          !isOwnerOrModerator && prioritizeSafeImages
+            ? version.images
+                .flatMap((x) => x.image)
+                .sort((a, b) => {
+                  return a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1;
+                })
+            : version.images.flatMap((x) => x.image);
+        return {
+          ...version,
+          images,
+        };
+      }),
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -50,6 +75,8 @@ export const getModelsInfiniteHandler = async ({
   input: GetAllModelsOutput;
   ctx: Context;
 }) => {
+  const prioritizeSafeImages =
+    input.hideNSFW || (ctx.user?.showNsfw ?? false) === false || ctx.user?.blurNsfw;
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
   const { items } = await getModels({
@@ -68,9 +95,9 @@ export const getModelsInfiniteHandler = async ({
         take: 1,
         select: {
           images: {
-            orderBy: {
-              index: 'asc',
-            },
+            orderBy: prioritizeSafeImages
+              ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
+              : [{ index: 'asc' }],
             take: 1,
             select: {
               image: {
@@ -265,4 +292,29 @@ export const getModelReportDetailsHandler = async ({ input: { id } }: { input: G
       select: { userId: true, reportStats: { select: { ownershipPending: true } } },
     });
   } catch (error) {}
+};
+
+export const getModelDetailsForReviewHandler = async ({
+  input: { id },
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  try {
+    const model = getModel({
+      input: { id },
+      user: ctx.user,
+      select: {
+        poi: true,
+        modelVersions: {
+          select: { id: true, name: true },
+        },
+      },
+    });
+    if (!model) throw throwNotFoundError();
+    return model;
+  } catch (error) {
+    throw throwDbError(error);
+  }
 };

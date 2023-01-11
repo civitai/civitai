@@ -1,7 +1,7 @@
+import { GetByIdInput } from './../schema/base.schema';
 import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
-import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllReviewsInput,
   GetReviewReactionsInput,
@@ -20,6 +20,7 @@ import {
   getReviewById,
 } from '~/server/services/review.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { env } from '~/env/server.mjs';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 export const getReviewsInfiniteHandler = async ({
@@ -31,11 +32,13 @@ export const getReviewsInfiniteHandler = async ({
 }) => {
   input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
   const limit = input.limit + 1;
-  const { user } = ctx;
+  const canViewNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+  const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
+
   const reviews = await getReviews({
     input: { ...input, limit },
-    user,
-    select: getAllReviewsSelect,
+    user: ctx.user,
+    select: getAllReviewsSelect(canViewNsfw),
   });
 
   let nextCursor: number | undefined;
@@ -46,10 +49,18 @@ export const getReviewsInfiniteHandler = async ({
 
   return {
     nextCursor,
-    reviews: reviews.map(({ imagesOnReviews, ...review }) => ({
-      ...review,
-      images: imagesOnReviews.map(({ image }) => image),
-    })),
+    reviews: reviews.map(({ imagesOnReviews, ...review }) => {
+      const isOwnerOrModerator = review.user.id === ctx.user?.id || ctx.user?.isModerator;
+      const images =
+        !isOwnerOrModerator && prioritizeSafeImages
+          ? imagesOnReviews
+              .sort((a, b) => {
+                return a.image.nsfw === b.image.nsfw ? 0 : a.image.nsfw ? 1 : -1;
+              })
+              .map((x) => x.image)
+          : imagesOnReviews.map((x) => x.image);
+      return { ...review, images };
+    }),
   };
 };
 
@@ -148,18 +159,34 @@ export const toggleExcludeHandler = async ({ input }: { input: GetByIdInput }) =
 };
 
 export type ReviewDetails = AsyncReturnType<typeof getReviewDetailsHandler>;
-export const getReviewDetailsHandler = async ({ input: { id } }: { input: GetByIdInput }) => {
+export const getReviewDetailsHandler = async ({
+  input: { id },
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
   try {
+    const canViewNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+    const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
     const result = await getReviewById({
       id,
-      select: reviewDetailSelect,
+      select: reviewDetailSelect(canViewNsfw),
     });
     if (!result) throw throwNotFoundError(`No review with id ${id}`);
 
     const { imagesOnReviews, ...review } = result;
+    const isOwnerOrModerator = review.user.id === ctx.user?.id || ctx.user?.isModerator;
     return {
       ...review,
-      images: imagesOnReviews.map((x) => x.image),
+      images:
+        !isOwnerOrModerator && prioritizeSafeImages
+          ? imagesOnReviews
+              .sort((a, b) => {
+                return a.image.nsfw === b.image.nsfw ? 0 : a.image.nsfw ? 1 : -1;
+              })
+              .map((x) => x.image)
+          : imagesOnReviews.map((x) => x.image),
     };
   } catch (error) {
     throw throwDbError(error);

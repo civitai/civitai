@@ -1,11 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES6",
-    "lib": [
-      "dom",
-      "dom.iterable",
-      "esnext"
-    ],
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "types": ["offscreencanvas"],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -22,13 +19,9 @@
     "noUncheckedIndexedAccess": false,
     "baseUrl": "src",
     "paths": {
-      "~/*": [
-        "./*"
-      ]
+      "~/*": ["./*"]
     },
-    "typeRoots": [
-      "./types"
-    ],
+    "typeRoots": ["./types"],
     "noErrorTruncation": true
   },
   "include": [
@@ -39,7 +32,5 @@
     "**/*.mjs",
     "src"
   ],
-  "exclude": [
-    "node_modules"
-  ]
+  "exclude": ["node_modules"]
 }

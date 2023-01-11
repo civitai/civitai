@@ -13,13 +13,12 @@ export default createRoutedContext({
 
     return (
       <Lightbox
-        id={reviewId}
-        type="review"
         nsfw={data?.nsfw}
         opened={context.opened}
         onClose={context.close}
         initialSlide={initialSlide}
         images={data?.images}
+        connect={{ entityId: reviewId, entityType: 'review' }}
       />
     );
   },

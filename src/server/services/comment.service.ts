@@ -24,7 +24,7 @@ export const getComments = <TSelect extends Prisma.CommentSelect>({
   user?: SessionUser;
 }) => {
   const skip = page ? (page - 1) * limit : undefined;
-  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+  // const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
@@ -37,13 +37,13 @@ export const getComments = <TSelect extends Prisma.CommentSelect>({
       userId,
       reviewId: { equals: null },
       parentId: { equals: null },
-      OR: [
-        {
-          userId: { not: user?.id },
-          nsfw: canViewNsfw ? (filterBy?.includes(ReviewFilter.NSFW) ? true : undefined) : false,
-        },
-        { userId: user?.id },
-      ],
+      // OR: [
+      //   {
+      //     userId: { not: user?.id },
+      //     nsfw: canViewNsfw ? (filterBy?.includes(ReviewFilter.NSFW) ? true : undefined) : false,
+      //   },
+      //   { userId: user?.id },
+      // ],
     },
     orderBy: {
       createdAt:

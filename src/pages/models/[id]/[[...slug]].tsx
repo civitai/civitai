@@ -20,8 +20,8 @@ import {
   ThemeIcon,
   Tooltip,
   Rating,
-  Card,
   Anchor,
+  AspectRatio,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
@@ -82,7 +82,6 @@ import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { scrollToTop } from '~/utils/scroll-utils';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
-import { SFW } from '~/components/Media/SFW';
 import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -91,8 +90,14 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
+import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ShowHide } from '~/components/ShowHide/ShowHide';
+import { Blurhash } from 'react-blurhash';
 
 //TODO - Break model query into multiple queries
 /*
@@ -301,9 +306,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       title={`${model.name} | Stable Diffusion ${model.type} | Civitai`}
       description={removeTags(model.description ?? '')}
       image={
-        nsfw || latestVersion?.images[0]?.image.url == null
+        nsfw || latestVersion?.images[0]?.url == null
           ? undefined
-          : getEdgeUrl(latestVersion.images[0].image.url, { width: 1200 })
+          : getEdgeUrl(latestVersion.images[0].url, { width: 1200 })
       }
     />
   );
@@ -767,66 +772,40 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             })}
           >
             <Stack>
-              <SFW type="model" id={model.id} nsfw={model.nsfw}>
-                {({ nsfw, showNsfw }) => (
-                  <>
-                    <SFW.Placeholder>
-                      <Card
-                        p="md"
-                        radius="sm"
-                        withBorder
-                        sx={{
-                          position: 'absolute',
-                          top: '50%',
-                          left: '50%',
-                          transform: 'translate(-50%,-50%)',
-                          zIndex: 10,
-                        }}
-                      >
-                        <Stack>
-                          <Text>This model has been marked NSFW</Text>
-                          <SFW.Toggle>
-                            <Button>Click to view</Button>
-                          </SFW.Toggle>
-                        </Stack>
-                      </Card>
-                    </SFW.Placeholder>
-                    <Carousel
-                      slideSize="50%"
-                      breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
-                      slideGap="xl"
-                      align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
-                      slidesToScroll={mobile ? 1 : 2}
-                      withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
-                      loop
-                    >
-                      {latestVersion?.images.map(({ image }, index) => (
-                        <Carousel.Slide key={image.id}>
-                          <Center style={{ height: '100%' }}>
-                            {/* <Media.Placeholder>
-                              <AspectRatio
-                                ratio={(image?.width ?? 1) / (image?.height ?? 1)}
-                                style={{ height: 400 }}
-                              >
-                                <MediaHash
-                                  {...image}
-                                  style={{ height: '300px', width: '300px', position: 'relative' }}
-                                />
-                              </AspectRatio>
-                            </Media.Placeholder>
-                            <Media.Content>
-                              <EdgeImage
-                                src={image.url}
-                                alt={image.name ?? undefined}
-                                width={450}
-                                placeholder="empty"
-                                style={{ width: '100%', zIndex: 2, position: 'relative' }}
-                              />
-                            </Media.Content> */}
+              <Carousel
+                slideSize="50%"
+                breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
+                slideGap="xl"
+                align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
+                slidesToScroll={mobile ? 1 : 2}
+                withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+                loop
+              >
+                <ImageGuard
+                  images={latestVersion.images}
+                  nsfw={model.nsfw}
+                  connect={{ entityId: model.id, entityType: 'model' }}
+                  render={(image, index) => (
+                    <Carousel.Slide>
+                      <Center style={{ height: '100%', width: '100%' }}>
+                        <div style={{ width: '100%', position: 'relative' }}>
+                          <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                          <ImageGuard.Unsafe>
+                            <AspectRatio
+                              ratio={(image.width ?? 1) / (image.height ?? 1)}
+                              sx={(theme) => ({
+                                width: '100%',
+                                borderRadius: theme.radius.md,
+                                overflow: 'hidden',
+                              })}
+                            >
+                              <MediaHash {...image} />
+                            </AspectRatio>
+                          </ImageGuard.Unsafe>
+                          <ImageGuard.Safe>
                             <ImagePreview
                               image={image}
                               edgeImageProps={{ width: 400 }}
-                              nsfw={nsfw && !showNsfw}
                               radius="md"
                               onClick={() =>
                                 openContext('modelVersionLightbox', {
@@ -837,14 +816,13 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                               style={{ width: '100%' }}
                               withMeta
                             />
-                          </Center>
-                        </Carousel.Slide>
-                      ))}
-                    </Carousel>
-                  </>
-                )}
-              </SFW>
-
+                          </ImageGuard.Safe>
+                        </div>
+                      </Center>
+                    </Carousel.Slide>
+                  )}
+                />
+              </Carousel>
               {model.description ? (
                 <ContentClamp maxHeight={300}>
                   <RenderHtml html={model.description} />
@@ -907,7 +885,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     onChange={handleReviewSortChange}
                     size="xs"
                   />
-                  <MultiSelect
+                  {/* <MultiSelect
                     placeholder="Filters"
                     icon={<IconFilter size={14} />}
                     data={Object.values(ReviewFilter).map((sort) => ({
@@ -919,7 +897,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     zIndex={500}
                     clearButtonLabel="Clear review filters"
                     clearable
-                  />
+                  /> */}
                 </Group>
               </Group>
               <ModelDiscussion modelId={model.id} filters={reviewFilters} />

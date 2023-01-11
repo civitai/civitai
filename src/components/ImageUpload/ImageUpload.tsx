@@ -15,7 +15,6 @@ import {
   Group,
   Input,
   InputWrapperProps,
-  RingProgress,
   Text,
   Stack,
   Title,
@@ -26,18 +25,27 @@ import {
   NumberInput,
   Grid,
   Select,
+  Tooltip,
+  Loader,
+  Center,
+  Overlay,
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
-import { useDidUpdate, useListState } from '@mantine/hooks';
-import { IconPencil, IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons';
+import { useDidUpdate } from '@mantine/hooks';
+import {
+  IconPencil,
+  IconPhoto,
+  IconRating18Plus,
+  IconTrash,
+  IconUpload,
+  IconX,
+} from '@tabler/icons';
 import { cloneElement, useState } from 'react';
-import { blurHashImage, loadImage } from '../../utils/blurhash';
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
-import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { getMetadata } from '~/utils/image-metadata';
-import isEqual from 'lodash/isEqual';
+
+import { useImageUpload } from '~/hooks/useImageUpload';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -46,6 +54,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   onChange?: (value: Array<CustomFile>) => void;
   loading?: boolean;
   withMeta?: boolean;
+  reset?: number;
 };
 
 //TODO File Safety: Limit to the specific file extensions we want to allow
@@ -57,26 +66,30 @@ export function ImageUpload({
   hasPrimaryImage,
   loading = false,
   withMeta = true,
+  reset = 0,
   ...inputWrapperProps
 }: Props) {
   const { classes, theme, cx } = useStyles();
   const isClient = useIsClient();
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
-    // useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  );
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
-  const { uploadToCF, files: imageFiles } = useCFImageUpload();
-  const [files, filesHandlers] = useListState<CustomFile>(Array.isArray(value) ? value : []);
+  const {
+    files,
+    filesHandler,
+    upload,
+    canUpload,
+    // isCompleted,
+    // isUploading,
+    // isProcessing,
+    // hasErrors,
+    // hasBlocked,
+  } = useImageUpload({ max, value: Array.isArray(value) ? value : [] });
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
 
-  // Disabled this because it seemed to cause state loop...
   useDidUpdate(() => {
-    const shouldReset = !isEqual(value, files);
-    // console.log('did update', { shouldReset });
-    if (shouldReset) filesHandlers.setState(value);
-  }, [value]);
+    if (reset > 0) filesHandler.setState(value);
+  }, [reset]);
 
   useDidUpdate(() => {
     if (files) onChange?.(files);
@@ -84,46 +97,9 @@ export function ImageUpload({
   }, [files]); //eslint-disable-line
 
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
-    const toUpload = await Promise.all(
-      droppedFiles.map(async (file) => {
-        const src = URL.createObjectURL(file);
-        const meta = await getMetadata(file);
-        const img = await loadImage(src);
-        const hashResult = blurHashImage(img);
-        return {
-          name: file.name,
-          url: src,
-          previewUrl: src,
-          file,
-          meta,
-          ...hashResult,
-        };
-      })
-    );
-
-    filesHandlers.setState((current) => [...current, ...toUpload]);
-
-    const uploads = await Promise.all(
-      toUpload.map(async ({ url, file, previewUrl }) => {
-        const { id } = await uploadToCF(file);
-        return { url, file, id, previewUrl };
-      })
-    );
-
-    filesHandlers.setState((states) =>
-      states.map((state) => {
-        const matchingUpload = uploads.find((x) => x.file == state.file);
-        if (!matchingUpload) return state;
-        return {
-          ...state,
-          url: matchingUpload.id,
-          onLoad: () => URL.revokeObjectURL(matchingUpload.previewUrl),
-          file: null,
-        };
-      })
-    );
+    await upload(droppedFiles);
   };
-  const dropzoneDisabled = files.length >= max;
+  const dropzoneDisabled = files.length >= max || !canUpload;
 
   return (
     <Input.Wrapper
@@ -135,7 +111,7 @@ export function ImageUpload({
         <Dropzone
           accept={IMAGE_MIME_TYPE}
           onDrop={handleDrop}
-          maxFiles={max - files.length}
+          // maxFiles={max - files.length}
           className={cx({ [classes.disabled]: dropzoneDisabled })}
           styles={(theme) => ({
             root: !!inputWrapperProps.error
@@ -146,7 +122,7 @@ export function ImageUpload({
               : undefined,
           })}
           disabled={dropzoneDisabled}
-          loading={loading}
+          // loading={loading}
         >
           <Group position="center" spacing="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
             <Dropzone.Accept>
@@ -167,14 +143,21 @@ export function ImageUpload({
               <IconPhoto size={50} stroke={1.5} />
             </Dropzone.Idle>
 
-            <div>
-              <Text size="xl" inline>
-                Drag images here or click to select files
-              </Text>
-              <Text size="sm" color="dimmed" inline mt={7}>
-                {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
-              </Text>
-            </div>
+            {!canUpload ? (
+              <Group spacing="xs">
+                <Text>Preparing Tom bot</Text>
+                <Loader variant="dots" />
+              </Group>
+            ) : (
+              <div>
+                <Text size="xl" inline>
+                  Drag images here or click to select files
+                </Text>
+                <Text size="sm" color="dimmed" inline mt={7}>
+                  {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
+                </Text>
+              </div>
+            )}
           </Group>
         </Dropzone>
 
@@ -196,9 +179,7 @@ export function ImageUpload({
                   }}
                 >
                   {files.map((image, index) => {
-                    const match = imageFiles.find((file) => image.file === file.file);
-                    const { progress } = match ?? { progress: 0 };
-                    const showLoading = match && progress < 100 && !!image.file;
+                    const showLoading = !!image.file || image.nsfw === undefined;
 
                     return (
                       // <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
@@ -207,16 +188,21 @@ export function ImageUpload({
                         image={image}
                         isPrimary={hasPrimaryImage && index === 0}
                         // disabled={hasSelectedFile}
+                        blocked={image.status === 'blocked'}
                         id={image.url}
                       >
                         {showLoading && (
-                          <RingProgress
-                            sx={{ position: 'absolute' }}
-                            sections={[{ value: progress, color: 'blue' }]}
-                            size={48}
-                            thickness={4}
-                            roundCaps
-                          />
+                          <Center
+                            sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+                          >
+                            <Overlay blur={2} zIndex={10} color="#000" />
+                            <Stack spacing="xs" sx={{ zIndex: 11 }} align="center">
+                              <Loader size="lg" />
+                              {image.status !== 'complete' && (
+                                <Text weight={600}>{image.status}...</Text>
+                              )}
+                            </Stack>
+                          </Center>
                         )}
                         <Group
                           className={classes.actionsGroup}
@@ -225,28 +211,46 @@ export function ImageUpload({
                           p={4}
                           spacing={4}
                         >
-                          {withMeta && (
-                            <ImageMetaPopover
-                              meta={image.meta}
-                              onSubmit={(meta) => filesHandlers.setItem(index, { ...image, meta })}
-                            >
-                              <ActionIcon
-                                variant="outline"
-                                color={
-                                  image.meta && Object.keys(image.meta).length
-                                    ? 'primary'
-                                    : undefined
-                                }
-                              >
-                                <IconPencil />
-                              </ActionIcon>
-                            </ImageMetaPopover>
+                          {!showLoading && (!image.status || image.status === 'complete') && (
+                            <>
+                              <Tooltip label="Toggle NSFW">
+                                <ActionIcon
+                                  color={image.nsfw ? 'red' : undefined}
+                                  variant="filled"
+                                  disabled={image.nsfw === undefined}
+                                  onClick={() =>
+                                    filesHandler.setItem(index, { ...image, nsfw: !image.nsfw })
+                                  }
+                                >
+                                  <IconRating18Plus />
+                                </ActionIcon>
+                              </Tooltip>
+                              {withMeta && (
+                                <ImageMetaPopover
+                                  meta={image.meta}
+                                  onSubmit={(meta) =>
+                                    filesHandler.setItem(index, { ...image, meta })
+                                  }
+                                >
+                                  <ActionIcon
+                                    variant="outline"
+                                    color={
+                                      image.meta && Object.keys(image.meta).length
+                                        ? 'primary'
+                                        : undefined
+                                    }
+                                  >
+                                    <IconPencil />
+                                  </ActionIcon>
+                                </ImageMetaPopover>
+                              )}
+                            </>
                           )}
                           <ActionIcon
                             color="red"
                             variant="outline"
                             onClick={() =>
-                              filesHandlers.setState((state) => [
+                              filesHandler.setState((state) => [
                                 ...state.filter((x) => x.url !== image.url),
                               ])
                             }
@@ -282,7 +286,7 @@ export function ImageUpload({
     const { active, over } = event;
     if (!over) return;
     if (active.id !== over.id) {
-      filesHandlers.setState((items) => {
+      filesHandler.setState((items) => {
         const ids = items.map(({ url }): UniqueIdentifier => url);
         const oldIndex = ids.indexOf(active.id);
         const newIndex = ids.indexOf(over.id);
@@ -449,6 +453,7 @@ const useStyles = createStyles((theme, _params, getRef) => ({
     borderBottomLeftRadius: theme.radius.sm,
     top: 0,
     right: 0,
+    zIndex: 11,
   },
 
   selected: {
