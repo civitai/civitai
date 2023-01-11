@@ -60,6 +60,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { v4 as uuidv4 } from 'uuid';
 
 /**NOTES**
   - If a model depicts an actual person, it cannot have nsfw content
@@ -72,6 +73,7 @@ const schema = modelSchema.extend({
     .array(
       modelVersionUpsertSchema
         .extend({
+          uuid: z.string(),
           files: z.preprocess((val) => {
             const list = val as ModelFileInput[];
             return list.filter((file) => file.url);
@@ -103,7 +105,12 @@ export function ModelForm({ model }: Props) {
   );
   const addMutation = trpc.model.add.useMutation();
   const updateMutation = trpc.model.update.useMutation();
-  const [uploading, setUploading] = useState(false);
+  const [uploading, setUploading] = useState<Record<string, boolean>>({});
+  const [complete, setComplete] = useState<Record<string, boolean>>({});
+  const [blocked, setBlocked] = useState<Record<string, boolean>>({});
+  const isBlocked = Object.values(blocked).some((bool) => bool);
+  const isComplete = Object.values(complete).every((bool) => bool);
+  const isUploading = Object.values(uploading).some((bool) => bool);
 
   const defaultModelFile = {
     name: '',
@@ -114,6 +121,7 @@ export function ModelForm({ model }: Props) {
 
   const defaultModelVersion: FormSchema['modelVersions'][number] = {
     name: '',
+    uuid: uuidv4(),
     description: null,
     epochs: null,
     steps: null,
@@ -133,6 +141,7 @@ export function ModelForm({ model }: Props) {
     modelVersions: model?.modelVersions.map(
       ({ trainedWords, images, files, baseModel, ...version }) => ({
         ...version,
+        uuid: uuidv4(),
         baseModel: (baseModel as BaseModel) ?? defaultModelVersion.baseModel,
         trainedWords: trainedWords,
         skipTrainedWords: !trainedWords.length,
@@ -180,11 +189,12 @@ export function ModelForm({ model }: Props) {
       const match = name?.match(/modelVersions\.[0-9]\.images/);
       if (name === 'poi' || name === 'nsfw' || match || name === undefined) {
         const { poi, nsfw, modelVersions } = value;
+        const images = modelVersions?.flatMap((x) => x?.images).filter(isDefined);
         setNsfwPoi(
           getIsNsfwPoi({
             poi,
             nsfw,
-            images: modelVersions?.flatMap((v) => v?.images)?.filter(isDefined),
+            images,
           })
         );
       }
@@ -361,7 +371,7 @@ export function ModelForm({ model }: Props) {
                   size="xs"
                   leftIcon={<IconPlus size={16} />}
                   variant="outline"
-                  onClick={() => prepend(defaultModelVersion)}
+                  onClick={() => prepend({ ...defaultModelVersion, uuid: uuidv4() })}
                   compact
                 >
                   Add Version
@@ -522,7 +532,16 @@ export function ModelForm({ model }: Props) {
                             max={20}
                             hasPrimaryImage
                             withAsterisk
-                            onChange={(values) => setUploading(values.some((x) => x.file))}
+                            onChange={(values) => {
+                              const isBlocked = values.some((x) => x.status === 'blocked');
+                              const isComplete = values
+                                .filter((x) => x.status)
+                                .every((x) => x.status === 'complete');
+                              const isUploading = values.some((x) => x.status === 'uploading');
+                              setUploading((state) => ({ ...state, [version.uuid]: isUploading }));
+                              setBlocked((state) => ({ ...state, [version.uuid]: isBlocked }));
+                              setComplete((state) => ({ ...state, [version.uuid]: isComplete }));
+                            }}
                           />
                         </Grid.Col>
                       </Grid>
@@ -665,6 +684,24 @@ export function ModelForm({ model }: Props) {
                   </Text>
                 </>
               )}
+              {isBlocked && (
+                <>
+                  <Alert color="red" pl={10}>
+                    <Group noWrap spacing={10}>
+                      <ThemeIcon color="red">
+                        <IconExclamationMark />
+                      </ThemeIcon>
+                      <Text size="xs" sx={{ lineHeight: 1.2 }}>
+                        TOS Violation
+                      </Text>
+                    </Group>
+                  </Alert>
+                  <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
+                    Please revise the content of this listing to ensure no images contain content
+                    that could constitute a TOS violation.
+                  </Text>
+                </>
+              )}
               <Group position="right">
                 <Button
                   variant="outline"
@@ -673,8 +710,8 @@ export function ModelForm({ model }: Props) {
                 >
                   Discard changes
                 </Button>
-                <Button type="submit" loading={mutating || uploading} disabled={nsfwPoi}>
-                  {uploading ? 'Uploading...' : mutating ? 'Saving...' : 'Save'}
+                <Button type="submit" loading={mutating} disabled={nsfwPoi || !isComplete}>
+                  {isUploading ? 'Uploading...' : mutating ? 'Saving...' : 'Save'}
                 </Button>
               </Group>
             </Stack>

@@ -48,10 +48,17 @@ export const getReviewsInfiniteHandler = async ({
 
   return {
     nextCursor,
-    reviews: reviews.map(({ imagesOnReviews, ...review }) => ({
-      ...review,
-      images: imagesOnReviews.map(({ image }) => image),
-    })),
+    reviews: reviews.map(({ imagesOnReviews, ...review }) => {
+      const isOwnerOrModerator = review.user.id === ctx.user?.id || ctx.user?.isModerator;
+      const images = !isOwnerOrModerator
+        ? imagesOnReviews
+            .sort((a, b) => {
+              return a.image.nsfw === b.image.nsfw ? 0 : a.image.nsfw ? 1 : -1;
+            })
+            .map((x) => x.image)
+        : imagesOnReviews.map((x) => x.image);
+      return { ...review, images };
+    }),
   };
 };
 
@@ -174,14 +181,14 @@ export const toggleExcludeHandler = async ({
 export type ReviewDetails = AsyncReturnType<typeof getReviewDetailsHandler>;
 export const getReviewDetailsHandler = async ({
   input: { id },
-  ctx: { user },
+  ctx,
 }: {
   input: GetByIdInput;
-  ctx: DeepNonNullable<Context>;
+  ctx: Context;
 }) => {
   try {
-    const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
-    const prioritizeSafeImages = !user;
+    const canViewNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+    const prioritizeSafeImages = !ctx.user;
     const result = await getReviewById({
       id,
       select: reviewDetailSelect(canViewNsfw, prioritizeSafeImages),
@@ -190,9 +197,16 @@ export const getReviewDetailsHandler = async ({
     if (!result) throw throwNotFoundError(`No review with id ${id}`);
 
     const { imagesOnReviews, ...review } = result;
+    const isOwnerOrModerator = review.user.id === ctx.user?.id || ctx.user?.isModerator;
     return {
       ...review,
-      images: imagesOnReviews.map((x) => x.image),
+      images: !isOwnerOrModerator
+        ? imagesOnReviews
+            .sort((a, b) => {
+              return a.image.nsfw === b.image.nsfw ? 0 : a.image.nsfw ? 1 : -1;
+            })
+            .map((x) => x.image)
+        : imagesOnReviews.map((x) => x.image),
     };
   } catch (error) {
     throw throwDbError(error);

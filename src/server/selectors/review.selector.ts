@@ -21,9 +21,10 @@ export const reviewDetailSelect = (includeNSFW = true, prioritizeSafeImages = fa
       select: simpleUserSelect,
     },
     imagesOnReviews: {
-      orderBy: prioritizeSafeImages
-        ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
-        : [{ index: 'asc' }],
+      // orderBy: prioritizeSafeImages
+      //   ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
+      //   : [{ index: 'asc' }],
+      orderBy: { index: 'asc' },
       select: {
         index: true,
         image: {
@@ -47,7 +48,7 @@ export const getAllReviewsSelect = (includeNSFW = true, prioritizeSafeImages = f
     },
   });
 
-export type ReviewDetails = Prisma.ReviewGetPayload<typeof getAllReviews>;
-const getAllReviews = Prisma.validator<Prisma.ReviewArgs>()({
-  select: getAllReviewsSelect,
-});
+// export type ReviewDetails = Prisma.ReviewGetPayload<typeof getAllReviews>;
+// const getAllReviews = Prisma.validator<Prisma.ReviewArgs>()({
+//   select: getAllReviewsSelect,
+// });

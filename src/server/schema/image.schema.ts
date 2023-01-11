@@ -14,6 +14,7 @@ export const imageMetaSchema = z
   .partial()
   .passthrough();
 
+export type ImageAnalysisInput = z.infer<typeof imageAnalysisSchema>;
 export const imageAnalysisSchema = z.object({
   drawing: z.number(),
   hentai: z.number(),

@@ -27,7 +27,9 @@ export default createRoutedContext({
     const router = useRouter();
     const modelId = Number(router.query.id);
 
-    const [uploading, setUploading] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
+    const [isComplete, setIsComplete] = useState(false);
+    const [isBlocked, setIsBlocked] = useState(false);
 
     const queryUtils = trpc.useContext();
     const {
@@ -120,8 +122,12 @@ export default createRoutedContext({
             <InputImageUpload
               name="images"
               label="Generated Images"
-              loading={uploading}
-              onChange={(values) => setUploading(values.some((value) => value.file))}
+              loading={isUploading}
+              onChange={(values) => {
+                setIsUploading(values.some((x) => x.status === 'uploading'));
+                setIsComplete(values.filter((x) => x.status).every((x) => x.status === 'complete'));
+                setIsBlocked(values.some((x) => x.status === 'blocked'));
+              }}
             />
             {nsfwPoi && (
               <>
@@ -144,12 +150,30 @@ export default createRoutedContext({
                 </Text>
               </>
             )}
+            {isBlocked && (
+              <>
+                <Alert color="red" pl={10}>
+                  <Group noWrap spacing={10}>
+                    <ThemeIcon color="red">
+                      <IconExclamationMark />
+                    </ThemeIcon>
+                    <Text size="xs" sx={{ lineHeight: 1.2 }}>
+                      TOS Violation
+                    </Text>
+                  </Group>
+                </Alert>
+                <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
+                  Please revise the content of this listing to ensure no images contain content that
+                  could constitute a TOS violation.
+                </Text>
+              </>
+            )}
             <Group position="apart">
               <Button variant="default" onClick={() => context.close()} disabled={isLoading}>
                 Cancel
               </Button>
-              <Button type="submit" loading={isLoading || uploading} disabled={nsfwPoi}>
-                {uploading ? 'Uploading...' : isLoading ? 'Saving...' : 'Save'}
+              <Button type="submit" loading={isLoading} disabled={nsfwPoi || !isComplete}>
+                {isUploading ? 'Uploading...' : isLoading ? 'Saving...' : 'Save'}
               </Button>
             </Group>
           </Stack>

@@ -134,9 +134,10 @@ export const modelWithDetailsSelect = (includeNSFW = true, prioritizeSafeImages 
         inaccurate: true,
         baseModel: true,
         images: {
-          orderBy: prioritizeSafeImages
-            ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
-            : [{ index: 'asc' }],
+          // orderBy: prioritizeSafeImages
+          //   ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
+          //   : [{ index: 'asc' }],
+          orderBy: { index: 'asc' },
           select: {
             index: true,
             image: {

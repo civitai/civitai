@@ -1,8 +1,9 @@
-import { imageAnalysisSchema } from './../server/schema/image.schema';
+import { imageAnalysisSchema } from '../server/schema/image.schema';
 import { FileWithPath } from '@mantine/dropzone';
 import * as tf from '@tensorflow/tfjs';
 import { setWasmPaths } from '@tensorflow/tfjs-backend-wasm';
 import { z } from 'zod';
+import Queue from '~/utils/queue';
 
 setWasmPaths('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm/wasm-out/');
 tf.enableProdMode();
@@ -13,6 +14,8 @@ export type PredictionType = {
   className: NSFW_TYPES;
   probability: number;
 };
+
+// type MessageInput = { uuid: string; file: FileWithPath };
 
 interface SharedWorkerGlobalScope {
   onconnect: (event: MessageEvent) => void;
@@ -32,6 +35,7 @@ const _self: SharedWorkerGlobalScope = self as any;
 // };
 
 let model: tf.LayersModel;
+let initializing = false;
 const SIZE = 299;
 const NSFW_CLASSES: Record<number, NSFW_TYPES> = {
   0: 'drawing',
@@ -54,8 +58,6 @@ function nsfwProcess(values: Int32Array | Uint8Array | Float32Array) {
     sexy: 0,
   };
 
-  console.log({ topkIndices, topkValues, values });
-
   for (let i = 0; i < values.length; i++) {
     valuesAndIndices.push({ value: values[i], index: i });
   }
@@ -69,12 +71,7 @@ function nsfwProcess(values: Int32Array | Uint8Array | Float32Array) {
   // const topClassesAndProbs: PredictionType[] = [];
   for (let i = 0; i < topkIndices.length; i++) {
     results[NSFW_CLASSES[topkIndices[i]]] = topkValues[i];
-    // topClassesAndProbs.push({
-    //   className: NSFW_CLASSES[topkIndices[i]],
-    //   probability: topkValues[i],
-    // });
   }
-  // console.log({ topClassesAndProbs });
   return results;
 }
 
@@ -102,6 +99,7 @@ async function analyzeImage(bitmap: ImageBitmap) {
   return result;
 }
 
+// determine if the image is NSFW based on the ranking
 function detectNsfwImage(analysis: NSFW_ANALYSIS) {
   const ranked = Object.entries(analysis)
     .sort((a, b) => b[1] - a[1])
@@ -111,46 +109,52 @@ function detectNsfwImage(analysis: NSFW_ANALYSIS) {
 
 _self.onconnect = async (e) => {
   const port = e.ports[0];
-  port.onmessage = async ({ data }) => {
-    const array = data as { url: string; file: FileWithPath }[];
-    try {
-      const result = await Promise.all(
-        array.map(async ({ url, file }) => {
-          const bitmap = await createImageBitmap(file);
-          const analysis = await analyzeImage(bitmap);
-          const nsfw = detectNsfwImage(analysis);
-          return { url, analysis, nsfw };
-        })
+
+  port.onmessage = async ({
+    data,
+  }: {
+    data: Array<{ uuid: string; file: FileWithPath; meta: any }>;
+  }) => {
+    for (let i = 0; i < data.length; i++) {
+      Queue.enqueue(
+        () =>
+          new Promise(async (resolve, reject) => {
+            const { uuid, file, meta } = data[i];
+            try {
+              const bitmap = await createImageBitmap(file);
+              const analysis = await analyzeImage(bitmap);
+              const nsfw = detectNsfwImage(analysis);
+              const data = { uuid, analysis, nsfw, file, meta };
+              port.postMessage({ type: 'result', data });
+              resolve(data);
+            } catch (error) {
+              port.postMessage({ type: 'error', error });
+              reject({ error });
+            }
+          })
       );
-      port.postMessage(result);
-    } catch (error) {
-      port.postMessage({ type: 'error', error });
     }
   };
 
   if (!model) {
-    await tf.setBackend('wasm');
-    try {
-      model = await tf.loadLayersModel('indexeddb://model');
-      console.log('Load NSFW Model!');
-    } catch (e) {
-      model = await tf.loadLayersModel('/model/model.json');
-      model.save('indexeddb://model');
-      console.log('Save NSFW Model!');
-    } finally {
-      // warm up
+    if (!initializing) {
+      initializing = true;
+      port.postMessage({ type: 'status', status: 'warming up' });
+      await tf.setBackend('wasm');
+      try {
+        model = await tf.loadLayersModel('indexeddb://model');
+        console.log('Load NSFW Model!');
+      } catch (e) {
+        model = await tf.loadLayersModel('/model/model.json');
+        model.save('indexeddb://model');
+        console.log('Save NSFW Model!');
+      }
       const result = tf.tidy(() => model.predict(tf.zeros([1, SIZE, SIZE, 3]))) as tf.Tensor;
       await result.data();
       result.dispose();
       console.log('warmed up');
-      port.postMessage('ready');
+      port.postMessage({ type: 'status', status: 'ready' });
+      initializing = false;
     }
-  } else {
-    console.log('else');
-    const result = tf.tidy(() => model.predict(tf.zeros([1, SIZE, SIZE, 3]))) as tf.Tensor;
-    await result.data();
-    result.dispose();
-    console.log('warmed up');
-    port.postMessage('ready');
-  }
+  } else port.postMessage({ type: 'status', status: 'ready' });
 };

@@ -1,7 +1,7 @@
 import { Button, Group, Popover, Stack, ThemeIcon, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons';
-import router from 'next/router';
+import { useRouter } from 'next/router';
 import React, { cloneElement, createContext, useContext, useState } from 'react';
 import create from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -234,6 +234,7 @@ function ImageGuardPopover({ children }: { children: React.ReactElement }) {
   const { nsfw } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
   const [opened, setOpened] = useState(false);
+  const router = useRouter();
 
   if ((nsfw || image.nsfw) && !isAuthenticated)
     return (

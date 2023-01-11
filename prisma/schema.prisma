@@ -494,6 +494,7 @@ model Image {
   width        Int?
   nsfw         Boolean  @default(false)
   tosViolation Boolean  @default(false)
+  analysis     Json?
 
   imagesOnModels  ImagesOnModels[]
   imagesOnReviews ImagesOnReviews[]

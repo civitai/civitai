@@ -41,12 +41,24 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       throw throwNotFoundError(`No model with id ${input.id}`);
     }
 
+    const isOwnerOrModerator = model.user.id === ctx.user?.id || ctx.user?.isModerator;
+
     return {
       ...model,
-      modelVersions: model.modelVersions.map((version) => ({
-        ...version,
-        images: version.images.flatMap((x) => x.image),
-      })),
+      modelVersions: model.modelVersions.map((version) => {
+        const images = !isOwnerOrModerator
+          ? version.images
+              .flatMap((x) => ({ ...x.image, index: x.index }))
+              .sort((a, b) => {
+                return a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1;
+              })
+              .map(({ index, ...image }) => image)
+          : version.images.flatMap((x) => x.image);
+        return {
+          ...version,
+          images,
+        };
+      }),
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
