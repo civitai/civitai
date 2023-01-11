@@ -83,7 +83,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       ],
     });
   }
-  if (excludedTagIds) {
+  if (excludedTagIds && !username) {
     AND.push({
       tagsOnModels: { every: { tagId: { notIn: excludedTagIds } } },
     });
