@@ -885,7 +885,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     onChange={handleReviewSortChange}
                     size="xs"
                   />
-                  <MultiSelect
+                  {/* <MultiSelect
                     placeholder="Filters"
                     icon={<IconFilter size={14} />}
                     data={Object.values(ReviewFilter).map((sort) => ({
@@ -897,7 +897,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     zIndex={500}
                     clearButtonLabel="Clear review filters"
                     clearable
-                  />
+                  /> */}
                 </Group>
               </Group>
               <ModelDiscussion modelId={model.id} filters={reviewFilters} />

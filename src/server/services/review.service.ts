@@ -33,7 +33,7 @@ export const getReviews = <TSelect extends Prisma.ReviewSelect>({
   user?: SessionUser;
 }) => {
   const skip = page ? (page - 1) * limit : undefined;
-  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+  // const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
 
   return prisma.review.findMany({
     take: limit,
@@ -43,20 +43,20 @@ export const getReviews = <TSelect extends Prisma.ReviewSelect>({
       modelId,
       modelVersionId,
       userId,
-      imagesOnReviews: filterBy?.includes(ReviewFilter.IncludesImages) ? { some: {} } : undefined,
-      OR: user
-        ? [
-            {
-              userId: { not: user.id },
-              nsfw: canViewNsfw
-                ? filterBy?.includes(ReviewFilter.NSFW)
-                  ? true
-                  : undefined
-                : false,
-            },
-            { userId: user.id },
-          ]
-        : undefined,
+      // imagesOnReviews: filterBy?.includes(ReviewFilter.IncludesImages) ? { some: {} } : undefined,
+      // OR: user
+      //   ? [
+      //       {
+      //         userId: { not: user.id },
+      //         nsfw: canViewNsfw
+      //           ? filterBy?.includes(ReviewFilter.NSFW)
+      //             ? true
+      //             : undefined
+      //           : false,
+      //       },
+      //       { userId: user.id },
+      //     ]
+      //   : undefined,
     },
     orderBy: {
       createdAt:
