@@ -44,13 +44,19 @@ export const getReviews = <TSelect extends Prisma.ReviewSelect>({
       modelVersionId,
       userId,
       imagesOnReviews: filterBy?.includes(ReviewFilter.IncludesImages) ? { some: {} } : undefined,
-      OR: [
-        {
-          userId: { not: user?.id },
-          nsfw: canViewNsfw ? (filterBy?.includes(ReviewFilter.NSFW) ? true : undefined) : false,
-        },
-        { userId: user?.id },
-      ],
+      OR: user
+        ? [
+            {
+              userId: { not: user.id },
+              nsfw: canViewNsfw
+                ? filterBy?.includes(ReviewFilter.NSFW)
+                  ? true
+                  : undefined
+                : false,
+            },
+            { userId: user.id },
+          ]
+        : undefined,
     },
     orderBy: {
       createdAt:
