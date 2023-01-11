@@ -1,6 +1,7 @@
-import { Prisma, TagTarget } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 import { prisma } from '~/server/db/client';
+import { GetTagsInput } from '~/server/schema/tag.schema';
 
 export const getTagWithModelCount = async ({ name }: { name: string }) => {
   return await prisma.tag.findFirst({
@@ -21,18 +22,18 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
   select,
   take,
   skip,
-  target,
+  entityType,
   query,
-}: {
+  modelId,
+}: Partial<GetTagsInput> & {
   select: TSelect;
   take?: number;
   skip?: number;
-  target?: TagTarget;
-  query?: string;
 }) => {
   const where: Prisma.TagWhereInput = {
     name: query ? { contains: query, mode: 'insensitive' } : undefined,
-    target,
+    target: entityType,
+    tagsOnModels: modelId ? { some: { modelId } } : undefined,
   };
 
   const items = await prisma.tag.findMany({

@@ -21,6 +21,7 @@ import {
 import { ModelStatus } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
 import {
+  IconBan,
   IconCloudOff,
   IconDotsVertical,
   IconDownload,
@@ -91,6 +92,9 @@ export function InfiniteModels({
   const queryParams = result.success ? result.data : {};
 
   const { ref, inView } = useInView();
+
+  const { data: blockedTags } = trpc.user.getTags.useQuery({ type: 'Hide' });
+  const excludedTagIds = blockedTags?.map((tag) => tag.id);
   const {
     data,
     isLoading,
@@ -99,7 +103,7 @@ export function InfiniteModels({
     hasNextPage,
     // hasPreviousPage,
   } = trpc.model.getAll.useInfiniteQuery(
-    { ...filters, ...queryParams },
+    { ...filters, ...queryParams, excludedTagIds },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
@@ -403,7 +407,7 @@ const MasonryItem = ({
     <LoginRedirect reason="report-model" key="report">
       <Menu.Item
         icon={<IconFlag size={14} stroke={1.5} />}
-        onClick={(e: any) => {
+        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
           openContext('report', { type: ReportEntity.Model, entityId: id });
@@ -413,10 +417,26 @@ const MasonryItem = ({
       </Menu.Item>
     </LoginRedirect>
   );
-  const contextMenuItems: React.ReactNode[] = [];
-  if (currentUser?.id != user.id)
-    contextMenuItems.push(<HideUserButton key="hide-button" as="menu-item" userId={user.id} />);
-  if (currentUser?.id != user.id) contextMenuItems.push(reportOption);
+
+  const blockTagsOption = (
+    <Menu.Item
+      icon={<IconBan size={14} stroke={1.5} />}
+      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openContext('blockTags', { modelId: id });
+      }}
+    >
+      {`Block model's tags`}
+    </Menu.Item>
+  );
+  let contextMenuItems: React.ReactNode[] = [];
+  if (currentUser?.id !== user.id)
+    contextMenuItems = contextMenuItems.concat([
+      <HideUserButton key="hide-button" as="menu-item" userId={user.id} />,
+      reportOption,
+    ]);
+  if (currentUser) contextMenuItems.push(blockTagsOption);
 
   const isNew = data.createdAt > aDayAgo;
   const isUpdated = !isNew && data.lastVersionAt && data.lastVersionAt > aDayAgo;

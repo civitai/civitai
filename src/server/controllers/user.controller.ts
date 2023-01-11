@@ -5,7 +5,9 @@ import {
   getUserCreator,
   getUserFavoriteModelByModelId,
   getUserFavoriteModels,
+  getUserTags,
   getUserUnreadNotificationsCount,
+  toggleBlockedTag,
   toggleFollowUser,
   toggleHideUser,
 } from '~/server/services/user.service';
@@ -19,6 +21,9 @@ import {
   ToggleFollowUserSchema,
   GetByUsernameSchema,
   DeleteUserInput,
+  ToggleBlockedTagSchema,
+  GetUserTagsSchema,
+  BatchBlockTagsSchema,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
@@ -382,6 +387,86 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
     });
 
     return items;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getUserTagsHandler = async ({
+  input,
+  ctx,
+}: {
+  input?: GetUserTagsSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id } = ctx.user;
+    const user = await getUserById({
+      id,
+      select: {
+        tagsEngaged: {
+          where: input ? { type: input.type } : undefined,
+          select: {
+            tag: { select: { id: true, name: true } },
+            type: !!input?.type ? true : undefined,
+          },
+        },
+      },
+    });
+    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    return user.tagsEngaged.map(({ tag }) => tag);
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const toggleBlockedTagHandler = ({
+  input,
+  ctx,
+}: {
+  input: ToggleBlockedTagSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    return toggleBlockedTag({ ...input, userId });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const batchBlockTagsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: BatchBlockTagsSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const { tagIds } = input;
+    const currentBlockedTags = await getUserTags({ userId, type: 'Hide' });
+    const blockedTagIds = currentBlockedTags.map(({ tagId }) => tagId);
+    const tagsToRemove = blockedTagIds.filter((id) => !tagIds.includes(id));
+
+    const updatedUser = await updateUserById({
+      id: userId,
+      data: {
+        tagsEngaged: {
+          deleteMany: { userId, tagId: { in: tagsToRemove } },
+          upsert: tagIds.map((tagId) => ({
+            where: { userId_tagId: { userId, tagId } },
+            update: { type: 'Hide' },
+            create: { type: 'Hide', tagId },
+          })),
+        },
+      },
+    });
+    if (!updatedUser) throw throwNotFoundError(`No user with id ${userId}`);
+
+    return updatedUser;
   } catch (error) {
     throw throwDbError(error);
   }
