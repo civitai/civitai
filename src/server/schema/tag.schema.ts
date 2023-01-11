@@ -27,5 +27,6 @@ export const getTagsInput = getAllQuerySchema.extend({
     }, z.boolean().default(false))
     .optional(),
   entityType: z.nativeEnum(TagTarget),
+  modelId: z.number().optional(),
 });
 export type GetTagsInput = z.infer<typeof getTagsInput>;

@@ -12,6 +12,7 @@ const ReviewThread = dynamic(() => import('~/routed-context/modals/ReviewThread'
 const CommentThread = dynamic(() => import('~/routed-context/modals/CommentThread'));
 const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
 const Report = dynamic(() => import('~/routed-context/modals/Report'));
+const BlockModelTags = dynamic(() => import('~/routed-context/modals/BlockModelTags'));
 
 const dictionary = {
   modelVersionLightbox: ModelVersionLightbox,
@@ -22,6 +23,7 @@ const dictionary = {
   commentThread: CommentThread,
   commentEdit: CommentEdit,
   report: Report,
+  blockTags: BlockModelTags,
 };
 
 // function register<T extends Record<string, ComponentType>>(dictionary: T) {

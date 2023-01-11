@@ -18,7 +18,10 @@ import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelper
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerAuthSession(context);
   const ssg = await getServerProxySSGHelpers(context);
-  if (session) await ssg.user.getFavoriteModels.prefetch(undefined);
+  if (session) {
+    await ssg.user.getFavoriteModels.prefetch(undefined);
+    await ssg.user.getTags.prefetch({ type: 'Hide' });
+  }
 
   return {
     props: {

@@ -1,5 +1,5 @@
 import { throwNotFoundError } from '~/server/utils/errorHandling';
-import { Prisma } from '@prisma/client';
+import { Prisma, TagEngagementType } from '@prisma/client';
 
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -7,6 +7,7 @@ import {
   DeleteUserInput,
   GetAllUsersInput,
   GetByUsernameSchema,
+  ToggleBlockedTagSchema,
 } from '~/server/schema/user.schema';
 
 // const xprisma = prisma.$extends({
@@ -107,6 +108,10 @@ export const getUserFavoriteModelByModelId = ({
   modelId: number;
 }) => {
   return prisma.favoriteModel.findUnique({ where: { userId_modelId: { userId, modelId } } });
+};
+
+export const getUserTags = ({ userId, type }: { userId: number; type?: TagEngagementType }) => {
+  return prisma.tagEngagement.findMany({ where: { userId, type } });
 };
 
 export const getCreators = async <TSelect extends Prisma.UserSelect>({
@@ -233,4 +238,28 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
     await prisma.model.deleteMany({ where: { userId: user.id } });
   }
   return await prisma.user.delete({ where: { id: user.id } });
+};
+
+export const toggleBlockedTag = async ({
+  tagId,
+  userId,
+}: ToggleBlockedTagSchema & { userId: number }) => {
+  const matchedTag = await prisma.tagEngagement.findUnique({
+    where: { userId_tagId: { userId, tagId } },
+    select: { type: true },
+  });
+
+  if (matchedTag) {
+    if (matchedTag.type === 'Hide')
+      return prisma.tagEngagement.delete({
+        where: { userId_tagId: { userId, tagId } },
+      });
+    else if (matchedTag.type === 'Follow')
+      return prisma.tagEngagement.update({
+        where: { userId_tagId: { userId, tagId } },
+        data: { type: 'Hide' },
+      });
+  }
+
+  return prisma.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
 };

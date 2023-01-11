@@ -79,6 +79,7 @@ export const getModelsInfiniteHandler = async ({
     input.hideNSFW || (ctx.user?.showNsfw ?? false) === false || ctx.user?.blurNsfw;
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
+
   const { items } = await getModels({
     input: { ...input, take },
     user: ctx.user,
