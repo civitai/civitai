@@ -122,6 +122,10 @@ export function ModelForm({ model }: Props) {
   const defaultValues: z.infer<typeof schema> = {
     ...model,
     name: model?.name ?? '',
+    allowCommercialUse: model?.allowCommercialUse ?? CommercialUse.Sell,
+    allowDerivatives: model?.allowDerivatives ?? true,
+    allowNoCredit: model?.allowNoCredit ?? true,
+    allowDifferentLicense: model?.allowDifferentLicense ?? true,
     type: model?.type ?? ModelType.Checkpoint,
     status: model?.status ?? ModelStatus.Published,
     tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
@@ -151,8 +155,8 @@ export function ModelForm({ model }: Props) {
     rules: { minLength: 1, required: true },
   });
 
-  const { isDirty } = form.formState;
-  useCatchNavigation({ unsavedChanges: isDirty });
+  const { isDirty, isSubmitted } = form.formState;
+  useCatchNavigation({ unsavedChanges: isDirty && !isSubmitted });
 
   const tagsOnModels = form.watch('tagsOnModels');
 
