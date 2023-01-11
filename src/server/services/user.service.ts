@@ -1,5 +1,5 @@
 import { throwNotFoundError } from '~/server/utils/errorHandling';
-import { Prisma } from '@prisma/client';
+import { Prisma, TagEngagementType } from '@prisma/client';
 
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -108,6 +108,10 @@ export const getUserFavoriteModelByModelId = ({
   modelId: number;
 }) => {
   return prisma.favoriteModel.findUnique({ where: { userId_modelId: { userId, modelId } } });
+};
+
+export const getUserTags = ({ userId, type }: { userId: number; type?: TagEngagementType }) => {
+  return prisma.tagEngagement.findMany({ where: { userId, type } });
 };
 
 export const getCreators = async <TSelect extends Prisma.UserSelect>({

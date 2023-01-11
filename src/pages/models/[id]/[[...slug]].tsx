@@ -553,7 +553,17 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     </Menu.Item>
                   </LoginRedirect>
                 )}
-                {currentUser && <HideUserButton as="menu-item" userId={model.user.id} />}
+                {currentUser && (
+                  <>
+                    <HideUserButton as="menu-item" userId={model.user.id} />
+                    <Menu.Item
+                      icon={<IconBan size={14} stroke={1.5} />}
+                      onClick={() => openContext('blockTags', { modelId: model.id })}
+                    >
+                      Block tags
+                    </Menu.Item>
+                  </>
+                )}
               </Menu.Dropdown>
             </Menu>
           </Group>
@@ -700,49 +710,24 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
                 <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>
-                  <Group
-                    spacing={4}
-                    noWrap
-                    style={{ flex: 1, overflow: 'hidden' }}
-                    align="flex-start"
-                  >
+                  <Group spacing="xs" noWrap style={{ flex: 1, overflow: 'hidden' }}>
                     <IconLicense size={16} />
                     <Text
                       size="xs"
                       color="dimmed"
                       sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                     >
-                      License{model?.licenses.length > 0 ? 's' : ''}:
-                    </Text>
-                    <Stack spacing={0}>
+                      License:{' '}
                       <Text
                         component="a"
                         href="https://huggingface.co/spaces/CompVis/stable-diffusion-license"
                         rel="nofollow"
                         td="underline"
                         target="_blank"
-                        size="xs"
-                        color="dimmed"
-                        sx={{ lineHeight: 1.1 }}
                       >
                         creativeml-openrail-m
                       </Text>
-                      {model?.licenses.map(({ url, name }) => (
-                        <Text
-                          key={name}
-                          component="a"
-                          rel="nofollow"
-                          href={url}
-                          td="underline"
-                          size="xs"
-                          color="dimmed"
-                          target="_blank"
-                          sx={{ lineHeight: 1.1 }}
-                        >
-                          {name}
-                        </Text>
-                      ))}
-                    </Stack>
+                    </Text>
                   </Group>
                   <PermissionIndicator spacing={5} size={28} permissions={model} />
                 </Group>

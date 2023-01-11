@@ -10,6 +10,7 @@ import {
   toggleFollowUserHandler,
   toggleHideUserHandler,
   toggleBlockedTagHandler,
+  batchBlockTagsHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -31,6 +32,7 @@ import {
   deleteUserSchema,
   toggleBlockedTagSchema,
   getUserTagsSchema,
+  batchBlockTagsSchema,
 } from '~/server/schema/user.schema';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
@@ -57,4 +59,5 @@ export const userRouter = router({
   toggleBlockedTag: protectedProcedure
     .input(toggleBlockedTagSchema)
     .mutation(toggleBlockedTagHandler),
+  batchBlockTags: protectedProcedure.input(batchBlockTagsSchema).mutation(batchBlockTagsHandler),
 });
