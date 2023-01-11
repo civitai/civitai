@@ -9,8 +9,6 @@ import Image from 'next/image';
 
 //TODO - handle what to display when there is an error
 type Props = {
-  blocked?: boolean;
-  error?: boolean;
   image?: CustomFile;
   children?: React.ReactNode;
   isPrimary?: boolean;
@@ -19,7 +17,7 @@ type Props = {
 } & React.ComponentPropsWithoutRef<'div'>;
 
 export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
-  ({ image, children, isPrimary, disabled, id, blocked, ...props }, ref) => { //eslint-disable-line
+  ({ image, children, isPrimary, disabled, id, ...props }, ref) => { //eslint-disable-line
     const { classes } = useStyles({ isPrimary });
     const [ready, setReady] = useState(false);
 
@@ -43,7 +41,7 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
         radius="sm"
         style={{ ...style, ...props.style }}
       >
-        {blocked ? (
+        {image.status === 'blocked' ? (
           <>
             <Image
               src={'/images/nedry.gif'}

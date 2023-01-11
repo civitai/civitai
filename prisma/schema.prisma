@@ -504,8 +504,8 @@ model Image {
   tosViolation Boolean  @default(false)
   analysis     Json?
 
-  imagesOnModels  ImagesOnModels[]
-  imagesOnReviews ImagesOnReviews[]
+  imagesOnModels  ImagesOnModels?
+  imagesOnReviews ImagesOnReviews?
 }
 
 enum ImageOnModelType {
@@ -517,7 +517,7 @@ model ImagesOnModels {
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   modelVersionId Int
   image          Image        @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  imageId        Int
+  imageId        Int          @unique
   index          Int?
 
   @@id([imageId, modelVersionId])
@@ -527,7 +527,7 @@ model ImagesOnReviews {
   review   Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   reviewId Int
   image    Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  imageId  Int
+  imageId  Int    @unique
   index    Int?
 
   @@id([imageId, reviewId])

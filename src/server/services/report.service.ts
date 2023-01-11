@@ -49,8 +49,13 @@ export const createReport = async ({
             report,
           },
         });
-        if (toUpdate) {
-          await tx.review.update({ where: { id }, data: toUpdate });
+        if (data.reason === ReportReason.NSFW) {
+          await tx.image.updateMany({
+            where: { imagesOnReviews: { reviewId: id } },
+            data: { nsfw: true },
+          });
+        } else if (data.reason === ReportReason.TOSViolation) {
+          await tx.review.update({ where: { id }, data: { tosViolation: true } });
         }
         break;
       case ReportEntity.Comment:

@@ -269,6 +269,7 @@ export function ReviewDiscussionItem({ review }: Props) {
             <ImageGuard
               images={review.images}
               connect={{ entityType: 'review', entityId: review.id }}
+              nsfw={review.nsfw}
               render={(image, index) => (
                 <Carousel.Slide>
                   <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>

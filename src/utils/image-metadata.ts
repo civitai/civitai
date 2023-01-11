@@ -123,16 +123,12 @@ const encoders = {
 
 // #region [audit]
 export const auditMetaData = (meta: AsyncReturnType<typeof getMetadata>) => {
-  const failed = blocked.some(
-    (item) => meta.prompt?.includes(item) || meta.negativePrompt?.includes(item)
-  );
-  return { success: !failed };
+  const blockedFor = blocked.filter((item) => meta.prompt?.includes(item));
+  if (blockedFor.length) console.log({ blockedFor });
+  return { success: !blockedFor.length };
 };
 
 const blocked = [
-  '(young',
-  '(young)',
-  '(young:',
   '1 y.o.',
   '1 year old',
   '1 yearold',
@@ -2099,11 +2095,5 @@ const blocked = [
   'wiggers',
   'wop',
   'yigger',
-  'young',
-  'younger',
-  'youngest',
-  'youngling',
-  'youngs',
-  'youngster',
 ];
 // #endregion

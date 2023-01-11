@@ -188,7 +188,6 @@ export function ImageUpload({
                         image={image}
                         isPrimary={hasPrimaryImage && index === 0}
                         // disabled={hasSelectedFile}
-                        blocked={image.status === 'blocked'}
                         id={image.url}
                       >
                         {showLoading && (
