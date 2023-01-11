@@ -8,6 +8,11 @@ export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
   type: true,
   nsfw: true,
   status: true,
+  allowNoCredit: true,
+  allowCommercialUse: true,
+  allowDerivatives: true,
+  allowDifferentLicense: true,
+  licenses: true,
   modelVersions: {
     orderBy: { index: 'asc' },
     take: 1,
@@ -104,6 +109,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   allowCommercialUse: true,
   allowDerivatives: true,
   allowDifferentLicense: true,
+  licenses: true,
   reportStats: {
     select: {
       ownershipProcessing: true,

@@ -229,6 +229,14 @@ model Model {
   comments       Comment[]
   interests      ModelInterest[]
   downloads      DownloadHistory[]
+  licenses       License[]
+}
+
+model License {
+  id     Int     @id @default(autoincrement())
+  name   String
+  url    String
+  models Model[]
 }
 
 model ModelInterest {
