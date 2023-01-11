@@ -46,14 +46,15 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     return {
       ...model,
       modelVersions: model.modelVersions.map((version) => {
-        const images = !isOwnerOrModerator
-          ? version.images
-              .flatMap((x) => ({ ...x.image, index: x.index }))
-              .sort((a, b) => {
-                return a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1;
-              })
-              .map(({ index, ...image }) => image)
-          : version.images.flatMap((x) => x.image);
+        const images =
+          !isOwnerOrModerator && prioritizeSafeImages
+            ? version.images
+                .flatMap((x) => ({ ...x.image, index: x.index }))
+                .sort((a, b) => {
+                  return a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1;
+                })
+                .map(({ index, ...image }) => image)
+            : version.images.flatMap((x) => x.image);
         return {
           ...version,
           images,

@@ -9,6 +9,7 @@ import {
   Group,
   Menu,
   Box,
+  AspectRatio,
 } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { startCase } from 'lodash';
@@ -36,9 +37,8 @@ import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
-import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { ShowHide } from '~/components/ShowHide/ShowHide';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 const VERSION_IMAGES_LIMIT = 8;
 
@@ -220,43 +220,51 @@ function TabContent({ version, nsfw }: TabContentProps) {
             connect={{ entityId: modelId, entityType: 'model' }}
             render={(image, index) =>
               index < imagesLimit ? (
-                <ImageGuard.Content>
-                  {({ status }) => (
-                    <Box
-                      style={{ position: 'relative' }}
-                      sx={{
-                        height: '100%',
-                        width: '100%',
-                        figure: { height: '100%', display: 'flex' },
-                        ...(index === 0 && !mobile
-                          ? {
-                              gridColumn: '1/3',
-                              gridRow: '1/3',
-                              figure: { height: '100%', display: 'flex' },
-                            }
-                          : {}),
-                      }}
-                    >
-                      {/* TODO.Justin - styling */}
-                      <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
-                      <ImagePreview
-                        key={index}
-                        image={image}
-                        edgeImageProps={{ width: 400 }}
-                        nsfw={status === 'hide'}
-                        radius="md"
-                        aspectRatio={1}
-                        onClick={() =>
-                          openContext('modelVersionLightbox', {
-                            initialSlide: index,
-                            modelVersionId: version.id,
-                          })
+                <Box
+                  style={{ position: 'relative' }}
+                  sx={{
+                    height: '100%',
+                    width: '100%',
+                    figure: { height: '100%', display: 'flex' },
+                    ...(index === 0 && !mobile
+                      ? {
+                          gridColumn: '1/3',
+                          gridRow: '1/3',
+                          figure: { height: '100%', display: 'flex' },
                         }
-                        withMeta
-                      />
-                    </Box>
-                  )}
-                </ImageGuard.Content>
+                      : {}),
+                  }}
+                >
+                  <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                  <ImageGuard.Unsafe>
+                    <AspectRatio
+                      ratio={1}
+                      sx={(theme) => ({
+                        width: '100%',
+                        borderRadius: theme.radius.md,
+                        overflow: 'hidden',
+                      })}
+                    >
+                      <MediaHash {...image} />
+                    </AspectRatio>
+                  </ImageGuard.Unsafe>
+                  <ImageGuard.Safe>
+                    <ImagePreview
+                      key={index}
+                      image={image}
+                      edgeImageProps={{ width: 400 }}
+                      radius="md"
+                      aspectRatio={1}
+                      onClick={() =>
+                        openContext('modelVersionLightbox', {
+                          initialSlide: index,
+                          modelVersionId: version.id,
+                        })
+                      }
+                      withMeta
+                    />
+                  </ImageGuard.Safe>
+                </Box>
               ) : null
             }
           />

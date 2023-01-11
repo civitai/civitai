@@ -32,7 +32,7 @@ export const getReviewsInfiniteHandler = async ({
   input.limit = input.limit ?? 20;
   const limit = input.limit + 1;
   const canViewNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
-  const prioritizeSafeImages = !ctx.user;
+  const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
 
   const reviews = await getReviews({
     input: { ...input, limit },
@@ -50,13 +50,14 @@ export const getReviewsInfiniteHandler = async ({
     nextCursor,
     reviews: reviews.map(({ imagesOnReviews, ...review }) => {
       const isOwnerOrModerator = review.user.id === ctx.user?.id || ctx.user?.isModerator;
-      const images = !isOwnerOrModerator
-        ? imagesOnReviews
-            .sort((a, b) => {
-              return a.image.nsfw === b.image.nsfw ? 0 : a.image.nsfw ? 1 : -1;
-            })
-            .map((x) => x.image)
-        : imagesOnReviews.map((x) => x.image);
+      const images =
+        !isOwnerOrModerator && prioritizeSafeImages
+          ? imagesOnReviews
+              .sort((a, b) => {
+                return a.image.nsfw === b.image.nsfw ? 0 : a.image.nsfw ? 1 : -1;
+              })
+              .map((x) => x.image)
+          : imagesOnReviews.map((x) => x.image);
       return { ...review, images };
     }),
   };
@@ -188,7 +189,7 @@ export const getReviewDetailsHandler = async ({
 }) => {
   try {
     const canViewNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
-    const prioritizeSafeImages = !ctx.user;
+    const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
     const result = await getReviewById({
       id,
       select: reviewDetailSelect(canViewNsfw, prioritizeSafeImages),
@@ -200,13 +201,14 @@ export const getReviewDetailsHandler = async ({
     const isOwnerOrModerator = review.user.id === ctx.user?.id || ctx.user?.isModerator;
     return {
       ...review,
-      images: !isOwnerOrModerator
-        ? imagesOnReviews
-            .sort((a, b) => {
-              return a.image.nsfw === b.image.nsfw ? 0 : a.image.nsfw ? 1 : -1;
-            })
-            .map((x) => x.image)
-        : imagesOnReviews.map((x) => x.image),
+      images:
+        !isOwnerOrModerator && prioritizeSafeImages
+          ? imagesOnReviews
+              .sort((a, b) => {
+                return a.image.nsfw === b.image.nsfw ? 0 : a.image.nsfw ? 1 : -1;
+              })
+              .map((x) => x.image)
+          : imagesOnReviews.map((x) => x.image),
     };
   } catch (error) {
     throw throwDbError(error);
