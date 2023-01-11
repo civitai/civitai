@@ -295,7 +295,7 @@ enum ModelHashType {
 }
 
 model ModelHash {
-  file      ModelFile     @relation(fields: [fileId], references: [id])
+  file      ModelFile     @relation(fields: [fileId], references: [id], onDelete: Cascade)
   fileId    Int
   type      ModelHashType
   hash      String
