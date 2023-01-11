@@ -28,6 +28,8 @@ export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => 
         id: true,
         name: true,
         tagsOnModels: withModels ? { select: { modelId: true } } : undefined,
+        // TODO tags metrics: remove once metrics are in place
+        _count: withModels ? { select: { tagsOnModels: true } } : undefined,
       },
     });
 

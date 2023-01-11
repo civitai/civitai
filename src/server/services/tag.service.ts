@@ -41,6 +41,8 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
     skip,
     select,
     where,
+    // TODO tags metrics: remove once metrics are in place
+    orderBy: { tagsOnModels: { _count: 'desc' } },
   });
   const count = await prisma.tag.count({ where });
 
