@@ -106,7 +106,6 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
           })
         );
         if (status === 'uploading') {
-          console.log('enqueue');
           pending.current.push({ uuid: result.data.uuid, file: result.data.file });
           setStats((stats) => {
             return {
@@ -135,7 +134,6 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
     while (inFlight.current.length < concurrency && pending.current.length > 0) {
       const item = pending.current.shift();
       if (!item) break;
-      console.log({ item });
       inFlight.current.push(item);
       setStats((stats) => {
         return {

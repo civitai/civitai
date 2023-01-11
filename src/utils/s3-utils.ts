@@ -152,7 +152,7 @@ function parseKey(key: string) {
 
 export async function getGetUrl(
   key: string,
-  { s3, expiresIn = 60 * 60, fileName }: GetObjectOptions = {}
+  { s3, expiresIn = 3 * 60 * 60, fileName }: GetObjectOptions = {}
 ) {
   if (!s3) s3 = getS3Client();
 

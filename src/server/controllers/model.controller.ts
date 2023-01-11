@@ -26,16 +26,17 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { env } from '~/env/server.mjs';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
-  const showNsfw = ctx.user?.showNsfw ?? true;
+  const showNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
   const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
   try {
     const model = await getModel({
       input,
       user: ctx.user,
-      select: modelWithDetailsSelect(showNsfw, prioritizeSafeImages),
+      select: modelWithDetailsSelect(showNsfw),
     });
     if (!model) {
       throw throwNotFoundError(`No model with id ${input.id}`);
@@ -49,11 +50,10 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         const images =
           !isOwnerOrModerator && prioritizeSafeImages
             ? version.images
-                .flatMap((x) => ({ ...x.image, index: x.index }))
+                .flatMap((x) => x.image)
                 .sort((a, b) => {
                   return a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1;
                 })
-                .map(({ index, ...image }) => image)
             : version.images.flatMap((x) => x.image);
         return {
           ...version,

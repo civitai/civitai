@@ -21,6 +21,7 @@ import {
 } from '~/server/services/review.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { env } from '~/env/server.mjs';
+import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 export const getReviewsInfiniteHandler = async ({
   input,
@@ -29,7 +30,7 @@ export const getReviewsInfiniteHandler = async ({
   input: GetAllReviewsInput;
   ctx: Context;
 }) => {
-  input.limit = input.limit ?? 20;
+  input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
   const limit = input.limit + 1;
   const canViewNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
   const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
@@ -37,7 +38,7 @@ export const getReviewsInfiniteHandler = async ({
   const reviews = await getReviews({
     input: { ...input, limit },
     user: ctx.user,
-    select: getAllReviewsSelect(canViewNsfw, prioritizeSafeImages),
+    select: getAllReviewsSelect(canViewNsfw),
   });
 
   let nextCursor: number | undefined;
@@ -90,18 +91,10 @@ export const upsertReviewHandler = async ({
   }
 };
 
-export const deleteUserReviewHandler = async ({
-  ctx,
-  input,
-}: {
-  ctx: DeepNonNullable<Context>;
-  input: GetByIdInput;
-}) => {
+export const deleteUserReviewHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     const deleted = await deleteReviewById({ ...input });
-    if (!deleted) {
-      throw throwNotFoundError(`No review with id ${input.id}`);
-    }
+    if (!deleted) throw throwNotFoundError(`No review with id ${input.id}`);
 
     return deleted;
   } catch (error) {
@@ -136,10 +129,7 @@ export const toggleReactionHandler = async ({
         },
       },
     });
-
-    if (!review) {
-      throw throwNotFoundError(`No review with id ${id}`);
-    }
+    if (!review) throw throwNotFoundError(`No review with id ${id}`);
 
     return review;
   } catch (error) {
@@ -148,16 +138,8 @@ export const toggleReactionHandler = async ({
   }
 };
 
-export const toggleExcludeHandler = async ({
-  ctx,
-  input,
-}: {
-  ctx: DeepNonNullable<Context>;
-  input: GetByIdInput;
-}) => {
-  const { user } = ctx;
+export const toggleExcludeHandler = async ({ input }: { input: GetByIdInput }) => {
   const { id } = input;
-
   const { exclude } = (await getReviewById({ id, select: { exclude: true } })) ?? {};
 
   try {
@@ -167,10 +149,7 @@ export const toggleExcludeHandler = async ({
         exclude: !exclude,
       },
     });
-
-    if (!review) {
-      throw throwNotFoundError(`No review with id ${id}`);
-    }
+    if (!review) throw throwNotFoundError(`No review with id ${id}`);
 
     return review;
   } catch (error) {
@@ -192,9 +171,8 @@ export const getReviewDetailsHandler = async ({
     const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
     const result = await getReviewById({
       id,
-      select: reviewDetailSelect(canViewNsfw, prioritizeSafeImages),
+      select: reviewDetailSelect(canViewNsfw),
     });
-
     if (!result) throw throwNotFoundError(`No review with id ${id}`);
 
     const { imagesOnReviews, ...review } = result;

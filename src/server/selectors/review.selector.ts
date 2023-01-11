@@ -4,7 +4,7 @@ import { imageSelect } from '~/server/selectors/image.selector';
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 
-export const reviewDetailSelect = (includeNSFW = true, prioritizeSafeImages = false) =>
+export const reviewDetailSelect = (includeNSFW = true) =>
   Prisma.validator<Prisma.ReviewSelect>()({
     id: true,
     createdAt: true,
@@ -38,9 +38,9 @@ export const reviewDetailSelect = (includeNSFW = true, prioritizeSafeImages = fa
     },
   });
 
-export const getAllReviewsSelect = (includeNSFW = true, prioritizeSafeImages = false) =>
+export const getAllReviewsSelect = (includeNSFW = true) =>
   Prisma.validator<Prisma.ReviewSelect>()({
-    ...reviewDetailSelect(includeNSFW, prioritizeSafeImages),
+    ...reviewDetailSelect(includeNSFW),
     _count: {
       select: {
         comments: true,

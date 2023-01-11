@@ -1,7 +1,7 @@
 import { Prisma, ReviewReactions } from '@prisma/client';
 import { SessionUser } from 'next-auth';
-import { env } from '~/env/server.mjs';
 
+import { env } from '~/env/server.mjs';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -12,30 +12,45 @@ import {
 } from '~/server/schema/review.schema';
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 import { getAllReviewsSelect } from '~/server/selectors/review.selector';
+import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
-export const getReviews = async <TSelect extends Prisma.ReviewSelect>({
-  input: { limit, page, cursor, modelId, modelVersionId, userId, filterBy, sort },
+export const getReviews = <TSelect extends Prisma.ReviewSelect>({
+  input: {
+    limit = DEFAULT_PAGE_SIZE,
+    page,
+    cursor,
+    modelId,
+    modelVersionId,
+    userId,
+    filterBy,
+    sort,
+  },
   user,
   select,
 }: {
   input: GetAllReviewsInput;
-  user?: SessionUser;
   select: TSelect;
+  user?: SessionUser;
 }) => {
-  const take = limit ?? 10;
-  const skip = page ? (page - 1) * take : undefined;
+  const skip = page ? (page - 1) * limit : undefined;
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
 
-  return await prisma.review.findMany({
-    take,
+  return prisma.review.findMany({
+    take: limit,
     skip,
     cursor: cursor ? { id: cursor } : undefined,
     where: {
       modelId,
       modelVersionId,
       userId,
-      nsfw: canViewNsfw ? (filterBy?.includes(ReviewFilter.NSFW) ? true : undefined) : false,
       imagesOnReviews: filterBy?.includes(ReviewFilter.IncludesImages) ? { some: {} } : undefined,
+      OR: [
+        {
+          userId: { not: user?.id },
+          nsfw: canViewNsfw ? (filterBy?.includes(ReviewFilter.NSFW) ? true : undefined) : false,
+        },
+        { userId: user?.id },
+      ],
     },
     orderBy: {
       createdAt:
@@ -153,5 +168,5 @@ export const deleteReviewById = ({ id }: GetByIdInput) => {
 };
 
 export const updateReviewById = ({ id, data }: { id: number; data: Prisma.ReviewUpdateInput }) => {
-  return prisma.review.update({ where: { id }, data, select: getAllReviewsSelect });
+  return prisma.review.update({ where: { id }, data, select: getAllReviewsSelect() });
 };

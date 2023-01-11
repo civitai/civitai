@@ -65,6 +65,7 @@
     "@trpc/next": "^10.7.0",
     "@trpc/react-query": "^10.7.0",
     "@trpc/server": "^10.7.0",
+    "@types/offscreencanvas": "^2019.7.0",
     "arraybuffer-to-buffer": "^0.0.7",
     "babel-plugin-superjson-next": "^0.4.4",
     "blurhash": "^2.0.4",

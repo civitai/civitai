@@ -61,6 +61,7 @@ import { isDefined } from '~/utils/type-guards';
 import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { v4 as uuidv4 } from 'uuid';
+import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 
 /**NOTES**
   - If a model depicts an actual person, it cannot have nsfw content
@@ -135,6 +136,10 @@ export function ModelForm({ model }: Props) {
   const defaultValues: FormSchema = {
     ...model,
     name: model?.name ?? '',
+    allowCommercialUse: model?.allowCommercialUse ?? CommercialUse.Sell,
+    allowDerivatives: model?.allowDerivatives ?? true,
+    allowNoCredit: model?.allowNoCredit ?? true,
+    allowDifferentLicense: model?.allowDifferentLicense ?? true,
     type: model?.type ?? ModelType.Checkpoint,
     status: model?.status ?? ModelStatus.Published,
     tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
@@ -164,6 +169,9 @@ export function ModelForm({ model }: Props) {
     name: 'modelVersions',
     rules: { minLength: 1, required: true },
   });
+
+  const { isDirty, isSubmitted } = form.formState;
+  useCatchNavigation({ unsavedChanges: isDirty && !isSubmitted });
 
   const tagsOnModels = form.watch('tagsOnModels');
 
@@ -208,11 +216,7 @@ export function ModelForm({ model }: Props) {
   }, [tagsOnModels, tags]);
 
   const mutating = addMutation.isLoading || updateMutation.isLoading;
-  const [type, allowDerivatives, allowNoCredit] = form.watch([
-    'type',
-    'allowDerivatives',
-    'allowNoCredit',
-  ]);
+  const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
 
   const acceptsTrainedWords = ['Checkpoint', 'TextualInversion', 'LORA'].includes(type);
   const isTextualInversion = type === 'TextualInversion';
@@ -706,7 +710,7 @@ export function ModelForm({ model }: Props) {
                 <Button
                   variant="outline"
                   onClick={() => form.reset()}
-                  disabled={!form.formState.isDirty || mutating}
+                  disabled={!isDirty || mutating}
                 >
                   Discard changes
                 </Button>

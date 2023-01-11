@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -18,6 +19,7 @@ import {
   updateCommentById,
 } from '~/server/services/comment.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 export const getCommentsInfiniteHandler = async ({
   input,
@@ -26,12 +28,12 @@ export const getCommentsInfiniteHandler = async ({
   input: GetAllCommentsSchema;
   ctx: Context;
 }) => {
-  input.limit = input.limit ?? 20;
+  input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
   const limit = input.limit + 1;
-
+  const { user } = ctx;
   const comments = await getComments({
     input: { ...input, limit },
-    user: ctx.user,
+    user,
     select: getAllCommentsSelect,
   });
 
@@ -78,18 +80,10 @@ export const upsertCommentHandler = async ({
   }
 };
 
-export const deleteUserCommentHandler = async ({
-  ctx,
-  input,
-}: {
-  ctx: DeepNonNullable<Context>;
-  input: GetByIdInput;
-}) => {
+export const deleteUserCommentHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     const deleted = await deleteCommentById({ ...input });
-    if (!deleted) {
-      throw throwNotFoundError(`No comment with id ${input.id}`);
-    }
+    if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);
 
     return deleted;
   } catch (error) {

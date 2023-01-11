@@ -181,11 +181,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     staleTime: Infinity,
   });
 
-  const showNsfwRequested = router.query.showNsfw !== 'true';
-  const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
-  const nsfw = userNotBlurringNsfw && showNsfwRequested && model?.nsfw === true;
-  const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
-
   const deleteMutation = trpc.model.delete.useMutation({
     onSuccess() {
       showSuccessNotification({
@@ -248,9 +243,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     },
   });
 
-  const isModerator = currentUser?.isModerator ?? false;
-  const isOwner = model?.user.id === currentUser?.id || isModerator;
-
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
     router.beforePopState(({ as }) => {
@@ -280,6 +272,13 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     );
 
   if (!model) return <NotFound />;
+
+  const isModerator = currentUser?.isModerator ?? false;
+  const isOwner = model.user.id === currentUser?.id || isModerator;
+  const showNsfwRequested = router.query.showNsfw !== 'true';
+  const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
+  const nsfw = userNotBlurringNsfw && showNsfwRequested && model.nsfw === true;
+  const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
 
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model.modelVersions[0];
@@ -706,24 +705,49 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
                 <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>
-                  <Group spacing="xs" noWrap style={{ flex: 1, overflow: 'hidden' }}>
+                  <Group
+                    spacing={4}
+                    noWrap
+                    style={{ flex: 1, overflow: 'hidden' }}
+                    align="flex-start"
+                  >
                     <IconLicense size={16} />
                     <Text
                       size="xs"
                       color="dimmed"
                       sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                     >
-                      License:{' '}
+                      License{model?.licenses.length > 0 ? 's' : ''}:
+                    </Text>
+                    <Stack spacing={0}>
                       <Text
                         component="a"
                         href="https://huggingface.co/spaces/CompVis/stable-diffusion-license"
                         rel="nofollow"
                         td="underline"
                         target="_blank"
+                        size="xs"
+                        color="dimmed"
+                        sx={{ lineHeight: 1.1 }}
                       >
                         creativeml-openrail-m
                       </Text>
-                    </Text>
+                      {model?.licenses.map(({ url, name }) => (
+                        <Text
+                          key={name}
+                          component="a"
+                          rel="nofollow"
+                          href={url}
+                          td="underline"
+                          size="xs"
+                          color="dimmed"
+                          target="_blank"
+                          sx={{ lineHeight: 1.1 }}
+                        >
+                          {name}
+                        </Text>
+                      ))}
+                    </Stack>
                   </Group>
                   <PermissionIndicator spacing={5} size={28} permissions={model} />
                 </Group>
