@@ -100,11 +100,9 @@ async function analyzeImage(bitmap: ImageBitmap) {
 }
 
 // determine if the image is NSFW based on the ranking
-function detectNsfwImage(analysis: NSFW_ANALYSIS) {
-  const ranked = Object.entries(analysis)
-    .sort((a, b) => b[1] - a[1])
-    .map(([key, value]) => ({ className: key, probability: value }));
-  return ['nsfw', 'hentai'].includes(ranked[0].className);
+function detectNsfwImage({ porn, hentai, sexy }: NSFW_ANALYSIS) {
+  const isNSFW = porn + hentai + sexy * 0.5 > 0.5; // If the sum of sketchy probabilities is greater than 0.5, it's NSFW
+  return isNSFW;
 }
 
 _self.onconnect = async (e) => {

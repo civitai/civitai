@@ -660,14 +660,14 @@ export function ModelForm({ model }: Props) {
               <Paper radius="md" p="xl" withBorder>
                 <Stack>
                   <Text size="sm" weight={500}>
-                    {`This model or it's images:`}
+                    {`This model:`}
                   </Text>
                   <InputCheckbox
                     name="poi"
-                    label="Depict an actual person"
+                    label="Depicts an actual person"
                     description="For Example: Tom Cruise or Tom Cruise as Maverick"
                   />
-                  <InputCheckbox name="nsfw" label="Are NSFW" />
+                  <InputCheckbox name="nsfw" label="Is for an adult audience (NSFW)" />
                 </Stack>
               </Paper>
               {nsfwPoi && (
