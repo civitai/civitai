@@ -56,7 +56,7 @@ export function ModelDiscussion({ modelId, filters }: Props) {
       <Grid.Col span={12} sx={{ position: 'relative' }}>
         <LoadingOverlay visible={loading} />
         {hasItems ? (
-          <MasonryGrid items={items} render={DiscussionItem} />
+          <MasonryGrid items={items} render={DiscussionItem} filters={filters} />
         ) : (
           <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Stack>
