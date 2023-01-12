@@ -38,6 +38,12 @@ export const createReport = async ({
             report,
           },
         });
+        if (data.reason === ReportReason.NSFW) {
+          await tx.image.updateMany({
+            where: { imagesOnModels: { modelVersion: { modelId: id } } },
+            data: { nsfw: true },
+          });
+        }
         if (toUpdate) {
           await tx.model.update({ where: { id }, data: toUpdate });
         }
