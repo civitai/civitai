@@ -15,6 +15,12 @@ const useStyles = createStyles((theme) => ({
       marginRight: theme.spacing.xl * -1.5, // -36px
     },
   },
+  tagsGroup: {
+    [theme.fn.largerThan('lg')]: {
+      marginLeft: theme.spacing.xl * 1.5, // 36px
+      marginRight: theme.spacing.xl * 1.5, // 36px
+    },
+  },
   tag: {
     textTransform: 'uppercase',
   },
@@ -107,7 +113,7 @@ export function TrendingTags() {
           <IconChevronLeft />
         </ActionIcon>
       </Box>
-      <Group spacing={8} px={36} noWrap>
+      <Group className={classes.tagsGroup} spacing={8} noWrap>
         <Link href="/" passHref>
           <Button
             component="a"
