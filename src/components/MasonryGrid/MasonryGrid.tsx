@@ -39,6 +39,7 @@ export function MasonryGrid<T>({
       containerRef={masonryRef}
       positioner={positioner}
       resizeObserver={resizeObserver}
+      overscanBy={10}
       offset={offset}
       height={height}
       items={items}
