@@ -26,6 +26,8 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
   query,
   modelId,
   orderBy,
+  not,
+  unlisted,
 }: Omit<GetTagsInput, 'limit' | 'page'> & {
   select: TSelect;
   take?: number;
@@ -36,6 +38,8 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
     name: query ? { contains: query, mode: 'insensitive' } : undefined,
     target: entityType,
     tagsOnModels: modelId ? { some: { modelId } } : undefined,
+    id: not ? { notIn: not } : undefined,
+    unlisted,
   };
 
   const items = await prisma.tag.findMany({
