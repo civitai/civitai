@@ -1,19 +1,7 @@
-import {
-  Alert,
-  Anchor,
-  Badge,
-  createStyles,
-  Container,
-  Group,
-  Stack,
-  Text,
-  Title,
-  ScrollArea,
-} from '@mantine/core';
+import { Alert, createStyles, Container, Group, Stack, Text, Title, Box } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { capitalize } from 'lodash';
 import { GetServerSideProps } from 'next';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
 
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
@@ -23,19 +11,22 @@ import {
   InfiniteModelsSort,
 } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { Meta } from '~/components/Meta/Meta';
+import { TrendingTags } from '~/components/TrendingTags/TrendingTags';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
-import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerAuthSession(context);
   const ssg = await getServerProxySSGHelpers(context);
   if (session) {
+    // Prefetch user's favorite models
     await ssg.user.getFavoriteModels.prefetch(undefined);
+    // Prefetch users' blocked tags
     await ssg.user.getTags.prefetch({ type: 'Hide' });
   }
 
+  // Prefetch trending tags
   await ssg.tag.getAll.prefetch({ entityType: 'Model', withModels: true, limit: 20 });
 
   return {
@@ -55,13 +46,6 @@ function Home() {
   });
   const { username, tag, favorites } = router.query;
 
-  const { data: tagsData } = trpc.tag.getAll.useQuery({
-    limit: 20,
-    entityType: 'Model',
-    withModels: true,
-  });
-  const trendingTags = tagsData?.items ?? [];
-
   const closeWelcomeAlert = () => setWelcomeAlert(false);
 
   return (
@@ -80,11 +64,10 @@ function Home() {
           {welcomeAlert && (
             <Alert
               color="blue"
-              withCloseButton
-              py={5}
-              pl={3}
+              py={8}
               className={classes.welcome}
               onClose={closeWelcomeAlert}
+              withCloseButton
             >
               <Group spacing="xs" noWrap>
                 <Text size={36} p={0}>
@@ -104,26 +87,9 @@ function Home() {
               </Group>
             </Alert>
           )}
-          {trendingTags.length > 0 ? (
-            <Stack spacing={4}>
-              <Text color="dimmed" transform="uppercase">
-                Explore Tags
-              </Text>
-              <ScrollArea scrollbarSize={4} offsetScrollbars>
-                <Group spacing="xs" noWrap>
-                  {trendingTags.map((tag) => (
-                    <Link key={tag.id} href={`/tag/${tag.name.toLowerCase()}`} passHref>
-                      <Anchor variant="text">
-                        <Badge className={classes.tag} size="lg" variant="outline" radius="xl">
-                          {tag.name}
-                        </Badge>
-                      </Anchor>
-                    </Link>
-                  ))}
-                </Group>
-              </ScrollArea>
-            </Stack>
-          ) : null}
+          <Box className={classes.trendingTagsContainer}>
+            <TrendingTags />
+          </Box>
           <Group position="apart" spacing={0}>
             <InfiniteModelsSort />
             <Group spacing={4}>
@@ -158,7 +124,7 @@ const useStyles = createStyles((theme) => ({
         ? theme.fn.darken(theme.colors.blue[8], 0.5)
         : theme.colors.blue[1],
     [theme.fn.smallerThan('md')]: {
-      marginBottom: 5,
+      marginBottom: -5,
       marginLeft: -5,
       marginRight: -5,
     },
@@ -171,12 +137,10 @@ const useStyles = createStyles((theme) => ({
     color: theme.colorScheme === 'dark' ? theme.colors.blue[2] : undefined,
     lineHeight: 1.1,
   },
-  tag: {
-    transition: 'background .3s',
-
-    '&:hover': {
-      backgroundColor:
-        theme.colorScheme === 'dark' ? 'rgba(25, 113, 194, 0.2)' : 'rgba(231, 245, 255, 1)',
+  trendingTagsContainer: {
+    [theme.fn.largerThan('lg')]: {
+      marginLeft: theme.spacing.xl * -1.5, // -36px
+      marginRight: theme.spacing.xl * -1.5, // -36px
     },
   },
 }));
