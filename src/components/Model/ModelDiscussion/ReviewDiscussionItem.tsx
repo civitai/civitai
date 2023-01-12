@@ -38,17 +38,22 @@ import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
-import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { useInView } from 'react-intersection-observer';
+import { useEffect, useRef, useState } from 'react';
 
-export function ReviewDiscussionItem({ review }: Props) {
+export function ReviewDiscussionItem({ review, width }: Props) {
   const { openContext } = useRoutedContext();
   const currentUser = useCurrentUser();
   const isOwner = currentUser?.id === review.user.id;
   const isMod = currentUser?.isModerator ?? false;
+  const { ref, inView } = useInView({ triggerOnce: true });
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    setVisible(true);
+  }, [inView]);
 
   const { data: reactions = [] } = trpc.review.getReactions.useQuery(
     { reviewId: review.id },
@@ -172,7 +177,7 @@ export function ReviewDiscussionItem({ review }: Props) {
   const hasMultipleImages = review.images.length > 1;
 
   return (
-    <Card radius="md" p="md" withBorder>
+    <Card radius="md" p="md" withBorder ref={ref}>
       <Stack spacing={4} mb="sm">
         <Group align="flex-start" position="apart" noWrap>
           <UserAvatar
@@ -264,7 +269,7 @@ export function ReviewDiscussionItem({ review }: Props) {
         </Group>
       </Stack>
       {hasImages && (
-        <Card.Section mb="sm" style={{ position: 'relative' }}>
+        <Card.Section mb="sm" style={{ position: 'relative', height: width }}>
           <Carousel withControls={hasMultipleImages} draggable={hasMultipleImages} loop>
             <ImageGuard
               images={review.images}
@@ -285,18 +290,22 @@ export function ReviewDiscussionItem({ review }: Props) {
                     </AspectRatio>
                   </ImageGuard.Unsafe>
                   <ImageGuard.Safe>
-                    <ImagePreview
-                      image={image}
-                      edgeImageProps={{ width: 400 }}
-                      aspectRatio={1}
-                      onClick={() =>
-                        openContext('reviewLightbox', {
-                          initialSlide: index,
-                          reviewId: review.id,
-                        })
-                      }
-                      withMeta
-                    />
+                    {(inView || visible) && (
+                      <>
+                        <ImagePreview
+                          image={image}
+                          edgeImageProps={{ width: 400 }}
+                          aspectRatio={1}
+                          onClick={() =>
+                            openContext('reviewLightbox', {
+                              initialSlide: index,
+                              reviewId: review.id,
+                            })
+                          }
+                          withMeta
+                        />
+                      </>
+                    )}
                   </ImageGuard.Safe>
                 </Carousel.Slide>
               )}
@@ -334,4 +343,4 @@ export function ReviewDiscussionItem({ review }: Props) {
   );
 }
 
-type Props = { review: ReviewGetAllItem };
+type Props = { review: ReviewGetAllItem; width: number };

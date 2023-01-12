@@ -157,7 +157,7 @@ ImageGuard.Unsafe = function Unsafe({ children }: { children: React.ReactNode })
   return image.nsfw && !showing ? <>{children}</> : null;
 };
 
-ImageGuard.Safe = function Safe({ children }: { children: React.ReactNode }) {
+ImageGuard.Safe = function Safe({ children }: { children?: React.ReactNode }) {
   const { connect } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
   const showImage = useStore((state) => state.showingImages[image.id.toString()] ?? false);

@@ -125,7 +125,6 @@ const encoders = {
 // #region [audit]
 export const auditMetaData = (meta: AsyncReturnType<typeof getMetadata>) => {
   const blockedFor = blocked.filter((item) => meta.prompt?.includes(item));
-  if (blockedFor.length) console.log({ blockedFor });
   return { success: !blockedFor.length };
 };
 // #endregion
