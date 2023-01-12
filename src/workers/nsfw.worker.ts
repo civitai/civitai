@@ -3,6 +3,7 @@ import { FileWithPath } from '@mantine/dropzone';
 import * as tf from '@tensorflow/tfjs';
 import { setWasmPaths } from '@tensorflow/tfjs-backend-wasm';
 import Queue from '~/utils/queue';
+import { env } from '~/env/client.mjs';
 
 setWasmPaths('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm/wasm-out/');
 tf.enableProdMode();
@@ -141,7 +142,7 @@ _self.onconnect = async (e) => {
         model = await tf.loadLayersModel('indexeddb://model');
         console.log('Load NSFW Model!');
       } catch (e) {
-        model = await tf.loadLayersModel('/model/model.json');
+        model = await tf.loadLayersModel(env.NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION);
         model.save('indexeddb://model');
         console.log('Save NSFW Model!');
       }
