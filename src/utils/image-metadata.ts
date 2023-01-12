@@ -1377,7 +1377,6 @@ const blocked = [
   'fouryo',
   'gas chamber',
   'gas chambers',
-  'girl',
   'girlish',
   'gook',
   'gooks',
