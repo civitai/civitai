@@ -101,7 +101,7 @@ export function ImageGuard({
   return (
     <ImageGuardCtx.Provider value={{ images, nsfw: globalNsfw, connect }}>
       {images.map((image, index) => (
-        <ImageGuardContentProvider key={index} image={image}>
+        <ImageGuardContentProvider key={image.id} image={image}>
           {render(image, index)}
         </ImageGuardContentProvider>
       ))}

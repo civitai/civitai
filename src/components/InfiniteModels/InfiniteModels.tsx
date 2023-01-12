@@ -499,7 +499,11 @@ const MasonryItem = ({
                               />
                             </ActionIcon>
                           </Menu.Target>
-                          <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
+                          <Menu.Dropdown>
+                            {contextMenuItems.map((el, index) => (
+                              <React.Fragment key={index}>{el}</React.Fragment>
+                            ))}
+                          </Menu.Dropdown>
                         </Menu>
                       )}
                       <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
