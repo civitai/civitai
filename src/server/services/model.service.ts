@@ -207,14 +207,17 @@ export const createModel = async ({
         })),
       },
       tagsOnModels: {
-        create: tagsOnModels?.map(({ name }) => ({
-          tag: {
-            connectOrCreate: {
-              where: { name_target: { name, target: TagTarget.Model } },
-              create: { name, target: TagTarget.Model },
+        create: tagsOnModels?.map((tag) => {
+          const name = tag.name.toLowerCase().trim();
+          return {
+            tag: {
+              connectOrCreate: {
+                where: { name_target: { name, target: TagTarget.Model } },
+                create: { name, target: TagTarget.Model },
+              },
             },
-          },
-        })),
+          };
+        }),
       },
     },
   });
@@ -432,11 +435,14 @@ export const updateModel = async ({
               where: { modelId_tagId: { tagId: tag.id, modelId: id } },
               create: { tagId: tag.id },
             })),
-            create: tagsOnModels.filter(isNotTag).map(({ name }) => ({
-              tag: {
-                create: { name, target: TagTarget.Model },
-              },
-            })),
+            create: tagsOnModels.filter(isNotTag).map((tag) => {
+              const name = tag.name.toLowerCase().trim();
+              return {
+                tag: {
+                  create: { name, target: TagTarget.Model },
+                },
+              };
+            }),
           }
         : undefined,
     },

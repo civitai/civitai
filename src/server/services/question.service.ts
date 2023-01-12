@@ -76,7 +76,7 @@ export const upsertQuestion = async ({
           tags: tags
             ? {
                 create: tags.map((tag) => {
-                  const name = tag.name.toLowerCase();
+                  const name = tag.name.toLowerCase().trim();
                   return {
                     tag: {
                       connectOrCreate: {
@@ -108,7 +108,7 @@ export const upsertQuestion = async ({
                   create: { tagId: tag.id },
                 })),
                 create: tags.filter(isNotTag).map((tag) => {
-                  const name = tag.name.toLowerCase();
+                  const name = tag.name.toLowerCase().trim();
                   return {
                     tag: {
                       create: { name, target: TagTarget.Question },

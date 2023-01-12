@@ -550,15 +550,30 @@ model Tag {
   tagsOnModels   TagsOnModels[]
   TagsOnQuestion TagsOnQuestions[]
   usersEngaged   TagEngagement[]
+  metrics        TagMetric[]
+  stats          TagStat?
+  rank           TagRank?
 
   @@unique([name, target])
 }
 
+model TagMetric {
+  tag           Tag             @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId         Int
+  timeframe     MetricTimeframe
+  modelCount    Int             @default(0)
+  hiddenCount   Int             @default(0)
+  followerCount Int             @default(0)
+
+  @@id([tagId, timeframe])
+}
+
 model TagsOnModels {
-  model   Model @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  modelId Int
-  tag     Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  tagId   Int
+  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelId   Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId     Int
+  createdAt DateTime @default(now())
 
   @@id([modelId, tagId])
 }
@@ -1154,6 +1169,48 @@ model UserRank {
   favoriteCountYearRank    Int
   favoriteCountAllTimeRank Int
   leaderboardRank          Int
+}
+
+/// @view
+model TagStat {
+  tag                  Tag @relation(fields: [tagId], references: [id], onDelete: NoAction)
+  tagId                Int @id
+  followerCountDay     Int
+  followerCountWeek    Int
+  followerCountMonth   Int
+  followerCountYear    Int
+  followerCountAllTime Int
+  hiddenCountDay       Int
+  hiddenCountWeek      Int
+  hiddenCountMonth     Int
+  hiddenCountYear      Int
+  hiddenCountAllTime   Int
+  modelCountDay        Int
+  modelCountWeek       Int
+  modelCountMonth      Int
+  modelCountYear       Int
+  modelCountAllTime    Int
+}
+
+/// @view
+model TagRank {
+  tag                      Tag @relation(fields: [tagId], references: [id], onDelete: NoAction)
+  tagId                    Int @id
+  followerCountDayRank     Int
+  followerCountWeekRank    Int
+  followerCountMonthRank   Int
+  followerCountYearRank    Int
+  followerCountAllTimeRank Int
+  hiddenCountDayRank       Int
+  hiddenCountWeekRank      Int
+  hiddenCountMonthRank     Int
+  hiddenCountYearRank      Int
+  hiddenCountAllTimeRank   Int
+  modelCountDayRank        Int
+  modelCountWeekRank       Int
+  modelCountMonthRank      Int
+  modelCountYearRank       Int
+  modelCountAllTimeRank    Int
 }
 
 /// @view

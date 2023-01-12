@@ -1,8 +1,6 @@
-import { Group, Stack, Container, Title, Alert, Text, createStyles } from '@mantine/core';
+import { Alert, createStyles, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { capitalize } from 'lodash';
 import { GetServerSideProps } from 'next';
-import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
 
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
@@ -12,6 +10,8 @@ import {
   InfiniteModelsSort,
 } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { Meta } from '~/components/Meta/Meta';
+import { TrendingTags } from '~/components/TrendingTags/TrendingTags';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 
@@ -19,9 +19,14 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerAuthSession(context);
   const ssg = await getServerProxySSGHelpers(context);
   if (session) {
+    // Prefetch user's favorite models
     await ssg.user.getFavoriteModels.prefetch(undefined);
+    // Prefetch users' blocked tags
     await ssg.user.getTags.prefetch({ type: 'Hide' });
   }
+
+  // Prefetch trending tags
+  await ssg.tag.getTrending.prefetch({ entityType: 'Model' });
 
   return {
     props: {
@@ -32,42 +37,35 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 
 function Home() {
   const router = useRouter();
-  const { data: session } = useSession();
+  const currentUser = useCurrentUser();
   const { classes } = useStyles();
   const [welcomeAlert, setWelcomeAlert] = useLocalStorage({
     key: 'welcomeAlert',
     defaultValue: true,
   });
+  const { username, favorites } = router.query;
 
-  const closeWelcomeAlert = () => {
-    setWelcomeAlert(false);
-  };
+  const closeWelcomeAlert = () => setWelcomeAlert(false);
 
   return (
     <>
       <Meta
-        title={`Civitai ${
-          !session ? `| Stable Diffusion models, embeddings, hypernetworks and more` : ''
+        title={`Civitai${
+          !currentUser ? ` | Stable Diffusion models, embeddings, hypernetworks and more` : ''
         }`}
-        description={`Civitai is a platform for Stable Diffusion AI Art models. We have a collection of over 1,700 models from 250+ creators. We also have a collection of 1200 reviews from the community along with 12,000+ images with prompts to get you started.`}
+        description="Civitai is a platform for Stable Diffusion AI Art models. We have a collection of over 1,700 models from 250+ creators. We also have a collection of 1200 reviews from the community along with 12,000+ images with prompts to get you started."
       />
       <Container size="xl">
-        {router.query.username && typeof router.query.username === 'string' && (
-          <Title>Models by {router.query.username}</Title>
-        )}
-        {router.query.favorites && <Title>Your Liked Models</Title>}
-        {router.query.tag && typeof router.query.tag === 'string' && (
-          <Title>{capitalize(router.query.tag)} Models</Title>
-        )}
+        {username && typeof username === 'string' && <Title>Models by {username}</Title>}
+        {favorites && <Title>Your Liked Models</Title>}
         <Stack spacing="xs">
           {welcomeAlert && (
             <Alert
               color="blue"
-              withCloseButton
-              py={5}
-              pl={3}
+              py={8}
               className={classes.welcome}
               onClose={closeWelcomeAlert}
+              withCloseButton
             >
               <Group spacing="xs" noWrap>
                 <Text size={36} p={0}>
@@ -87,6 +85,7 @@ function Home() {
               </Group>
             </Alert>
           )}
+          <TrendingTags />
           <Group position="apart" spacing={0}>
             <InfiniteModelsSort />
             <Group spacing={4}>
@@ -108,7 +107,6 @@ const useStyles = createStyles((theme) => ({
   welcome: {
     maxWidth: 600,
     top: 75,
-    marginBottom: -40,
     position: 'sticky',
     alignSelf: 'center',
     zIndex: 11,
@@ -121,7 +119,6 @@ const useStyles = createStyles((theme) => ({
         ? theme.fn.darken(theme.colors.blue[8], 0.5)
         : theme.colors.blue[1],
     [theme.fn.smallerThan('md')]: {
-      marginBottom: 5,
       marginLeft: -5,
       marginRight: -5,
     },

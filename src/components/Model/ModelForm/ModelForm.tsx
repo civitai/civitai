@@ -193,7 +193,7 @@ export function ModelForm({ model }: Props) {
     getIsNsfwPoi({ ...defaultValues, images: defaultValues.modelVersions.flatMap((v) => v.images) })
   );
   useEffect(() => {
-    const subscription = form.watch((value, { name, type }) => {
+    const subscription = form.watch((value, { name }) => {
       const match = name?.match(/modelVersions\.[0-9]\.images/);
       if (name === 'poi' || name === 'nsfw' || match || name === undefined) {
         const { poi, nsfw, modelVersions } = value;

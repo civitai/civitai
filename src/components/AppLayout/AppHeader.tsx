@@ -367,7 +367,7 @@ export function AppHeader({ links }: Props) {
     <Header ref={ref} height={HEADER_HEIGHT} fixed>
       <Grid className={classes.header} m={0} gutter="xs" align="center">
         <Grid.Col span="auto" pl={0}>
-          <Group spacing="xs">
+          <Group spacing="xs" noWrap>
             <Link href="/" passHref>
               <Anchor variant="text" onClick={() => closeBurger()}>
                 <Logo />
@@ -380,7 +380,6 @@ export function AppHeader({ links }: Props) {
                 href="/models/create"
                 variant="filled"
                 size="xs"
-                ml="xs"
                 pl={5}
               >
                 <IconPlus size={16} />

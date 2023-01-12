@@ -693,6 +693,117 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
     `);
   };
 
+  const updateTagMetrics = async () => {
+    await prisma.$executeRawUnsafe(`
+      -- Get all engagements that have happened since then that affect metrics
+      WITH recent_engagements AS
+      (
+        SELECT
+          "tagId" AS id
+        FROM "Model" m
+        JOIN "TagsOnModels" tom ON tom."modelId" = m.id
+        WHERE (m."updatedAt" > '2023-01-01')
+
+        UNION
+
+        SELECT
+          "tagId" AS id
+        FROM "TagEngagement"
+        WHERE ("createdAt" > '2023-01-01')
+      ),
+      -- Get all affected
+      affected AS
+      (
+          SELECT DISTINCT
+              r.id
+          FROM recent_engagements r
+          WHERE r.id IS NOT NULL
+      )
+
+      -- upsert metrics for all affected
+      -- perform a one-pass table scan producing all metrics for all affected users
+      INSERT INTO "TagMetric" ("tagId", timeframe, "followerCount", "hiddenCount", "modelCount")
+      SELECT
+        m.id,
+        tf.timeframe,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN follower_count
+          WHEN tf.timeframe = 'Year' THEN year_follower_count
+          WHEN tf.timeframe = 'Month' THEN month_follower_count
+          WHEN tf.timeframe = 'Week' THEN week_follower_count
+          WHEN tf.timeframe = 'Day' THEN day_follower_count
+        END AS follower_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN hidden_count
+          WHEN tf.timeframe = 'Year' THEN year_hidden_count
+          WHEN tf.timeframe = 'Month' THEN month_hidden_count
+          WHEN tf.timeframe = 'Week' THEN week_hidden_count
+          WHEN tf.timeframe = 'Day' THEN day_hidden_count
+        END AS hidden_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN model_count
+          WHEN tf.timeframe = 'Year' THEN year_model_count
+          WHEN tf.timeframe = 'Month' THEN month_model_count
+          WHEN tf.timeframe = 'Week' THEN week_model_count
+          WHEN tf.timeframe = 'Day' THEN day_model_count
+        END AS model_count
+      FROM
+      (
+        SELECT
+          a.id,
+          COALESCE(ft.follower_count, 0) AS follower_count,
+          COALESCE(ft.year_follower_count, 0) AS year_follower_count,
+          COALESCE(ft.month_follower_count, 0) AS month_follower_count,
+          COALESCE(ft.week_follower_count, 0) AS week_follower_count,
+          COALESCE(ft.day_follower_count, 0) AS day_follower_count,
+          COALESCE(ft.hidden_count, 0) AS hidden_count,
+          COALESCE(ft.year_hidden_count, 0) AS year_hidden_count,
+          COALESCE(ft.month_hidden_count, 0) AS month_hidden_count,
+          COALESCE(ft.week_hidden_count, 0) AS week_hidden_count,
+          COALESCE(ft.day_hidden_count, 0) AS day_hidden_count,
+          COALESCE(r.model_count, 0) AS model_count,
+          COALESCE(r.year_model_count, 0) AS year_model_count,
+          COALESCE(r.month_model_count, 0) AS month_model_count,
+          COALESCE(r.week_model_count, 0) AS week_model_count,
+          COALESCE(r.day_model_count, 0) AS day_model_count
+        FROM affected a
+        LEFT JOIN (
+          SELECT
+            "tagId" id,
+            COUNT("modelId") model_count,
+            SUM(IIF(m."publishedAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_model_count,
+            SUM(IIF(m."publishedAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_model_count,
+            SUM(IIF(m."publishedAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_model_count,
+            SUM(IIF(m."publishedAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_model_count
+          FROM "TagsOnModels" tom
+          JOIN "Model" m ON m.id = tom."modelId"
+          GROUP BY "tagId"
+        ) r ON r.id = a.id
+        LEFT JOIN (
+          SELECT
+            "tagId"                                                                      AS id,
+            SUM(IIF(type = 'Follow', 1, 0))                                                     AS follower_count,
+            SUM(IIF(type = 'Follow' AND "createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_follower_count,
+            SUM(IIF(type = 'Follow' AND "createdAt" >= (NOW() - interval '30 days'), 1, 0))  AS month_follower_count,
+            SUM(IIF(type = 'Follow' AND "createdAt" >= (NOW() - interval '7 days'), 1, 0))   AS week_follower_count,
+            SUM(IIF(type = 'Follow' AND "createdAt" >= (NOW() - interval '1 days'), 1, 0))   AS day_follower_count,
+            SUM(IIF(type = 'Hide', 1, 0))                                                       AS hidden_count,
+            SUM(IIF(type = 'Hide' AND "createdAt" >= (NOW() - interval '365 days'), 1, 0))   AS year_hidden_count,
+            SUM(IIF(type = 'Hide' AND "createdAt" >= (NOW() - interval '30 days'), 1, 0))    AS month_hidden_count,
+            SUM(IIF(type = 'Hide' AND "createdAt" >= (NOW() - interval '7 days'), 1, 0))     AS week_hidden_count,
+            SUM(IIF(type = 'Hide' AND "createdAt" >= (NOW() - interval '1 days'), 1, 0))     AS day_hidden_count
+          FROM "TagEngagement"
+          GROUP BY "tagId"
+        ) ft ON a.id = ft.id
+      ) m
+      CROSS JOIN (
+        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+      ) tf
+      ON CONFLICT ("tagId", timeframe) DO UPDATE
+        SET "followerCount" = EXCLUDED."followerCount", "modelCount" = EXCLUDED."modelCount", "hiddenCount" = EXCLUDED."hiddenCount";
+    `);
+  };
+
   const refreshModelRank = async () =>
     await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelRank"');
 
@@ -720,6 +831,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
   await updateAnswerMetrics();
   await updateQuestionMetrics();
   await updateUserMetrics();
+  await updateTagMetrics();
   await refreshModelRank();
 
   // Update the last update time

@@ -25,10 +25,12 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
   entityType,
   query,
   modelId,
-}: Partial<GetTagsInput> & {
+  orderBy,
+}: Omit<GetTagsInput, 'limit' | 'page'> & {
   select: TSelect;
   take?: number;
   skip?: number;
+  orderBy?: Prisma.TagFindManyArgs['orderBy'];
 }) => {
   const where: Prisma.TagWhereInput = {
     name: query ? { contains: query, mode: 'insensitive' } : undefined,
@@ -41,6 +43,7 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
     skip,
     select,
     where,
+    orderBy,
   });
   const count = await prisma.tag.count({ where });
 
