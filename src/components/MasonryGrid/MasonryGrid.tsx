@@ -30,7 +30,7 @@ export function MasonryGrid<T>({
       columnWidth: columnWidth,
       columnGutter: columnGutter ?? theme.spacing.md,
     },
-    [items]
+    [dependency]
   );
   const resizeObserver = useResizeObserver(positioner);
 

@@ -8,6 +8,7 @@ import { ReviewDiscussionItem } from '~/components/Model/ModelDiscussion/ReviewD
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { CommentGetAllItem, ReviewGetAllItem } from '~/types/router';
 import { trpc } from '~/utils/trpc';
+import sortBy from 'lodash/sortBy';
 
 export function ModelDiscussion({ modelId, filters }: Props) {
   const {
@@ -20,7 +21,7 @@ export function ModelDiscussion({ modelId, filters }: Props) {
     { modelId, limit: 12, ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
-      keepPreviousData: true,
+      keepPreviousData: false,
     }
   );
   const {
@@ -33,7 +34,7 @@ export function ModelDiscussion({ modelId, filters }: Props) {
     { modelId, limit: 12, ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
-      keepPreviousData: true,
+      keepPreviousData: false,
     }
   );
 
@@ -45,7 +46,11 @@ export function ModelDiscussion({ modelId, filters }: Props) {
     () => commentsData?.pages.flatMap((x) => x.comments) ?? [],
     [commentsData?.pages]
   );
-  const items = useMemo(() => [...reviews, ...comments], [comments, reviews]);
+  const items = useMemo(
+    () => [...reviews, ...comments].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
+    [comments, reviews]
+  );
+  console.log(items.map((x) => x.createdAt));
   const loading = loadingReviews || loadingComments;
   const fetching = fetchingReviews || fetchingComments;
   const hasNextPage = hasMoreReviews || hasMoreComments;
