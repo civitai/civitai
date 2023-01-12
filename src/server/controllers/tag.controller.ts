@@ -42,7 +42,7 @@ export const getTrendingTagsHandler = async ({ input }: { input: GetTrendingTags
   const { items } = await getTags({
     ...input,
     take: input.limit ?? constants.tagFilterDefaults.trendingTagsLimit,
-    select: { id: true, name: true, rank: { select: { modelCountAllTimeRank: true } } },
+    select: { id: true, name: true },
     orderBy: { rank: { modelCountAllTimeRank: 'asc' } },
   });
 

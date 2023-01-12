@@ -78,7 +78,7 @@ const useStyles = createStyles((theme) => ({
 }));
 
 export function TrendingTags() {
-  const { classes, cx } = useStyles();
+  const { classes, cx, theme } = useStyles();
   const router = useRouter();
 
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -115,21 +115,32 @@ export function TrendingTags() {
       </Box>
       <Group className={classes.tagsGroup} spacing={8} noWrap>
         <Link href="/" shallow>
-          <Button className={classes.tag} variant={!router.query.tag ? 'filled' : 'light'} compact>
+          <Button
+            className={classes.tag}
+            variant={
+              !router.query.tag ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'
+            }
+            color={!router.query.tag ? 'blue' : 'gray'}
+            compact
+          >
             All
           </Button>
         </Link>
-        {trendingTags.map((tag) => (
-          <Link key={tag.id} href={`/?tag=${encodeURIComponent(tag.name)}`} as="/" shallow>
-            <Button
-              className={classes.tag}
-              variant={router.query.tag === tag.name ? 'filled' : 'light'}
-              compact
-            >
-              {tag.name}
-            </Button>
-          </Link>
-        ))}
+        {trendingTags.map((tag) => {
+          const active = router.query.tag === tag.name;
+          return (
+            <Link key={tag.id} href={`/?tag=${encodeURIComponent(tag.name)}`} as="/" shallow>
+              <Button
+                className={classes.tag}
+                variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                color={active ? 'blue' : 'gray'}
+                compact
+              >
+                {tag.name}
+              </Button>
+            </Link>
+          );
+        })}
       </Group>
       <Box className={cx(classes.rightArrow, atEnd && classes.hidden)}>
         <ActionIcon
