@@ -87,14 +87,14 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
           result.data.nsfw && result.data.meta && !auditMetaData(result.data.meta).success
             ? 'blocked'
             : 'uploading';
-        const { porn, hentai, sexy } = result.data.analysis;
-        console.log({
-          name: result.data.file.name,
-          analysis: result.data.analysis,
-          score: porn + hentai + sexy * 0.5,
-          meta: result.data.meta,
-          status,
-        });
+        // const { porn, hentai, sexy } = result.data.analysis;
+        // console.log({
+        //   name: result.data.file.name,
+        //   analysis: result.data.analysis,
+        //   score: porn + hentai + sexy * 0.5,
+        //   meta: result.data.meta,
+        //   status,
+        // });
         filesHandler.setState(
           produce((state) => {
             const index = state.findIndex((x) => x.uuid === result.data.uuid);
@@ -113,15 +113,15 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
             }
           })
         );
-        // if (status === 'uploading') {
-        //   pending.current.push({ uuid: result.data.uuid, file: result.data.file });
-        //   setStats((stats) => {
-        //     return {
-        //       ...stats,
-        //       numPending: stats.numPending + 1,
-        //     };
-        //   });
-        // }
+        if (status === 'uploading') {
+          pending.current.push({ uuid: result.data.uuid, file: result.data.file });
+          setStats((stats) => {
+            return {
+              ...stats,
+              numPending: stats.numPending + 1,
+            };
+          });
+        }
       }
     };
   }, []); //eslint-disable-line

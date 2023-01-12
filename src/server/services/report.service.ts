@@ -83,7 +83,7 @@ export const getReports = async <TSelect extends Prisma.ReportSelect>({
   page,
   query,
   type,
-  limit,
+  limit = 20,
   select,
 }: GetReportsInput & {
   select: TSelect;
