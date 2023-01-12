@@ -1,8 +1,19 @@
-import { Group, Stack, Container, Title, Alert, Text, createStyles } from '@mantine/core';
+import {
+  Alert,
+  Anchor,
+  Badge,
+  createStyles,
+  Container,
+  Group,
+  Stack,
+  Text,
+  Title,
+  ScrollArea,
+} from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { capitalize } from 'lodash';
 import { GetServerSideProps } from 'next';
-import { useSession } from 'next-auth/react';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
@@ -12,8 +23,10 @@ import {
   InfiniteModelsSort,
 } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { Meta } from '~/components/Meta/Meta';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
+import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerAuthSession(context);
@@ -22,6 +35,8 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     await ssg.user.getFavoriteModels.prefetch(undefined);
     await ssg.user.getTags.prefetch({ type: 'Hide' });
   }
+
+  await ssg.tag.getAll.prefetch({ entityType: 'Model', withModels: true, limit: 20 });
 
   return {
     props: {
@@ -32,33 +47,35 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 
 function Home() {
   const router = useRouter();
-  const { data: session } = useSession();
+  const currentUser = useCurrentUser();
   const { classes } = useStyles();
   const [welcomeAlert, setWelcomeAlert] = useLocalStorage({
     key: 'welcomeAlert',
     defaultValue: true,
   });
+  const { username, tag, favorites } = router.query;
 
-  const closeWelcomeAlert = () => {
-    setWelcomeAlert(false);
-  };
+  const { data: tagsData } = trpc.tag.getAll.useQuery({
+    limit: 20,
+    entityType: 'Model',
+    withModels: true,
+  });
+  const trendingTags = tagsData?.items ?? [];
+
+  const closeWelcomeAlert = () => setWelcomeAlert(false);
 
   return (
     <>
       <Meta
-        title={`Civitai ${
-          !session ? `| Stable Diffusion models, embeddings, hypernetworks and more` : ''
+        title={`Civitai${
+          !currentUser ? ` | Stable Diffusion models, embeddings, hypernetworks and more` : ''
         }`}
-        description={`Civitai is a platform for Stable Diffusion AI Art models. We have a collection of over 1,700 models from 250+ creators. We also have a collection of 1200 reviews from the community along with 12,000+ images with prompts to get you started.`}
+        description="Civitai is a platform for Stable Diffusion AI Art models. We have a collection of over 1,700 models from 250+ creators. We also have a collection of 1200 reviews from the community along with 12,000+ images with prompts to get you started."
       />
       <Container size="xl">
-        {router.query.username && typeof router.query.username === 'string' && (
-          <Title>Models by {router.query.username}</Title>
-        )}
-        {router.query.favorites && <Title>Your Liked Models</Title>}
-        {router.query.tag && typeof router.query.tag === 'string' && (
-          <Title>{capitalize(router.query.tag)} Models</Title>
-        )}
+        {username && typeof username === 'string' && <Title>Models by {username}</Title>}
+        {favorites && <Title>Your Liked Models</Title>}
+        {tag && typeof tag === 'string' && <Title>{capitalize(tag)} Models</Title>}
         <Stack spacing="xs">
           {welcomeAlert && (
             <Alert
@@ -87,6 +104,26 @@ function Home() {
               </Group>
             </Alert>
           )}
+          {trendingTags.length > 0 ? (
+            <Stack spacing={4}>
+              <Text color="dimmed" transform="uppercase">
+                Explore Tags
+              </Text>
+              <ScrollArea scrollbarSize={4} offsetScrollbars>
+                <Group spacing="xs" noWrap>
+                  {trendingTags.map((tag) => (
+                    <Link key={tag.id} href={`/tag/${tag.name.toLowerCase()}`} passHref>
+                      <Anchor variant="text">
+                        <Badge className={classes.tag} size="lg" variant="outline" radius="xl">
+                          {tag.name}
+                        </Badge>
+                      </Anchor>
+                    </Link>
+                  ))}
+                </Group>
+              </ScrollArea>
+            </Stack>
+          ) : null}
           <Group position="apart" spacing={0}>
             <InfiniteModelsSort />
             <Group spacing={4}>
@@ -108,7 +145,7 @@ const useStyles = createStyles((theme) => ({
   welcome: {
     maxWidth: 600,
     top: 75,
-    marginBottom: -40,
+    marginBottom: -25,
     position: 'sticky',
     alignSelf: 'center',
     zIndex: 11,
@@ -133,5 +170,13 @@ const useStyles = createStyles((theme) => ({
   welcomeText: {
     color: theme.colorScheme === 'dark' ? theme.colors.blue[2] : undefined,
     lineHeight: 1.1,
+  },
+  tag: {
+    transition: 'background .3s',
+
+    '&:hover': {
+      backgroundColor:
+        theme.colorScheme === 'dark' ? 'rgba(25, 113, 194, 0.2)' : 'rgba(231, 245, 255, 1)',
+    },
   },
 }));
