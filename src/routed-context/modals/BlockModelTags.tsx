@@ -40,7 +40,7 @@ export default createRoutedContext({
     const handleBlockTags = () => mutate({ tagIds: selectedTags.map(Number) });
 
     return (
-      <Modal opened={context.opened} onClose={context.close} title="Block Tags">
+      <Modal opened={context.opened} onClose={context.close} title="Hide Tags">
         {isLoading ? (
           <Center p="lg">
             <Loader size="lg" />
@@ -84,7 +84,7 @@ export default createRoutedContext({
               </>
             ) : (
               <>
-                <Text>{`This model doesn't has any tags`}</Text>
+                <Text>{`This model doesn't have any tags`}</Text>
                 <Group position="right">
                   <Button variant="default" onClick={context.close}>
                     Close

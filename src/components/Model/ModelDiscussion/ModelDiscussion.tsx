@@ -20,7 +20,7 @@ export function ModelDiscussion({ modelId, filters }: Props) {
     { modelId, limit: 12, ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
-      keepPreviousData: true,
+      keepPreviousData: false,
     }
   );
   const {
@@ -33,7 +33,7 @@ export function ModelDiscussion({ modelId, filters }: Props) {
     { modelId, limit: 12, ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
-      keepPreviousData: true,
+      keepPreviousData: false,
     }
   );
 
@@ -45,7 +45,10 @@ export function ModelDiscussion({ modelId, filters }: Props) {
     () => commentsData?.pages.flatMap((x) => x.comments) ?? [],
     [commentsData?.pages]
   );
-  const items = useMemo(() => [...reviews, ...comments], [comments, reviews]);
+  const items = useMemo(
+    () => [...reviews, ...comments].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
+    [comments, reviews]
+  );
   const loading = loadingReviews || loadingComments;
   const fetching = fetchingReviews || fetchingComments;
   const hasNextPage = hasMoreReviews || hasMoreComments;
@@ -56,7 +59,7 @@ export function ModelDiscussion({ modelId, filters }: Props) {
       <Grid.Col span={12} sx={{ position: 'relative' }}>
         <LoadingOverlay visible={loading} />
         {hasItems ? (
-          <MasonryGrid items={items} render={DiscussionItem} />
+          <MasonryGrid items={items} render={DiscussionItem} filters={filters} />
         ) : (
           <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Stack>
@@ -113,9 +116,9 @@ type Props = {
   filters: { filterBy: ReviewFilter[]; sort: ReviewSort };
 };
 
-function DiscussionItem({ data }: ItemProps) {
+function DiscussionItem({ data, width }: ItemProps) {
   return 'rating' in data ? (
-    <ReviewDiscussionItem review={data} />
+    <ReviewDiscussionItem review={data} width={width} />
   ) : (
     <CommentDiscussionItem comment={data} />
   );
@@ -123,4 +126,5 @@ function DiscussionItem({ data }: ItemProps) {
 
 type ItemProps = {
   data: ReviewGetAllItem | CommentGetAllItem;
+  width: number;
 };

@@ -179,6 +179,7 @@ export default createRoutedContext({
                   >
                     <ImageGuard
                       images={review.images}
+                      nsfw={review.nsfw}
                       connect={{ entityType: 'review', entityId: review.id }}
                       render={(image) => {
                         const width = image.width ?? 1;

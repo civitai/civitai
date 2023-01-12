@@ -38,17 +38,22 @@ import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
-import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { useInView } from 'react-intersection-observer';
+import { useEffect, useState } from 'react';
 
-export function ReviewDiscussionItem({ review }: Props) {
+export function ReviewDiscussionItem({ review, width }: Props) {
   const { openContext } = useRoutedContext();
   const currentUser = useCurrentUser();
   const isOwner = currentUser?.id === review.user.id;
   const isMod = currentUser?.isModerator ?? false;
+  const { ref, inView } = useInView({ triggerOnce: true });
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (inView) setVisible(true);
+  }, [inView]);
 
   const { data: reactions = [] } = trpc.review.getReactions.useQuery(
     { reviewId: review.id },
@@ -172,7 +177,7 @@ export function ReviewDiscussionItem({ review }: Props) {
   const hasMultipleImages = review.images.length > 1;
 
   return (
-    <Card radius="md" p="md" withBorder>
+    <Card radius="md" p="md" withBorder ref={ref}>
       <Stack spacing={4} mb="sm">
         <Group align="flex-start" position="apart" noWrap>
           <UserAvatar
@@ -264,43 +269,8 @@ export function ReviewDiscussionItem({ review }: Props) {
         </Group>
       </Stack>
       {hasImages && (
-        <Card.Section mb="sm" style={{ position: 'relative' }}>
-          <Carousel withControls={hasMultipleImages} draggable={hasMultipleImages} loop>
-            <ImageGuard
-              images={review.images}
-              connect={{ entityType: 'review', entityId: review.id }}
-              render={(image, index) => (
-                <Carousel.Slide>
-                  <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
-                  <ImageGuard.Unsafe>
-                    <AspectRatio
-                      ratio={1}
-                      sx={{
-                        width: '100%',
-                        overflow: 'hidden',
-                      }}
-                    >
-                      <MediaHash {...image} />
-                    </AspectRatio>
-                  </ImageGuard.Unsafe>
-                  <ImageGuard.Safe>
-                    <ImagePreview
-                      image={image}
-                      edgeImageProps={{ width: 400 }}
-                      aspectRatio={1}
-                      onClick={() =>
-                        openContext('reviewLightbox', {
-                          initialSlide: index,
-                          reviewId: review.id,
-                        })
-                      }
-                      withMeta
-                    />
-                  </ImageGuard.Safe>
-                </Carousel.Slide>
-              )}
-            />
-          </Carousel>
+        <Card.Section mb="sm" style={{ position: 'relative', height: width }}>
+          <ReviewCarousel review={review} inView={visible} />
         </Card.Section>
       )}
 
@@ -333,4 +303,61 @@ export function ReviewDiscussionItem({ review }: Props) {
   );
 }
 
-type Props = { review: ReviewGetAllItem };
+type Props = { review: ReviewGetAllItem; width: number };
+
+function ReviewCarousel({ review, inView }: { review: ReviewGetAllItem; inView: boolean }) {
+  const { openContext } = useRoutedContext();
+  const [renderImages, setRenderImages] = useState([review.images[0].id]);
+
+  const hasMultipleImages = review.images.length > 1;
+
+  return (
+    <Carousel
+      withControls={hasMultipleImages}
+      draggable={hasMultipleImages}
+      loop
+      onSlideChange={(index) => {
+        const image = review.images[index];
+        setRenderImages((ids) => (!ids.includes(image.id) ? [...ids, image.id] : ids));
+      }}
+    >
+      <ImageGuard
+        images={review.images}
+        connect={{ entityType: 'review', entityId: review.id }}
+        nsfw={review.nsfw}
+        render={(image, index) => (
+          <Carousel.Slide>
+            <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+            <ImageGuard.Unsafe>
+              <AspectRatio
+                ratio={1}
+                sx={{
+                  width: '100%',
+                  overflow: 'hidden',
+                }}
+              >
+                <MediaHash {...image} />
+              </AspectRatio>
+            </ImageGuard.Unsafe>
+            <ImageGuard.Safe>
+              {inView && renderImages.includes(image.id) && (
+                <ImagePreview
+                  image={image}
+                  edgeImageProps={{ width: 400 }}
+                  aspectRatio={1}
+                  onClick={() =>
+                    openContext('reviewLightbox', {
+                      initialSlide: index,
+                      reviewId: review.id,
+                    })
+                  }
+                  withMeta
+                />
+              )}
+            </ImageGuard.Safe>
+          </Carousel.Slide>
+        )}
+      />
+    </Carousel>
+  );
+}

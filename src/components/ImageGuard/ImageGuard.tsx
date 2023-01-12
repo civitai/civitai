@@ -101,7 +101,7 @@ export function ImageGuard({
   return (
     <ImageGuardCtx.Provider value={{ images, nsfw: globalNsfw, connect }}>
       {images.map((image, index) => (
-        <ImageGuardContentProvider key={index} image={image}>
+        <ImageGuardContentProvider key={image.id} image={image}>
           {render(image, index)}
         </ImageGuardContentProvider>
       ))}
@@ -157,7 +157,7 @@ ImageGuard.Unsafe = function Unsafe({ children }: { children: React.ReactNode })
   return image.nsfw && !showing ? <>{children}</> : null;
 };
 
-ImageGuard.Safe = function Safe({ children }: { children: React.ReactNode }) {
+ImageGuard.Safe = function Safe({ children }: { children?: React.ReactNode }) {
   const { connect } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
   const showImage = useStore((state) => state.showingImages[image.id.toString()] ?? false);
@@ -200,7 +200,7 @@ ImageGuard.ToggleConnect = function ToggleConnect({ children }: ToggleProps) {
   );
   const toggleConnect = useStore((state) => state.toggleConnection);
 
-  if (!connect || (!nsfw && !image.nsfw)) return null;
+  if (!connect || !image.nsfw) return null;
   const showing = showConnect ?? showImage;
 
   return (

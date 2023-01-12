@@ -1,15 +1,14 @@
-import { imageAnalysisSchema } from '../server/schema/image.schema';
+import { ImageAnalysisInput } from '../server/schema/image.schema';
 import { FileWithPath } from '@mantine/dropzone';
 import * as tf from '@tensorflow/tfjs';
 import { setWasmPaths } from '@tensorflow/tfjs-backend-wasm';
-import { z } from 'zod';
 import Queue from '~/utils/queue';
+import { env } from '~/env/client.mjs';
 
 setWasmPaths('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm/wasm-out/');
 tf.enableProdMode();
 
 export type NSFW_TYPES = 'drawing' | 'hentai' | 'neutral' | 'porn' | 'sexy';
-export type NSFW_ANALYSIS = z.infer<typeof imageAnalysisSchema>;
 export type PredictionType = {
   className: NSFW_TYPES;
   probability: number;
@@ -100,8 +99,8 @@ async function analyzeImage(bitmap: ImageBitmap) {
 }
 
 // determine if the image is NSFW based on the ranking
-function detectNsfwImage({ porn, hentai, sexy }: NSFW_ANALYSIS) {
-  const isNSFW = porn + hentai + sexy * 0.5 > 0.5; // If the sum of sketchy probabilities is greater than 0.5, it's NSFW
+function detectNsfwImage({ porn, hentai, sexy }: ImageAnalysisInput) {
+  const isNSFW = porn + hentai + sexy * 0.5 > 0.55; // If the sum of sketchy probabilities is greater than 0.5, it's NSFW
   return isNSFW;
 }
 
@@ -143,7 +142,7 @@ _self.onconnect = async (e) => {
         model = await tf.loadLayersModel('indexeddb://model');
         console.log('Load NSFW Model!');
       } catch (e) {
-        model = await tf.loadLayersModel('/model/model.json');
+        model = await tf.loadLayersModel(env.NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION);
         model.save('indexeddb://model');
         console.log('Save NSFW Model!');
       }

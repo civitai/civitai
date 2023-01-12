@@ -565,7 +565,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       icon={<IconBan size={14} stroke={1.5} />}
                       onClick={() => openContext('blockTags', { modelId: model.id })}
                     >
-                      Block tags
+                      Hide content with these tags
                     </Menu.Item>
                   </>
                 )}
@@ -857,7 +857,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   </LoginRedirect>
                 </Group>
                 <Group spacing="xs" noWrap grow>
-                  <Select
+                  {/* <Select
                     defaultValue={ReviewSort.Newest}
                     icon={<IconArrowsSort size={14} />}
                     data={Object.values(ReviewSort)
@@ -869,7 +869,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       }))}
                     onChange={handleReviewSortChange}
                     size="xs"
-                  />
+                  /> */}
                   {/* <MultiSelect
                     placeholder="Filters"
                     icon={<IconFilter size={14} />}

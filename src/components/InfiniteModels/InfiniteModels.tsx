@@ -420,7 +420,7 @@ const MasonryItem = ({
         openContext('blockTags', { modelId: id });
       }}
     >
-      {`Block model's tags`}
+      {`Hide content with these tags`}
     </Menu.Item>
   );
   let contextMenuItems: React.ReactNode[] = [];
@@ -429,7 +429,7 @@ const MasonryItem = ({
       <HideUserButton key="hide-button" as="menu-item" userId={user.id} />,
       reportOption,
     ]);
-  if (currentUser) contextMenuItems.push(blockTagsOption);
+  if (currentUser) contextMenuItems.splice(1, 0, blockTagsOption);
 
   const isNew = data.createdAt > aDayAgo;
   const isUpdated = !isNew && data.lastVersionAt && data.lastVersionAt > aDayAgo;
@@ -492,7 +492,11 @@ const MasonryItem = ({
                               />
                             </ActionIcon>
                           </Menu.Target>
-                          <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
+                          <Menu.Dropdown>
+                            {contextMenuItems.map((el, index) => (
+                              <React.Fragment key={index}>{el}</React.Fragment>
+                            ))}
+                          </Menu.Dropdown>
                         </Menu>
                       )}
                       <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>

@@ -70,7 +70,7 @@ export function TagsCard() {
   return (
     <Card withBorder>
       <Stack spacing={0}>
-        <Title order={2}>Blocked Tags</Title>
+        <Title order={2}>Hidden Tags</Title>
         <Text color="dimmed" size="sm">
           You will stop seeing models that contain tags you have blocked. Use the input below to
           manage them.
@@ -113,7 +113,7 @@ export function TagsCard() {
           ) : (
             <Center>
               <Stack spacing={2}>
-                <Text weight="bold">No blocked tags</Text>
+                <Text weight="bold">No hidden tags</Text>
                 <Text size="sm" color="dimmed">
                   You can add tags by using the search input above.
                 </Text>

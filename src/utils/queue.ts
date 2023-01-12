@@ -35,11 +35,9 @@ export default class Queue {
             item.reject(err);
           });
       } catch (err) {
-        console.log({ item });
         item.reject(err);
       } finally {
         // In all cases: decrement and try to perform the next promise
-        console.log({ queue: this.queue });
         this.nb_pending_promises--;
         this.dequeue();
       }

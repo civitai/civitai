@@ -38,6 +38,12 @@ export const createReport = async ({
             report,
           },
         });
+        if (data.reason === ReportReason.NSFW) {
+          await tx.image.updateMany({
+            where: { imagesOnModels: { modelVersion: { modelId: id } } },
+            data: { nsfw: true },
+          });
+        }
         if (toUpdate) {
           await tx.model.update({ where: { id }, data: toUpdate });
         }
@@ -49,8 +55,13 @@ export const createReport = async ({
             report,
           },
         });
-        if (toUpdate) {
-          await tx.review.update({ where: { id }, data: toUpdate });
+        if (data.reason === ReportReason.NSFW) {
+          await tx.image.updateMany({
+            where: { imagesOnReviews: { reviewId: id } },
+            data: { nsfw: true },
+          });
+        } else if (data.reason === ReportReason.TOSViolation) {
+          await tx.review.update({ where: { id }, data: { tosViolation: true } });
         }
         break;
       case ReportEntity.Comment:
@@ -78,7 +89,7 @@ export const getReports = async <TSelect extends Prisma.ReportSelect>({
   page,
   query,
   type,
-  limit,
+  limit = 20,
   select,
 }: GetReportsInput & {
   select: TSelect;

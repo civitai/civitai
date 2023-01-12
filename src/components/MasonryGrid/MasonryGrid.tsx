@@ -15,12 +15,14 @@ export function MasonryGrid<T>({
   maxColumnCount = 4,
   columnWidth = 1200 / maxColumnCount,
   columnGutter,
+  filters,
   ...props
 }: Props<T>) {
   const theme = useMantineTheme();
   const masonryRef = useRef(null);
   const { width, height } = useViewportSize();
   const { offset, width: containerWidth } = useContainerPosition(masonryRef, [width, height]);
+  const dependency = JSON.stringify(filters);
   const positioner = usePositioner(
     {
       width: containerWidth,
@@ -28,7 +30,7 @@ export function MasonryGrid<T>({
       columnWidth: columnWidth,
       columnGutter: columnGutter ?? theme.spacing.md,
     },
-    [items]
+    [dependency]
   );
   const resizeObserver = useResizeObserver(positioner);
 
@@ -37,6 +39,7 @@ export function MasonryGrid<T>({
       containerRef={masonryRef}
       positioner={positioner}
       resizeObserver={resizeObserver}
+      overscanBy={10}
       offset={offset}
       height={height}
       items={items}
@@ -53,4 +56,5 @@ type Props<T> = Omit<
   maxColumnCount?: number;
   columnWidth?: number;
   columnGutter?: number;
+  filters: Record<string, unknown>;
 };
