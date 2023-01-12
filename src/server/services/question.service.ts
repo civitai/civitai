@@ -12,7 +12,7 @@ import { isTag } from '~/server/schema/tag.schema';
 import { QuestionSort, QuestionStatus } from '~/server/common/enums';
 
 export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
-  limit,
+  limit = 20,
   page,
   query,
   tagname,
