@@ -84,6 +84,7 @@ function MyApp(props: CustomAppProps) {
           theme={{
             colorScheme,
             components: {
+              Modal: { styles: { modal: { maxWidth: '100%' } } },
               Popover: { styles: { dropdown: { maxWidth: '100vw' } } },
               Rating: { styles: { symbolBody: { cursor: 'pointer' } } },
               Switch: {

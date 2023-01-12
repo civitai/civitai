@@ -8,7 +8,6 @@ import { ReviewDiscussionItem } from '~/components/Model/ModelDiscussion/ReviewD
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { CommentGetAllItem, ReviewGetAllItem } from '~/types/router';
 import { trpc } from '~/utils/trpc';
-import sortBy from 'lodash/sortBy';
 
 export function ModelDiscussion({ modelId, filters }: Props) {
   const {
@@ -50,7 +49,6 @@ export function ModelDiscussion({ modelId, filters }: Props) {
     () => [...reviews, ...comments].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
     [comments, reviews]
   );
-  console.log(items.map((x) => x.createdAt));
   const loading = loadingReviews || loadingComments;
   const fetching = fetchingReviews || fetchingComments;
   const hasNextPage = hasMoreReviews || hasMoreComments;
@@ -118,9 +116,9 @@ type Props = {
   filters: { filterBy: ReviewFilter[]; sort: ReviewSort };
 };
 
-function DiscussionItem({ data }: ItemProps) {
+function DiscussionItem({ data, width }: ItemProps) {
   return 'rating' in data ? (
-    <ReviewDiscussionItem review={data} />
+    <ReviewDiscussionItem review={data} width={width} />
   ) : (
     <CommentDiscussionItem comment={data} />
   );
@@ -128,4 +126,5 @@ function DiscussionItem({ data }: ItemProps) {
 
 type ItemProps = {
   data: ReviewGetAllItem | CommentGetAllItem;
+  width: number;
 };
