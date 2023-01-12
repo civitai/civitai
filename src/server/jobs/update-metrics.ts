@@ -702,14 +702,14 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           "tagId" AS id
         FROM "Model" m
         JOIN "TagsOnModels" tom ON tom."modelId" = m.id
-        WHERE (m."updatedAt" > '2023-01-01')
+        WHERE (m."updatedAt" > '${lastUpdate}')
 
         UNION
 
         SELECT
           "tagId" AS id
         FROM "TagEngagement"
-        WHERE ("createdAt" > '2023-01-01')
+        WHERE ("createdAt" > '${lastUpdate}')
       ),
       -- Get all affected
       affected AS
