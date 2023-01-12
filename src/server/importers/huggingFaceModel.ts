@@ -52,8 +52,6 @@ export async function importModelFromHuggingFace(
     where: { fromImport: { source } },
     select: { id: true, modelVersions: { select: { files: true, images: true } } },
   });
-  const images: { id: number }[] =
-    model?.modelVersions[0]?.images.map((x) => ({ id: x.imageId })) ?? [];
 
   // Prepare modelVersions files
   // for each file in the model, create a modelVersion on the model
@@ -149,20 +147,21 @@ export async function importModelFromHuggingFace(
           },
           select: { id: true, modelVersions: { select: { files: true, images: true } } },
         });
+      }
 
+      for (const data of modelVersions) {
+        const versionImages = [];
         for (const data of imagesToCreate) {
           const image = await tx.image.create({
             data,
             select: { id: true },
           });
-          images.push(image);
+          versionImages.push(image);
         }
-      }
 
-      for (const data of modelVersions) {
         data.modelId = model.id;
         data.images = {
-          create: images.map((image, index) => ({ imageId: image.id, index })),
+          create: versionImages.map((image, index) => ({ imageId: image.id, index })),
         };
         await tx.modelVersion.create({ data });
       }
