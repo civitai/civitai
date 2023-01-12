@@ -26,7 +26,14 @@ export const getTagsInput = getAllQuerySchema.extend({
       return val === 'true' || val === true;
     }, z.boolean().default(false))
     .optional(),
-  entityType: z.nativeEnum(TagTarget),
+  entityType: z.nativeEnum(TagTarget).optional(),
   modelId: z.number().optional(),
 });
 export type GetTagsInput = z.infer<typeof getTagsInput>;
+
+export const getTrendingTagsSchema = z.object({
+  limit: z.number().optional(),
+  entityType: z.nativeEnum(TagTarget),
+  includeNsfw: z.boolean().optional(),
+});
+export type GetTrendingTagsSchema = z.infer<typeof getTrendingTagsSchema>;

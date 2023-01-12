@@ -1,4 +1,5 @@
-import { GetTagByNameInput, GetTagsInput } from '~/server/schema/tag.schema';
+import { constants } from '~/server/common/constants';
+import { GetTagByNameInput, GetTagsInput, GetTrendingTagsSchema } from '~/server/schema/tag.schema';
 import { getTags, getTagWithModelCount } from '~/server/services/tag.service';
 import { throwDbError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -28,8 +29,6 @@ export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => 
         id: true,
         name: true,
         tagsOnModels: withModels ? { select: { modelId: true } } : undefined,
-        // TODO tags metrics: remove once metrics are in place
-        _count: withModels ? { select: { tagsOnModels: true } } : undefined,
       },
     });
 
@@ -37,4 +36,15 @@ export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => 
   } catch (error) {
     throw throwDbError(error);
   }
+};
+
+export const getTrendingTagsHandler = async ({ input }: { input: GetTrendingTagsSchema }) => {
+  const { items } = await getTags({
+    ...input,
+    take: input.limit ?? constants.tagFilterDefaults.trendingTagsLimit,
+    select: { id: true, name: true, rank: { select: { modelCountAllTimeRank: true } } },
+    orderBy: { rank: { modelCountAllTimeRank: 'asc' } },
+  });
+
+  return items;
 };

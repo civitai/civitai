@@ -52,7 +52,6 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { SFW } from '~/components/Media/SFW';
 import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
@@ -95,14 +94,7 @@ export function InfiniteModels({
 
   const { data: blockedTags } = trpc.user.getTags.useQuery({ type: 'Hide' });
   const excludedTagIds = blockedTags?.map((tag) => tag.id);
-  const {
-    data,
-    isLoading,
-    fetchNextPage,
-    // fetchPreviousPage,
-    hasNextPage,
-    // hasPreviousPage,
-  } = trpc.model.getAll.useInfiniteQuery(
+  const { data, isLoading, fetchNextPage, hasNextPage } = trpc.model.getAll.useInfiniteQuery(
     { ...filters, ...queryParams, excludedTagIds },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
@@ -420,6 +412,7 @@ const MasonryItem = ({
 
   const blockTagsOption = (
     <Menu.Item
+      key="block-tags"
       icon={<IconBan size={14} stroke={1.5} />}
       onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();

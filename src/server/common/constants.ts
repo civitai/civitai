@@ -22,6 +22,9 @@ export const constants = {
     'VAE',
     'Config',
   ],
+  tagFilterDefaults: {
+    trendingTagsLimit: 20,
+  },
 } as const;
 
 export type BaseModel = typeof constants.baseModels[number];

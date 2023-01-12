@@ -73,7 +73,6 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
         return match ?? { name };
       }),
     };
-    // console.log({ data });
     mutate(data);
   };
 

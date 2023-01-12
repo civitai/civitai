@@ -1,6 +1,5 @@
-import { Alert, createStyles, Container, Group, Stack, Text, Title, Box } from '@mantine/core';
+import { Alert, createStyles, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { capitalize } from 'lodash';
 import { GetServerSideProps } from 'next';
 import { useRouter } from 'next/router';
 
@@ -27,7 +26,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
   }
 
   // Prefetch trending tags
-  await ssg.tag.getAll.prefetch({ entityType: 'Model', withModels: true, limit: 20 });
+  await ssg.tag.getTrending.prefetch({ entityType: 'Model' });
 
   return {
     props: {
@@ -44,7 +43,7 @@ function Home() {
     key: 'welcomeAlert',
     defaultValue: true,
   });
-  const { username, tag, favorites } = router.query;
+  const { username, favorites } = router.query;
 
   const closeWelcomeAlert = () => setWelcomeAlert(false);
 
@@ -59,7 +58,6 @@ function Home() {
       <Container size="xl">
         {username && typeof username === 'string' && <Title>Models by {username}</Title>}
         {favorites && <Title>Your Liked Models</Title>}
-        {tag && typeof tag === 'string' && <Title>{capitalize(tag)} Models</Title>}
         <Stack spacing="xs">
           {welcomeAlert && (
             <Alert
@@ -87,9 +85,7 @@ function Home() {
               </Group>
             </Alert>
           )}
-          <Box className={classes.trendingTagsContainer}>
-            <TrendingTags />
-          </Box>
+          <TrendingTags />
           <Group position="apart" spacing={0}>
             <InfiniteModelsSort />
             <Group spacing={4}>
@@ -111,7 +107,6 @@ const useStyles = createStyles((theme) => ({
   welcome: {
     maxWidth: 600,
     top: 75,
-    marginBottom: -25,
     position: 'sticky',
     alignSelf: 'center',
     zIndex: 11,
@@ -124,7 +119,6 @@ const useStyles = createStyles((theme) => ({
         ? theme.fn.darken(theme.colors.blue[8], 0.5)
         : theme.colors.blue[1],
     [theme.fn.smallerThan('md')]: {
-      marginBottom: -5,
       marginLeft: -5,
       marginRight: -5,
     },
@@ -136,11 +130,5 @@ const useStyles = createStyles((theme) => ({
   welcomeText: {
     color: theme.colorScheme === 'dark' ? theme.colors.blue[2] : undefined,
     lineHeight: 1.1,
-  },
-  trendingTagsContainer: {
-    [theme.fn.largerThan('lg')]: {
-      marginLeft: theme.spacing.xl * -1.5, // -36px
-      marginRight: theme.spacing.xl * -1.5, // -36px
-    },
   },
 }));
