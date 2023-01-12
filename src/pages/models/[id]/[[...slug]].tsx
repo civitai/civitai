@@ -565,7 +565,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       icon={<IconBan size={14} stroke={1.5} />}
                       onClick={() => openContext('blockTags', { modelId: model.id })}
                     >
-                      Block tags
+                      Hide content with these tags
                     </Menu.Item>
                   </>
                 )}
