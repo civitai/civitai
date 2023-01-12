@@ -77,6 +77,7 @@ export function ImageUpload({
   const {
     files,
     filesHandler,
+    removeImage,
     upload,
     canUpload,
     // isCompleted,
@@ -248,11 +249,7 @@ export function ImageUpload({
                           <ActionIcon
                             color="red"
                             variant="outline"
-                            onClick={() =>
-                              filesHandler.setState((state) => [
-                                ...state.filter((x) => x.url !== image.url),
-                              ])
-                            }
+                            onClick={() => removeImage(image)}
                           >
                             <IconTrash size={16} />
                           </ActionIcon>

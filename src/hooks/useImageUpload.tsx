@@ -43,6 +43,7 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
     const toProcess = await Promise.all(
       filesToProcess.slice(0, max - files.length).map(async (file) => {
         const src = URL.createObjectURL(file);
+        console.log({ src });
         const meta = await getMetadata(file);
         const img = await loadImage(src);
         const hashResult = blurHashImage(img);
@@ -104,10 +105,6 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
               state[index].status = status;
 
               if (status === 'blocked') {
-                const previewUrl = state[index].previewUrl;
-                if (previewUrl) state[index].onLoad = () => URL.revokeObjectURL(previewUrl);
-                state[index].previewUrl = undefined;
-                state[index].url = '';
                 state[index].file = null;
               }
             }
@@ -194,6 +191,11 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
   }, [stats, concurrency]); //eslint-disable-line
   // #endregion
 
+  const removeImage = (image: ImageUpload) => {
+    if (image.previewUrl) URL.revokeObjectURL(image.previewUrl);
+    filesHandler.setState((state) => [...state].filter((x) => x.url !== image.url));
+  };
+
   // const hasErrors = files.some((x) => x.status === 'error');
   // const hasBlocked = files.some((x) => x.status === 'blocked');
   // const isCompleted = files.every(
@@ -205,6 +207,7 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
   return {
     files,
     filesHandler,
+    removeImage,
     upload: startProcessing,
     canUpload,
     // isCompleted,
