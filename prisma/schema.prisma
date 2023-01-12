@@ -505,7 +505,7 @@ model Image {
   tosViolation Boolean  @default(false)
   analysis     Json?
 
-  imagesOnModels  ImagesOnModels[]
+  imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?
 }
 
@@ -518,7 +518,7 @@ model ImagesOnModels {
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   modelVersionId Int
   image          Image        @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  imageId        Int
+  imageId        Int          @unique
   index          Int?
 
   @@id([imageId, modelVersionId])
