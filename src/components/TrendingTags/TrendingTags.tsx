@@ -114,20 +114,14 @@ export function TrendingTags() {
         </ActionIcon>
       </Box>
       <Group className={classes.tagsGroup} spacing={8} noWrap>
-        <Link href="/" passHref>
-          <Button
-            component="a"
-            className={classes.tag}
-            variant={!router.query.tag ? 'filled' : 'light'}
-            compact
-          >
+        <Link href="/" shallow>
+          <Button className={classes.tag} variant={!router.query.tag ? 'filled' : 'light'} compact>
             All
           </Button>
         </Link>
         {trendingTags.map((tag) => (
-          <Link key={tag.id} href={`/?tag=${encodeURIComponent(tag.name)}`} as="/" passHref>
+          <Link key={tag.id} href={`/?tag=${encodeURIComponent(tag.name)}`} as="/" shallow>
             <Button
-              component="a"
               className={classes.tag}
               variant={router.query.tag === tag.name ? 'filled' : 'light'}
               compact
