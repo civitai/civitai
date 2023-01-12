@@ -1,7 +1,7 @@
 import { FileWithPath } from '@mantine/dropzone';
 import exifr from 'exifr';
 import { ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
-import * as blocked from './blocklist.json';
+import blocked from './blocklist.json';
 
 export async function getMetadata(file: FileWithPath) {
   let exif: any; //eslint-disable-line
