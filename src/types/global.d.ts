@@ -30,6 +30,7 @@ declare global {
     uuid?: string;
     analysis?: ImageAnalysisInput;
     status?: 'processing' | 'uploading' | 'complete' | 'blocked' | 'error';
+    blockedFor?: string[];
   };
 
   type DeepNonNullable<T> = { [P in keyof T]-?: NonNullable<T[P]> } & NonNullable<T>;

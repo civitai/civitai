@@ -1,10 +1,22 @@
 import { forwardRef, CSSProperties, useState } from 'react';
-import { Alert, Center, createStyles, Overlay, Paper } from '@mantine/core';
+import {
+  Alert,
+  Center,
+  createStyles,
+  Group,
+  Overlay,
+  Paper,
+  ActionIcon,
+  Text,
+  Popover,
+  Code,
+  Stack,
+} from '@mantine/core';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { UniqueIdentifier } from '@dnd-kit/core';
-import { IconArrowsMaximize } from '@tabler/icons';
+import { IconArrowsMaximize, IconInfoCircle } from '@tabler/icons';
 
 //TODO - handle what to display when there is an error
 type Props = {
@@ -24,10 +36,11 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
 
     const { attributes, listeners, isDragging, setNodeRef, transform, transition } = sortable;
 
+    const isDisabled = disabled || image?.status === 'blocked';
     const style: CSSProperties = {
       transform: CSS.Transform.toString(transform),
       transition,
-      cursor: isDragging ? 'grabbing' : !disabled ? 'pointer' : 'auto',
+      cursor: isDragging ? 'grabbing' : !isDisabled ? 'pointer' : 'auto',
     };
 
     if (!image) return null;
@@ -70,7 +83,24 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
               }}
               radius={0}
             >
-              TOS Violation
+              <Group spacing={4}>
+                <Popover position="top" withinPortal withArrow>
+                  <Popover.Target>
+                    <ActionIcon>
+                      <IconInfoCircle />
+                    </ActionIcon>
+                  </Popover.Target>
+                  <Popover.Dropdown sx={{ maxWidth: 400 }} pb={14}>
+                    <Stack spacing={0}>
+                      <Text size="xs" weight={500}>
+                        Blocked for
+                      </Text>
+                      <Code color="red">{image.blockedFor?.join(', ')}</Code>
+                    </Stack>
+                  </Popover.Dropdown>
+                </Popover>
+                <Text>TOS Violation</Text>
+              </Group>
             </Alert>
           </>
         )}

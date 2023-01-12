@@ -7,6 +7,7 @@ import { auditMetaData, getMetadata } from '~/utils/image-metadata';
 import { v4 as uuidv4 } from 'uuid';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useListState } from '@mantine/hooks';
+import { result } from 'lodash';
 
 type MessageTypes =
   | { type: 'status'; status: string }
@@ -84,10 +85,9 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
           );
         }
       } else if (result.type === 'result') {
-        const status =
-          result.data.nsfw && result.data.meta && !auditMetaData(result.data.meta).success
-            ? 'blocked'
-            : 'uploading';
+        const auditResult =
+          result.data.nsfw && result.data.meta ? auditMetaData(result.data.meta) : undefined;
+        const status = !auditResult?.success ? 'blocked' : 'uploading';
         // const { porn, hentai, sexy } = result.data.analysis;
         // console.log({
         //   name: result.data.file.name,
@@ -103,6 +103,7 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
               state[index].analysis = result.data.analysis;
               state[index].nsfw = result.data.nsfw;
               state[index].status = status;
+              state[index].blockedFor = auditResult?.blockedFor;
 
               if (status === 'blocked') {
                 state[index].file = null;
