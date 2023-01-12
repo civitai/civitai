@@ -546,6 +546,7 @@ model Tag {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   target    TagTarget
+  unlisted  Boolean   @default(false)
 
   tagsOnModels   TagsOnModels[]
   TagsOnQuestion TagsOnQuestions[]
