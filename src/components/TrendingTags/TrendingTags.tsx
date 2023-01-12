@@ -91,7 +91,7 @@ export function TrendingTags() {
   const atStart = scrollPosition.x === 0;
   const atEnd =
     viewportRef.current &&
-    scrollPosition.x >= viewportRef.current.scrollWidth - viewportRef.current.offsetWidth;
+    scrollPosition.x >= viewportRef.current.scrollWidth - viewportRef.current.offsetWidth - 1;
 
   const scrollLeft = () => viewportRef.current?.scrollBy({ left: -200, behavior: 'smooth' });
   const scrollRight = () => viewportRef.current?.scrollBy({ left: 200, behavior: 'smooth' });
