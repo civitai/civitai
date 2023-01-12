@@ -200,7 +200,7 @@ ImageGuard.ToggleConnect = function ToggleConnect({ children }: ToggleProps) {
   );
   const toggleConnect = useStore((state) => state.toggleConnection);
 
-  if (!connect || (!nsfw && !image.nsfw)) return null;
+  if (!connect || !image.nsfw) return null;
   const showing = showConnect ?? showImage;
 
   return (
