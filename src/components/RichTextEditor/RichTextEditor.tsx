@@ -60,6 +60,7 @@ export function RichTextEditor({
     // Casting width as any to be able to use `100%`
     // since the tiptap extension API doesn't allow
     // strings for its value
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ...(addMedia ? [Image, Youtube.configure({ width: '100%' as any })] : []),
   ];
 

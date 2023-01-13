@@ -357,57 +357,84 @@ function ReviewCarousel({
 }) {
   const { openContext } = useRoutedContext();
   const [renderImages, setRenderImages] = useState([review.images[0].id]);
+  const [index, setIndex] = useState(0);
 
   const hasMultipleImages = review.images.length > 1;
 
   return (
-    <Carousel
-      withControls={hasMultipleImages}
-      draggable={hasMultipleImages}
-      loop
-      style={{ height: '100%' }}
-      onSlideChange={(index) => {
-        const image = review.images[index];
-        setRenderImages((ids) => (!ids.includes(image.id) ? [...ids, image.id] : ids));
-      }}
-    >
-      <ImageGuard
-        images={review.images}
-        connect={{ entityType: 'review', entityId: review.id }}
-        nsfw={review.nsfw}
-        render={(image, index) => (
-          <Carousel.Slide style={{ height }}>
-            <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
-            <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height }}>
-              <AspectRatio
-                ratio={1}
-                sx={{
-                  width: '100%',
-                  overflow: 'hidden',
-                }}
-              >
-                <MediaHash {...image} />
-              </AspectRatio>
-            </div>
-            <ImageGuard.Safe>
-              {inView && renderImages.includes(image.id) && (
-                <ImagePreview
-                  image={image}
-                  edgeImageProps={{ width: 400 }}
-                  aspectRatio={1}
-                  onClick={() =>
-                    openContext('reviewLightbox', {
-                      initialSlide: index,
-                      reviewId: review.id,
-                    })
-                  }
-                  withMeta
-                />
-              )}
-            </ImageGuard.Safe>
-          </Carousel.Slide>
-        )}
-      />
-    </Carousel>
+    <div style={{ position: 'relative' }}>
+      {/* {hasMultipleImages && (
+        <Badge
+          color="gray"
+          variant=""
+          sx={(theme) => ({
+            userSelect: 'none',
+            position: 'absolute',
+            top: theme.spacing.xs,
+            right: theme.spacing.xs,
+            zIndex: 10,
+          })}
+        >
+          {index + 1} / {review.images.length}
+        </Badge>
+      )} */}
+      <Carousel
+        withControls={hasMultipleImages}
+        draggable={hasMultipleImages}
+        loop
+        style={{ height }}
+        onSlideChange={(index) => {
+          const image = review.images[index];
+          setRenderImages((ids) => (!ids.includes(image.id) ? [...ids, image.id] : ids));
+          setIndex(index);
+        }}
+        withIndicators={hasMultipleImages}
+        styles={{
+          indicator: {
+            width: 8,
+            height: 8,
+            transition: 'width 250ms ease',
+          },
+        }}
+      >
+        <ImageGuard
+          images={review.images}
+          connect={{ entityType: 'review', entityId: review.id }}
+          nsfw={review.nsfw}
+          render={(image, index) => (
+            <Carousel.Slide style={{ height }}>
+              <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+              <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height }}>
+                <AspectRatio
+                  ratio={1}
+                  sx={{
+                    width: '100%',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <MediaHash {...image} />
+                </AspectRatio>
+              </div>
+              <ImageGuard.Safe>
+                {inView && renderImages.includes(image.id) && (
+                  <ImagePreview
+                    image={image}
+                    edgeImageProps={{ width: 400 }}
+                    aspectRatio={1}
+                    onClick={() =>
+                      openContext('reviewLightbox', {
+                        initialSlide: index,
+                        reviewId: review.id,
+                      })
+                    }
+                    withMeta
+                  />
+                )}
+              </ImageGuard.Safe>
+            </Carousel.Slide>
+          )}
+        />
+      </Carousel>
+    </div>
   );
 }

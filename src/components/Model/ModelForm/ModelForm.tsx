@@ -360,6 +360,28 @@ export function ModelForm({ model }: Props) {
               <Paper radius="md" p="xl" withBorder>
                 <Stack>
                   <InputText name="name" label="Name" placeholder="Name" withAsterisk />
+                  <InputSelect
+                    name="type"
+                    label="Type"
+                    placeholder="Type"
+                    data={Object.values(ModelType).map((type) => ({
+                      label: splitUppercase(type),
+                      value: type,
+                    }))}
+                    onChange={handleModelTypeChange}
+                    withAsterisk
+                  />
+                  <InputMultiSelect
+                    name="tagsOnModels"
+                    label="Tags"
+                    placeholder="e.g.: portrait, sharp focus, etc."
+                    description="Please add your tags"
+                    data={tagsData}
+                    creatable
+                    getCreateLabel={(query) => `+ Create ${query}`}
+                    clearable
+                    searchable
+                  />
                   <InputRTE
                     name="description"
                     label="About your model"
@@ -469,6 +491,7 @@ export function ModelForm({ model }: Props) {
                         </Grid.Col>
                         <Grid.Col span={12}>
                           <InputRTE
+                            key={`modelVersions.${index}.description`}
                             name={`modelVersions.${index}.description`}
                             label="Version changes or notes"
                             description="Tell us about this version"
@@ -566,29 +589,6 @@ export function ModelForm({ model }: Props) {
                     placeholder="Status"
                     data={[ModelStatus.Published, ModelStatus.Draft]}
                     withAsterisk
-                  />
-                  <InputSelect
-                    name="type"
-                    label="Type"
-                    placeholder="Type"
-                    data={Object.values(ModelType).map((type) => ({
-                      label: splitUppercase(type),
-                      value: type,
-                    }))}
-                    onChange={handleModelTypeChange}
-                    withAsterisk
-                  />
-
-                  <InputMultiSelect
-                    name="tagsOnModels"
-                    label="Tags"
-                    placeholder="e.g.: portrait, sharp focus, etc."
-                    description="Please add your tags"
-                    data={tagsData}
-                    creatable
-                    getCreateLabel={(query) => `+ Create ${query}`}
-                    clearable
-                    searchable
                   />
                 </Stack>
               </Paper>
