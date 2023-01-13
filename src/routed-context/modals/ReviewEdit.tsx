@@ -4,15 +4,7 @@ import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 
-import {
-  Form,
-  InputCheckbox,
-  InputImageUpload,
-  InputRating,
-  InputRTE,
-  InputSelect,
-  useForm,
-} from '~/libs/form';
+import { Form, InputImageUpload, InputRating, InputRTE, InputSelect, useForm } from '~/libs/form';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { ReviewUpsertInput, reviewUpsertSchema } from '~/server/schema/review.schema';
 import { showErrorNotification } from '~/utils/notifications';
@@ -28,7 +20,7 @@ export default createRoutedContext({
     const modelId = Number(router.query.id);
 
     const [isUploading, setIsUploading] = useState(false);
-    const [isComplete, setIsComplete] = useState(false);
+    const [isComplete, setIsComplete] = useState(true);
     const [isBlocked, setIsBlocked] = useState(false);
 
     const queryUtils = trpc.useContext();
@@ -63,7 +55,7 @@ export default createRoutedContext({
 
     const [nsfwPoi, setNsfwPoi] = useState(false);
     useEffect(() => {
-      const subscription = form.watch((value, { name, type }) => {
+      const subscription = form.watch((value, { name }) => {
         if (!modelDetail) return;
         if (name === 'nsfw' || name === 'images' || name === undefined) {
           const { nsfw, images } = value;

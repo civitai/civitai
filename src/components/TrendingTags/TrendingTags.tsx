@@ -103,8 +103,8 @@ export function TrendingTags() {
   return (
     <ScrollArea
       viewportRef={viewportRef}
-      type="never"
       className={classes.tagsContainer}
+      type="never"
       onScrollPositionChange={setScrollPosition}
     >
       <Box className={cx(classes.leftArrow, atStart && classes.hidden)}>
