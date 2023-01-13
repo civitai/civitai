@@ -111,14 +111,16 @@ model UserEngagement {
 }
 
 model UserMetric {
-  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId         Int
-  timeframe      MetricTimeframe
-  followingCount Int             @default(0)
-  followerCount  Int             @default(0)
-  hiddenCount    Int             @default(0)
-  uploadCount    Int             @default(0)
-  reviewCount    Int             @default(0)
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId            Int
+  timeframe         MetricTimeframe
+  followingCount    Int             @default(0)
+  followerCount     Int             @default(0)
+  hiddenCount       Int             @default(0)
+  uploadCount       Int             @default(0)
+  reviewCount       Int             @default(0)
+  answerCount       Int             @default(0)
+  answerAcceptCount Int             @default(0)
 
   @@id([userId, timeframe])
 }
@@ -1091,85 +1093,105 @@ model ModelVersionRank {
 
 /// @view
 model UserStat {
-  user                  User  @relation(fields: [userId], references: [id], onDelete: NoAction)
-  userId                Int   @id
-  uploadCountDay        Int
-  uploadCountWeek       Int
-  uploadCountMonth      Int
-  uploadCountYear       Int
-  uploadCountAllTime    Int
-  reviewCountDay        Int
-  reviewCountWeek       Int
-  reviewCountMonth      Int
-  reviewCountYear       Int
-  reviewCountAllTime    Int
-  downloadCountDay      Int
-  downloadCountWeek     Int
-  downloadCountMonth    Int
-  downloadCountYear     Int
-  downloadCountAllTime  Int
-  ratingCountDay        Int
-  ratingCountWeek       Int
-  ratingCountMonth      Int
-  ratingCountYear       Int
-  ratingCountAllTime    Int
-  followingCountDay     Int
-  followingCountWeek    Int
-  followingCountMonth   Int
-  followingCountYear    Int
-  followingCountAllTime Int
-  followerCountDay      Int
-  followerCountWeek     Int
-  followerCountMonth    Int
-  followerCountYear     Int
-  followerCountAllTime  Int
-  hiddenCountDay        Int
-  hiddenCountWeek       Int
-  hiddenCountMonth      Int
-  hiddenCountYear       Int
-  hiddenCountAllTime    Int
-  ratingDay             Float
-  ratingWeek            Float
-  ratingMonth           Float
-  ratingYear            Float
-  ratingAllTime         Float
-  favoriteCountDay      Int
-  favoriteCountWeek     Int
-  favoriteCountMonth    Int
-  favoriteCountYear     Int
-  favoriteCountAllTime  Int
+  user                     User  @relation(fields: [userId], references: [id], onDelete: NoAction)
+  userId                   Int   @id
+  uploadCountDay           Int
+  uploadCountWeek          Int
+  uploadCountMonth         Int
+  uploadCountYear          Int
+  uploadCountAllTime       Int
+  reviewCountDay           Int
+  reviewCountWeek          Int
+  reviewCountMonth         Int
+  reviewCountYear          Int
+  reviewCountAllTime       Int
+  downloadCountDay         Int
+  downloadCountWeek        Int
+  downloadCountMonth       Int
+  downloadCountYear        Int
+  downloadCountAllTime     Int
+  ratingCountDay           Int
+  ratingCountWeek          Int
+  ratingCountMonth         Int
+  ratingCountYear          Int
+  ratingCountAllTime       Int
+  followingCountDay        Int
+  followingCountWeek       Int
+  followingCountMonth      Int
+  followingCountYear       Int
+  followingCountAllTime    Int
+  followerCountDay         Int
+  followerCountWeek        Int
+  followerCountMonth       Int
+  followerCountYear        Int
+  followerCountAllTime     Int
+  hiddenCountDay           Int
+  hiddenCountWeek          Int
+  hiddenCountMonth         Int
+  hiddenCountYear          Int
+  hiddenCountAllTime       Int
+  ratingDay                Float
+  ratingWeek               Float
+  ratingMonth              Float
+  ratingYear               Float
+  ratingAllTime            Float
+  favoriteCountDay         Int
+  favoriteCountWeek        Int
+  favoriteCountMonth       Int
+  favoriteCountYear        Int
+  favoriteCountAllTime     Int
+  answerCountDay           Int
+  answerCountWeek          Int
+  answerCountMonth         Int
+  answerCountYear          Int
+  answerCountAllTime       Int
+  answerAcceptCountDay     Int
+  answerAcceptCountWeek    Int
+  answerAcceptCountMonth   Int
+  answerAcceptCountYear    Int
+  answerAcceptCountAllTime Int
 }
 
 /// @view
 model UserRank {
-  user                     User @relation(fields: [userId], references: [id], onDelete: NoAction)
-  userId                   Int  @id
-  downloadCountDayRank     Int
-  downloadCountWeekRank    Int
-  downloadCountMonthRank   Int
-  downloadCountYearRank    Int
-  downloadCountAllTimeRank Int
-  ratingCountDayRank       Int
-  ratingCountWeekRank      Int
-  ratingCountMonthRank     Int
-  ratingCountYearRank      Int
-  ratingCountAllTimeRank   Int
-  followerCountDayRank     Int
-  followerCountWeekRank    Int
-  followerCountMonthRank   Int
-  followerCountYearRank    Int
-  followerCountAllTimeRank Int
-  ratingDayRank            Int
-  ratingWeekRank           Int
-  ratingMonthRank          Int
-  ratingYearRank           Int
-  ratingAllTimeRank        Int
-  favoriteCountDayRank     Int
-  favoriteCountWeekRank    Int
-  favoriteCountMonthRank   Int
-  favoriteCountYearRank    Int
-  favoriteCountAllTimeRank Int
-  leaderboardRank          Int
+  user                         User @relation(fields: [userId], references: [id], onDelete: NoAction)
+  userId                       Int  @id
+  downloadCountDayRank         Int
+  downloadCountWeekRank        Int
+  downloadCountMonthRank       Int
+  downloadCountYearRank        Int
+  downloadCountAllTimeRank     Int
+  ratingCountDayRank           Int
+  ratingCountWeekRank          Int
+  ratingCountMonthRank         Int
+  ratingCountYearRank          Int
+  ratingCountAllTimeRank       Int
+  followerCountDayRank         Int
+  followerCountWeekRank        Int
+  followerCountMonthRank       Int
+  followerCountYearRank        Int
+  followerCountAllTimeRank     Int
+  ratingDayRank                Int
+  ratingWeekRank               Int
+  ratingMonthRank              Int
+  ratingYearRank               Int
+  ratingAllTimeRank            Int
+  favoriteCountDayRank         Int
+  favoriteCountWeekRank        Int
+  favoriteCountMonthRank       Int
+  favoriteCountYearRank        Int
+  favoriteCountAllTimeRank     Int
+  answerCountDayRank           Int
+  answerCountWeekRank          Int
+  answerCountMonthRank         Int
+  answerCountYearRank          Int
+  answerCountAllTimeRank       Int
+  answerAcceptCountDayRank     Int
+  answerAcceptCountWeekRank    Int
+  answerAcceptCountMonthRank   Int
+  answerAcceptCountYearRank    Int
+  answerAcceptCountAllTimeRank Int
+  leaderboardRank              Int
 }
 
 /// @view

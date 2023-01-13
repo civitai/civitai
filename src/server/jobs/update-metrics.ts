@@ -284,6 +284,21 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           "userId"
         FROM "Review" r
         WHERE (r."createdAt" > '${lastUpdate}')
+
+        UNION
+
+        SELECT
+          a2."userId"
+        FROM "AnswerVote" ar
+        JOIN "Answer" a2 ON a2.id = ar."answerId"
+        WHERE (ar."createdAt" > '${lastUpdate}')
+
+        UNION
+
+        SELECT
+          "userId"
+        FROM "Answer" ar
+        WHERE "createdAt" > '${lastUpdate}'
       ),
       -- Get all affected users
       affected_users AS
@@ -296,7 +311,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
 
       -- upsert metrics for all affected users
       -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "UserMetric" ("userId", timeframe, "followingCount", "followerCount", "hiddenCount", "uploadCount", "reviewCount")
+      INSERT INTO "UserMetric" ("userId", timeframe, "followingCount", "followerCount", "hiddenCount", "uploadCount", "reviewCount", "answerCount", "answerAcceptCount")
       SELECT
         m.user_id,
         tf.timeframe,
@@ -334,7 +349,21 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           WHEN tf.timeframe = 'Month' THEN month_review_count
           WHEN tf.timeframe = 'Week' THEN week_review_count
           WHEN tf.timeframe = 'Day' THEN day_review_count
-        END AS review_count
+        END AS review_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN answer_count
+          WHEN tf.timeframe = 'Year' THEN year_answer_count
+          WHEN tf.timeframe = 'Month' THEN month_answer_count
+          WHEN tf.timeframe = 'Week' THEN week_answer_count
+          WHEN tf.timeframe = 'Day' THEN day_answer_count
+        END AS answer_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN check_count
+          WHEN tf.timeframe = 'Year' THEN year_check_count
+          WHEN tf.timeframe = 'Month' THEN month_check_count
+          WHEN tf.timeframe = 'Week' THEN week_check_count
+          WHEN tf.timeframe = 'Day' THEN day_check_count
+        END AS check_count
       FROM
       (
         SELECT
@@ -363,7 +392,17 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           COALESCE(r.year_review_count, 0) AS year_review_count,
           COALESCE(r.month_review_count, 0) AS month_review_count,
           COALESCE(r.week_review_count, 0) AS week_review_count,
-          COALESCE(r.day_review_count, 0) AS day_review_count
+          COALESCE(r.day_review_count, 0) AS day_review_count,
+          COALESCE(ans.answer_count, 0) AS answer_count,
+          COALESCE(ans.year_answer_count, 0) AS year_answer_count,
+          COALESCE(ans.month_answer_count, 0) AS month_answer_count,
+          COALESCE(ans.week_answer_count, 0) AS week_answer_count,
+          COALESCE(ans.day_answer_count, 0) AS day_answer_count,
+          COALESCE(ans.check_count, 0) AS check_count,
+          COALESCE(ans.year_check_count, 0) AS year_check_count,
+          COALESCE(ans.month_check_count, 0) AS month_check_count,
+          COALESCE(ans.week_check_count, 0) AS week_check_count,
+          COALESCE(ans.day_check_count, 0) AS day_check_count
         FROM affected_users a
         LEFT JOIN (
           SELECT
@@ -376,6 +415,23 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           FROM "UserEngagement" ue
           GROUP BY ue."userId"
         ) fs ON a.user_id = fs.user_id
+        LEFT JOIN (
+          SELECT
+            ans."userId" AS user_id,
+            COUNT(*) answer_count,
+            SUM(IIF(ans."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_answer_count,
+            SUM(IIF(ans."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_answer_count,
+            SUM(IIF(ans."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_answer_count,
+            SUM(IIF(ans."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_answer_count,
+            SUM(ar."checkCountAllTime") check_count,
+            SUM(ar."checkCountDay") day_check_count,
+            SUM(ar."checkCountWeek") week_check_count,
+            SUM(ar."checkCountMonth") month_check_count,
+            SUM(ar."checkCountYear") year_check_count
+          FROM "AnswerRank" ar
+          JOIN "Answer" ans ON ans.id = ar."answerId"
+          GROUP BY ans."userId"
+        ) ans ON a.user_id = ans.user_id
         LEFT JOIN (
           SELECT
             m2."userId" user_id,
@@ -421,7 +477,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       ON CONFLICT ("userId", timeframe) DO UPDATE
-        SET "followerCount" = EXCLUDED."followerCount", "followingCount" = EXCLUDED."followingCount", "hiddenCount" = EXCLUDED."hiddenCount", "uploadCount" = EXCLUDED."uploadCount", "reviewCount" = EXCLUDED."reviewCount";
+        SET "followerCount" = EXCLUDED."followerCount", "followingCount" = EXCLUDED."followingCount", "hiddenCount" = EXCLUDED."hiddenCount", "uploadCount" = EXCLUDED."uploadCount", "reviewCount" = EXCLUDED."reviewCount", "answerCount" = EXCLUDED."answerCount", "answerAcceptCount" = EXCLUDED."answerAcceptCount";
     `);
   };
 

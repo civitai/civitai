@@ -98,6 +98,7 @@ export function CreatorList({ items }: Props) {
                           }}
                           favorite={stats.favoriteCountMonth}
                           downloads={stats.downloadCountMonth}
+                          answers={stats.answerCountMonth}
                           size="lg"
                         />
                       )}

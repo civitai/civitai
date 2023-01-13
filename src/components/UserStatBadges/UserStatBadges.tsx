@@ -1,5 +1,12 @@
 import { Group, MantineSize, Rating, Text, useMantineTheme } from '@mantine/core';
-import { IconStar, IconUpload, IconUsers, IconHeart, IconDownload } from '@tabler/icons';
+import {
+  IconStar,
+  IconUpload,
+  IconUsers,
+  IconHeart,
+  IconDownload,
+  IconChecks,
+} from '@tabler/icons';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -18,6 +25,7 @@ export function UserStatBadges({
   favorite,
   uploads,
   downloads,
+  answers,
   size = 'lg',
 }: Props) {
   const theme = useMantineTheme();
@@ -92,6 +100,16 @@ export function UserStatBadges({
           <Text size={textSize}>{abbreviateNumber(downloads)}</Text>
         </IconBadge>
       ) : null}
+      {answers != null && answers > 0 ? (
+        <IconBadge
+          tooltip="Answers"
+          icon={<IconChecks size={iconSize} />}
+          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          size={size}
+        >
+          <Text size={textSize}>{abbreviateNumber(answers)}</Text>
+        </IconBadge>
+      ) : null}
     </Group>
   );
 }
@@ -103,5 +121,6 @@ type Props = {
   uploads?: number;
   favorite?: number;
   downloads?: number;
+  answers?: number;
   size?: MantineSize;
 };

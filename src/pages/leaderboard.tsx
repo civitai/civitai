@@ -63,7 +63,7 @@ export default function Leaderboard() {
                     <Stack spacing={4}>
                       <Text weight={500}>Rank is calculated based on:</Text>
                       <Code block color="blue">
-                        {`(downloads / 100) +\n(averageRating * ratingCount * 10) +\n(favorites * 5)`}
+                        {`(downloads / 100) +\n(averageRating * ratingCount * 10) +\n(favorites * 5) +\n(answers * 3) +\n(answerAccepts * 5)`}
                       </Code>
                       <Text color="dimmed" size="xs">
                         Only the last 30 days are considered

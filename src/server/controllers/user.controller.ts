@@ -380,6 +380,7 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
             downloadCountMonth: true,
             favoriteCountMonth: true,
             uploadCountMonth: true,
+            answerCountMonth: true,
           },
         },
       },
