@@ -14,24 +14,10 @@ export type PredictionType = {
   probability: number;
 };
 
-// type MessageInput = { uuid: string; file: FileWithPath };
-
 interface SharedWorkerGlobalScope {
   onconnect: (event: MessageEvent) => void;
 }
 const _self: SharedWorkerGlobalScope = self as any;
-
-// const counter = 0;
-// _self.onconnect = (e) => {
-//   const port = e.ports[0];
-//   console.log({ ports: e.ports });
-//   console.log('test', counter);
-//   port.onmessage = function (e) {
-//     counter++;
-//     console.log('onmessage', { e });
-//     port.postMessage(`response: ${counter}`);
-//   };
-// };
 
 let model: tf.LayersModel;
 let initializing = false;
@@ -100,7 +86,7 @@ async function analyzeImage(bitmap: ImageBitmap) {
 
 // determine if the image is NSFW based on the ranking
 function detectNsfwImage({ porn, hentai, sexy }: ImageAnalysisInput) {
-  const isNSFW = porn + hentai + sexy * 0.5 > 0.55; // If the sum of sketchy probabilities is greater than 0.5, it's NSFW
+  const isNSFW = porn + hentai + sexy * 0.5 > 0.6; // If the sum of sketchy probabilities is greater than 0.6, it's NSFW
   return isNSFW;
 }
 
