@@ -90,7 +90,6 @@ export function TrendingTags() {
     { enabled: hiddenTags !== undefined }
   );
 
-  console.log({ trendingTags });
   if (!trendingTags.length) return null;
 
   const atStart = scrollPosition.x === 0;
@@ -119,7 +118,7 @@ export function TrendingTags() {
         </ActionIcon>
       </Box>
       <Group className={classes.tagsGroup} spacing={8} noWrap>
-        <Link href="/" shallow>
+        <Link href={router.asPath} shallow>
           <Button
             className={classes.tag}
             variant={
@@ -134,7 +133,12 @@ export function TrendingTags() {
         {trendingTags.map((tag) => {
           const active = router.query.tag === tag.name;
           return (
-            <Link key={tag.id} href={`/?tag=${encodeURIComponent(tag.name)}`} as="/" shallow>
+            <Link
+              key={tag.id}
+              href={!active ? `/?tag=${encodeURIComponent(tag.name)}` : router.asPath}
+              as={router.asPath}
+              shallow
+            >
               <Button
                 className={classes.tag}
                 variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
