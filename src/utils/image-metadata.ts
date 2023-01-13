@@ -123,8 +123,14 @@ const encoders = {
 // #endregion
 
 // #region [audit]
+const blockedRegex = blocked.map((word) => ({
+  word,
+  regex: new RegExp(`(^|\\s|\\(|\\))${word}(\\s|,|$|\\(|\\))`, 'm'),
+}));
 export const auditMetaData = (meta: AsyncReturnType<typeof getMetadata>) => {
-  const blockedFor = blocked.filter((item) => meta.prompt?.includes(item));
+  const blockedFor = blockedRegex
+    .filter(({ regex }) => meta?.prompt && regex.test(meta.prompt))
+    .map((x) => x.word);
   return { blockedFor, success: !blockedFor.length };
 };
 // #endregion
