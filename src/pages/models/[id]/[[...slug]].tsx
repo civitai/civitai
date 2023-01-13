@@ -438,22 +438,23 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       value: model.user && (
         <Group align="center" position="apart">
           <Link href={`/user/${model.user.username}`} passHref>
-            <Group spacing={4} noWrap sx={{ flex: 1, overflow: 'hidden' }}>
-              <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
-              <Text
-                size="sm"
-                variant="link"
-                component="a"
-                sx={{
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                {model.user.username}
-              </Text>
-            </Group>
+            <Anchor>
+              <Group spacing={4} noWrap sx={{ flex: 1, overflow: 'hidden' }}>
+                <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
+                <Text
+                  size="sm"
+                  variant="link"
+                  sx={{
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  {model.user.username}
+                </Text>
+              </Group>
+            </Anchor>
           </Link>
           <Group spacing={4} noWrap>
             <RankBadge size="md" textSize="xs" rank={model.user.rank?.leaderboardRank} />
