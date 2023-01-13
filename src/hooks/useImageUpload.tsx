@@ -7,7 +7,6 @@ import { auditMetaData, getMetadata } from '~/utils/image-metadata';
 import { v4 as uuidv4 } from 'uuid';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useListState } from '@mantine/hooks';
-import { result } from 'lodash';
 
 type MessageTypes =
   | { type: 'status'; status: string }
@@ -44,7 +43,6 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
     const toProcess = await Promise.all(
       filesToProcess.slice(0, max - files.length).map(async (file) => {
         const src = URL.createObjectURL(file);
-        console.log({ src });
         const meta = await getMetadata(file);
         const img = await loadImage(src);
         const hashResult = blurHashImage(img);

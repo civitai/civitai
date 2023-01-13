@@ -491,6 +491,7 @@ export function ModelForm({ model }: Props) {
                         </Grid.Col>
                         <Grid.Col span={12}>
                           <InputRTE
+                            key={`modelVersions.${index}.description`}
                             name={`modelVersions.${index}.description`}
                             label="Version changes or notes"
                             description="Tell us about this version"
