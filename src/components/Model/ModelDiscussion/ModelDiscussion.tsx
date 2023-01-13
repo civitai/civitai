@@ -1,5 +1,6 @@
 import { Button, Center, Grid, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
-import { useMemo } from 'react';
+import { usePrevious } from '@mantine/hooks';
+import { useEffect, useMemo, useState } from 'react';
 import { InView } from 'react-intersection-observer';
 
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
@@ -16,6 +17,7 @@ export function ModelDiscussion({ modelId, filters }: Props) {
     isFetchingNextPage: fetchingReviews,
     fetchNextPage: fetchNextReviews,
     hasNextPage: hasMoreReviews,
+    isRefetching: refetchingReviews,
   } = trpc.review.getAll.useInfiniteQuery(
     { modelId, limit: 12, ...filters },
     {
@@ -29,6 +31,7 @@ export function ModelDiscussion({ modelId, filters }: Props) {
     isFetchingNextPage: fetchingComments,
     fetchNextPage: fetchNextComments,
     hasNextPage: hasMoreComments,
+    isRefetching: refetchingComments,
   } = trpc.comment.getAll.useInfiniteQuery(
     { modelId, limit: 12, ...filters },
     {
@@ -36,6 +39,8 @@ export function ModelDiscussion({ modelId, filters }: Props) {
       keepPreviousData: false,
     }
   );
+
+  const previousFetching = usePrevious(refetchingComments || refetchingReviews);
 
   const reviews = useMemo(
     () => reviewsData?.pages.flatMap((x) => x.reviews) ?? [],
@@ -59,7 +64,12 @@ export function ModelDiscussion({ modelId, filters }: Props) {
       <Grid.Col span={12} sx={{ position: 'relative' }}>
         <LoadingOverlay visible={loading} />
         {hasItems ? (
-          <MasonryGrid items={items} render={DiscussionItem} filters={filters} />
+          <MasonryGrid
+            items={items}
+            render={DiscussionItem}
+            filters={filters}
+            previousFetching={previousFetching}
+          />
         ) : (
           <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Stack>

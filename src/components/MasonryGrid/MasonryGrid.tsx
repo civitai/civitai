@@ -16,13 +16,17 @@ export function MasonryGrid<T>({
   columnWidth = 1200 / maxColumnCount,
   columnGutter,
   filters,
+  previousFetching,
   ...props
 }: Props<T>) {
+  const counterRef = useRef(0);
   const theme = useMantineTheme();
   const masonryRef = useRef(null);
   const { width, height } = useViewportSize();
   const { offset, width: containerWidth } = useContainerPosition(masonryRef, [width, height]);
   const dependency = JSON.stringify(filters);
+  if (previousFetching) counterRef.current++;
+  // when add/edit/delete
   const positioner = usePositioner(
     {
       width: containerWidth,
@@ -30,7 +34,7 @@ export function MasonryGrid<T>({
       columnWidth: columnWidth,
       columnGutter: columnGutter ?? theme.spacing.md,
     },
-    [dependency]
+    [counterRef.current]
   );
   const resizeObserver = useResizeObserver(positioner);
 
@@ -57,4 +61,5 @@ type Props<T> = Omit<
   columnWidth?: number;
   columnGutter?: number;
   filters: Record<string, unknown>;
+  previousFetching?: boolean;
 };
