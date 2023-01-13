@@ -28,6 +28,8 @@ export const getTagsInput = getAllQuerySchema.extend({
     .optional(),
   entityType: z.nativeEnum(TagTarget).optional(),
   modelId: z.number().optional(),
+  not: z.number().array().optional(),
+  unlisted: z.boolean().optional(),
 });
 export type GetTagsInput = z.infer<typeof getTagsInput>;
 
@@ -35,5 +37,7 @@ export const getTrendingTagsSchema = z.object({
   limit: z.number().optional(),
   entityType: z.nativeEnum(TagTarget),
   includeNsfw: z.boolean().optional(),
+  not: z.number().array().optional(),
+  unlisted: z.boolean().optional(),
 });
 export type GetTrendingTagsSchema = z.infer<typeof getTrendingTagsSchema>;

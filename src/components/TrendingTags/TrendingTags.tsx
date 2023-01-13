@@ -84,8 +84,13 @@ export function TrendingTags() {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [scrollPosition, setScrollPosition] = useState({ x: 0, y: 0 });
 
-  const { data: trendingTags = [] } = trpc.tag.getTrending.useQuery({ entityType: 'Model' });
+  const { data: hiddenTags } = trpc.user.getTags.useQuery({ type: 'Hide' });
+  const { data: trendingTags = [] } = trpc.tag.getTrending.useQuery(
+    { entityType: 'Model', not: hiddenTags?.map((x) => x.id), unlisted: false },
+    { enabled: hiddenTags !== undefined }
+  );
 
+  console.log({ trendingTags });
   if (!trendingTags.length) return null;
 
   const atStart = scrollPosition.x === 0;

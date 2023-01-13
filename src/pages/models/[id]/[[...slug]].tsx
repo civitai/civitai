@@ -757,57 +757,59 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             })}
           >
             <Stack>
-              <Carousel
-                slideSize="50%"
-                breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
-                slideGap="xl"
-                align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
-                slidesToScroll={mobile ? 1 : 2}
-                withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
-                loop
-              >
-                <ImageGuard
-                  images={latestVersion.images}
-                  nsfw={model.nsfw}
-                  connect={{ entityId: model.id, entityType: 'model' }}
-                  render={(image, index) => (
-                    <Carousel.Slide>
-                      <Center style={{ height: '100%', width: '100%' }}>
-                        <div style={{ width: '100%', position: 'relative' }}>
-                          <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
-                          <ImageGuard.Unsafe>
-                            <AspectRatio
-                              ratio={(image.width ?? 1) / (image.height ?? 1)}
-                              sx={(theme) => ({
-                                width: '100%',
-                                borderRadius: theme.radius.md,
-                                overflow: 'hidden',
-                              })}
-                            >
-                              <MediaHash {...image} />
-                            </AspectRatio>
-                          </ImageGuard.Unsafe>
-                          <ImageGuard.Safe>
-                            <ImagePreview
-                              image={image}
-                              edgeImageProps={{ width: 400 }}
-                              radius="md"
-                              onClick={() =>
-                                openContext('modelVersionLightbox', {
-                                  modelVersionId: latestVersion.id,
-                                  initialSlide: index,
-                                })
-                              }
-                              style={{ width: '100%' }}
-                              withMeta
-                            />
-                          </ImageGuard.Safe>
-                        </div>
-                      </Center>
-                    </Carousel.Slide>
-                  )}
-                />
-              </Carousel>
+              {latestVersion.images.length > 0 && (
+                <Carousel
+                  slideSize="50%"
+                  breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
+                  slideGap="xl"
+                  align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
+                  slidesToScroll={mobile ? 1 : 2}
+                  withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+                  loop
+                >
+                  <ImageGuard
+                    images={latestVersion.images}
+                    nsfw={model.nsfw}
+                    connect={{ entityId: model.id, entityType: 'model' }}
+                    render={(image, index) => (
+                      <Carousel.Slide>
+                        <Center style={{ height: '100%', width: '100%' }}>
+                          <div style={{ width: '100%', position: 'relative' }}>
+                            <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                            <ImageGuard.Unsafe>
+                              <AspectRatio
+                                ratio={(image.width ?? 1) / (image.height ?? 1)}
+                                sx={(theme) => ({
+                                  width: '100%',
+                                  borderRadius: theme.radius.md,
+                                  overflow: 'hidden',
+                                })}
+                              >
+                                <MediaHash {...image} />
+                              </AspectRatio>
+                            </ImageGuard.Unsafe>
+                            <ImageGuard.Safe>
+                              <ImagePreview
+                                image={image}
+                                edgeImageProps={{ width: 400 }}
+                                radius="md"
+                                onClick={() =>
+                                  openContext('modelVersionLightbox', {
+                                    modelVersionId: latestVersion.id,
+                                    initialSlide: index,
+                                  })
+                                }
+                                style={{ width: '100%' }}
+                                withMeta
+                              />
+                            </ImageGuard.Safe>
+                          </div>
+                        </Center>
+                      </Carousel.Slide>
+                    )}
+                  />
+                </Carousel>
+              )}
               {model.description ? (
                 <ContentClamp maxHeight={300}>
                   <RenderHtml html={model.description} />
