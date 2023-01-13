@@ -7,6 +7,7 @@ import create from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageModel } from '~/server/selectors/image.selector';
+import { isDefined } from '~/utils/type-guards';
 export type ImageGuardConnect = {
   entityType: 'model' | 'review';
   entityId: number;
@@ -87,10 +88,13 @@ export function ImageGuard({
   // );
 
   // alter image nsfw - only allow to be true if shouldBlur is true
-  const images = initialImages.map((image) => {
-    const nsfw = (globalNsfw || image.nsfw) && shouldBlur;
-    return { ...image, nsfw };
-  });
+  const images = initialImages
+    .filter(isDefined)
+    .filter((x) => x.id)
+    .map((image) => {
+      const nsfw = (globalNsfw || image.nsfw) && shouldBlur;
+      return { ...image, nsfw };
+    });
 
   // if the showConnection is true, set nsfw = false for all images
   // const connectedImages =
