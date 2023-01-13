@@ -11,14 +11,14 @@ const useStyles = createStyles((theme) => ({
     position: 'relative',
 
     [theme.fn.largerThan('lg')]: {
-      marginLeft: theme.spacing.xl * -1.5, // -36px
-      marginRight: theme.spacing.xl * -1.5, // -36px
+      // marginLeft: theme.spacing.xl * -1.5, // -36px
+      // marginRight: theme.spacing.xl * -1.5, // -36px
     },
   },
   tagsGroup: {
     [theme.fn.largerThan('lg')]: {
-      marginLeft: theme.spacing.xl * 1.5, // 36px
-      marginRight: theme.spacing.xl * 1.5, // 36px
+      // marginLeft: theme.spacing.xl * 1.5, // 36px
+      // marginRight: theme.spacing.xl * 1.5, // 36px
     },
   },
   tag: {
@@ -103,8 +103,8 @@ export function TrendingTags() {
   return (
     <ScrollArea
       viewportRef={viewportRef}
-      type="never"
       className={classes.tagsContainer}
+      type="never"
       onScrollPositionChange={setScrollPosition}
     >
       <Box className={cx(classes.leftArrow, atStart && classes.hidden)}>

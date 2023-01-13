@@ -6,7 +6,7 @@ const modelLikeMilestones = [100, 500, 1000, 10000, 50000] as const;
 
 export const modelNotifications = createNotificationProcessor({
   'model-download-milestone': {
-    displayName: 'Model Download Milestones',
+    displayName: 'Model download milestones',
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your ${details.modelName} model has received ${details.downloadCount} downloads`,
       url: `/models/${details.modelId}`,
@@ -61,7 +61,7 @@ export const modelNotifications = createNotificationProcessor({
     `,
   },
   'model-like-milestone': {
-    displayName: 'Model Like Milestones',
+    displayName: 'Model like milestones',
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your ${details.modelName} model has received ${details.favoriteCount} likes`,
       url: `/models/${details.modelId}`,
@@ -115,7 +115,7 @@ export const modelNotifications = createNotificationProcessor({
     `,
   },
   'new-model-version': {
-    displayName: 'New Versions of Liked Models',
+    displayName: 'New versions of liked models',
     prepareMessage: ({ details }) => ({
       message: `The ${details.modelName} model you liked has a new version: ${details.versionName}`,
       url: `/models/${details.modelId}`,
@@ -145,7 +145,7 @@ export const modelNotifications = createNotificationProcessor({
     `,
   },
   'new-model-from-following': {
-    displayName: 'New Versions of Liked Models',
+    displayName: 'New models from followed users',
     prepareMessage: ({ details }) => ({
       message: `${details.username} released a new ${splitUppercase(
         details.modelType

@@ -85,7 +85,7 @@ function Home() {
               </Group>
             </Alert>
           )}
-          <TrendingTags />
+          {!username && !favorites ? <TrendingTags /> : null}
           <Group position="apart" spacing={0}>
             <InfiniteModelsSort />
             <Group spacing={4}>

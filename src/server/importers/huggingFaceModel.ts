@@ -1,4 +1,5 @@
 import { ImportStatus, ModelType, Prisma } from '@prisma/client';
+
 import { createImporter } from '~/server/importers/importer';
 import { prisma } from '~/server/db/client';
 import { uploadViaUrl } from '~/utils/cf-images-utils';
@@ -6,7 +7,6 @@ import { markdownToHtml } from '~/utils/markdown-helpers';
 import { bytesToKB } from '~/utils/number-helpers';
 import { imageToBlurhash } from '~/utils/image-utils';
 import { getModelFileFormat } from '~/utils/file-helpers';
-import { date } from 'zod';
 
 // Find match for URL like: https://huggingface.co/nitrosocke/Arcane-Diffusion
 const hfModelRegex = /^https:\/\/huggingface\.co\/([\w\-\.]+)\/([\w\-\.]+)/;
@@ -84,7 +84,7 @@ export async function importModelFromHuggingFace(
             type: 'Model',
             format: getModelFileFormat(name),
             primary,
-          },
+          } as Prisma.ModelFileCreateWithoutModelVersionInput,
         ],
       },
     });
