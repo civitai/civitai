@@ -270,7 +270,7 @@ export function ReviewDiscussionItem({ review, width }: Props) {
       </Stack>
       {hasImages && (
         <Card.Section mb="sm" style={{ position: 'relative', height: width }}>
-          <ReviewCarousel review={review} inView={visible} />
+          <ReviewCarousel review={review} inView={visible} height={width} />
         </Card.Section>
       )}
 
@@ -305,7 +305,15 @@ export function ReviewDiscussionItem({ review, width }: Props) {
 
 type Props = { review: ReviewGetAllItem; width: number };
 
-function ReviewCarousel({ review, inView }: { review: ReviewGetAllItem; inView: boolean }) {
+function ReviewCarousel({
+  review,
+  inView,
+  height,
+}: {
+  review: ReviewGetAllItem;
+  inView: boolean;
+  height: number;
+}) {
   const { openContext } = useRoutedContext();
   const [renderImages, setRenderImages] = useState([review.images[0].id]);
 
@@ -316,6 +324,7 @@ function ReviewCarousel({ review, inView }: { review: ReviewGetAllItem; inView: 
       withControls={hasMultipleImages}
       draggable={hasMultipleImages}
       loop
+      style={{ height: '100%' }}
       onSlideChange={(index) => {
         const image = review.images[index];
         setRenderImages((ids) => (!ids.includes(image.id) ? [...ids, image.id] : ids));
@@ -326,9 +335,9 @@ function ReviewCarousel({ review, inView }: { review: ReviewGetAllItem; inView: 
         connect={{ entityType: 'review', entityId: review.id }}
         nsfw={review.nsfw}
         render={(image, index) => (
-          <Carousel.Slide>
+          <Carousel.Slide style={{ height }}>
             <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
-            <ImageGuard.Unsafe>
+            <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height }}>
               <AspectRatio
                 ratio={1}
                 sx={{
@@ -338,7 +347,7 @@ function ReviewCarousel({ review, inView }: { review: ReviewGetAllItem; inView: 
               >
                 <MediaHash {...image} />
               </AspectRatio>
-            </ImageGuard.Unsafe>
+            </div>
             <ImageGuard.Safe>
               {inView && renderImages.includes(image.id) && (
                 <ImagePreview

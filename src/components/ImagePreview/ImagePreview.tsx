@@ -1,4 +1,12 @@
-import { ActionIcon, AspectRatio, Center, createStyles, Paper, PaperProps } from '@mantine/core';
+import {
+  ActionIcon,
+  AspectRatio,
+  Center,
+  createStyles,
+  MantineNumberSize,
+  Box,
+  BoxProps,
+} from '@mantine/core';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageModel } from '~/server/selectors/image.selector';
 // import { useImageLightbox } from '~/hooks/useImageLightbox';
@@ -17,7 +25,8 @@ type ImagePreviewProps = {
   edgeImageProps?: Omit<EdgeImageProps, 'src'>;
   withMeta?: boolean;
   onClick?: React.MouseEventHandler<HTMLImageElement>;
-} & Omit<PaperProps, 'component'>;
+  radius?: MantineNumberSize;
+} & Omit<BoxProps, 'component'>;
 
 export function ImagePreview({
   image: { url, name, width, height, hash, meta },
@@ -28,9 +37,10 @@ export function ImagePreview({
   style,
   onClick,
   className,
+  radius = 0,
   ...props
 }: ImagePreviewProps) {
-  const { classes, cx } = useStyles();
+  const { classes, cx } = useStyles({ radius });
   aspectRatio ??= (width ?? 16) / (height ?? 9);
 
   if (!edgeImageProps.width && !edgeImageProps.height) {
@@ -79,16 +89,17 @@ export function ImagePreview({
   );
 
   return (
-    <Paper radius={0} className={cx(classes.root, className)} style={{ ...style }} {...props}>
+    <Box className={cx(classes.root, className)} style={{ ...style }} {...props}>
       {aspectRatio === 0 ? Image : <AspectRatio ratio={aspectRatio}>{Image}</AspectRatio>}
       {Meta}
-    </Paper>
+    </Box>
   );
 }
 
-const useStyles = createStyles(() => ({
+const useStyles = createStyles((theme, { radius }: { radius?: MantineNumberSize }) => ({
   root: {
     position: 'relative',
     overflow: 'hidden',
+    borderRadius: theme.fn.radius(radius),
   },
 }));
