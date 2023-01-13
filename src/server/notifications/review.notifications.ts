@@ -2,7 +2,7 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 
 export const reviewNotifications = createNotificationProcessor({
   'new-review': {
-    displayName: 'New Reviews',
+    displayName: 'New reviews',
     prepareMessage: ({ details }) => ({
       message: `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`,
       url: `/models/${details.modelId}?modal=reviewThread&reviewId=${details.reviewId}`,
@@ -36,7 +36,7 @@ export const reviewNotifications = createNotificationProcessor({
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review');`,
   },
   'review-reminder': {
-    displayName: 'Review Reminders',
+    displayName: 'Review reminders',
     prepareMessage: ({ details }) => ({
       message: `Remember to review "${details.modelName}"`,
       url: `/models/${details.modelId}?modal=reviewEdit`,

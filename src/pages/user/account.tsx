@@ -32,9 +32,9 @@ export default function Account({ providers, isDev = false }: Props) {
           <ProfileCard />
           <CreatorCard />
           <SettingsCard />
+          <TagsCard />
           <NotificationsCard />
           <AccountsCard providers={providers} />
-          <TagsCard />
           {isDev && <ApiKeysCard />}
         </Stack>
       </Container>

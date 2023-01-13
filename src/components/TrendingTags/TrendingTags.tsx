@@ -11,14 +11,14 @@ const useStyles = createStyles((theme) => ({
     position: 'relative',
 
     [theme.fn.largerThan('lg')]: {
-      marginLeft: theme.spacing.xl * -1.5, // -36px
-      marginRight: theme.spacing.xl * -1.5, // -36px
+      // marginLeft: theme.spacing.xl * -1.5, // -36px
+      // marginRight: theme.spacing.xl * -1.5, // -36px
     },
   },
   tagsGroup: {
     [theme.fn.largerThan('lg')]: {
-      marginLeft: theme.spacing.xl * 1.5, // 36px
-      marginRight: theme.spacing.xl * 1.5, // 36px
+      // marginLeft: theme.spacing.xl * 1.5, // 36px
+      // marginRight: theme.spacing.xl * 1.5, // 36px
     },
   },
   tag: {

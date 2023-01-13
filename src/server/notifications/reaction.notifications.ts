@@ -5,7 +5,7 @@ const reviewReactionMilestones = [5, 10, 20, 50, 100] as const;
 
 export const reactionNotifications = createNotificationProcessor({
   'comment-reaction-milestone': {
-    displayName: 'Comment Reaction Milestones',
+    displayName: 'Comment reaction milestones',
     prepareMessage: ({ details }) => ({
       message: `Your comment on ${details.modelName} has received ${details.reactionCount} reactions`,
       url: `/models/${details.modelId}?modal=commentThread&commentId=${details.rootCommentId}`,
@@ -61,7 +61,7 @@ export const reactionNotifications = createNotificationProcessor({
     `,
   },
   'review-reaction-milestone': {
-    displayName: 'Review Reaction Milestones',
+    displayName: 'Review reaction milestones',
     prepareMessage: ({ details }) => ({
       message: `Your review on ${details.modelName} has received ${details.reactionCount} reactions`,
       url: `/models/${details.modelId}?modal=reviewThread&reviewId=${details.reviewId}`,
