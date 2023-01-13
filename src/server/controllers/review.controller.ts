@@ -18,8 +18,13 @@ import {
   getUserReactionByReviewId,
   updateReviewById,
   getReviewById,
+  convertReviewToComment,
 } from '~/server/services/review.service';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { env } from '~/env/server.mjs';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
@@ -225,5 +230,27 @@ export const getReviewCommentsCountHandler = async ({ input }: { input: GetByIdI
     return review._count.comments;
   } catch (error) {
     throw throwDbError(error);
+  }
+};
+
+export const convertToCommentHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const review = await getReviewById({
+      ...input,
+      select: { id: true, text: true, modelId: true, userId: true, createdAt: true },
+    });
+    if (!review) throw throwNotFoundError(`No review with id ${input.id}`);
+    if (!review.text)
+      throw throwBadRequestError(
+        `This review can't be converted to comment because it doesn't have any text message`
+      );
+
+    // Type casting to prevent type error since we already cover that text property is not null at this point
+    const results = await convertReviewToComment(review as DeepNonNullable<typeof review>);
+
+    return results;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };

@@ -1,8 +1,7 @@
-import { Prisma, ReviewReactions } from '@prisma/client';
+import { Prisma, Review, ReviewReactions } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 
-import { env } from '~/env/server.mjs';
-import { ReviewFilter, ReviewSort } from '~/server/common/enums';
+import { ReviewSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -15,17 +14,7 @@ import { getAllReviewsSelect } from '~/server/selectors/review.selector';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 export const getReviews = <TSelect extends Prisma.ReviewSelect>({
-  input: {
-    limit = DEFAULT_PAGE_SIZE,
-    page,
-    cursor,
-    modelId,
-    modelVersionId,
-    userId,
-    filterBy,
-    sort,
-  },
-  user,
+  input: { limit = DEFAULT_PAGE_SIZE, page, cursor, modelId, modelVersionId, userId, sort },
   select,
 }: {
   input: GetAllReviewsInput;
@@ -175,4 +164,37 @@ export const deleteReviewById = ({ id }: GetByIdInput) => {
 
 export const updateReviewById = ({ id, data }: { id: number; data: Prisma.ReviewUpdateInput }) => {
   return prisma.review.update({ where: { id }, data, select: getAllReviewsSelect() });
+};
+
+export const convertReviewToComment = ({
+  id,
+  text,
+  modelId,
+  userId,
+  createdAt,
+}: Pick<DeepNonNullable<Review>, 'id' | 'text' | 'modelId' | 'userId' | 'createdAt'>) => {
+  return prisma.$transaction(async (tx) => {
+    const reviewReactions = await tx.reviewReaction.findMany({
+      where: { reviewId: id, userId },
+      select: { reaction: true, userId: true, createdAt: true },
+    });
+    const comment = await tx.comment.create({
+      data: {
+        content: text,
+        modelId,
+        userId,
+        createdAt,
+        reactions: { createMany: { data: reviewReactions } },
+      },
+    });
+
+    await tx.comment.updateMany({
+      where: { modelId, reviewId: id, parentId: null },
+      data: { parentId: comment.id, reviewId: null },
+    });
+
+    await tx.review.delete({ where: { id } });
+
+    return comment;
+  });
 };

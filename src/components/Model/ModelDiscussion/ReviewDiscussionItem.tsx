@@ -21,7 +21,10 @@ import {
   IconMessageCircle2,
   IconCalculatorOff,
   IconCalculator,
+  IconSwitchHorizontal,
 } from '@tabler/icons';
+import { useEffect, useState } from 'react';
+import { useInView } from 'react-intersection-observer';
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
@@ -41,8 +44,6 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { useInView } from 'react-intersection-observer';
-import { useEffect, useState } from 'react';
 
 export function ReviewDiscussionItem({ review, width }: Props) {
   const { openContext } = useRoutedContext();
@@ -173,8 +174,40 @@ export function ReviewDiscussionItem({ review, width }: Props) {
     toggleReactionMutation.mutate({ id: review.id, reaction });
   };
 
+  const convertToCommentMutation = trpc.review.convertToComment.useMutation({
+    async onSuccess() {
+      await queryUtils.review.getAll.invalidate();
+      await queryUtils.comment.getAll.invalidate();
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+      });
+    },
+    onSettled() {
+      closeAllModals();
+    },
+  });
+  const handleConvertToComment = () => {
+    openConfirmModal({
+      title: 'Convert to Review',
+      children: (
+        <Text size="sm">
+          Are you sure you want to convert this review to a comment? You will not be able to revert
+          this.
+        </Text>
+      ),
+      centered: true,
+      labels: { confirm: 'Convert', cancel: 'Cancel' },
+      confirmProps: { loading: convertToCommentMutation.isLoading },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        convertToCommentMutation.mutate({ id: review.id });
+      },
+    });
+  };
+
   const hasImages = review.images.length > 0;
-  const hasMultipleImages = review.images.length > 1;
 
   return (
     <Card radius="md" p="md" withBorder ref={ref}>
@@ -226,6 +259,14 @@ export function ReviewDiscussionItem({ review, width }: Props) {
                       onClick={handleExcludeReview}
                     >
                       Exclude from average
+                    </Menu.Item>
+                  )}
+                  {isMod && (
+                    <Menu.Item
+                      icon={<IconSwitchHorizontal size={14} stroke={1.5} />}
+                      onClick={handleConvertToComment}
+                    >
+                      Convert to comment
                     </Menu.Item>
                   )}
                   {isMod && review.exclude && (

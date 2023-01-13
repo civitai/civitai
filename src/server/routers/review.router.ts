@@ -11,6 +11,7 @@ import {
   toggleReactionHandler,
   upsertReviewHandler,
   toggleExcludeHandler,
+  convertToCommentHandler,
 } from '~/server/controllers/review.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -62,4 +63,8 @@ export const reviewRouter = router({
     .mutation(deleteUserReviewHandler),
   toggleReaction: protectedProcedure.input(toggleReactionInput).mutation(toggleReactionHandler),
   toggleExclude: protectedProcedure.input(getByIdSchema).mutation(toggleExcludeHandler),
+  convertToComment: protectedProcedure
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .mutation(convertToCommentHandler),
 });
