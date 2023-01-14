@@ -18,7 +18,6 @@ import {
 import { useHotkeys } from '@mantine/hooks';
 import { IconMinus, IconInfoCircle } from '@tabler/icons';
 import { useState, useRef } from 'react';
-import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -135,8 +134,8 @@ export function Lightbox({
                               <AspectRatio
                                 ratio={width / height}
                                 sx={{
-                                  maxHeight: '100%',
-                                  maxWidth: '100%',
+                                  maxHeight: '100vh',
+                                  maxWidth: '100vw',
                                   height,
                                   width,
                                 }}
@@ -148,7 +147,7 @@ export function Lightbox({
                               <EdgeImage
                                 src={image.url}
                                 alt={image.name ?? undefined}
-                                style={{ maxHeight: '100%', maxWidth: '100%' }}
+                                style={{ maxHeight: '100vh', maxWidth: '100vw' }}
                                 width={width}
                               />
                             </ImageGuard.Safe>
