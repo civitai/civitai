@@ -50,7 +50,7 @@ export function ReviewDiscussionItem({ review, width }: Props) {
   const currentUser = useCurrentUser();
   const isOwner = currentUser?.id === review.user.id;
   const isMod = currentUser?.isModerator ?? false;
-  const { ref, inView } = useInView({ triggerOnce: true });
+  const { ref, inView } = useInView();
   const [visible, setVisible] = useState(false);
   useEffect(() => {
     if (inView) setVisible(true);
@@ -311,7 +311,7 @@ export function ReviewDiscussionItem({ review, width }: Props) {
       </Stack>
       {hasImages && (
         <Card.Section mb="sm" style={{ position: 'relative', height: width }}>
-          <ReviewCarousel review={review} inView={visible} height={width} />
+          <ReviewCarousel review={review} inView={visible || inView} height={width} />
         </Card.Section>
       )}
 
@@ -356,8 +356,19 @@ function ReviewCarousel({
   height: number;
 }) {
   const { openContext } = useRoutedContext();
-  const [renderImages, setRenderImages] = useState([review.images[0].id]);
+  const [renderIndexes, setRenderIndexes] = useState([0]);
   const [index, setIndex] = useState(0);
+
+  useEffect(() => {
+    // if (!!review.images && !review.images.some((x) => renderImages.includes(x.id))) {
+    //   setRenderImages([review.images[0].id]);
+    // }
+    if (review.id === 5615) console.log('reviewChanged');
+  }, [review]);
+
+  // if (review.id === 5615) {
+  //   console.log({ review, renderImages });
+  // }
 
   const hasMultipleImages = review.images.length > 1;
 
@@ -384,8 +395,7 @@ function ReviewCarousel({
         loop
         style={{ height }}
         onSlideChange={(index) => {
-          const image = review.images[index];
-          setRenderImages((ids) => (!ids.includes(image.id) ? [...ids, image.id] : ids));
+          setRenderIndexes((indexes) => (!indexes.includes(index) ? [...indexes, index] : indexes));
           setIndex(index);
         }}
         withIndicators={hasMultipleImages}
@@ -416,7 +426,7 @@ function ReviewCarousel({
                 </AspectRatio>
               </div>
               <ImageGuard.Safe>
-                {inView && renderImages.includes(image.id) && (
+                {inView && renderIndexes.includes(index) && (
                   <ImagePreview
                     image={image}
                     edgeImageProps={{ width: 400 }}
