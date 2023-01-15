@@ -33,7 +33,8 @@ type QueueItem = { uuid: string; file: FileWithPath };
 
 export const useImageUpload = ({ max = 10, value }: { max?: number; value: CustomFile[] }) => {
   const workerRef = useRef<SharedWorker>();
-  const supportsWebWorker = typeof SharedWorker !== undefined;
+  const noSharedWorker = typeof window === 'undefined' || !('SharedWorker' in window);
+  const supportsWebWorker = !noSharedWorker;
 
   const [canUpload, setCanUpload] = useState(!supportsWebWorker);
   const [files, filesHandler] = useListState<ImageUpload>(value);
