@@ -68,7 +68,7 @@ export const modelSchema = licensingSchema.extend({
   modelVersions: z
     .array(modelVersionUpsertSchema)
     .min(1, 'At least one model version is required.'),
-  mergePermissions: licensingSchema.array().optional(),
+  // mergePermissions: licensingSchema.array().optional(),
 });
 export type ModelInput = z.infer<typeof modelSchema>;
 

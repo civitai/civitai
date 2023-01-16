@@ -38,5 +38,5 @@ export const modelVersionUpsertSchema = z.object({
     .max(20, 'You can only upload up to 20 images'),
   trainedWords: z.array(z.string()),
   files: z.array(modelFileSchema),
-  recipe: z.array(recipeSchema).optional(),
+  // recipe: z.array(recipeSchema).optional(),
 });
