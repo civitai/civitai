@@ -14,9 +14,9 @@ const fileFormats = Object.values(ModelFileFormat).filter((type) => type !== 'Ot
 const fileFormatCount = fileFormats.length;
 
 const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
-  Model: '.ckpt,.pt,.safetensors',
+  Model: '.ckpt,.pt,.safetensors,.bin',
   'Pruned Model': '.ckpt,.pt,.safetensors',
-  Negative: '.pt',
+  Negative: '.pt,.bin',
   'Training Data': '.zip',
   Config: '.yaml,.yml',
   VAE: '.pt,.ckpt,.safetensors',
