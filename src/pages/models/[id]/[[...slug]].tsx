@@ -66,7 +66,6 @@ import { ModelDiscussion } from '~/components/Model/ModelDiscussion/ModelDiscuss
 import { ModelVersions } from '~/components/Model/ModelVersions/ModelVersions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
-import { TrainingWordBadge } from '~/components/TrainingWordBadge/TrainingWordBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
