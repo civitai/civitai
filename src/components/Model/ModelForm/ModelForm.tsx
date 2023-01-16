@@ -391,7 +391,8 @@ export function ModelForm({ model }: Props) {
               {fields.map((version, index) => {
                 const trainedWords = form.watch(`modelVersions.${index}.trainedWords`) ?? [];
                 const skipTrainedWords =
-                  form.watch(`modelVersions.${index}.skipTrainedWords`) ?? false;
+                  !isTextualInversion &&
+                  (form.watch(`modelVersions.${index}.skipTrainedWords`) ?? false);
                 const name = form.watch(`modelVersions.${index}.name`) ?? '';
 
                 return (
