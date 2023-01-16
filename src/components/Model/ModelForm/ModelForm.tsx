@@ -362,7 +362,6 @@ export function ModelForm({ model }: Props) {
                     data={tagsData}
                     creatable
                     getCreateLabel={(query) => `+ Create ${query}`}
-                    maxSelectedValues={5}
                     clearable
                     searchable
                   />
