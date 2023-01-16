@@ -70,43 +70,16 @@ export const commentNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-comment-response' "type",
         details
-      FROM new_comment_response
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment-response');
-    `,
-  },
-  'new-review-response': {
-    displayName: 'New review responses',
-    prepareMessage: ({ details }) => ({
-      message: `${details.username} has responded to your review on the ${details.modelName} model`,
-      url: `/models/${details.modelId}?modal=reviewThread&reviewId=${details.reviewId}&highlight=${details.commentId}`,
-    }),
-    prepareQuery: ({ lastSent }) => `
-      WITH new_review_response AS (
-        SELECT DISTINCT
-          r."userId" "ownerId",
-          JSONB_BUILD_OBJECT(
-            'modelId', c."modelId",
-            'commentId', c.id,
-            'reviewId', r.id,
-            'modelName', m.name,
-            'username', u.username
-          ) "details"
-        FROM "Comment" c
-        JOIN "Review" r ON r.id = c."reviewId"
-        JOIN "User" u ON c."userId" = u.id
-        JOIN "Model" m ON m.id = c."modelId"
-        WHERE m."userId" > 0
-          AND c."createdAt" > '${lastSent}'
-          AND c."userId" != r."userId"
-      )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
-      SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
-        "ownerId"    "userId",
-        'new-review-response' "type",
-        details
-      FROM new_review_response
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review-response');
+      FROM new_comment_response r
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment-response')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "Notification" n
+          WHERE n."userId" = r."ownerId"
+              AND (n.type = 'new-comment-nested' OR n.type = 'new-thread-response')
+              AND n.details->>'parentId' = r.details->>'parentId'
+        );
     `,
   },
   'new-comment-nested': {
@@ -141,7 +114,16 @@ export const commentNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-comment-nested' "type",
         details
-      FROM new_comments_nested;
+      FROM new_comments_nested r
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment-nested')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "Notification" n
+          WHERE n."userId" = r."ownerId"
+              AND (n.type = 'new-thread-response' OR n.type = 'new-comment-response')
+              AND n.details->>'parentId' = r.details->>'parentId'
+        );
     `,
   },
   'new-thread-response': {
@@ -186,7 +168,59 @@ export const commentNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-thread-response' "type",
         details
-      FROM new_thread_response;
+      FROM new_thread_response r
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-thread-response')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "Notification" n
+          WHERE n."userId" = r."ownerId"
+              AND (n.type = 'new-comment-nested' OR n.type = 'new-comment-response')
+              AND n.details->>'parentId' = r.details->>'parentId'
+        );
+    `,
+  },
+  'new-review-response': {
+    displayName: 'New review responses',
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} has responded to your review on the ${details.modelName} model`,
+      url: `/models/${details.modelId}?modal=reviewThread&reviewId=${details.reviewId}&highlight=${details.commentId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_review_response AS (
+        SELECT DISTINCT
+          r."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'modelId', c."modelId",
+            'commentId', c.id,
+            'reviewId', r.id,
+            'modelName', m.name,
+            'username', u.username
+          ) "details"
+        FROM "Comment" c
+        JOIN "Review" r ON r.id = c."reviewId"
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Model" m ON m.id = c."modelId"
+        WHERE m."userId" > 0
+          AND c."createdAt" > '${lastSent}'
+          AND c."userId" != r."userId"
+      )
+      INSERT INTO "Notification"("id", "userId", "type", "details")
+      SELECT
+        REPLACE(gen_random_uuid()::text, '-', ''),
+        "ownerId"    "userId",
+        'new-review-response' "type",
+        details
+      FROM new_review_response r
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review-response')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "Notification" n
+          WHERE n."userId" = r."ownerId"
+              AND (n.type = 'new-comment-nested' OR n.type = 'new-thread-response')
+              AND n.details->>'parentId' = r.details->>'reviewId'
+        );
     `,
   },
 });

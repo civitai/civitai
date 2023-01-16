@@ -24,6 +24,7 @@ export const reviewNotifications = createNotificationProcessor({
         JOIN "Model" m ON m.id = mv."modelId"
         WHERE
           m."userId" > 0 AND
+          m."userId" != r."userId" AND
           r."createdAt" > '${lastSent}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")
