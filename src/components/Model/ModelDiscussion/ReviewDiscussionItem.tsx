@@ -390,8 +390,11 @@ function ReviewCarousel({
         }}
         withIndicators={hasMultipleImages}
         styles={{
+          indicators: {
+            bottom: 8,
+          },
           indicator: {
-            width: 8,
+            width: 16,
             height: 8,
             transition: 'width 250ms ease',
           },

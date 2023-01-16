@@ -255,21 +255,6 @@ export function ModelForm({ model }: Props) {
           const match = tags.find((x) => x.name === name);
           return match ?? { name };
         }),
-        modelVersions: isTextualInversion
-          ? values.modelVersions.map((version) => {
-              const files = version.files ?? [];
-              const hasNegativeFile = files.findIndex((file) => file.type === 'Negative') > -1;
-              if (!hasNegativeFile) return version;
-
-              const trainedWords = version.trainedWords ?? [];
-              const [firstWord] = trainedWords;
-
-              return {
-                ...version,
-                trainedWords: firstWord ? [firstWord, `${firstWord}-neg`] : [],
-              };
-            })
-          : values.modelVersions,
       };
 
       if (editing) updateMutation.mutate(data as UpdateModelProps, commonOptions);
@@ -320,8 +305,7 @@ export function ModelForm({ model }: Props) {
           const trainedWords = modelVersion.trainedWords ?? [];
           const [firstWord] = trainedWords;
 
-          if (firstWord)
-            form.setValue(`modelVersions.${index}.trainedWords`, [firstWord, `${firstWord}-neg`]);
+          if (firstWord) form.setValue(`modelVersions.${index}.trainedWords`, [firstWord]);
         });
         break;
       case 'Hypernetwork':
@@ -374,11 +358,11 @@ export function ModelForm({ model }: Props) {
                   <InputMultiSelect
                     name="tagsOnModels"
                     label="Tags"
-                    placeholder="e.g.: portrait, sharp focus, etc."
-                    description="Please add your tags"
+                    placeholder="e.g.: portraits, landscapes, anime, etc."
                     data={tagsData}
                     creatable
                     getCreateLabel={(query) => `+ Create ${query}`}
+                    maxSelectedValues={5}
                     clearable
                     searchable
                   />
@@ -512,22 +496,24 @@ export function ModelForm({ model }: Props) {
                                   }`}
                                   data={trainedWords}
                                   getCreateLabel={(query) => `+ Create ${query}`}
-                                  maxSelectedValues={type === 'TextualInversion' ? 1 : undefined}
+                                  maxSelectedValues={isTextualInversion ? 1 : undefined}
                                   creatable
                                   clearable
                                   searchable
                                   required
                                 />
                               )}
-                              <InputSwitch
-                                name={`modelVersions.${index}.skipTrainedWords`}
-                                label="This version doesn't require any trigger words"
-                                onChange={(e) =>
-                                  e.target.checked
-                                    ? form.setValue(`modelVersions.${index}.trainedWords`, [])
-                                    : undefined
-                                }
-                              />
+                              {!isTextualInversion && (
+                                <InputSwitch
+                                  name={`modelVersions.${index}.skipTrainedWords`}
+                                  label="This version doesn't require any trigger words"
+                                  onChange={(e) =>
+                                    e.target.checked
+                                      ? form.setValue(`modelVersions.${index}.trainedWords`, [])
+                                      : undefined
+                                  }
+                                />
+                              )}
                             </Stack>
                           </Grid.Col>
                         )}
@@ -582,7 +568,6 @@ export function ModelForm({ model }: Props) {
             <Stack>
               <Paper radius="md" p="xl" withBorder>
                 <Stack>
-                  <Title order={4}>Model Properties</Title>
                   <InputSelect
                     name="status"
                     label="Status"

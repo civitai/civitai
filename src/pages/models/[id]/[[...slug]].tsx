@@ -91,13 +91,11 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
-import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ShowHide } from '~/components/ShowHide/ShowHide';
-import { Blurhash } from 'react-blurhash';
+import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 
 //TODO - Break model query into multiple queries
 /*
@@ -426,11 +424,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       label: 'Trigger Words',
       visible: !!latestVersion?.trainedWords?.length,
       value: (
-        <Group spacing={4}>
-          {latestVersion?.trainedWords.map((word, index) => (
-            <TrainingWordBadge key={index} word={word} />
-          ))}
-        </Group>
+        <TrainedWords trainedWords={latestVersion?.trainedWords} files={latestVersion?.files} />
       ),
     },
     {

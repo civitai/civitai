@@ -24,7 +24,6 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RunButton } from '~/components/RunStrategy/RunButton';
-import { TrainingWordBadge } from '~/components/TrainingWordBadge/TrainingWordBadge';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
@@ -39,6 +38,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 
 const VERSION_IMAGES_LIMIT = 8;
 
@@ -105,13 +105,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
     {
       label: 'Trigger Words',
       visible: !!version.trainedWords?.length,
-      value: (
-        <Group spacing={4}>
-          {version?.trainedWords.map((word, index) => (
-            <TrainingWordBadge key={index} word={word} />
-          ))}
-        </Group>
-      ),
+      value: <TrainedWords trainedWords={version?.trainedWords} files={version?.files} />,
     },
     {
       label: 'Training Images',
