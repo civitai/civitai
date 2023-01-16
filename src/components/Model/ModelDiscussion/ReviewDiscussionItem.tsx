@@ -311,7 +311,12 @@ export function ReviewDiscussionItem({ review, width }: Props) {
       </Stack>
       {hasImages && (
         <Card.Section mb="sm" style={{ position: 'relative', height: width }}>
-          <ReviewCarousel review={review} inView={visible || inView} height={width} />
+          <ReviewCarousel
+            key={review.id}
+            review={review}
+            inView={visible || inView}
+            height={width}
+          />
         </Card.Section>
       )}
 
