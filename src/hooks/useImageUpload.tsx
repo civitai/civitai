@@ -33,8 +33,10 @@ type QueueItem = { uuid: string; file: FileWithPath };
 
 export const useImageUpload = ({ max = 10, value }: { max?: number; value: CustomFile[] }) => {
   const workerRef = useRef<SharedWorker>();
+  const noSharedWorker = typeof window === 'undefined' || !('SharedWorker' in window);
+  const supportsWebWorker = !noSharedWorker;
 
-  const [canUpload, setCanUpload] = useState(false);
+  const [canUpload, setCanUpload] = useState(!supportsWebWorker);
   const [files, filesHandler] = useListState<ImageUpload>(value);
   const { uploadToCF } = useCFImageUpload();
 
@@ -53,73 +55,88 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
           file,
           meta,
           uuid: uuidv4(),
-          status: 'processing' as const,
+          status: !supportsWebWorker ? ('uploading' as const) : ('processing' as const),
+          nsfw: !supportsWebWorker ? false : undefined,
           ...hashResult,
         };
       })
     );
     filesHandler.setState((files) => [...files, ...toProcess]);
-    workerRef.current?.port.postMessage(
-      toProcess.map(({ uuid, file, meta }) => ({ uuid, file, meta }))
-    );
+    if (supportsWebWorker) {
+      workerRef.current?.port.postMessage(
+        toProcess.map(({ uuid, file, meta }) => ({ uuid, file, meta }))
+      );
+    } else {
+      pending.current = pending.current.concat(toProcess.map(({ uuid, file }) => ({ uuid, file })));
+      setStats((stats) => ({
+        ...stats,
+        numPending: stats.numPending + toProcess.length,
+      }));
+    }
   };
 
   // #region [nsfw.worker]
   useEffect(() => {
-    workerRef.current = new SharedWorker(new URL('/src/workers/nsfw.worker.ts', import.meta.url), {
-      name: 'tom_bot',
-    });
-    workerRef.current.port.onmessage = async function ({ data: result }: { data: MessageTypes }) {
-      if (result.type === 'status') {
-        setCanUpload(result.status === 'ready');
-      } else if (result.type === 'error') {
-        console.error(result.error);
-        if (result.uuid) {
+    if (supportsWebWorker) {
+      workerRef.current = new SharedWorker(
+        new URL('/src/workers/nsfw.worker.ts', import.meta.url),
+        {
+          name: 'tom_bot',
+        }
+      );
+      workerRef.current.port.onmessage = async function ({ data: result }: { data: MessageTypes }) {
+        if (result.type === 'status') {
+          setCanUpload(result.status === 'ready');
+        } else if (result.type === 'error') {
+          console.error(result.error);
+          if (result.uuid) {
+            filesHandler.setState(
+              produce((state) => {
+                const index = state.findIndex((x) => x.uuid === result.uuid);
+                state[index].status = 'error';
+              })
+            );
+          }
+        } else if (result.type === 'result') {
+          const auditResult =
+            result.data.nsfw && result.data.meta ? auditMetaData(result.data.meta) : undefined;
+          const status = auditResult && !auditResult?.success ? 'blocked' : 'uploading';
+          // const { porn, hentai, sexy } = result.data.analysis;
+          // console.log({
+          //   name: result.data.file.name,
+          //   analysis: result.data.analysis,
+          //   score: porn + hentai + sexy * 0.5,
+          //   meta: result.data.meta,
+          //   status,
+          // });
           filesHandler.setState(
             produce((state) => {
-              const index = state.findIndex((x) => x.uuid === result.uuid);
-              state[index].status = 'error';
+              const index = state.findIndex((x) => x.uuid === result.data.uuid);
+              if (index > -1) {
+                state[index].analysis = result.data.analysis;
+                state[index].nsfw = result.data.nsfw;
+                state[index].status = status;
+                state[index].blockedFor = auditResult?.blockedFor;
+
+                if (status === 'blocked') {
+                  state[index].file = null;
+                }
+              }
             })
           );
+          if (status === 'uploading') {
+            pending.current.push({ uuid: result.data.uuid, file: result.data.file });
+            setStats((stats) => {
+              return {
+                ...stats,
+                numPending: stats.numPending + 1,
+              };
+            });
+          }
         }
-      } else if (result.type === 'result') {
-        const auditResult =
-          result.data.nsfw && result.data.meta ? auditMetaData(result.data.meta) : undefined;
-        const status = auditResult && !auditResult?.success ? 'blocked' : 'uploading';
-        // const { porn, hentai, sexy } = result.data.analysis;
-        // console.log({
-        //   name: result.data.file.name,
-        //   analysis: result.data.analysis,
-        //   score: porn + hentai + sexy * 0.5,
-        //   meta: result.data.meta,
-        //   status,
-        // });
-        filesHandler.setState(
-          produce((state) => {
-            const index = state.findIndex((x) => x.uuid === result.data.uuid);
-            if (index > -1) {
-              state[index].analysis = result.data.analysis;
-              state[index].nsfw = result.data.nsfw;
-              state[index].status = status;
-              state[index].blockedFor = auditResult?.blockedFor;
-
-              if (status === 'blocked') {
-                state[index].file = null;
-              }
-            }
-          })
-        );
-        if (status === 'uploading') {
-          pending.current.push({ uuid: result.data.uuid, file: result.data.file });
-          setStats((stats) => {
-            return {
-              ...stats,
-              numPending: stats.numPending + 1,
-            };
-          });
-        }
-      }
-    };
+      };
+    } else {
+    }
   }, []); //eslint-disable-line
   // #endregion
 

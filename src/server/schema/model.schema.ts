@@ -49,7 +49,14 @@ export const getAllModelsSchema = z.object({
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
 export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;
 
-export const modelSchema = z.object({
+const licensingSchema = z.object({
+  allowNoCredit: z.boolean().optional(),
+  allowCommercialUse: z.nativeEnum(CommercialUse).optional(),
+  allowDerivatives: z.boolean().optional(),
+  allowDifferentLicense: z.boolean().optional(),
+});
+
+export const modelSchema = licensingSchema.extend({
   id: z.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema().nullish(),
@@ -58,12 +65,15 @@ export const modelSchema = z.object({
   tagsOnModels: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   poi: z.boolean().optional(),
-  allowNoCredit: z.boolean().optional(),
-  allowCommercialUse: z.nativeEnum(CommercialUse).optional(),
-  allowDerivatives: z.boolean().optional(),
-  allowDifferentLicense: z.boolean().optional(),
   modelVersions: z
     .array(modelVersionUpsertSchema)
     .min(1, 'At least one model version is required.'),
+  mergePermissions: licensingSchema.array().optional(),
 });
 export type ModelInput = z.infer<typeof modelSchema>;
+
+export type MergePermissionInput = z.infer<typeof mergePermissionInput>;
+export const mergePermissionInput = licensingSchema.extend({
+  modelId: z.number(),
+  permissionDate: z.date().default(new Date()),
+});
