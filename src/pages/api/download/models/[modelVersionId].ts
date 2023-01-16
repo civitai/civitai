@@ -105,6 +105,7 @@ export function getDownloadFilename({
   file: { name: string; type: ModelFileType | string };
 }) {
   let fileName = file.name;
+  const ext = file.name.split('.').pop();
   if (!constants.modelFileTypes.includes(file.type as ModelFileType)) return file.name;
   const fileType = file.type as ModelFileType;
 
@@ -115,13 +116,12 @@ export function getDownloadFilename({
     let fileSuffix = '';
     if (fileType === 'Negative') fileSuffix = '-neg';
 
-    if (trainedWord) fileName = `${trainedWord}${fileSuffix}.pt`;
+    if (trainedWord) fileName = `${trainedWord}${fileSuffix}.${ext}`;
   } else if (fileType !== 'VAE') {
     let fileSuffix = '';
     if (fileName.includes('-inpainting')) fileSuffix = '-inpainting';
     else if (fileType === 'Text Encoder') fileSuffix = '_txt';
 
-    const ext = file.name.split('.').pop();
     fileName = `${filenamize(model.name)}_${filenamize(modelVersion.name)}${fileSuffix}.${ext}`;
   }
   return fileName;
