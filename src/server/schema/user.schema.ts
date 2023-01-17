@@ -8,7 +8,9 @@ export const getUserByUsernameSchema = z.object({
 export type GetUserByUsernameSchema = z.infer<typeof getUserByUsernameSchema>;
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 
-export const getAllUsersInput = getAllQuerySchema.extend({ email: z.string() }).partial();
+export const getAllUsersInput = getAllQuerySchema
+  .extend({ email: z.string(), ids: z.array(z.number()) })
+  .partial();
 export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
 
 export const userUpsertSchema = z.object({

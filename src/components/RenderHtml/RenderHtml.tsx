@@ -5,6 +5,8 @@ import {
 } from '@mantine/core';
 import React from 'react';
 
+import { sanitizeHtml } from '~/utils/html-helpers';
+
 const useStyles = createStyles(() => ({
   htmlRenderer: {
     '& p:last-of-type': {
@@ -13,8 +15,29 @@ const useStyles = createStyles(() => ({
   },
 }));
 
-export function RenderHtml({ html, ...props }: Props) {
+export function RenderHtml({ html, withMentions = false, ...props }: Props) {
   const { classes } = useStyles();
+
+  if (withMentions) {
+    html = sanitizeHtml(html, {
+      transformTags: {
+        span: function (tagName, attribs) {
+          const dataType = attribs['data-type'];
+          const isMention = dataType === 'mention';
+
+          return isMention
+            ? {
+                tagName: 'a',
+                attribs: {
+                  ...attribs,
+                  href: `/user/${attribs['data-label'] ?? attribs['data-id']}`,
+                },
+              }
+            : { tagName, attribs };
+        },
+      },
+    });
+  }
 
   return (
     <TypographyStylesProvider {...props} className={classes.htmlRenderer}>
@@ -23,4 +46,7 @@ export function RenderHtml({ html, ...props }: Props) {
   );
 }
 
-type Props = Omit<TypographyStylesProviderProps, 'children'> & { html: string };
+type Props = Omit<TypographyStylesProviderProps, 'children'> & {
+  html: string;
+  withMentions?: boolean;
+};

@@ -68,7 +68,7 @@ export default createRoutedContext({
             <InputRTE
               name="content"
               placeholder="Type your thoughts..."
-              includeControls={['formatting', 'link']}
+              includeControls={['formatting', 'link', 'mentions']}
               editorSize="xl"
             />
             <Group position="apart">

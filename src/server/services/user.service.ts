@@ -53,11 +53,13 @@ export const getUsers = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>(
   query,
   email,
   select,
+  ids,
 }: GetAllUsersInput & { select: TSelect }) => {
   return prisma.user.findMany({
     take: limit,
     select,
     where: {
+      id: ids && ids.length > 0 ? { in: ids } : undefined,
       username: query
         ? {
             contains: query,

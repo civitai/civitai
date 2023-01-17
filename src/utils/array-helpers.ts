@@ -1,3 +1,5 @@
+import { uniqBy } from 'lodash';
+
 export const getRandom = <T>(array: T[]) => array[Math.floor(Math.random() * array.length)];
 
 /**
@@ -6,4 +8,8 @@ export const getRandom = <T>(array: T[]) => array[Math.floor(Math.random() * arr
 export function toStringList(array: string[]) {
   const formatter = new Intl.ListFormat('en', { style: 'long', type: 'conjunction' });
   return formatter.format(array);
+}
+
+export function removeDuplicates<T extends object>(array: T[], property: keyof T) {
+  return uniqBy(array, property);
 }

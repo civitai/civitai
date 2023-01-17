@@ -369,7 +369,7 @@ export function ModelForm({ model }: Props) {
                     name="description"
                     label="About your model"
                     description="Tell us what your model does"
-                    includeControls={['heading', 'formatting', 'list', 'link', 'media']}
+                    includeControls={['heading', 'formatting', 'list', 'link', 'media', 'mentions']}
                     editorSize="md"
                   />
                 </Stack>

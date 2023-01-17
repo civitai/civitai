@@ -1,5 +1,6 @@
 import { BareNotification } from '~/server/notifications/base.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
+import { mentionNotifications } from '~/server/notifications/mention.notifications';
 import { modelNotifications } from '~/server/notifications/model.notifications';
 import { reactionNotifications } from '~/server/notifications/reaction.notifications';
 import { reviewNotifications } from '~/server/notifications/review.notifications';
@@ -7,6 +8,7 @@ import { systemNotifications } from '~/server/notifications/system.notifications
 import { userJourneyNotifications } from '~/server/notifications/user-journey.notifications';
 
 export const notificationProcessors = {
+  ...mentionNotifications,
   ...modelNotifications,
   ...reviewNotifications,
   ...commentNotifications,
