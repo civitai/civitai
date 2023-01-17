@@ -18,32 +18,30 @@ const useStyles = createStyles(() => ({
 export function RenderHtml({ html, withMentions = false, ...props }: Props) {
   const { classes } = useStyles();
 
+  if (withMentions) {
+    html = sanitizeHtml(html, {
+      transformTags: {
+        span: function (tagName, attribs) {
+          const dataType = attribs['data-type'];
+          const isMention = dataType === 'mention';
+
+          return isMention
+            ? {
+                tagName: 'a',
+                attribs: {
+                  ...attribs,
+                  href: `/user/${attribs['data-label'] ?? attribs['data-id']}`,
+                },
+              }
+            : { tagName, attribs };
+        },
+      },
+    });
+  }
+
   return (
     <TypographyStylesProvider {...props} className={classes.htmlRenderer}>
-      <div
-        dangerouslySetInnerHTML={{
-          __html: withMentions
-            ? sanitizeHtml(html, {
-                transformTags: {
-                  span: function (tagName, attribs) {
-                    const dataType = attribs['data-type'];
-                    const isMention = dataType === 'mention';
-
-                    return isMention
-                      ? {
-                          tagName: 'a',
-                          attribs: {
-                            ...attribs,
-                            href: `/user/${attribs['data-label'] ?? attribs['data-id']}`,
-                          },
-                        }
-                      : { tagName, attribs };
-                  },
-                },
-              })
-            : html,
-        }}
-      />
+      <div dangerouslySetInnerHTML={{ __html: html }} />
     </TypographyStylesProvider>
   );
 }

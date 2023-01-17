@@ -55,14 +55,14 @@ export const mentionNotifications = createNotificationProcessor({
       SELECT
         REPLACE(gen_random_uuid()::text, '-', ''),
         "ownerId"    "userId",
-        'new-mentions' "type",
+        'new-mention' "type",
         details
       FROM new_mentions r
       WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-mentions')
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-mention')
         AND NOT EXISTS (
           SELECT 1 FROM "Notification" n
-          WHERE "userId" = "ownerId" AND type = 'new-mentions'
+          WHERE "userId" = "ownerId" AND type = 'new-mention'
           AND (
             (n.details->>'mentionedIn' = 'model' AND r.details->>'modelId' = n.details->>'modelId') OR
             (n.details->>'mentionedIn' = 'comment' AND r.details->>'commentId' = n.details->>'commentId')
