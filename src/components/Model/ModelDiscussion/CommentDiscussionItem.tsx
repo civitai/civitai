@@ -168,7 +168,11 @@ export function CommentDiscussionItem({ comment }: Props) {
       </Group>
 
       <ContentClamp maxHeight={100}>
-        <RenderHtml html={comment.content} sx={(theme) => ({ fontSize: theme.fontSizes.sm })} />
+        <RenderHtml
+          html={comment.content}
+          sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+          withMentions
+        />
       </ContentClamp>
 
       <Group mt="sm" align="flex-start" position="apart" noWrap>

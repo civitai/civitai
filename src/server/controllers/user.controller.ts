@@ -34,9 +34,9 @@ import {
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
-export const getAllUsersHandler = async ({ input }: { input: GetAllUsersInput }) => {
+export const getAllUsersHandler = ({ input }: { input: GetAllUsersInput }) => {
   try {
-    return await getUsers({
+    return getUsers({
       ...input,
       select: {
         username: true,
@@ -44,7 +44,7 @@ export const getAllUsersHandler = async ({ input }: { input: GetAllUsersInput })
       },
     });
   } catch (error) {
-    throwDbError(error);
+    throw throwDbError(error);
   }
 };
 
@@ -229,6 +229,7 @@ export const getCreatorsHandler = async ({ input }: { input: Partial<GetAllSchem
       take,
       skip,
       count: true,
+      excludeIds: [-1], // Exclude civitai user
       select: { username: true, models: { select: { id: true } } },
     });
 

@@ -842,7 +842,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               )}
               {model.description ? (
                 <ContentClamp maxHeight={300}>
-                  <RenderHtml html={model.description} />
+                  <RenderHtml html={model.description} withMentions />
                 </ContentClamp>
               ) : null}
             </Stack>
