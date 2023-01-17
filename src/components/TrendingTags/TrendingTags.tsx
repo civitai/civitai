@@ -3,6 +3,7 @@ import { IconChevronLeft, IconChevronRight } from '@tabler/icons';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 import { trpc } from '~/utils/trpc';
 
@@ -79,15 +80,19 @@ const useStyles = createStyles((theme) => ({
 
 export function TrendingTags() {
   const { classes, cx, theme } = useStyles();
+  const currentUser = useCurrentUser();
   const router = useRouter();
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const [scrollPosition, setScrollPosition] = useState({ x: 0, y: 0 });
 
-  const { data: hiddenTags } = trpc.user.getTags.useQuery({ type: 'Hide' });
+  const { data: hiddenTags } = trpc.user.getTags.useQuery(
+    { type: 'Hide' },
+    { enabled: currentUser != null }
+  );
   const { data: trendingTags = [] } = trpc.tag.getTrending.useQuery(
     { entityType: 'Model', not: hiddenTags?.map((x) => x.id), unlisted: false },
-    { enabled: hiddenTags !== undefined }
+    { enabled: !currentUser || hiddenTags !== undefined }
   );
 
   if (!trendingTags.length) return null;

@@ -85,7 +85,6 @@ function Home() {
               </Group>
             </Alert>
           )}
-          {!username && !favorites ? <TrendingTags /> : null}
           <Group position="apart" spacing={0}>
             <InfiniteModelsSort />
             <Group spacing={4}>
@@ -93,6 +92,7 @@ function Home() {
               <InfiniteModelsFilter />
             </Group>
           </Group>
+          <TrendingTags />
           <InfiniteModels delayNsfw />
         </Stack>
       </Container>
@@ -107,6 +107,7 @@ const useStyles = createStyles((theme) => ({
   welcome: {
     maxWidth: 600,
     top: 75,
+    marginBottom: -25,
     position: 'sticky',
     alignSelf: 'center',
     zIndex: 11,
@@ -119,6 +120,7 @@ const useStyles = createStyles((theme) => ({
         ? theme.fn.darken(theme.colors.blue[8], 0.5)
         : theme.colors.blue[1],
     [theme.fn.smallerThan('md')]: {
+      marginBottom: -5,
       marginLeft: -5,
       marginRight: -5,
     },
