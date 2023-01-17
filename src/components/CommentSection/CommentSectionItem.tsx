@@ -9,6 +9,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
+import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
@@ -160,7 +161,7 @@ export function CommentSectionItem({ comment, modelId }: Props) {
             <Group spacing={8} align="center">
               <Link href={`/user/${comment.user.username}`} passHref>
                 <Anchor variant="text" size="sm" weight="bold">
-                  {comment.user.username}
+                  <Username {...comment.user} />
                 </Anchor>
               </Link>
               {comment.user.id === model?.user.id ? (
