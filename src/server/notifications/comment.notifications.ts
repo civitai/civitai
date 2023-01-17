@@ -33,8 +33,16 @@ export const commentNotifications = createNotificationProcessor({
         "ownerId"    "userId",
         'new-comment' "type",
         details
-      FROM new_comments
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment');
+      FROM new_comments r
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "Notification" n
+          WHERE n."userId" = r."ownerId"
+              AND n.type IN ('new-mention')
+              AND n.details->>'commentId' = r.details->>'commentId'
+        );
     `,
   },
   'new-comment-response': {
@@ -77,7 +85,7 @@ export const commentNotifications = createNotificationProcessor({
           SELECT 1
           FROM "Notification" n
           WHERE n."userId" = r."ownerId"
-              AND (n.type = 'new-comment-nested' OR n.type = 'new-thread-response')
+              AND n.type IN ('new-comment-nested', 'new-thread-response', 'new-mention')
               AND n.details->>'parentId' = r.details->>'parentId'
         );
     `,
@@ -121,7 +129,7 @@ export const commentNotifications = createNotificationProcessor({
           SELECT 1
           FROM "Notification" n
           WHERE n."userId" = r."ownerId"
-              AND (n.type = 'new-thread-response' OR n.type = 'new-comment-response')
+              AND n.type IN ('new-thread-response', 'new-comment-response', 'new-mention')
               AND n.details->>'parentId' = r.details->>'parentId'
         );
     `,
@@ -175,7 +183,7 @@ export const commentNotifications = createNotificationProcessor({
           SELECT 1
           FROM "Notification" n
           WHERE n."userId" = r."ownerId"
-              AND (n.type = 'new-comment-nested' OR n.type = 'new-comment-response')
+              AND n.type IN ('new-comment-nested', 'new-comment-response', 'new-mention')
               AND n.details->>'parentId' = r.details->>'parentId'
         );
     `,
@@ -218,7 +226,7 @@ export const commentNotifications = createNotificationProcessor({
           SELECT 1
           FROM "Notification" n
           WHERE n."userId" = r."ownerId"
-              AND (n.type = 'new-comment-nested' OR n.type = 'new-thread-response')
+              AND n.type IN ('new-comment-nested', 'new-thread-response', 'new-mention')
               AND n.details->>'parentId' = r.details->>'reviewId'
         );
     `,
