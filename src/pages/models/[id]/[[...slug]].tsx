@@ -95,6 +95,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 
 //TODO - Break model query into multiple queries
 /*
@@ -291,18 +292,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   });
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
-
-  let hasNegativeEmbed = false;
-  let hasConfig = false;
-  let hasVAE = false;
-  if (latestVersion) {
-    for (const file of latestVersion.files) {
-      if (model.type === ModelType.TextualInversion && file.type === 'Negative')
-        hasNegativeEmbed = true;
-      else if (model.type === ModelType.Checkpoint && file.type === 'Config') hasConfig = true;
-      else if (model.type === ModelType.Checkpoint && file.type === 'VAE') hasVAE = true;
-    }
-  }
 
   const meta = (
     <Meta
@@ -670,47 +659,12 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   </Tooltip>
                 </Group>
               )}
-              {hasNegativeEmbed && (
-                <AlertWithIcon icon={<IconAlertCircle />}>
-                  This Textual Inversion includes a{' '}
-                  <Anchor
-                    href={createModelFileDownloadUrl({
-                      versionId: latestVersion.id,
-                      type: 'Negative',
-                    })}
-                  >
-                    Negative embed
-                  </Anchor>
-                  , install the negative and use it in the negative prompt for full effect.
-                </AlertWithIcon>
-              )}
-              {hasConfig && (
-                <AlertWithIcon icon={<IconAlertCircle />}>
-                  This checkpoint includes a{' '}
-                  <Anchor
-                    href={createModelFileDownloadUrl({
-                      versionId: latestVersion.id,
-                      type: 'Config',
-                    })}
-                  >
-                    config file
-                  </Anchor>
-                  , download and place it along side the checkpoint.
-                </AlertWithIcon>
-              )}
-              {hasVAE && (
-                <AlertWithIcon icon={<IconAlertCircle />}>
-                  This checkpoint includes a{' '}
-                  <Anchor
-                    href={createModelFileDownloadUrl({
-                      versionId: latestVersion.id,
-                      type: 'VAE',
-                    })}
-                  >
-                    VAE
-                  </Anchor>
-                  , download and place it along side the checkpoint.
-                </AlertWithIcon>
+              {latestVersion && (
+                <ModelFileAlert
+                  versionId={latestVersion.id}
+                  modelType={model.type}
+                  files={latestVersion.files}
+                />
               )}
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
@@ -853,6 +807,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 Versions
               </Title>
               <ModelVersions
+                type={model.type}
                 items={model.modelVersions}
                 initialTab={latestVersion?.id.toString()}
                 nsfw={model.nsfw}

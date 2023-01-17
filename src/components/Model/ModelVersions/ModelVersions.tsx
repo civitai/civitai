@@ -39,10 +39,12 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
+import { ModelType } from '@prisma/client';
 
 const VERSION_IMAGES_LIMIT = 8;
 
-export function ModelVersions({ items, initialTab, nsfw }: Props) {
+export function ModelVersions({ items, initialTab, nsfw, type }: Props) {
   const mobile = useIsMobile();
 
   return (
@@ -64,7 +66,7 @@ export function ModelVersions({ items, initialTab, nsfw }: Props) {
         <Grid.Col xs={12} sm={9} md={10}>
           {items.map((version) => (
             <Tabs.Panel key={version.id} value={version.id.toString()}>
-              <TabContent version={version} nsfw={nsfw} />
+              <TabContent version={version} nsfw={nsfw} type={type} />
             </Tabs.Panel>
           ))}
         </Grid.Col>
@@ -75,11 +77,12 @@ export function ModelVersions({ items, initialTab, nsfw }: Props) {
 
 type Props = {
   items: NonNullable<ModelById>['modelVersions'];
+  type: ModelType;
   initialTab?: string | null;
   nsfw?: boolean;
 };
 
-function TabContent({ version, nsfw }: TabContentProps) {
+function TabContent({ version, nsfw, type }: TabContentProps) {
   const router = useRouter();
   const modelId = Number(router.query.id);
   const mobile = useIsMobile();
@@ -185,6 +188,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
             </Stack>
             <RunButton modelVersionId={version.id} variant="light" />
           </Group>
+          <ModelFileAlert versionId={version.id} modelType={type} files={version.files} />
 
           <DescriptionTable items={versionDetails} labelWidth="30%" />
           {version.description && (
@@ -282,7 +286,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
   );
 }
 
-type TabContentProps = { version: Props['items'][number]; nsfw?: boolean };
+type TabContentProps = { version: Props['items'][number]; nsfw?: boolean; type: ModelType };
 
 // const useStyles = createStyles((theme, { index, mobile }: { index: number; mobile: boolean }) => ({
 //   image: {
