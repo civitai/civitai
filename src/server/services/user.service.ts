@@ -100,6 +100,13 @@ export const getUserFavoriteModels = ({ id }: { id: number }) => {
   });
 };
 
+export const getUserEngagedModels = ({ id }: { id: number }) => {
+  return prisma.user.findUnique({
+    where: { id },
+    select: { engagedModels: { select: { modelId: true } } },
+  });
+};
+
 export const getUserFavoriteModelByModelId = ({
   userId,
   modelId,

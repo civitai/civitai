@@ -175,6 +175,20 @@ export const getUserFavoriteModelsHandler = async ({ ctx }: { ctx: DeepNonNullab
   }
 };
 
+export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  const { id } = ctx.user;
+
+  try {
+    const user = await getUserFavoriteModels({ id });
+
+    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    return user.favoriteModels;
+  } catch (error) {
+    throwDbError(error);
+  }
+};
+
 export const toggleFavoriteModelHandler = async ({
   input,
   ctx,

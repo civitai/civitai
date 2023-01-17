@@ -41,6 +41,7 @@ export const userRouter = router({
   getAll: publicProcedure.input(getAllUsersInput).query(getAllUsersHandler),
   getById: publicProcedure.input(getByIdSchema).query(getUserByIdHandler),
   getFavoriteModels: protectedProcedure.query(getUserFavoriteModelsHandler),
+  getEngagedModels: protectedProcedure.query(getUserFavoriteModelsHandler),
   getFollowingUsers: protectedProcedure.query(getUserFollowingListHandler),
   getHiddenUsers: protectedProcedure.query(getUserHiddenListHandler),
   getTags: protectedProcedure.input(getUserTagsSchema.optional()).query(getUserTagsHandler),
