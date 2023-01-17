@@ -96,7 +96,7 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
   },
 });
 
-export const modelWithDetailsSelect = (includeNSFW = true, prioritizeSafeImages = false) =>
+export const modelWithDetailsSelect = (includeNSFW = true) =>
   Prisma.validator<Prisma.ModelSelect>()({
     id: true,
     name: true,
@@ -119,8 +119,6 @@ export const modelWithDetailsSelect = (includeNSFW = true, prioritizeSafeImages 
     user: {
       select: {
         id: true,
-        name: true,
-        email: true,
         image: true,
         username: true,
         rank: { select: { leaderboardRank: true } },
@@ -140,9 +138,6 @@ export const modelWithDetailsSelect = (includeNSFW = true, prioritizeSafeImages 
         inaccurate: true,
         baseModel: true,
         images: {
-          // orderBy: prioritizeSafeImages
-          //   ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
-          //   : [{ index: 'asc' }],
           orderBy: { index: 'asc' },
           select: {
             index: true,
