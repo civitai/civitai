@@ -102,9 +102,9 @@ enum UserEngagementType {
 
 model UserEngagement {
   userId       Int
-  user         User               @relation("engagingUsers", fields: [userId], references: [id])
+  user         User               @relation("engagingUsers", fields: [userId], references: [id], onDelete: Cascade)
   targetUserId Int
-  targetUser   User               @relation("engagedUsers", fields: [targetUserId], references: [id])
+  targetUser   User               @relation("engagedUsers", fields: [targetUserId], references: [id], onDelete: Cascade)
   type         UserEngagementType
   createdAt    DateTime           @default(now())
 
@@ -429,7 +429,7 @@ enum ReportStatus {
 model Report {
   id        Int            @id @default(autoincrement())
   userId    Int
-  user      User           @relation(fields: [userId], references: [id])
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   reason    ReportReason
   createdAt DateTime       @default(now())
   details   Json?
@@ -790,9 +790,9 @@ model Answer {
 }
 
 model AnswerVote {
-  answer    Answer   @relation(fields: [answerId], references: [id])
+  answer    Answer   @relation(fields: [answerId], references: [id], onDelete: Cascade)
   answerId  Int
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    Int
   vote      Boolean?
   createdAt DateTime @default(now())
@@ -903,9 +903,9 @@ enum TagEngagementType {
 
 model TagEngagement {
   userId    Int
-  user      User              @relation(fields: [userId], references: [id])
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   tagId     Int
-  tag       Tag               @relation(fields: [tagId], references: [id])
+  tag       Tag               @relation(fields: [tagId], references: [id], onDelete: Cascade)
   type      TagEngagementType
   createdAt DateTime          @default(now())
 
