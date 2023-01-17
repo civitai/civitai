@@ -43,6 +43,7 @@ export function sanitizeHtml(html: string, options?: sanitize.IOptions) {
         'start',
       ],
       div: ['data-youtube-video'],
+      span: ['class', 'data-type', 'data-id', 'data-label'],
     },
     allowedIframeHostnames: ['www.youtube.com'],
     transformTags: {

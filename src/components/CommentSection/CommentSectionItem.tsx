@@ -1,6 +1,6 @@
 import { Anchor, Badge, Group, Stack, Text, Button, Menu, ActionIcon } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconDotsVertical, IconTrash, IconEdit, IconFlag } from '@tabler/icons';
+import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconArrowBackUp } from '@tabler/icons';
 import Link from 'next/link';
 import { useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -18,7 +18,7 @@ import { CommentGetCommentsById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export function CommentSectionItem({ comment, modelId }: Props) {
+export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
   const { openContext } = useRoutedContext();
@@ -176,6 +176,7 @@ export function CommentSectionItem({ comment, modelId }: Props) {
               <RenderHtml
                 html={comment.content}
                 sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+                withMentions
               />
             ) : (
               <RichTextEditor
@@ -190,10 +191,26 @@ export function CommentSectionItem({ comment, modelId }: Props) {
             )}
           </Stack>
           {!isEditing ? (
-            <ReactionPicker
-              reactions={reactions}
-              onSelect={(reaction) => toggleReactionMutation.mutate({ id: comment.id, reaction })}
-            />
+            <Group position="apart">
+              <ReactionPicker
+                reactions={reactions}
+                onSelect={(reaction) => toggleReactionMutation.mutate({ id: comment.id, reaction })}
+              />
+              {!isOwner && (
+                <Button
+                  variant="subtle"
+                  size="xs"
+                  radius="xl"
+                  onClick={() => onReplyClick(comment)}
+                  compact
+                >
+                  <Group spacing={4}>
+                    <IconArrowBackUp size={14} />
+                    Reply
+                  </Group>
+                </Button>
+              )}
+            </Group>
           ) : (
             <Group position="right">
               <Button variant="default" size="xs" onClick={() => setEditComment(null)}>
@@ -258,4 +275,5 @@ export function CommentSectionItem({ comment, modelId }: Props) {
 type Props = {
   comment: CommentGetCommentsById[number];
   modelId: number;
+  onReplyClick: (comment: CommentGetCommentsById[number]) => void;
 };
