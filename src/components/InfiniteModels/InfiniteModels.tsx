@@ -21,7 +21,6 @@ import {
 import { ModelStatus } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
 import {
-  IconBan,
   IconCloudOff,
   IconDotsVertical,
   IconDownload,
@@ -29,6 +28,7 @@ import {
   IconHeart,
   IconMessageCircle2,
   IconStar,
+  IconTagOff,
 } from '@tabler/icons';
 import dayjs from 'dayjs';
 import {
@@ -434,7 +434,7 @@ const MasonryItem = ({
   const blockTagsOption = (
     <Menu.Item
       key="block-tags"
-      icon={<IconBan size={14} stroke={1.5} />}
+      icon={<IconTagOff size={14} stroke={1.5} />}
       onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
         e.stopPropagation();
@@ -451,7 +451,7 @@ const MasonryItem = ({
       <HideUserButton key="hide-button" as="menu-item" userId={user.id} />,
       reportOption,
     ]);
-  if (currentUser) contextMenuItems.splice(1, 0, blockTagsOption);
+  if (currentUser) contextMenuItems.splice(2, 0, blockTagsOption);
 
   const isNew = data.createdAt > aDayAgo;
   const isUpdated = !isNew && data.lastVersionAt && data.lastVersionAt > aDayAgo;

@@ -10,8 +10,6 @@ import {
   Group,
   Loader,
   Menu,
-  MultiSelect,
-  Select,
   Stack,
   Text,
   Title,
@@ -25,22 +23,20 @@ import {
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { ModelStatus, ModelType } from '@prisma/client';
+import { ModelStatus } from '@prisma/client';
 import {
-  IconAlertCircle,
-  IconArrowsSort,
   IconBan,
   IconDotsVertical,
   IconDownload,
   IconEdit,
   IconExclamationMark,
-  IconFilter,
   IconFlag,
   IconHeart,
   IconLicense,
   IconMessage,
   IconMessageCircle2,
   IconStar,
+  IconTagOff,
   IconTrash,
 } from '@tabler/icons';
 import startCase from 'lodash/startCase';
@@ -559,7 +555,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     <HideUserButton as="menu-item" userId={model.user.id} />
                     <HideModelButton as="menu-item" modelId={model.id} />
                     <Menu.Item
-                      icon={<IconBan size={14} stroke={1.5} />}
+                      icon={<IconTagOff size={14} stroke={1.5} />}
                       onClick={() => openContext('blockTags', { modelId: model.id })}
                     >
                       Hide content with these tags
