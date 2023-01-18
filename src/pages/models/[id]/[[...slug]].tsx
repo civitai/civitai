@@ -747,6 +747,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             <Stack>
               {latestVersion.images.length > 0 && (
                 <Carousel
+                  key={model.id}
                   slideSize="50%"
                   breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
                   slideGap="xl"
