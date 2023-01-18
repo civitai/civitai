@@ -11,6 +11,8 @@ interface ExtendedUser {
   email?: string;
   preferredModelFormat?: ModelFileFormat;
   preferredPrunedModel?: boolean;
+  subscription?: string;
+  stripeCustomer?: string;
 }
 
 declare module 'next-auth' {

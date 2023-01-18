@@ -58,6 +58,8 @@ model User {
   deletedAt            DateTime?
   preferredModelFormat ModelFileFormat? @default(SafeTensor)
   preferredPrunedModel Boolean?         @default(false)
+  stripeCustomer       String?
+  subscription         String?
 
   accounts             Account[]
   sessions             Session[]

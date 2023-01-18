@@ -17,7 +17,8 @@ import { questionRouter } from './question.router';
 import { answerRouter } from './answer.router';
 import { commentv2Router } from './commentv2.router';
 import { reactionRouter } from './reaction.router';
-import { downloadRouter } from '~/server/routers/download.router';
+import { downloadRouter } from './download.router';
+import { stripeRouter } from './stripe.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -39,6 +40,7 @@ export const appRouter = router({
   answer: answerRouter,
   commentv2: commentv2Router,
   reaction: reactionRouter,
+  stripe: stripeRouter,
 });
 
 // export type definition of API
