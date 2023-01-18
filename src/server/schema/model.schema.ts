@@ -43,6 +43,11 @@ export const getAllModelsSchema = z.object({
     (val) => val === true || val === 'true',
     z.boolean().optional().default(false)
   ),
+  hidden: z.preprocess(
+    (val) => val === true || val === 'true',
+    z.boolean().optional().default(false)
+  ),
+  excludedIds: z.array(z.number()).optional(),
   excludedTagIds: z.array(z.number()).optional(),
 });
 

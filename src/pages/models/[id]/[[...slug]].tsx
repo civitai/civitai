@@ -96,6 +96,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
+import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 
 //TODO - Break model query into multiple queries
 /*
@@ -173,11 +174,12 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   });
 
   const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({ id });
-  const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery(undefined, {
-    enabled: !!currentUser,
-    cacheTime: Infinity,
-    staleTime: Infinity,
-  });
+  const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
+    trpc.user.getEngagedModels.useQuery(undefined, {
+      enabled: !!currentUser,
+      cacheTime: Infinity,
+      staleTime: Infinity,
+    });
 
   const deleteMutation = trpc.model.delete.useMutation({
     onSuccess() {
@@ -204,26 +206,31 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       showErrorNotification({ error: new Error(error.message) });
     },
   });
-  const toggleFavoriteModelMutation = trpc.user.toggleFavorite.useMutation({
+  const toggleFavoriteModelMutation = trpc.user.toggleFavoriteModel.useMutation({
     async onMutate({ modelId }) {
-      await queryUtils.user.getFavoriteModels.cancel();
+      await queryUtils.user.getEngagedModels.cancel();
 
-      const previousFavorites = queryUtils.user.getFavoriteModels.getData() ?? [];
+      const previousEngaged = queryUtils.user.getEngagedModels.getData() ?? {
+        Favorite: [],
+        Hide: [],
+      };
       const previousModel = queryUtils.model.getById.getData({ id: modelId });
-      const shouldRemove = previousFavorites.find((favorite) => favorite.modelId === modelId);
+      const shouldRemove = previousEngaged.Favorite?.find((id) => id === modelId);
       // Update the favorite count
       queryUtils.model.getById.setData({ id: modelId }, (model) => {
         if (model?.rank) model.rank.favoriteCountAllTime += shouldRemove ? -1 : 1;
         return model;
       });
       // Remove from favorites list
-      queryUtils.user.getFavoriteModels.setData(undefined, (old = []) =>
-        shouldRemove
-          ? old.filter((favorite) => favorite.modelId !== modelId)
-          : [...old, { modelId }]
+      queryUtils.user.getEngagedModels.setData(
+        undefined,
+        ({ Favorite = [], ...old } = { Favorite: [], Hide: [] }) => {
+          if (shouldRemove) return { Favorite: Favorite.filter((id) => id !== modelId), ...old };
+          return { Favorite: [...Favorite, modelId], ...old };
+        }
       );
 
-      return { previousFavorites, previousModel };
+      return { previousEngaged, previousModel };
     },
     async onSuccess() {
       await queryUtils.model.getAll.invalidate({ favorites: true });
@@ -232,7 +239,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       });
     },
     onError(_error, _variables, context) {
-      queryUtils.user.getFavoriteModels.setData(undefined, context?.previousFavorites);
+      queryUtils.user.getEngagedModels.setData(undefined, context?.previousEngaged);
       if (context?.previousModel?.id)
         queryUtils.model.getById.setData(
           { id: context?.previousModel?.id },
@@ -282,7 +289,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const showNsfwRequested = router.query.showNsfw !== 'true';
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
   const nsfw = userNotBlurringNsfw && showNsfwRequested && model.nsfw === true;
-  const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
+  const isFavorite = favoriteModels.find((modelId) => modelId === id);
 
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model.modelVersions[0];
@@ -550,6 +557,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 {currentUser && (
                   <>
                     <HideUserButton as="menu-item" userId={model.user.id} />
+                    <HideModelButton as="menu-item" modelId={model.id} />
                     <Menu.Item
                       icon={<IconBan size={14} stroke={1.5} />}
                       onClick={() => openContext('blockTags', { modelId: model.id })}

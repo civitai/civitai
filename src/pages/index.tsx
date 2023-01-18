@@ -20,7 +20,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
   const ssg = await getServerProxySSGHelpers(context);
   if (session) {
     // Prefetch user's favorite models
-    await ssg.user.getFavoriteModels.prefetch(undefined);
+    await ssg.user.getEngagedModels.prefetch(undefined);
     // Prefetch users' blocked tags
     await ssg.user.getTags.prefetch({ type: 'Hide' });
   }
@@ -43,7 +43,7 @@ function Home() {
     key: 'welcomeAlert',
     defaultValue: true,
   });
-  const { username, favorites } = router.query;
+  const { username, favorites, hidden } = router.query;
 
   const closeWelcomeAlert = () => setWelcomeAlert(false);
 
@@ -58,6 +58,7 @@ function Home() {
       <Container size="xl">
         {username && typeof username === 'string' && <Title>Models by {username}</Title>}
         {favorites && <Title>Your Liked Models</Title>}
+        {hidden && <Title>Your Hidden Models</Title>}
         <Stack spacing="xs">
           {welcomeAlert && (
             <Alert

@@ -3,13 +3,14 @@ import {
   getCreators,
   getUserByUsername,
   getUserCreator,
-  getUserFavoriteModelByModelId,
-  getUserFavoriteModels,
+  getUserEngagedModels,
   getUserTags,
   getUserUnreadNotificationsCount,
   toggleBlockedTag,
   toggleFollowUser,
   toggleHideUser,
+  toggleModelHide,
+  toggleModelFavorite,
 } from '~/server/services/user.service';
 import { TRPCError } from '@trpc/server';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
@@ -17,13 +18,13 @@ import {
   GetAllUsersInput,
   UserUpsertInput,
   GetUserByUsernameSchema,
-  ToggleFavoriteModelInput,
   ToggleFollowUserSchema,
   GetByUsernameSchema,
   DeleteUserInput,
   ToggleBlockedTagSchema,
   GetUserTagsSchema,
   BatchBlockTagsSchema,
+  ToggleModelEngagementInput,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
@@ -33,6 +34,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { ModelEngagementType } from '@prisma/client';
 
 export const getAllUsersHandler = ({ input }: { input: GetAllUsersInput }) => {
   try {
@@ -161,61 +163,27 @@ export const deleteUserHandler = async ({
   }
 };
 
-export const getUserFavoriteModelsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
-  const { id } = ctx.user;
-
-  try {
-    const user = await getUserFavoriteModels({ id });
-
-    if (!user) throw throwNotFoundError(`No user with id ${id}`);
-
-    return user.favoriteModels;
-  } catch (error) {
-    throwDbError(error);
-  }
-};
-
 export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   const { id } = ctx.user;
 
   try {
-    const user = await getUserFavoriteModels({ id });
+    const user = await getUserEngagedModels({ id });
 
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
-    return user.favoriteModels;
+    // turn array of user.engagedModels into object with `type` as key and array of modelId as value
+    const engagedModels = user.engagedModels.reduce<Record<ModelEngagementType, number[]>>(
+      (acc, model) => {
+        const { type, modelId } = model;
+        if (!acc[type]) acc[type] = [];
+        acc[type].push(modelId);
+        return acc;
+      },
+      {} as Record<ModelEngagementType, number[]>
+    );
+    return engagedModels;
   } catch (error) {
     throwDbError(error);
-  }
-};
-
-export const toggleFavoriteModelHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ToggleFavoriteModelInput;
-  ctx: DeepNonNullable<Context>;
-}) => {
-  const { id: userId } = ctx.user;
-  const favoriteModel = await getUserFavoriteModelByModelId({ ...input, userId });
-
-  try {
-    const user = await updateUserById({
-      id: userId,
-      data: {
-        favoriteModels: {
-          create: favoriteModel ? undefined : { ...input },
-          deleteMany: favoriteModel ? { ...input, userId } : undefined,
-        },
-      },
-    });
-
-    if (!user) throw throwNotFoundError(`No user with id ${userId}`);
-
-    return user;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throwDbError(error);
   }
 };
 
@@ -363,6 +331,36 @@ export const toggleHideUserHandler = async ({
   try {
     const { id: userId } = ctx.user;
     await toggleHideUser({ ...input, userId });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const toggleHideModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleModelEngagementInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    await toggleModelHide({ ...input, userId });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const toggleFavoriteModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleModelEngagementInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    await toggleModelFavorite({ ...input, userId });
   } catch (error) {
     throw throwDbError(error);
   }

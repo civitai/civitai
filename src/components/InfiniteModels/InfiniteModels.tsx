@@ -46,6 +46,7 @@ import { useInView } from 'react-intersection-observer';
 import { z } from 'zod';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
@@ -75,6 +76,7 @@ const filterSchema = z.object({
   tagname: z.string().optional(),
   tag: z.string().optional(),
   favorites: z.preprocess((val) => val === true || val === 'true', z.boolean().optional()),
+  hidden: z.preprocess((val) => val === true || val === 'true', z.boolean().optional()),
 });
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
@@ -92,10 +94,26 @@ export function InfiniteModels({
 
   const { ref, inView } = useInView();
 
-  const { data: blockedTags } = trpc.user.getTags.useQuery({ type: 'Hide' });
+  const { data: blockedTags } = trpc.user.getTags.useQuery(
+    { type: 'Hide' },
+    { enabled: !!currentUser }
+  );
   const excludedTagIds = blockedTags?.map((tag) => tag.id);
+  const { data: { Hide: excludedIds = [] } = { Hide: [] } } = trpc.user.getEngagedModels.useQuery(
+    undefined,
+    {
+      enabled: !!currentUser,
+      cacheTime: Infinity,
+      staleTime: Infinity,
+    }
+  );
   const { data, isLoading, fetchNextPage, hasNextPage } = trpc.model.getAll.useInfiniteQuery(
-    { ...filters, ...queryParams, excludedTagIds },
+    {
+      ...filters,
+      ...queryParams,
+      excludedTagIds,
+      excludedIds: queryParams.hidden ? undefined : excludedIds,
+    },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
@@ -267,18 +285,21 @@ const MasonryItem = ({
   const { ref, inView } = useInView();
   const { openContext } = useRoutedContext();
 
-  const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery(undefined, {
+  const {
+    data: { Favorite: favoriteModels = [], Hide: hiddenModels = [] } = { Favorite: [], Hide: [] },
+  } = trpc.user.getEngagedModels.useQuery(undefined, {
     enabled: !!currentUser,
     cacheTime: Infinity,
     staleTime: Infinity,
   });
-  const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
+  const isFavorite = favoriteModels.find((modelId) => modelId === id);
   const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
     enabled: !!currentUser,
     cacheTime: Infinity,
     staleTime: Infinity,
   });
-  const isHidden = hidden.find(({ id }) => id === user.id);
+  const isHidden =
+    hidden.find(({ id }) => id === user.id) || hiddenModels.find((modelId) => modelId === id);
 
   const onTwoLines = true;
   const height = useMemo(() => {
@@ -426,6 +447,7 @@ const MasonryItem = ({
   let contextMenuItems: React.ReactNode[] = [];
   if (currentUser?.id !== user.id)
     contextMenuItems = contextMenuItems.concat([
+      <HideModelButton key="hide-model" as="menu-item" modelId={id} />,
       <HideUserButton key="hide-button" as="menu-item" userId={user.id} />,
       reportOption,
     ]);

@@ -1,5 +1,5 @@
 import { Button, ButtonProps, Menu } from '@mantine/core';
-import { IconEye, IconEyeOff } from '@tabler/icons';
+import { IconUser, IconUserOff } from '@tabler/icons';
 import { MouseEventHandler } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
@@ -55,7 +55,7 @@ export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }
   if (currentUser != null && userId === currentUser.id) return null;
 
   return as === 'button' ? (
-    <LoginRedirect reason="hide-user">
+    <LoginRedirect reason="hide-content">
       <Button
         variant={alreadyHiding ? 'outline' : 'filled'}
         onClick={handleHideClick}
@@ -66,11 +66,15 @@ export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }
       </Button>
     </LoginRedirect>
   ) : (
-    <LoginRedirect reason="hide-user">
+    <LoginRedirect reason="hide-content">
       <Menu.Item
         onClick={handleHideClick}
         icon={
-          alreadyHiding ? <IconEye size={16} stroke={1.5} /> : <IconEyeOff size={16} stroke={1.5} />
+          alreadyHiding ? (
+            <IconUser size={16} stroke={1.5} />
+          ) : (
+            <IconUserOff size={16} stroke={1.5} />
+          )
         }
       >
         {alreadyHiding ? 'Unhide ' : 'Hide '}content from this user

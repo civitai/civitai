@@ -26,8 +26,8 @@ export const userUpsertSchema = z.object({
 });
 export type UserUpsertInput = z.input<typeof userUpsertSchema>;
 
-export const toggleFavoriteModelInput = z.object({ modelId: z.number() });
-export type ToggleFavoriteModelInput = z.infer<typeof toggleFavoriteModelInput>;
+export const toggleModelEngagementInput = z.object({ modelId: z.number() });
+export type ToggleModelEngagementInput = z.infer<typeof toggleModelEngagementInput>;
 
 export const toggleFollowUserSchema = z.object({ targetUserId: z.number() });
 export type ToggleFollowUserSchema = z.infer<typeof toggleFollowUserSchema>;

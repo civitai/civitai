@@ -50,8 +50,8 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         (
           SELECT
             "modelId" AS model_id
-          FROM "FavoriteModel"
-          WHERE ("createdAt" > '${lastUpdate}')
+          FROM "ModelEngagement"
+          WHERE ("createdAt" > '${lastUpdate}') AND type = 'Favorite'
         ),
         -- Get all comments that have been created since then
         recent_comments AS
@@ -231,7 +231,8 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
               SUM(CASE WHEN f."createdAt" >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_favorite_count,
               SUM(CASE WHEN f."createdAt" >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_favorite_count,
               SUM(CASE WHEN f."createdAt" >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_favorite_count
-            FROM "FavoriteModel" f
+            FROM "ModelEngagement" f
+            WHERE type = 'Favorite'
             GROUP BY f."modelId"
           ) fs ON m.model_id = fs.model_id
           LEFT JOIN (
