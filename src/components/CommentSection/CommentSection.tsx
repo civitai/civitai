@@ -77,7 +77,7 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
       await queryUtils.comment.getCommentsById.invalidate();
 
       setShowCommentActions(false);
-      form.reset();
+      form.reset({ modelId, reviewId, parentId, content: undefined });
     },
     onError(error, _variables, context) {
       if (reviewId)
