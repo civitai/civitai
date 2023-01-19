@@ -55,9 +55,9 @@ export function UserAvatar({
       </Avatar>
       {withUsername || subText ? (
         <Stack spacing={0}>
-          {withUsername && (
+          {withUsername && user.username && (
             <Group spacing={4}>
-              <Username {...user} size={textSize} />
+              <Username username={user.username} deletedAt={user.deletedAt} size={textSize} />
               {badge}
             </Group>
           )}
@@ -83,7 +83,7 @@ export function UserAvatar({
 }
 
 type Props = {
-  user?: Pick<User, 'username' | 'image' | 'deletedAt'> | null;
+  user?: Pick<Partial<User>, 'username' | 'image' | 'deletedAt'> | null;
   withUsername?: boolean;
   withLink?: boolean;
   avatarProps?: AvatarProps;

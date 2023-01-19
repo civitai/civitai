@@ -1,4 +1,5 @@
 import { Badge, BadgeProps, Group, MantineSize, Text, TextProps } from '@mantine/core';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getRandom } from '~/utils/array-helpers';
 
 // TODO support badge: remove once final support badge is implemented
@@ -31,9 +32,10 @@ export function Username({
   size = 'sm',
   inherit = false,
 }: Props) {
+  const features = useFeatureFlags();
   if (deletedAt) return <Text size={size}>[delete]</Text>;
 
-  supportLevel = getRandom(levels); // TODO support badge: remove once final support badge is implemented
+  supportLevel = features.memberBadges ? getRandom(levels) : 'common'; // TODO support badge: remove random once final support badge is implemented
   const { textProps, badgeProps } = textBadgeProps[supportLevel];
 
   return (
