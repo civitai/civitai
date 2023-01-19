@@ -4,6 +4,7 @@ import { IconAlertCircle } from '@tabler/icons';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Countdown } from '~/components/Countdown/Countdown';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { isFutureDate } from '~/utils/date-helpers';
 
@@ -25,7 +26,9 @@ export const ModelFileAlert = ({
     }
   }
 
-  const inEarlyAccess = !!earlyAccessDeadline && isFutureDate(earlyAccessDeadline);
+  const features = useFeatureFlags();
+  const inEarlyAccess =
+    features.earlyAccessModel && !!earlyAccessDeadline && isFutureDate(earlyAccessDeadline);
 
   return (
     <>

@@ -64,6 +64,7 @@ import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { isBetweenToday } from '~/utils/date-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 /**NOTES**
   - If a model depicts an actual person, it cannot have nsfw content
@@ -111,6 +112,7 @@ type Props = { model?: ModelById };
 export function ModelForm({ model }: Props) {
   const router = useRouter();
   const queryUtils = trpc.useContext();
+  const features = useFeatureFlags();
   const editing = !!model;
 
   const { data: { items: tags } = { items: [] } } = trpc.tag.getAll.useQuery(
@@ -168,9 +170,10 @@ export function ModelForm({ model }: Props) {
         images: images.map((image) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
         // HOTFIX: Casting files to defaultModelFile[] to avoid type confusion and accept room for error
         files: files.length > 0 ? (files as typeof defaultModelFile[]) : [defaultModelFile],
-        earlyAccessTimeFrame: version.earlyAccessTimeFrame
-          ? String(version.earlyAccessTimeFrame)
-          : '0',
+        earlyAccessTimeFrame:
+          version.earlyAccessTimeFrame && features.earlyAccessModel
+            ? String(version.earlyAccessTimeFrame)
+            : '0',
       })
     ) ?? [defaultModelVersion],
   };
@@ -415,7 +418,8 @@ export function ModelForm({ model }: Props) {
                   (form.watch(`modelVersions.${index}.skipTrainedWords`) ?? false);
                 const name = form.watch(`modelVersions.${index}.name`) ?? '';
                 const showEarlyAccess =
-                  !version.createdAt || status === 'Draft' || isBetweenToday(version.createdAt);
+                  features.earlyAccessModel &&
+                  (!version.createdAt || status === 'Draft' || isBetweenToday(version.createdAt));
 
                 return (
                   <Paper

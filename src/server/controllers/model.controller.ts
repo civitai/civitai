@@ -28,6 +28,7 @@ import {
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { env } from '~/env/server.mjs';
 import { increaseDate, maxDate } from '~/utils/date-helpers';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -44,6 +45,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     }
 
     const isOwnerOrModerator = model.user.id === ctx.user?.id || ctx.user?.isModerator;
+    const features = getFeatureFlags({ user: ctx.user });
 
     return {
       ...model,
@@ -56,11 +58,13 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
                   return a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1;
                 })
             : version.images.flatMap((x) => x.image);
-        const earlyAccessDeadline = increaseDate(
-          model.publishedAt ? maxDate(version.createdAt, model.publishedAt) : version.createdAt,
-          version.earlyAccessTimeFrame,
-          'days'
-        );
+        const earlyAccessDeadline = features.earlyAccessModel
+          ? increaseDate(
+              model.publishedAt ? maxDate(version.createdAt, model.publishedAt) : version.createdAt,
+              version.earlyAccessTimeFrame,
+              'days'
+            )
+          : undefined;
         return {
           ...version,
           images,

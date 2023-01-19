@@ -12,7 +12,7 @@ import {
   useMantineTheme,
   Card,
 } from '@mantine/core';
-import { IconCrown, IconDownload, IconHeart, IconStar, IconUpload, IconUsers } from '@tabler/icons';
+import { IconDownload, IconHeart, IconStar, IconUpload, IconUsers } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import { GetServerSideProps } from 'next/types';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
