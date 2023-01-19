@@ -566,6 +566,7 @@ export function ModelForm({ model }: Props) {
                         </Grid.Col>
                         {showEarlyAccess && (
                           <Grid.Col span={12}>
+                            {/* TODO justin: adjust text as necessary */}
                             <Input.Wrapper
                               label="Early Access"
                               description="Set an early access for this version so your supporters can generate their own creations before anyone else"
@@ -578,6 +579,7 @@ export function ModelForm({ model }: Props) {
                                 name={`modelVersions.${index}.earlyAccessTimeFrame`}
                                 orientation={mobile ? 'vertical' : 'horizontal'}
                                 data={[
+                                  // TODO justin: adjust text as necessary
                                   { label: 'All Access', value: '0' },
                                   { label: '1 day', value: '1' },
                                   { label: '2 days', value: '2' },
