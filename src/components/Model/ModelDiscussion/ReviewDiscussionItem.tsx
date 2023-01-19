@@ -314,8 +314,9 @@ export function ReviewDiscussionItem({ review, width }: Props) {
           <ReviewCarousel
             key={review.id}
             review={review}
-            inView={visible || inView}
+            inView={inView}
             height={width}
+            visible={visible}
           />
         </Card.Section>
       )}
@@ -355,10 +356,12 @@ function ReviewCarousel({
   review,
   inView,
   height,
+  visible,
 }: {
   review: ReviewGetAllItem;
   inView: boolean;
   height: number;
+  visible: boolean;
 }) {
   const { openContext } = useRoutedContext();
   const [renderIndexes, setRenderIndexes] = useState([0]);
@@ -377,23 +380,49 @@ function ReviewCarousel({
 
   const hasMultipleImages = review.images.length > 1;
 
+  if (!inView && review.images.length > 0)
+    return (
+      <ImageGuard
+        images={[review.images[0]]}
+        connect={{ entityType: 'review', entityId: review.id }}
+        nsfw={review.nsfw}
+        render={(image, index) => (
+          <div style={{ height, position: 'relative' }}>
+            <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+            <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height }}>
+              <AspectRatio
+                ratio={1}
+                sx={{
+                  width: '100%',
+                  overflow: 'hidden',
+                }}
+              >
+                <MediaHash {...image} />
+              </AspectRatio>
+            </div>
+            <ImageGuard.Safe>
+              {inView && renderIndexes.includes(index) && (
+                <ImagePreview
+                  image={image}
+                  edgeImageProps={{ width: 400 }}
+                  aspectRatio={1}
+                  onClick={() =>
+                    openContext('reviewLightbox', {
+                      initialSlide: index,
+                      reviewId: review.id,
+                    })
+                  }
+                  withMeta
+                />
+              )}
+            </ImageGuard.Safe>
+          </div>
+        )}
+      />
+    );
+
   return (
     <div style={{ position: 'relative' }}>
-      {/* {hasMultipleImages && (
-        <Badge
-          color="gray"
-          variant=""
-          sx={(theme) => ({
-            userSelect: 'none',
-            position: 'absolute',
-            top: theme.spacing.xs,
-            right: theme.spacing.xs,
-            zIndex: 10,
-          })}
-        >
-          {index + 1} / {review.images.length}
-        </Badge>
-      )} */}
       <Carousel
         withControls={hasMultipleImages}
         draggable={hasMultipleImages}
@@ -434,7 +463,7 @@ function ReviewCarousel({
                 </AspectRatio>
               </div>
               <ImageGuard.Safe>
-                {inView && renderIndexes.includes(index) && (
+                {visible && inView && renderIndexes.includes(index) && (
                   <ImagePreview
                     image={image}
                     edgeImageProps={{ width: 400 }}
