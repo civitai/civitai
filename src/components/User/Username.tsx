@@ -2,7 +2,7 @@ import { Badge, BadgeProps, Group, MantineSize, Text, TextProps } from '@mantine
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getRandom } from '~/utils/array-helpers';
 
-// TODO support badge: remove once final support badge is implemented
+// TODO justin: remove once final support badge is implemented
 const levels: SupportLevel[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 
 const textBadgeProps: Record<SupportLevel, { textProps: TextProps; badgeProps: BadgeProps }> = {
@@ -35,7 +35,7 @@ export function Username({
   const features = useFeatureFlags();
   if (deletedAt) return <Text size={size}>[delete]</Text>;
 
-  supportLevel = features.memberBadges ? getRandom(levels) : 'common'; // TODO support badge: remove random once final support badge is implemented
+  supportLevel = features.memberBadges ? getRandom(levels) : 'common'; // TODO justin: remove random once final support badge is implemented
   const { textProps, badgeProps } = textBadgeProps[supportLevel];
 
   return (
@@ -51,7 +51,7 @@ export function Username({
         {username}
       </Text>
       {supportLevel !== 'common' ? (
-        // TODO support badge: remove once final support badge is implemented
+        // TODO justin: replace with icon once final support badge is implemented
         <Badge {...badgeProps} radius="xl">
           {supportLevel}
         </Badge>
