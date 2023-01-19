@@ -79,7 +79,6 @@ export function ImageUpload({
     filesHandler,
     removeImage,
     upload,
-    canUpload,
     // isCompleted,
     // isUploading,
     // isProcessing,
@@ -100,7 +99,7 @@ export function ImageUpload({
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
     await upload(droppedFiles);
   };
-  const dropzoneDisabled = files.length >= max || !canUpload;
+  const dropzoneDisabled = files.length >= max;
 
   return (
     <Input.Wrapper
@@ -144,21 +143,14 @@ export function ImageUpload({
               <IconPhoto size={50} stroke={1.5} />
             </Dropzone.Idle>
 
-            {!canUpload ? (
-              <Group spacing="xs">
-                <Text>Preparing Tom bot</Text>
-                <Loader variant="dots" />
-              </Group>
-            ) : (
-              <div>
-                <Text size="xl" inline>
-                  Drag images here or click to select files
-                </Text>
-                <Text size="sm" color="dimmed" inline mt={7}>
-                  {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
-                </Text>
-              </div>
-            )}
+            <div>
+              <Text size="xl" inline>
+                Drag images here or click to select files
+              </Text>
+              <Text size="sm" color="dimmed" inline mt={7}>
+                {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
+              </Text>
+            </div>
           </Group>
         </Dropzone>
 

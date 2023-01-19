@@ -1,6 +1,6 @@
 import { createJob } from './job';
 import { prisma } from '~/server/db/client';
-import { notificationProcessors } from '~/server/notifications/utils.notifications';
+import { notificationBatches } from '~/server/notifications/utils.notifications';
 
 const NOTIFICATIONS_LAST_SENT_KEY = 'last-sent-notifications';
 export const sendNotificationsJob = createJob(
@@ -16,12 +16,18 @@ export const sendNotificationsJob = createJob(
       )?.value as number) ?? 0
     ).toISOString();
 
-    // Run all processors in parralel
-    const promises = Object.values(notificationProcessors).map(async ({ prepareQuery }) => {
-      const query = await prepareQuery?.({ lastSent });
-      if (query) await prisma.$executeRawUnsafe(query);
-    });
-    await Promise.all(promises);
+    // Run all processors in batches by priority
+    // --------------------------------------------
+    // Prepare batches
+
+    // Run batches
+    for (const batch of notificationBatches) {
+      const promises = batch.map(async ({ prepareQuery }) => {
+        const query = await prepareQuery?.({ lastSent });
+        if (query) await prisma.$executeRawUnsafe(query);
+      });
+      await Promise.all(promises);
+    }
     console.log('sent notifications');
 
     // Update the last sent time

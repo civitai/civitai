@@ -24,7 +24,7 @@ export const commentUpsertInput = z.object({
   reviewId: z.number().nullish(),
   parentId: z.number().nullish(),
   content: getSanitizedStringSchema({
-    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br'],
+    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span'],
   }),
 });
 

@@ -1,5 +1,5 @@
 import { throwNotFoundError } from '~/server/utils/errorHandling';
-import { Prisma, TagEngagementType } from '@prisma/client';
+import { ModelEngagementType, Prisma, TagEngagementType } from '@prisma/client';
 
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -53,11 +53,13 @@ export const getUsers = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>(
   query,
   email,
   select,
+  ids,
 }: GetAllUsersInput & { select: TSelect }) => {
   return prisma.user.findMany({
     take: limit,
     select,
     where: {
+      id: ids && ids.length > 0 ? { in: ids } : undefined,
       username: query
         ? {
             contains: query,
@@ -93,21 +95,21 @@ export const updateUserById = ({ id, data }: { id: number; data: Prisma.UserUpda
   return prisma.user.update({ where: { id }, data });
 };
 
-export const getUserFavoriteModels = ({ id }: { id: number }) => {
+export const getUserEngagedModels = ({ id }: { id: number }) => {
   return prisma.user.findUnique({
     where: { id },
-    select: { favoriteModels: { select: { modelId: true } } },
+    select: { engagedModels: { select: { modelId: true, type: true } } },
   });
 };
 
-export const getUserFavoriteModelByModelId = ({
+export const getUserEngagedModelByModelId = ({
   userId,
   modelId,
 }: {
   userId: number;
   modelId: number;
 }) => {
-  return prisma.favoriteModel.findUnique({ where: { userId_modelId: { userId, modelId } } });
+  return prisma.modelEngagement.findUnique({ where: { userId_modelId: { userId, modelId } } });
 };
 
 export const getUserTags = ({ userId, type }: { userId: number; type?: TagEngagementType }) => {
@@ -167,6 +169,50 @@ export const getUserUnreadNotificationsCount = ({ id }: { id: number }) => {
     },
   });
 };
+
+export const toggleModelEngagement = async ({
+  userId,
+  modelId,
+  type,
+}: {
+  userId: number;
+  modelId: number;
+  type: ModelEngagementType;
+}) => {
+  const engagement = await prisma.modelEngagement.findUnique({
+    where: { userId_modelId: { userId, modelId } },
+    select: { type: true },
+  });
+  console.log(engagement?.type, type);
+
+  if (engagement) {
+    if (engagement.type === type)
+      await prisma.modelEngagement.delete({
+        where: { userId_modelId: { userId, modelId } },
+      });
+    else if (engagement.type !== type)
+      await prisma.modelEngagement.update({
+        where: { userId_modelId: { userId, modelId } },
+        data: { type, createdAt: new Date() },
+      });
+
+    return;
+  }
+
+  await prisma.modelEngagement.create({ data: { type, modelId, userId } });
+  return;
+};
+
+export const toggleModelFavorite = async ({
+  userId,
+  modelId,
+}: {
+  userId: number;
+  modelId: number;
+}) => toggleModelEngagement({ userId, modelId, type: 'Favorite' });
+
+export const toggleModelHide = async ({ userId, modelId }: { userId: number; modelId: number }) =>
+  toggleModelEngagement({ userId, modelId, type: 'Hide' });
 
 export const toggleFollowUser = async ({
   userId,

@@ -10,8 +10,6 @@ import {
   Group,
   Loader,
   Menu,
-  MultiSelect,
-  Select,
   Stack,
   Text,
   Title,
@@ -25,22 +23,20 @@ import {
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { ModelStatus, ModelType } from '@prisma/client';
+import { ModelStatus } from '@prisma/client';
 import {
-  IconAlertCircle,
-  IconArrowsSort,
   IconBan,
   IconDotsVertical,
   IconDownload,
   IconEdit,
   IconExclamationMark,
-  IconFilter,
   IconFlag,
   IconHeart,
   IconLicense,
   IconMessage,
   IconMessageCircle2,
   IconStar,
+  IconTagOff,
   IconTrash,
 } from '@tabler/icons';
 import startCase from 'lodash/startCase';
@@ -95,6 +91,8 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
+import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 
 //TODO - Break model query into multiple queries
 /*
@@ -172,11 +170,12 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   });
 
   const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({ id });
-  const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery(undefined, {
-    enabled: !!currentUser,
-    cacheTime: Infinity,
-    staleTime: Infinity,
-  });
+  const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
+    trpc.user.getEngagedModels.useQuery(undefined, {
+      enabled: !!currentUser,
+      cacheTime: Infinity,
+      staleTime: Infinity,
+    });
 
   const deleteMutation = trpc.model.delete.useMutation({
     onSuccess() {
@@ -203,26 +202,31 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       showErrorNotification({ error: new Error(error.message) });
     },
   });
-  const toggleFavoriteModelMutation = trpc.user.toggleFavorite.useMutation({
+  const toggleFavoriteModelMutation = trpc.user.toggleFavoriteModel.useMutation({
     async onMutate({ modelId }) {
-      await queryUtils.user.getFavoriteModels.cancel();
+      await queryUtils.user.getEngagedModels.cancel();
 
-      const previousFavorites = queryUtils.user.getFavoriteModels.getData() ?? [];
+      const previousEngaged = queryUtils.user.getEngagedModels.getData() ?? {
+        Favorite: [],
+        Hide: [],
+      };
       const previousModel = queryUtils.model.getById.getData({ id: modelId });
-      const shouldRemove = previousFavorites.find((favorite) => favorite.modelId === modelId);
+      const shouldRemove = previousEngaged.Favorite?.find((id) => id === modelId);
       // Update the favorite count
       queryUtils.model.getById.setData({ id: modelId }, (model) => {
         if (model?.rank) model.rank.favoriteCountAllTime += shouldRemove ? -1 : 1;
         return model;
       });
       // Remove from favorites list
-      queryUtils.user.getFavoriteModels.setData(undefined, (old = []) =>
-        shouldRemove
-          ? old.filter((favorite) => favorite.modelId !== modelId)
-          : [...old, { modelId }]
+      queryUtils.user.getEngagedModels.setData(
+        undefined,
+        ({ Favorite = [], ...old } = { Favorite: [], Hide: [] }) => {
+          if (shouldRemove) return { Favorite: Favorite.filter((id) => id !== modelId), ...old };
+          return { Favorite: [...Favorite, modelId], ...old };
+        }
       );
 
-      return { previousFavorites, previousModel };
+      return { previousEngaged, previousModel };
     },
     async onSuccess() {
       await queryUtils.model.getAll.invalidate({ favorites: true });
@@ -231,7 +235,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       });
     },
     onError(_error, _variables, context) {
-      queryUtils.user.getFavoriteModels.setData(undefined, context?.previousFavorites);
+      queryUtils.user.getEngagedModels.setData(undefined, context?.previousEngaged);
       if (context?.previousModel?.id)
         queryUtils.model.getById.setData(
           { id: context?.previousModel?.id },
@@ -281,7 +285,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const showNsfwRequested = router.query.showNsfw !== 'true';
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
   const nsfw = userNotBlurringNsfw && showNsfwRequested && model.nsfw === true;
-  const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
+  const isFavorite = favoriteModels.find((modelId) => modelId === id);
 
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model.modelVersions[0];
@@ -291,18 +295,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   });
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
-
-  let hasNegativeEmbed = false;
-  let hasConfig = false;
-  let hasVAE = false;
-  if (latestVersion) {
-    for (const file of latestVersion.files) {
-      if (model.type === ModelType.TextualInversion && file.type === 'Negative')
-        hasNegativeEmbed = true;
-      else if (model.type === ModelType.Checkpoint && file.type === 'Config') hasConfig = true;
-      else if (model.type === ModelType.Checkpoint && file.type === 'VAE') hasVAE = true;
-    }
-  }
 
   const meta = (
     <Meta
@@ -561,8 +553,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 {currentUser && (
                   <>
                     <HideUserButton as="menu-item" userId={model.user.id} />
+                    <HideModelButton as="menu-item" modelId={model.id} />
                     <Menu.Item
-                      icon={<IconBan size={14} stroke={1.5} />}
+                      icon={<IconTagOff size={14} stroke={1.5} />}
                       onClick={() => openContext('blockTags', { modelId: model.id })}
                     >
                       Hide content with these tags
@@ -670,47 +663,12 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   </Tooltip>
                 </Group>
               )}
-              {hasNegativeEmbed && (
-                <AlertWithIcon icon={<IconAlertCircle />}>
-                  This Textual Inversion includes a{' '}
-                  <Anchor
-                    href={createModelFileDownloadUrl({
-                      versionId: latestVersion.id,
-                      type: 'Negative',
-                    })}
-                  >
-                    Negative embed
-                  </Anchor>
-                  , install the negative and use it in the negative prompt for full effect.
-                </AlertWithIcon>
-              )}
-              {hasConfig && (
-                <AlertWithIcon icon={<IconAlertCircle />}>
-                  This checkpoint includes a{' '}
-                  <Anchor
-                    href={createModelFileDownloadUrl({
-                      versionId: latestVersion.id,
-                      type: 'Config',
-                    })}
-                  >
-                    config file
-                  </Anchor>
-                  , download and place it along side the checkpoint.
-                </AlertWithIcon>
-              )}
-              {hasVAE && (
-                <AlertWithIcon icon={<IconAlertCircle />}>
-                  This checkpoint includes a{' '}
-                  <Anchor
-                    href={createModelFileDownloadUrl({
-                      versionId: latestVersion.id,
-                      type: 'VAE',
-                    })}
-                  >
-                    VAE
-                  </Anchor>
-                  , download and place it along side the checkpoint.
-                </AlertWithIcon>
+              {latestVersion && (
+                <ModelFileAlert
+                  versionId={latestVersion.id}
+                  modelType={model.type}
+                  files={latestVersion.files}
+                />
               )}
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
@@ -789,6 +747,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             <Stack>
               {latestVersion.images.length > 0 && (
                 <Carousel
+                  key={model.id}
                   slideSize="50%"
                   breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
                   slideGap="xl"
@@ -842,7 +801,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               )}
               {model.description ? (
                 <ContentClamp maxHeight={300}>
-                  <RenderHtml html={model.description} />
+                  <RenderHtml html={model.description} withMentions />
                 </ContentClamp>
               ) : null}
             </Stack>
@@ -853,6 +812,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 Versions
               </Title>
               <ModelVersions
+                type={model.type}
                 items={model.modelVersions}
                 initialTab={latestVersion?.id.toString()}
                 nsfw={model.nsfw}

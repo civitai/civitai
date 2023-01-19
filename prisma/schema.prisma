@@ -69,7 +69,6 @@ model User {
   saves                SavedModel[]
   imports              Import[]
   keys                 ApiKey[]
-  favoriteModels       FavoriteModel[]
   links                UserLink[]
   stats                UserStat?
   rank                 UserRank?
@@ -81,6 +80,7 @@ model User {
   interests            ModelInterest[]
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
   engagedUsers         UserEngagement[]           @relation("engagedUsers")
+  engagedModels        ModelEngagement[]
   metrics              UserMetric[]
   reports              Report[]
   questions            Question[]
@@ -101,9 +101,9 @@ enum UserEngagementType {
 
 model UserEngagement {
   userId       Int
-  user         User               @relation("engagingUsers", fields: [userId], references: [id])
+  user         User               @relation("engagingUsers", fields: [userId], references: [id], onDelete: Cascade)
   targetUserId Int
-  targetUser   User               @relation("engagedUsers", fields: [targetUserId], references: [id])
+  targetUser   User               @relation("engagedUsers", fields: [targetUserId], references: [id], onDelete: Cascade)
   type         UserEngagementType
   createdAt    DateTime           @default(now())
 
@@ -220,19 +220,19 @@ model Model {
   allowDerivatives      Boolean       @default(true)
   allowDifferentLicense Boolean       @default(true)
 
-  modelVersions  ModelVersion[]
-  reviews        Review[]
-  tagsOnModels   TagsOnModels[]
-  metrics        ModelMetric[]
-  saves          SavedModel[]
-  rank           ModelRank?
-  reportStats    ModelReportStat?
-  reports        ModelReport[]
-  favoriteModels FavoriteModel[]
-  comments       Comment[]
-  interests      ModelInterest[]
-  downloads      DownloadHistory[]
-  licenses       License[]
+  modelVersions ModelVersion[]
+  reviews       Review[]
+  tagsOnModels  TagsOnModels[]
+  metrics       ModelMetric[]
+  saves         SavedModel[]
+  rank          ModelRank?
+  reportStats   ModelReportStat?
+  reports       ModelReport[]
+  engagements   ModelEngagement[]
+  comments      Comment[]
+  interests     ModelInterest[]
+  downloads     DownloadHistory[]
+  licenses      License[]
 }
 
 model License {
@@ -252,12 +252,18 @@ model ModelInterest {
   @@id([userId, modelId])
 }
 
-model FavoriteModel {
+enum ModelEngagementType {
+  Favorite
+  Hide
+}
+
+model ModelEngagement {
   userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   modelId   Int
-  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  model     Model               @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  type      ModelEngagementType
+  createdAt DateTime            @default(now())
 
   @@id([userId, modelId])
 }
@@ -411,7 +417,7 @@ enum ReportStatus {
 model Report {
   id        Int            @id @default(autoincrement())
   userId    Int
-  user      User           @relation(fields: [userId], references: [id])
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   reason    ReportReason
   createdAt DateTime       @default(now())
   details   Json?
@@ -772,9 +778,9 @@ model Answer {
 }
 
 model AnswerVote {
-  answer    Answer   @relation(fields: [answerId], references: [id])
+  answer    Answer   @relation(fields: [answerId], references: [id], onDelete: Cascade)
   answerId  Int
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    Int
   vote      Boolean?
   createdAt DateTime @default(now())
@@ -885,9 +891,9 @@ enum TagEngagementType {
 
 model TagEngagement {
   userId    Int
-  user      User              @relation(fields: [userId], references: [id])
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   tagId     Int
-  tag       Tag               @relation(fields: [tagId], references: [id])
+  tag       Tag               @relation(fields: [tagId], references: [id], onDelete: Cascade)
   type      TagEngagementType
   createdAt DateTime          @default(now())
 

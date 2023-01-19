@@ -11,13 +11,14 @@ import {
   toggleHideUserHandler,
   toggleBlockedTagHandler,
   batchBlockTagsHandler,
+  getUserEngagedModelsHandler,
+  toggleHideModelHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
   getAllUsersHandler,
   getCreatorsHandler,
   getUserByIdHandler,
-  getUserFavoriteModelsHandler,
   toggleFavoriteModelHandler,
   updateUserHandler,
 } from '~/server/controllers/user.controller';
@@ -26,7 +27,7 @@ import {
   getAllUsersInput,
   getUserByUsernameSchema,
   getByUsernameSchema,
-  toggleFavoriteModelInput,
+  toggleModelEngagementInput,
   toggleFollowUserSchema,
   userUpsertSchema,
   deleteUserSchema,
@@ -40,7 +41,7 @@ export const userRouter = router({
   getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),
   getAll: publicProcedure.input(getAllUsersInput).query(getAllUsersHandler),
   getById: publicProcedure.input(getByIdSchema).query(getUserByIdHandler),
-  getFavoriteModels: protectedProcedure.query(getUserFavoriteModelsHandler),
+  getEngagedModels: protectedProcedure.query(getUserEngagedModelsHandler),
   getFollowingUsers: protectedProcedure.query(getUserFollowingListHandler),
   getHiddenUsers: protectedProcedure.query(getUserHiddenListHandler),
   getTags: protectedProcedure.input(getUserTagsSchema.optional()).query(getUserTagsHandler),
@@ -51,9 +52,12 @@ export const userRouter = router({
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
   update: protectedProcedure.input(userUpsertSchema.partial()).mutation(updateUserHandler),
   delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),
-  toggleFavorite: protectedProcedure
-    .input(toggleFavoriteModelInput)
+  toggleFavoriteModel: protectedProcedure
+    .input(toggleModelEngagementInput)
     .mutation(toggleFavoriteModelHandler),
+  toggleHideModel: protectedProcedure
+    .input(toggleModelEngagementInput)
+    .mutation(toggleHideModelHandler),
   toggleFollow: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleFollowUserHandler),
   toggleHide: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleHideUserHandler),
   toggleBlockedTag: protectedProcedure

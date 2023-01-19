@@ -11,6 +11,7 @@ export type ModelGetAll = ModelRouter['getAll'];
 type ReviewRouter = RouterOutput['review'];
 export type ReviewGetAll = ReviewRouter['getAll'];
 export type ReviewGetAllItem = ReviewGetAll['reviews'][number];
+export type ReviewGetById = ReviewRouter['getDetail'];
 export type ReviewGetCommentsById = ReviewRouter['getCommentsById'];
 export type ReviewGetReactions = ReviewRouter['getReactions'];
 
@@ -30,3 +31,5 @@ export type DownloadGetAllItem = DownloadGetAll['items'][number];
 
 type UserRouter = RouterOutput['user'];
 export type LeaderboardGetAll = UserRouter['getLeaderboard'];
+export type CreatorsGetAll = UserRouter['getCreators'];
+export type UsersGetAll = UserRouter['getAll'];

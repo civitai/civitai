@@ -72,9 +72,9 @@ export const modelNotifications = createNotificationProcessor({
       ), affected_models AS (
         SELECT DISTINCT
           "modelId" model_id
-        FROM "FavoriteModel" fm
+        FROM "ModelEngagement" fm
         JOIN "Model" m ON fm."modelId" = m.id
-        WHERE fm."createdAt" > '${lastSent}'
+        WHERE fm."createdAt" > '${lastSent}' AND fm.type = 'Favorite'
         AND m."userId" > 0
       ), model_value AS (
         SELECT
@@ -131,7 +131,7 @@ export const modelNotifications = createNotificationProcessor({
           ) "details"
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
-        JOIN "FavoriteModel" fm ON m.id = fm."modelId" AND mv."createdAt" >= fm."createdAt"
+        JOIN "ModelEngagement" fm ON m.id = fm."modelId" AND mv."createdAt" >= fm."createdAt" AND fm.type = 'Favorite'
         WHERE mv."createdAt" > '${lastSent}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")

@@ -23,6 +23,10 @@ import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/Cooki
 import { RoutedContextProvider } from '~/routed-context/routed-context.provider';
 import { env } from '~/env/client.mjs';
 import { MaintenanceMode } from '~/components/MaintenanceMode/MaintenanceMode';
+import { NsfwWorkerProvider } from '~/providers/NsfwWorkerProvider';
+import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import type { FeatureFlags } from '~/server/services/feature-flags.service';
 
 dayjs.extend(duration);
 dayjs.extend(relativeTime);
@@ -37,12 +41,13 @@ type CustomAppProps = {
   session: Session | null;
   colorScheme: ColorScheme;
   cookies: CookiesContext;
+  flags: FeatureFlags;
 }>;
 
 function MyApp(props: CustomAppProps) {
   const {
     Component,
-    pageProps: { session, colorScheme: initialColorScheme, cookies, ...pageProps },
+    pageProps: { session, colorScheme: initialColorScheme, cookies, flags, ...pageProps },
   } = props;
   const [colorScheme, setColorScheme] = useState<ColorScheme>(initialColorScheme);
 
@@ -60,13 +65,17 @@ function MyApp(props: CustomAppProps) {
   ) : (
     <SessionProvider session={session}>
       <CookiesProvider value={cookies}>
-        <CustomModalsProvider>
-          <NotificationsProvider>
-            <RoutedContextProvider>
-              <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-            </RoutedContextProvider>
-          </NotificationsProvider>
-        </CustomModalsProvider>
+        <FeatureFlagsProvider flags={flags}>
+          <CustomModalsProvider>
+            <NotificationsProvider>
+              <RoutedContextProvider>
+                <NsfwWorkerProvider>
+                  <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                </NsfwWorkerProvider>
+              </RoutedContextProvider>
+            </NotificationsProvider>
+          </CustomModalsProvider>
+        </FeatureFlagsProvider>
       </CookiesProvider>
     </SessionProvider>
   );
@@ -121,6 +130,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const { pageProps, ...appProps } = await App.getInitialProps(appContext);
   const session = await getSession(appContext.ctx);
 
+  const flags = getFeatureFlags({ user: session?.user });
+
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
 
@@ -130,6 +141,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       session,
       colorScheme: getCookie('mantine-color-scheme', appContext.ctx) ?? 'light',
       cookies: parsedCookies,
+      flags,
     },
     ...appProps,
   };

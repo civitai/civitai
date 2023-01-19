@@ -1,12 +1,15 @@
-import { Input, InputWrapperProps, MantineSize } from '@mantine/core';
+import { createStyles, Input, InputWrapperProps, MantineSize } from '@mantine/core';
 import { Link, RichTextEditor as RTE, RichTextEditorProps } from '@mantine/tiptap';
 import Image from '@tiptap/extension-image';
+import Mention from '@tiptap/extension-mention';
 import Placeholder from '@tiptap/extension-placeholder';
 import Underline from '@tiptap/extension-underline';
 import Youtube from '@tiptap/extension-youtube';
 import { BubbleMenu, Extensions, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useEffect } from 'react';
+
+import { getSuggestions } from '~/components/RichTextEditor/suggestion';
 
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
@@ -17,6 +20,12 @@ const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
   lg: '70px',
   xl: '90px',
 };
+
+const useStyles = createStyles((theme) => ({
+  mention: {
+    color: theme.colors.blue[4],
+  },
+}));
 
 export function RichTextEditor({
   id,
@@ -33,14 +42,16 @@ export function RichTextEditor({
   editorSize = 'sm',
   reset = 0,
   autoFocus,
+  defaultSuggestions,
   ...props
 }: Props) {
+  const { classes } = useStyles();
   const addHeading = includeControls.includes('heading');
   const addFormatting = includeControls.includes('formatting');
   const addList = includeControls.includes('list');
   const addLink = includeControls.includes('link');
   const addMedia = includeControls.includes('media');
-  // const [value, setValue] = useState(initialValue);
+  const addMentions = includeControls.includes('mentions');
 
   const extensions: Extensions = [
     Placeholder.configure({ placeholder }),
@@ -62,6 +73,19 @@ export function RichTextEditor({
     // strings for its value
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ...(addMedia ? [Image, Youtube.configure({ width: '100%' as any })] : []),
+    ...(addMentions
+      ? [
+          Mention.configure({
+            suggestion: getSuggestions({ defaultSuggestions }),
+            HTMLAttributes: {
+              class: classes.mention,
+            },
+            renderLabel({ options, node }) {
+              return `${options.suggestion.char}${node.attrs.label ?? node.attrs.id}`;
+            },
+          }),
+        ]
+      : []),
   ];
 
   const editor = useEditor({
@@ -83,7 +107,7 @@ export function RichTextEditor({
   }, [reset]); //eslint-disable-line
 
   useEffect(() => {
-    if (editor && autoFocus) editor.commands.focus('end');
+    if (editor && autoFocus) editor.commands.focus('end', { scrollIntoView: true });
   }, [editor, autoFocus]);
 
   return (
@@ -181,7 +205,7 @@ export function RichTextEditor({
   );
 }
 
-type ControlType = 'heading' | 'formatting' | 'list' | 'link' | 'media';
+type ControlType = 'heading' | 'formatting' | 'list' | 'link' | 'media' | 'mentions';
 
 type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'description' | 'withAsterisk' | 'error'> & {
@@ -193,4 +217,5 @@ type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
     editorSize?: 'sm' | 'md' | 'lg' | 'xl';
     reset?: number;
     autoFocus?: boolean;
+    defaultSuggestions?: Array<{ id: number; label: string }>;
   };

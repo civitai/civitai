@@ -22,24 +22,27 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputRTE, useForm } from '~/libs/form';
 
 import { commentUpsertInput } from '~/server/schema/comment.schema';
-import { CommentGetCommentsById, ReviewGetCommentsById } from '~/types/router';
+import {
+  CommentGetById,
+  CommentGetCommentsById,
+  ReviewGetById,
+  ReviewGetCommentsById,
+} from '~/types/router';
+import { removeDuplicates } from '~/utils/array-helpers';
 
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export default function CommentSection({
-  comments,
-  modelId,
-  reviewId,
-  parentId,
-  highlights,
-}: Props) {
+export function CommentSection({ comments, modelId, review, parent, highlights }: Props) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const theme = useMantineTheme();
   const queryUtils = trpc.useContext();
   const { classes } = useStyles();
   highlights = highlights?.filter((x) => x);
+
+  const reviewId = review?.id;
+  const parentId = parent?.id;
   const form = useForm({
     schema: commentUpsertInput,
     shouldUnregister: false,
@@ -74,7 +77,7 @@ export default function CommentSection({
       await queryUtils.comment.getCommentsById.invalidate();
 
       setShowCommentActions(false);
-      form.reset();
+      form.reset({ modelId, reviewId, parentId, content: undefined });
     },
     onError(error, _variables, context) {
       if (reviewId)
@@ -89,7 +92,17 @@ export default function CommentSection({
     },
   });
 
+  const mainComment = review ?? parent;
   const commentCount = comments.length;
+  const suggestedMentions = removeDuplicates(
+    [...comments, mainComment]
+      .filter((comment) => comment && comment.user.id !== currentUser?.id)
+      .map((comment) => ({
+        id: comment?.user.id as number,
+        label: comment?.user.username as string,
+      })),
+    'id'
+  ).slice(0, 5);
 
   return (
     <Stack spacing="xl">
@@ -125,12 +138,15 @@ export default function CommentSection({
                   </Stack>
                 </Overlay>
               ) : null}
+
               <InputRTE
                 name="content"
                 placeholder="Type your comment..."
-                includeControls={['formatting', 'link']}
+                includeControls={['formatting', 'link', 'mentions']}
                 disabled={saveCommentMutation.isLoading}
                 onFocus={() => setShowCommentActions(true)}
+                defaultSuggestions={suggestedMentions}
+                autoFocus={showCommentActions}
                 hideToolbar
               />
             </Box>
@@ -139,7 +155,7 @@ export default function CommentSection({
                 <Button
                   variant="default"
                   onClick={() => {
-                    form.reset();
+                    form.reset({ content: undefined, modelId, reviewId, parentId });
                     setShowCommentActions(false);
                   }}
                 >
@@ -162,7 +178,24 @@ export default function CommentSection({
               key={comment.id}
               className={isHighlighted ? classes.highlightedComment : undefined}
             >
-              <CommentSectionItem comment={comment} modelId={modelId} />
+              <CommentSectionItem
+                comment={comment}
+                modelId={modelId}
+                onReplyClick={(comment) => {
+                  setShowCommentActions(true);
+                  const content = form.getValues('content');
+                  form.reset({
+                    modelId,
+                    reviewId,
+                    parentId,
+                    content: `<p><span data-type="mention" data-id="mention:${
+                      comment.user.id
+                    }" data-label="${comment.user.username}" contenteditable="false">@${
+                      comment.user.username
+                    }</span>&nbsp;${content ? content : ''}</p>`,
+                  });
+                }}
+              />
             </List.Item>
           );
         })}
@@ -174,8 +207,8 @@ export default function CommentSection({
 type Props = {
   comments: ReviewGetCommentsById | CommentGetCommentsById;
   modelId: number;
-  reviewId?: number;
-  parentId?: number;
+  review?: ReviewGetById;
+  parent?: CommentGetById;
   highlights?: number[];
 };
 

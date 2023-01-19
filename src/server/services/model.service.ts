@@ -46,8 +46,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     period = MetricTimeframe.AllTime,
     rating,
     favorites,
+    hidden,
     hideNSFW,
     excludedTagIds,
+    excludedIds,
   },
   select,
   user: sessionUser,
@@ -88,6 +90,9 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       tagsOnModels: { every: { tagId: { notIn: excludedTagIds } } },
     });
   }
+  if (excludedIds) {
+    AND.push({ id: { notIn: excludedIds } });
+  }
 
   const where: Prisma.ModelWhereInput = {
     tagsOnModels:
@@ -102,7 +107,11 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
           AND: [{ ratingAllTime: { gte: rating } }, { ratingAllTime: { lt: rating + 1 } }],
         }
       : undefined,
-    favoriteModels: favorites ? { some: { userId: sessionUser?.id } } : undefined,
+    engagements: favorites
+      ? { some: { userId: sessionUser?.id, type: 'Favorite' } }
+      : hidden
+      ? { some: { userId: sessionUser?.id, type: 'Hide' } }
+      : undefined,
     AND: AND.length ? AND : undefined,
     modelVersions: baseModels?.length ? { some: { baseModel: { in: baseModels } } } : undefined,
   };

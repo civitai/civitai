@@ -111,7 +111,7 @@ _self.onconnect = async (e) => {
               port.postMessage({ type: 'result', data });
               resolve(data);
             } catch (error) {
-              port.postMessage({ type: 'error', error });
+              port.postMessage({ type: 'error', data: { error, uuid } });
               reject({ error });
             }
           })
