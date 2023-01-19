@@ -93,7 +93,7 @@ model User {
   downloads            DownloadHistory[]
   tagsEngaged          TagEngagement[]
   imageReactions       ImageReaction[]
-  imageConnections     ImageConnections[]
+  imageConnections     ImageConnection[]
 }
 
 enum UserEngagementType {
@@ -1307,13 +1307,15 @@ model DownloadHistory {
 }
 
 /// @view
-model ImageConnections {
-  imageId  Int     @id
-  image    Image   @relation(fields: [imageId], references: [id], onDelete: NoAction)
-  userId   Int
-  user     User    @relation(fields: [userId], references: [id], onDelete: NoAction)
-  modelId  Int
-  model    Model   @relation(fields: [modelId], references: [id], onDelete: NoAction)
-  reviewId Int?
-  review   Review? @relation(fields: [reviewId], references: [id], onDelete: NoAction)
+model ImageConnection {
+  imageId        Int           @id
+  image          Image         @relation(fields: [imageId], references: [id], onDelete: NoAction)
+  userId         Int
+  user           User          @relation(fields: [userId], references: [id], onDelete: NoAction)
+  modelId        Int?
+  model          Model?        @relation(fields: [modelId], references: [id], onDelete: NoAction)
+  modelVersionId Int?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
+  reviewId       Int?
+  review         Review?       @relation(fields: [reviewId], references: [id], onDelete: NoAction)
 }

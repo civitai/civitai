@@ -68,3 +68,17 @@ ALTER TABLE "ImageReaction" ADD CONSTRAINT "ImageReaction_imageId_fkey" FOREIGN 
 
 -- AddForeignKey
 ALTER TABLE "ImageReaction" ADD CONSTRAINT "ImageReaction_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- View: "ImageConnection"
+CREATE OR REPLACE VIEW "ImageConnection" AS
+SELECT
+  i.id "imageId",
+  i."userId",
+  COALESCE(iom."modelVersionId", r."modelVersionId") "modelVersionId",
+  COALESCE(mv."modelId",r."modelId") "modelId",
+	ior."reviewId"
+FROM "Image" i
+LEFT JOIN "ImagesOnModels" iom ON i.id = iom."imageId"
+LEFT JOIN "ModelVersion" mv ON mv.id = iom."modelVersionId"
+LEFT JOIN "ImagesOnReviews" ior ON i.id = ior."imageId"
+LEFT JOIN "Review" r ON ior."reviewId" = r.id;
