@@ -22,6 +22,10 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
   const { openContext } = useRoutedContext();
+  // TODO Briant: This is a hack to support direct linking to a comment...
+  // I wanted to just use a hash, but that broke things on refresh...
+  const directLink = new URL(window.location.href);
+  directLink.searchParams.set('highlight', comment.id.toString());
 
   const [editComment, setEditComment] = useState<Props['comment'] | null>(null);
 
@@ -168,7 +172,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
                   OP
                 </Badge>
               ) : null}
-              <Text color="dimmed" size="xs">
+              <Text color="dimmed" size="xs" component="a" href={directLink.toString()}>
                 <DaysFromNow date={comment.createdAt} />
               </Text>
             </Group>
