@@ -66,15 +66,15 @@ function MyApp(props: CustomAppProps) {
     <SessionProvider session={session}>
       <CookiesProvider value={cookies}>
         <FeatureFlagsProvider flags={flags}>
-          <CustomModalsProvider>
-            <NotificationsProvider>
-              <RoutedContextProvider>
-                <NsfwWorkerProvider>
+          <NsfwWorkerProvider>
+            <CustomModalsProvider>
+              <NotificationsProvider>
+                <RoutedContextProvider>
                   <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                </NsfwWorkerProvider>
-              </RoutedContextProvider>
-            </NotificationsProvider>
-          </CustomModalsProvider>
+                </RoutedContextProvider>
+              </NotificationsProvider>
+            </CustomModalsProvider>
+          </NsfwWorkerProvider>
         </FeatureFlagsProvider>
       </CookiesProvider>
     </SessionProvider>

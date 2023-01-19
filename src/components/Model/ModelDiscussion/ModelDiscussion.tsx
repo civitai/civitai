@@ -1,6 +1,6 @@
 import { Button, Center, Grid, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
 
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
@@ -40,7 +40,13 @@ export function ModelDiscussion({ modelId, filters }: Props) {
     }
   );
 
-  const previousFetching = usePrevious(refetchingComments || refetchingReviews);
+  const previousFetching = usePrevious(
+    (refetchingComments && !fetchingComments) || (refetchingReviews && !fetchingReviews)
+  );
+
+  useEffect(() => {
+    console.log({ previousFetching });
+  }, [previousFetching]);
 
   const reviews = useMemo(
     () => reviewsData?.pages.flatMap((x) => x.reviews) ?? [],
