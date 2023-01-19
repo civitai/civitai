@@ -531,6 +531,7 @@ model Image {
   reactions       ImageReaction[]
   comments        ImageComment[]
   connections     ImageConnections[]
+  tags            TagsOnImage[]
 }
 
 enum ImageOnModelType {
@@ -561,6 +562,7 @@ model ImagesOnReviews {
 enum TagTarget {
   Model
   Question
+  Image
 }
 
 model Tag {
@@ -573,13 +575,43 @@ model Tag {
   unlisted  Boolean   @default(false)
 
   tagsOnModels   TagsOnModels[]
-  TagsOnQuestion TagsOnQuestions[]
+  tagsOnQuestion TagsOnQuestions[]
+  tagsOnImage    TagsOnImage[]
   usersEngaged   TagEngagement[]
   metrics        TagMetric[]
   stats          TagStat?
   rank           TagRank?
 
   @@unique([name, target])
+}
+
+model TagsOnModels {
+  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelId   Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId     Int
+  createdAt DateTime @default(now())
+
+  @@id([modelId, tagId])
+}
+
+model TagsOnQuestions {
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  questionId Int
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId      Int
+
+  @@id([tagId, questionId])
+}
+
+model TagsOnImage {
+  imageId   Int
+  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([tagId, imageId])
 }
 
 model TagMetric {
@@ -591,16 +623,6 @@ model TagMetric {
   followerCount Int             @default(0)
 
   @@id([tagId, timeframe])
-}
-
-model TagsOnModels {
-  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  modelId   Int
-  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  tagId     Int
-  createdAt DateTime @default(now())
-
-  @@id([modelId, tagId])
 }
 
 model SavedModel {
@@ -855,20 +877,11 @@ model AnswerComment {
 
 model ImageComment {
   imageId   Int
-  image     Image     @relation(fields: [imageId], references: [id])
+  image     Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
   commentId Int       @unique
-  comment   CommentV2 @relation(fields: [commentId], references: [id])
+  comment   CommentV2 @relation(fields: [commentId], references: [id], onDelete: Cascade)
 
   @@id([imageId, commentId])
-}
-
-model TagsOnQuestions {
-  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
-  questionId Int
-  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  tagId      Int
-
-  @@id([tagId, questionId])
 }
 
 model QuestionReaction {
@@ -913,9 +926,9 @@ model CommentV2Reaction {
 model ImageReaction {
   id        Int             @id @default(autoincrement())
   imageId   Int
-  image     Image           @relation(fields: [imageId], references: [id])
+  image     Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
   userId    Int
-  user      User            @relation(fields: [userId], references: [id])
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   reaction  ReviewReactions
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
@@ -1295,13 +1308,12 @@ model DownloadHistory {
 
 /// @view
 model ImageConnections {
-  id       Int     @id
-  imageId  Int
-  image    Image   @relation(fields: [imageId], references: [id])
+  imageId  Int     @id
+  image    Image   @relation(fields: [imageId], references: [id], onDelete: NoAction)
   userId   Int
-  user     User    @relation(fields: [userId], references: [id])
+  user     User    @relation(fields: [userId], references: [id], onDelete: NoAction)
   modelId  Int
-  model    Model   @relation(fields: [modelId], references: [id])
+  model    Model   @relation(fields: [modelId], references: [id], onDelete: NoAction)
   reviewId Int?
-  review   Review? @relation(fields: [reviewId], references: [id])
+  review   Review? @relation(fields: [reviewId], references: [id], onDelete: NoAction)
 }
