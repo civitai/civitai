@@ -186,7 +186,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
               <RichTextEditor
                 value={editComment.content}
                 disabled={saveCommentMutation.isLoading}
-                includeControls={['formatting', 'link']}
+                includeControls={['formatting', 'link', 'mentions']}
                 onChange={(value) =>
                   setEditComment((state) => (state ? { ...state, content: value } : state))
                 }
