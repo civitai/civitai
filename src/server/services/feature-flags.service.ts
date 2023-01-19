@@ -1,6 +1,6 @@
 import { SessionUser } from 'next-auth';
-import { env } from '~/env/server.mjs';
 
+/** 'dev' AND ('mod' OR 'public' OR etc...)  */
 const featureAvailability = ['dev', 'mod', 'public', 'tier1'] as const;
 type FeatureAvailability = typeof featureAvailability[number];
 
@@ -11,21 +11,25 @@ type FeatureFlagKey = keyof typeof featureFlags;
 const featureFlags = createTypedDictionary({
   earlyAccessModel: ['dev'],
   memberBadges: ['dev'],
+  apiKeys: ['dev'],
 });
 
-const isDev = env.NODE_ENV === 'development';
+const isDev = process.env.NODE_ENV === 'development';
 
 export type FeatureFlags = Record<FeatureFlagKey, boolean>;
 export const getFeatureFlags = ({ user }: { user?: SessionUser }) => {
   const keys = Object.keys(featureFlags) as FeatureFlagKey[];
   return keys.reduce<FeatureFlags>((acc, key) => {
-    acc[key] = false; // ensure a value
+    acc[key] = false; // set default
 
     const flags = featureFlags[key];
-    if (flags.includes('dev') && !isDev) acc[key] = false;
-    else {
-      acc[key] = (flags.includes('mod') && user?.isModerator) || flags.includes('public');
-    }
+    const devRequirement = flags.includes('dev') ? isDev : flags.length > 0;
+    const otherRequirement =
+      flags.filter((x) => x !== 'dev').length > 0
+        ? (flags.includes('mod') && user?.isModerator) || flags.includes('public')
+        : true;
+
+    acc[key] = devRequirement && otherRequirement;
 
     return acc;
   }, {} as FeatureFlags);
