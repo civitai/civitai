@@ -3,6 +3,7 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 export const mentionNotifications = createNotificationProcessor({
   'new-mention': {
     displayName: 'New @mentions',
+    priority: -1,
     prepareMessage: ({ details }) => {
       if (details.mentionedIn === 'comment')
         return {

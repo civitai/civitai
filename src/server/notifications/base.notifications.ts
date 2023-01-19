@@ -1,5 +1,6 @@
-type NotificationProcessor = {
+export type NotificationProcessor = {
   displayName: string;
+  priority?: number;
   toggleable?: boolean;
   prepareQuery?: (input: NotificationProcessorRunInput) => string;
   prepareMessage: (notification: BareNotification) => NotificationMessage;

@@ -4,7 +4,7 @@ export const commentNotifications = createNotificationProcessor({
   'new-comment': {
     displayName: 'New comments on your models',
     prepareMessage: ({ details }) => ({
-      message: `${details.username} just commented on your ${details.modelName} model`,
+      message: `${details.username} commented on your ${details.modelName} model`,
       url: `/models/${details.modelId}?modal=commentThread&commentId=${details.commentId}`,
     }),
     prepareQuery: ({ lastSent }) => `
@@ -48,7 +48,7 @@ export const commentNotifications = createNotificationProcessor({
   'new-comment-response': {
     displayName: 'New comment responses',
     prepareMessage: ({ details }) => ({
-      message: `${details.username} has responded to your comment on the ${details.modelName} model`,
+      message: `${details.username} responded to your comment on the ${details.modelName} model`,
       url: `/models/${details.modelId}?modal=commentThread&commentId=${
         details.parentId ?? details.commentId
       }&highlight=${details.commentId}`,
@@ -86,14 +86,14 @@ export const commentNotifications = createNotificationProcessor({
           FROM "Notification" n
           WHERE n."userId" = r."ownerId"
               AND n.type IN ('new-comment-nested', 'new-thread-response', 'new-mention')
-              AND n.details->>'parentId' = r.details->>'parentId'
+              AND n.details->>'commentId' = r.details->>'commentId'
         );
     `,
   },
   'new-comment-nested': {
     displayName: 'New responses to comments and reviews on your models',
     prepareMessage: ({ details }) => ({
-      message: `${details.username} has responded to a ${details.parentType} on your ${details.modelName} model`,
+      message: `${details.username} responded to a ${details.parentType} on your ${details.modelName} model`,
       url: `/models/${details.modelId}?modal=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
     }),
     prepareQuery: ({ lastSent }) => `
@@ -130,14 +130,14 @@ export const commentNotifications = createNotificationProcessor({
           FROM "Notification" n
           WHERE n."userId" = r."ownerId"
               AND n.type IN ('new-thread-response', 'new-comment-response', 'new-mention')
-              AND n.details->>'parentId' = r.details->>'parentId'
+              AND n.details->>'commentId' = r.details->>'commentId'
         );
     `,
   },
   'new-thread-response': {
     displayName: 'New replies to comment threads you are in',
     prepareMessage: ({ details }) => ({
-      message: `${details.username} has responded to the ${details.parentType} thread on the ${details.modelName} model`,
+      message: `${details.username} responded to the ${details.parentType} thread on the ${details.modelName} model`,
       url: `/models/${details.modelId}?modal=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
     }),
     prepareQuery: ({ lastSent }) => `
@@ -184,14 +184,14 @@ export const commentNotifications = createNotificationProcessor({
           FROM "Notification" n
           WHERE n."userId" = r."ownerId"
               AND n.type IN ('new-comment-nested', 'new-comment-response', 'new-mention')
-              AND n.details->>'parentId' = r.details->>'parentId'
+              AND n.details->>'commentId' = r.details->>'commentId'
         );
     `,
   },
   'new-review-response': {
     displayName: 'New review responses',
     prepareMessage: ({ details }) => ({
-      message: `${details.username} has responded to your review on the ${details.modelName} model`,
+      message: `${details.username} responded to your review on the ${details.modelName} model`,
       url: `/models/${details.modelId}?modal=reviewThread&reviewId=${details.reviewId}&highlight=${details.commentId}`,
     }),
     prepareQuery: ({ lastSent }) => `
@@ -227,7 +227,7 @@ export const commentNotifications = createNotificationProcessor({
           FROM "Notification" n
           WHERE n."userId" = r."ownerId"
               AND n.type IN ('new-comment-nested', 'new-thread-response', 'new-mention')
-              AND n.details->>'parentId' = r.details->>'reviewId'
+              AND n.details->>'commentId' = r.details->>'commentId'
         );
     `,
   },
