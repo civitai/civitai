@@ -235,7 +235,7 @@ model Model {
   interests        ModelInterest[]
   downloads        DownloadHistory[]
   licenses         License[]
-  imageConnections ImageConnections[]
+  imageConnections ImageConnection[]
 }
 
 model License {
@@ -290,13 +290,14 @@ model ModelVersion {
   baseModel    String?
   meta         Json        @default("{}")
 
-  reviews       Review[]
-  images        ImagesOnModels[]
-  metrics       ModelVersionMetric[]
-  rank          ModelVersionRank?
-  files         ModelFile[]
-  runStrategies RunStrategy[]
-  downloads     DownloadHistory[]
+  reviews         Review[]
+  images          ImagesOnModels[]
+  metrics         ModelVersionMetric[]
+  rank            ModelVersionRank?
+  files           ModelFile[]
+  runStrategies   RunStrategy[]
+  downloads       DownloadHistory[]
+  ImageConnection ImageConnection[]
 }
 
 enum ModelHashType {
@@ -485,7 +486,7 @@ model Review {
   imagesOnReviews  ImagesOnReviews[]
   reports          ReviewReport[]
   comments         Comment[]
-  imageConnections ImageConnections[]
+  imageConnections ImageConnection[]
 }
 
 enum ReviewReactions {
@@ -530,7 +531,7 @@ model Image {
   reports         ImageReport[]
   reactions       ImageReaction[]
   comments        ImageComment[]
-  connections     ImageConnections[]
+  connections     ImageConnection[]
   tags            TagsOnImage[]
 }
 
