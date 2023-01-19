@@ -594,82 +594,79 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         <Grid gutter="xl">
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
             <Stack>
-              {latestVersion && (
-                <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
-                  <Stack sx={{ flex: 1 }} spacing={4}>
-                    <MultiActionButton
-                      component="a"
-                      href={createModelFileDownloadUrl({
-                        versionId: latestVersion.id,
-                        primary: true,
-                      })}
-                      leftIcon={<IconDownload size={16} />}
-                      disabled={!primaryFile}
-                      menuItems={
-                        latestVersion?.files.length > 1
-                          ? latestVersion?.files.map((file, index) => (
-                              <Menu.Item
-                                key={index}
-                                component="a"
-                                py={4}
-                                icon={<VerifiedText file={file} iconOnly />}
-                                href={createModelFileDownloadUrl({
-                                  versionId: latestVersion.id,
-                                  type: file.type,
-                                  format: file.format,
-                                })}
-                                download
-                              >
-                                {`${startCase(file.type)}${
-                                  ['Model', 'Pruned Model'].includes(file.type)
-                                    ? ' ' + file.format
-                                    : ''
-                                } (${formatKBytes(file.sizeKB)})`}
-                              </Menu.Item>
-                            ))
-                          : []
-                      }
-                      menuTooltip="Other Downloads"
-                      download
-                    >
-                      <Text align="center">
-                        {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+              <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
+                <Stack sx={{ flex: 1 }} spacing={4}>
+                  <MultiActionButton
+                    component="a"
+                    href={createModelFileDownloadUrl({
+                      versionId: latestVersion.id,
+                      primary: true,
+                    })}
+                    leftIcon={<IconDownload size={16} />}
+                    disabled={!primaryFile}
+                    menuItems={
+                      latestVersion?.files.length > 1
+                        ? latestVersion?.files.map((file, index) => (
+                            <Menu.Item
+                              key={index}
+                              component="a"
+                              py={4}
+                              icon={<VerifiedText file={file} iconOnly />}
+                              href={createModelFileDownloadUrl({
+                                versionId: latestVersion.id,
+                                type: file.type,
+                                format: file.format,
+                              })}
+                              download
+                            >
+                              {`${startCase(file.type)}${
+                                ['Model', 'Pruned Model'].includes(file.type)
+                                  ? ' ' + file.format
+                                  : ''
+                              } (${formatKBytes(file.sizeKB)})`}
+                            </Menu.Item>
+                          ))
+                        : []
+                    }
+                    menuTooltip="Other Downloads"
+                    download
+                  >
+                    <Text align="center">
+                      {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+                    </Text>
+                  </MultiActionButton>
+                  {primaryFile && (
+                    <Group position="apart" noWrap spacing={0}>
+                      <VerifiedText file={primaryFile} />
+                      <Text size="xs" color="dimmed">
+                        {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+                        {primaryFile.format}
                       </Text>
-                    </MultiActionButton>
-                    {primaryFile && (
-                      <Group position="apart" noWrap spacing={0}>
-                        <VerifiedText file={primaryFile} />
-                        <Text size="xs" color="dimmed">
-                          {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                          {primaryFile.format}
-                        </Text>
-                      </Group>
-                    )}
-                  </Stack>
+                    </Group>
+                  )}
+                </Stack>
 
-                  <RunButton modelVersionId={latestVersion.id} />
-                  <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-                    <div>
-                      <LoginRedirect reason="favorite-model">
-                        <Button
-                          onClick={() => handleToggleFavorite()}
-                          color={isFavorite ? 'red' : 'gray'}
-                          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                        >
-                          <IconHeart color="#fff" />
-                        </Button>
-                      </LoginRedirect>
-                    </div>
-                  </Tooltip>
-                </Group>
-              )}
-              {latestVersion && (
-                <ModelFileAlert
-                  versionId={latestVersion.id}
-                  modelType={model.type}
-                  files={latestVersion.files}
-                />
-              )}
+                <RunButton modelVersionId={latestVersion.id} />
+                <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
+                  <div>
+                    <LoginRedirect reason="favorite-model">
+                      <Button
+                        onClick={() => handleToggleFavorite()}
+                        color={isFavorite ? 'red' : 'gray'}
+                        sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                      >
+                        <IconHeart color="#fff" />
+                      </Button>
+                    </LoginRedirect>
+                  </div>
+                </Tooltip>
+              </Group>
+              <ModelFileAlert
+                versionId={latestVersion.id}
+                modelType={model.type}
+                files={latestVersion.files}
+                earlyAccessDeadline={latestVersion.earlyAccessDeadline}
+              />
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
                 <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>

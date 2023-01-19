@@ -1,10 +1,18 @@
-import { Anchor } from '@mantine/core';
+import { Anchor, Text } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconAlertCircle } from '@tabler/icons';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 
-export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertProps) => {
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { Countdown } from '~/components/Countdown/Countdown';
+import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import { isFutureDate } from '~/utils/date-helpers';
+
+export const ModelFileAlert = ({
+  files,
+  modelType,
+  versionId,
+  earlyAccessDeadline,
+}: ModelFileAlertProps) => {
   let hasNegativeEmbed = false;
   let hasConfig = false;
   let hasVAE = false;
@@ -17,8 +25,25 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
     }
   }
 
+  const inEarlyAccess = !!earlyAccessDeadline && isFutureDate(earlyAccessDeadline);
+
   return (
     <>
+      {inEarlyAccess && (
+        <AlertWithIcon color="green" iconColor="green" icon={<IconAlertCircle />}>
+          {`This checkpoint is marked as Supporter's only. Come back in `}
+          <Countdown endTime={earlyAccessDeadline} />
+          {' to download for free. '}
+          <Text
+            variant="link"
+            onClick={() => console.log('Add notification')}
+            sx={{ cursor: 'pointer' }}
+            span
+          >
+            Notify me when it is available.
+          </Text>
+        </AlertWithIcon>
+      )}
       {hasNegativeEmbed && (
         <AlertWithIcon icon={<IconAlertCircle />}>
           This Textual Inversion includes a{' '}
@@ -69,4 +94,5 @@ type ModelFileAlertProps = {
   files: { type: string }[];
   modelType: ModelType;
   versionId: number;
+  earlyAccessDeadline?: Date;
 };

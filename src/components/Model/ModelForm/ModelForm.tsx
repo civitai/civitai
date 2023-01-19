@@ -11,6 +11,7 @@ import {
   Alert,
   ThemeIcon,
   Divider,
+  Input,
 } from '@mantine/core';
 import { CommercialUse, Model, ModelStatus, ModelType, TagTarget } from '@prisma/client';
 import { openConfirmModal } from '@mantine/modals';
@@ -33,6 +34,7 @@ import { DefaultErrorShape } from '@trpc/server';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
+import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 
 import { FileList } from '~/components/Model/ModelForm/FileList';
@@ -57,11 +59,11 @@ import { ModelById } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { isDefined } from '~/utils/type-guards';
+import { isDefined, isNumber } from '~/utils/type-guards';
 import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { v4 as uuidv4 } from 'uuid';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
+import { isBetweenToday } from '~/utils/date-helpers';
 
 /**NOTES**
   - If a model depicts an actual person, it cannot have nsfw content
@@ -80,6 +82,17 @@ const schema = modelSchema.extend({
             return list.filter((file) => file.url);
           }, z.array(modelFileSchema)),
           skipTrainedWords: z.boolean().default(false),
+          earlyAccessTimeFrame: z.string().refine(
+            (data) => {
+              const value = Number(data);
+              const valid = isNumber(value);
+              if (!valid) return false;
+
+              return value >= 0 && value <= 5;
+            },
+            { message: 'Needs to be a number between 0 and 5', path: ['earlyAccessTimeFrame'] }
+          ),
+          createdAt: z.date().optional(),
         })
         .refine((data) => (!data.skipTrainedWords ? data.trainedWords.length > 0 : true), {
           message: 'You need to specify at least one trained word',
@@ -131,6 +144,7 @@ export function ModelForm({ model }: Props) {
     baseModel: 'SD 1.5',
     images: [],
     files: [defaultModelFile],
+    earlyAccessTimeFrame: '0',
   };
 
   const defaultValues: FormSchema = {
@@ -154,6 +168,9 @@ export function ModelForm({ model }: Props) {
         images: images.map((image) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
         // HOTFIX: Casting files to defaultModelFile[] to avoid type confusion and accept room for error
         files: files.length > 0 ? (files as typeof defaultModelFile[]) : [defaultModelFile],
+        earlyAccessTimeFrame: version.earlyAccessTimeFrame
+          ? String(version.earlyAccessTimeFrame)
+          : '0',
       })
     ) ?? [defaultModelVersion],
   };
@@ -216,7 +233,7 @@ export function ModelForm({ model }: Props) {
   }, [tagsOnModels, tags]);
 
   const mutating = addMutation.isLoading || updateMutation.isLoading;
-  const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
+  const [type, allowDerivatives, status] = form.watch(['type', 'allowDerivatives', 'status']);
 
   const acceptsTrainedWords = ['Checkpoint', 'TextualInversion', 'LORA'].includes(type);
   const isTextualInversion = type === 'TextualInversion';
@@ -255,6 +272,10 @@ export function ModelForm({ model }: Props) {
           const match = tags.find((x) => x.name === name);
           return match ?? { name };
         }),
+        modelVersions: values.modelVersions.map(({ earlyAccessTimeFrame, ...version }) => ({
+          ...version,
+          earlyAccessTimeFrame: Number(earlyAccessTimeFrame),
+        })),
       };
 
       if (editing) updateMutation.mutate(data as UpdateModelProps, commonOptions);
@@ -393,6 +414,8 @@ export function ModelForm({ model }: Props) {
                   !isTextualInversion &&
                   (form.watch(`modelVersions.${index}.skipTrainedWords`) ?? false);
                 const name = form.watch(`modelVersions.${index}.name`) ?? '';
+                const showEarlyAccess =
+                  !version.createdAt || status === 'Draft' || isBetweenToday(version.createdAt);
 
                 return (
                   <Paper
@@ -535,6 +558,44 @@ export function ModelForm({ model }: Props) {
                             step={500}
                           />
                         </Grid.Col>
+                        {showEarlyAccess && (
+                          <Grid.Col span={12}>
+                            <Input.Wrapper
+                              label="Early Access"
+                              description="Set an early access for this version so your supporters can generate their own creations before anyone else"
+                              error={
+                                form.formState.errors.modelVersions?.[index]?.earlyAccessTimeFrame
+                                  ?.message
+                              }
+                            >
+                              <InputSegmentedControl
+                                name={`modelVersions.${index}.earlyAccessTimeFrame`}
+                                data={[
+                                  { label: 'All Access', value: '0' },
+                                  { label: '1 day', value: '1' },
+                                  { label: '2 days', value: '2' },
+                                  { label: '3 days', value: '3' },
+                                  { label: '4 days', value: '4' },
+                                  { label: '5 days', value: '5' },
+                                ]}
+                                color="blue"
+                                size="xs"
+                                styles={(theme) => ({
+                                  root: {
+                                    border: `1px solid ${
+                                      theme.colorScheme === 'dark'
+                                        ? theme.colors.dark[4]
+                                        : theme.colors.gray[4]
+                                    }`,
+                                    background: 'none',
+                                    marginTop: theme.spacing.xs * 0.5, // 5px
+                                  },
+                                })}
+                                fullWidth
+                              />
+                            </Input.Wrapper>
+                          </Grid.Col>
+                        )}
                         <Grid.Col span={12}>
                           <FileList parentIndex={index} form={form} />
                         </Grid.Col>

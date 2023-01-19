@@ -188,7 +188,12 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
             </Stack>
             <RunButton modelVersionId={version.id} variant="light" />
           </Group>
-          <ModelFileAlert versionId={version.id} modelType={type} files={version.files} />
+          <ModelFileAlert
+            versionId={version.id}
+            modelType={type}
+            files={version.files}
+            earlyAccessDeadline={version.earlyAccessDeadline}
+          />
 
           <DescriptionTable items={versionDetails} labelWidth="30%" />
           {version.description && (

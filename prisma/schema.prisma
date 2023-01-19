@@ -269,23 +269,24 @@ model ModelEngagement {
 }
 
 model ModelVersion {
-  id           Int         @id @default(autoincrement())
-  index        Int?
-  name         String
-  description  String?
-  modelId      Int
-  model        Model       @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  trainedWords String[]
-  steps        Int?
-  epochs       Int?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  status       ModelStatus @default(Draft)
-  fromImport   Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
-  fromImportId Int?
-  inaccurate   Boolean     @default(false)
-  baseModel    String?
-  meta         Json        @default("{}")
+  id                   Int         @id @default(autoincrement())
+  index                Int?
+  name                 String
+  description          String?
+  modelId              Int
+  model                Model       @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  trainedWords         String[]
+  steps                Int?
+  epochs               Int?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  status               ModelStatus @default(Draft)
+  fromImport           Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImportId         Int?
+  inaccurate           Boolean     @default(false)
+  baseModel            String?
+  meta                 Json        @default("{}")
+  earlyAccessTimeFrame Int         @default(0)
 
   reviews       Review[]
   images        ImagesOnModels[]

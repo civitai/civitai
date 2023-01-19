@@ -111,6 +111,7 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
     allowDerivatives: true,
     allowDifferentLicense: true,
     licenses: true,
+    publishedAt: true,
     reportStats: {
       select: {
         ownershipProcessing: true,
@@ -137,6 +138,7 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
         trainedWords: true,
         inaccurate: true,
         baseModel: true,
+        earlyAccessTimeFrame: true,
         images: {
           orderBy: { index: 'asc' },
           select: {

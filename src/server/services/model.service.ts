@@ -241,7 +241,7 @@ export const updateModel = async ({
 }: ModelInput & { id: number; userId: number }) => {
   const currentModel = await prisma.model.findUnique({
     where: { id },
-    select: { status: true },
+    select: { status: true, publishedAt: true },
   });
   if (!currentModel) return currentModel;
 
@@ -315,9 +315,9 @@ export const updateModel = async ({
       nsfw: data.nsfw || allImagesNSFW,
       status: data.status,
       publishedAt:
-        data.status === ModelStatus.Published && currentModel?.status !== ModelStatus.Published
+        data.status === ModelStatus.Published && currentModel.status !== ModelStatus.Published
           ? new Date()
-          : null,
+          : currentModel.publishedAt,
       lastVersionAt: hasNewVersions ? new Date() : undefined,
       modelVersions: {
         deleteMany: versionIds.length > 0 ? { id: { notIn: versionIds } } : undefined,
