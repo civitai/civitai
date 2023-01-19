@@ -65,6 +65,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { isBetweenToday } from '~/utils/date-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 /**NOTES**
   - If a model depicts an actual person, it cannot have nsfw content
@@ -113,6 +114,7 @@ export function ModelForm({ model }: Props) {
   const router = useRouter();
   const queryUtils = trpc.useContext();
   const features = useFeatureFlags();
+  const mobile = useIsMobile();
   const editing = !!model;
 
   const { data: { items: tags } = { items: [] } } = trpc.tag.getAll.useQuery(
@@ -574,6 +576,7 @@ export function ModelForm({ model }: Props) {
                             >
                               <InputSegmentedControl
                                 name={`modelVersions.${index}.earlyAccessTimeFrame`}
+                                orientation={mobile ? 'vertical' : 'horizontal'}
                                 data={[
                                   { label: 'All Access', value: '0' },
                                   { label: '1 day', value: '1' },

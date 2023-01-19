@@ -81,6 +81,7 @@ model User {
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
   engagedUsers         UserEngagement[]           @relation("engagedUsers")
   engagedModels        ModelEngagement[]
+  engagedModelVersions ModelVersionEngagement[]
   metrics              UserMetric[]
   reports              Report[]
   questions            Question[]
@@ -295,6 +296,22 @@ model ModelVersion {
   files         ModelFile[]
   runStrategies RunStrategy[]
   downloads     DownloadHistory[]
+  engagements   ModelVersionEngagement[]
+}
+
+enum ModelVersionEngagementType {
+  Notify
+}
+
+model ModelVersionEngagement {
+  userId         Int
+  user           User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelVersionId Int
+  modelVersion   ModelVersion               @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  type           ModelVersionEngagementType
+  createdAt      DateTime                   @default(now())
+
+  @@id([userId, modelVersionId])
 }
 
 enum ModelHashType {

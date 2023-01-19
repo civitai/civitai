@@ -21,6 +21,8 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
   if (session) {
     // Prefetch user's favorite models
     await ssg.user.getEngagedModels.prefetch(undefined);
+    // Prefetch user's engaged models versions
+    await ssg.user.getEngagedModelVersions.prefetch(undefined);
     // Prefetch users' blocked tags
     await ssg.user.getTags.prefetch({ type: 'Hide' });
   }

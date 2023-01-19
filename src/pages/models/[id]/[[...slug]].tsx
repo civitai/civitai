@@ -93,6 +93,7 @@ import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
+import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 
 //TODO - Break model query into multiple queries
 /*
@@ -661,11 +662,14 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                   </div>
                 </Tooltip>
               </Group>
+              <EarlyAccessAlert
+                versionId={latestVersion.id}
+                deadline={latestVersion.earlyAccessDeadline}
+              />
               <ModelFileAlert
                 versionId={latestVersion.id}
                 modelType={model.type}
                 files={latestVersion.files}
-                earlyAccessDeadline={latestVersion.earlyAccessDeadline}
               />
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
