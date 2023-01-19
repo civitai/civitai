@@ -267,7 +267,7 @@ function ImageGuardPopover({ children }: { children: React.ReactElement }) {
                 <IconLock />
               </ThemeIcon>
               <Text size="sm" weight={500} sx={{ flex: 1 }}>
-                You must be logged in to view NSFW content
+                You must be logged in to view adult content
               </Text>
             </Group>
 
