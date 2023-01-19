@@ -23,6 +23,7 @@ import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/Cooki
 import { RoutedContextProvider } from '~/routed-context/routed-context.provider';
 import { env } from '~/env/client.mjs';
 import { MaintenanceMode } from '~/components/MaintenanceMode/MaintenanceMode';
+import { NsfwWorkerProvider } from '~/providers/NsfwWorkerProvider';
 
 dayjs.extend(duration);
 dayjs.extend(relativeTime);
@@ -63,7 +64,9 @@ function MyApp(props: CustomAppProps) {
         <CustomModalsProvider>
           <NotificationsProvider>
             <RoutedContextProvider>
-              <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+              <NsfwWorkerProvider>
+                <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+              </NsfwWorkerProvider>
             </RoutedContextProvider>
           </NotificationsProvider>
         </CustomModalsProvider>
