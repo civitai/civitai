@@ -92,6 +92,8 @@ model User {
   answerVotes          AnswerVote[]
   downloads            DownloadHistory[]
   tagsEngaged          TagEngagement[]
+  imageReactions       ImageReaction[]
+  imageConnections     ImageConnections[]
 }
 
 enum UserEngagementType {
@@ -220,19 +222,20 @@ model Model {
   allowDerivatives      Boolean       @default(true)
   allowDifferentLicense Boolean       @default(true)
 
-  modelVersions ModelVersion[]
-  reviews       Review[]
-  tagsOnModels  TagsOnModels[]
-  metrics       ModelMetric[]
-  saves         SavedModel[]
-  rank          ModelRank?
-  reportStats   ModelReportStat?
-  reports       ModelReport[]
-  engagements   ModelEngagement[]
-  comments      Comment[]
-  interests     ModelInterest[]
-  downloads     DownloadHistory[]
-  licenses      License[]
+  modelVersions    ModelVersion[]
+  reviews          Review[]
+  tagsOnModels     TagsOnModels[]
+  metrics          ModelMetric[]
+  saves            SavedModel[]
+  rank             ModelRank?
+  reportStats      ModelReportStat?
+  reports          ModelReport[]
+  engagements      ModelEngagement[]
+  comments         Comment[]
+  interests        ModelInterest[]
+  downloads        DownloadHistory[]
+  licenses         License[]
+  imageConnections ImageConnections[]
 }
 
 model License {
@@ -425,6 +428,7 @@ model Report {
   model     ModelReport?
   review    ReviewReport?
   comment   CommentReport?
+  image     ImageReport?
 }
 
 model ModelReport {
@@ -454,6 +458,13 @@ model CommentReport {
   @@id([reportId, commentId])
 }
 
+model ImageReport {
+  imageId  Int
+  image    Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  reportId Int    @unique
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+}
+
 model Review {
   id             Int           @id @default(autoincrement())
   model          Model         @relation(fields: [modelId], references: [id], onDelete: Cascade)
@@ -470,10 +481,11 @@ model Review {
   tosViolation   Boolean       @default(false)
   exclude        Boolean       @default(false)
 
-  reactions       ReviewReaction[]
-  imagesOnReviews ImagesOnReviews[]
-  reports         ReviewReport[]
-  comments        Comment[]
+  reactions        ReviewReaction[]
+  imagesOnReviews  ImagesOnReviews[]
+  reports          ReviewReport[]
+  comments         Comment[]
+  imageConnections ImageConnections[]
 }
 
 enum ReviewReactions {
@@ -515,6 +527,10 @@ model Image {
 
   imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?
+  reports         ImageReport[]
+  reactions       ImageReaction[]
+  comments        ImageComment[]
+  connections     ImageConnections[]
 }
 
 enum ImageOnModelType {
@@ -816,6 +832,7 @@ model CommentV2 {
   question  QuestionComment?
   answer    AnswerComment?
   reactions CommentV2Reaction[]
+  image     ImageComment?
 }
 
 model QuestionComment {
@@ -834,6 +851,15 @@ model AnswerComment {
   comment   CommentV2 @relation(fields: [commentId], references: [id], onDelete: Cascade)
 
   @@id([answerId, commentId])
+}
+
+model ImageComment {
+  imageId   Int
+  image     Image     @relation(fields: [imageId], references: [id])
+  commentId Int       @unique
+  comment   CommentV2 @relation(fields: [commentId], references: [id])
+
+  @@id([imageId, commentId])
 }
 
 model TagsOnQuestions {
@@ -882,6 +908,19 @@ model CommentV2Reaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([commentId, userId, reaction])
+}
+
+model ImageReaction {
+  id        Int             @id @default(autoincrement())
+  imageId   Int
+  image     Image           @relation(fields: [imageId], references: [id])
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id])
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([imageId, userId, reaction])
 }
 
 enum TagEngagementType {
@@ -1252,4 +1291,17 @@ model DownloadHistory {
   modelId        Int
   model          Model        @relation(fields: [modelId], references: [id], onDelete: NoAction)
   createdAt      DateTime
+}
+
+/// @view
+model ImageConnections {
+  id       Int     @id
+  imageId  Int
+  image    Image   @relation(fields: [imageId], references: [id])
+  userId   Int
+  user     User    @relation(fields: [userId], references: [id])
+  modelId  Int
+  model    Model   @relation(fields: [modelId], references: [id])
+  reviewId Int?
+  review   Review? @relation(fields: [reviewId], references: [id])
 }
