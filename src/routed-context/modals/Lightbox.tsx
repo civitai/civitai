@@ -10,7 +10,6 @@ import {
   CloseButton,
   Paper,
   Stack,
-  Button,
   Center,
   Loader,
   AspectRatio,
@@ -129,7 +128,9 @@ export function Lightbox({
                           }}
                         >
                           <div style={{ position: 'relative' }}>
-                            <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                            <ImageGuard.ToggleConnect>
+                              <ShowHide />
+                            </ImageGuard.ToggleConnect>
                             <ImageGuard.Unsafe>
                               <AspectRatio
                                 ratio={width / height}

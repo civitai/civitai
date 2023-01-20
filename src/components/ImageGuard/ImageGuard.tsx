@@ -5,6 +5,8 @@ import { useRouter } from 'next/router';
 import React, { cloneElement, createContext, useContext, useState } from 'react';
 import create from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+
+import type { Props as ShowHideProps } from '~/components/ShowHide/ShowHide';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageModel } from '~/server/selectors/image.selector';
 import { isDefined } from '~/utils/type-guards';
@@ -140,12 +142,12 @@ ImageGuard.Content = function Content({ children }: ToggleProps) {
     connect ? state.showingConnections[getConnectionKey(connect)] : undefined
   );
 
-  if (!image.nsfw) return children({ status: 'show' });
+  if (!image.nsfw) return cloneElement(children, { status: 'show' });
   const showing = showConnection ?? showImage;
 
   // if(showConnection || showImage) return children({status: 'show'})
 
-  return children({ status: showing ? 'show' : 'hide' });
+  return cloneElement(children, { status: showing ? 'show' : 'hide' });
 };
 
 ImageGuard.Unsafe = function Unsafe({ children }: { children: React.ReactNode }) {
@@ -173,9 +175,8 @@ ImageGuard.Safe = function Safe({ children }: { children?: React.ReactNode }) {
   return image.nsfw && !showing ? null : <>{children}</>;
 };
 
-type ToggleStatus = 'show' | 'hide';
 type ToggleProps = {
-  children: ({ status }: { status: ToggleStatus }) => React.ReactElement;
+  children: React.ReactElement<ShowHideProps>;
 };
 
 // !important - don't remove this until we know we'll never need to toggle individual images
@@ -209,7 +210,8 @@ ImageGuard.ToggleConnect = function ToggleConnect({ children }: ToggleProps) {
 
   return (
     <ImageGuardPopover>
-      {cloneElement(children({ status: showing ? 'hide' : 'show' }), {
+      {cloneElement(children, {
+        status: showing ? 'hide' : 'show',
         onClick: () => toggleConnect(connect),
       })}
     </ImageGuardPopover>
