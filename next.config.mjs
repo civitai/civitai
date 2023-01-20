@@ -57,11 +57,6 @@ export default defineNextConfig({
         destination: 'https://github.com/civitai/civitai/discussions/categories/ideas',
         permanent: true,
       },
-      {
-        source: '/health',
-        destination: '/api/health',
-        permanent: true,
-      },
     ];
   },
 });
