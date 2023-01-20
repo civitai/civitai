@@ -1,8 +1,18 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getGetUrl } from '~/utils/s3-utils';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { prisma } from '~/server/db/client';
+import { UserActivityType } from '@prisma/client';
+import requestIp from 'request-ip';
 
 export default async function downloadTrainingData(req: NextApiRequest, res: NextApiResponse) {
+  // Get ip so that we can block exploits we catch
+  const ip = requestIp.getClientIp(req);
+  const blacklist = (
+    ((await prisma.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ?? ''
+  ).split(',');
+  if (ip && blacklist.includes(ip)) return res.status(403).json({ error: 'Forbidden' });
+
   const keyParts = req.query.key as string[];
   const key = keyParts.join('/');
   if (!key) return res.status(400).json({ error: 'Missing key' });
@@ -15,8 +25,27 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
     else return res.redirect(`/login?returnUrl=/api/download/${key}`);
   }
 
-  // Track activity
-  // TODO Tracking: Add a new activity type for downloading other keys... @JustMaier
+  // Track download
+  try {
+    await prisma.userActivity.create({
+      data: {
+        userId,
+        activity: UserActivityType.OtherDownload,
+        details: {
+          key,
+          // Just so we can catch exploits
+          ...(!userId
+            ? {
+                ip,
+                userAgent: req.headers['user-agent'],
+              }
+            : {}), // You'll notice we don't include this for authed users...
+        },
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ error: 'Invalid database operation', cause: error });
+  }
 
   const { url } = await getGetUrl(key);
 
