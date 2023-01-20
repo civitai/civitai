@@ -233,7 +233,9 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
                       : {}),
                   }}
                 >
-                  <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                  <ImageGuard.ToggleConnect>
+                    <ShowHide />
+                  </ImageGuard.ToggleConnect>
                   <ImageGuard.Unsafe>
                     <AspectRatio
                       ratio={1}
