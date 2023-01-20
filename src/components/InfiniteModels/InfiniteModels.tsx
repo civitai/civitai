@@ -393,7 +393,7 @@ const MasonryItem = ({
         {modelText}
         {modelBadges}
       </Group>
-      <Group position="apart">
+      <Group position="apart" spacing={0}>
         {modelRating}
         <Group spacing={4} align="center" ml="auto">
           {modelLikes}
