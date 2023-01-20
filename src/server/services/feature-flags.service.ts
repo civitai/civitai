@@ -12,6 +12,7 @@ const featureFlags = createTypedDictionary({
   earlyAccessModel: ['dev'],
   memberBadges: ['dev'],
   apiKeys: ['dev'],
+  ambientCard: ['dev'],
 });
 
 const isDev = process.env.NODE_ENV === 'development';

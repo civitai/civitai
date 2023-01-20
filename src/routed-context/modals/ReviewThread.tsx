@@ -166,7 +166,9 @@ export default createRoutedContext({
                                   width: parsedWidth,
                                 }}
                               >
-                                <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                                <ImageGuard.ToggleConnect>
+                                  <ShowHide />
+                                </ImageGuard.ToggleConnect>
                                 <ImageGuard.Unsafe>
                                   <AspectRatio
                                     ratio={(image.width ?? 1) / (image.height ?? 1)}
