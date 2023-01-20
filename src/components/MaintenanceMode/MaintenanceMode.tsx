@@ -1,4 +1,4 @@
-import { AppShell, Center, MantineProvider, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Center, Stack, Text, ThemeIcon, Image } from '@mantine/core';
 import { IconHourglass } from '@tabler/icons';
 import { Meta } from '~/components/Meta/Meta';
 
@@ -17,6 +17,7 @@ export const MaintenanceMode = () => {
           <Text align="center" size="xl" weight={500}>
             {`We're adjusting a few things, be back in a few minutes...`}
           </Text>
+          <Image src="/images/imrs.webp" alt="This is fine" />
         </Stack>
       </Center>
     </>

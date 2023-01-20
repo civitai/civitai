@@ -302,8 +302,10 @@ model ModelVersion {
 
 enum ModelHashType {
   AutoV1
+  AutoV2
   SHA256
-  CRC
+  CRC32
+  BLAKE3
 }
 
 model ModelHash {
@@ -389,6 +391,7 @@ model ModelVersionMetric {
 enum UserActivityType {
   ModelDownload
   ModelRun
+  OtherDownload
   TrainingDataDownload
   HashReport
 }

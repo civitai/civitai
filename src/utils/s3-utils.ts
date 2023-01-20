@@ -140,40 +140,51 @@ type GetObjectOptions = {
   s3?: S3Client | null;
   expiresIn?: number;
   fileName?: string;
+  bucket?: string;
 };
 
-const keyParser = /https:\/\/.*?\/(.*)/;
+const buckets = [env.S3_UPLOAD_BUCKET, env.S3_SETTLED_BUCKET];
+const keyParser = new RegExp(`https:\\/\\/([\\w\\-]*)\\.?${env.CF_ACCOUNT_ID}.*?\\/(.+)`, 'i');
 function parseKey(key: string) {
-  if (key.startsWith('http')) key = keyParser.exec(key)?.[1] ?? key;
-  if (key.startsWith(env.S3_UPLOAD_BUCKET)) key = key.replace(`${env.S3_UPLOAD_BUCKET}/`, '');
+  let bucket = null;
+  if (key.startsWith('http')) [, bucket, key] = keyParser.exec(key) ?? [, null, key];
+  for (const b of buckets) {
+    if (!key.startsWith(b + '/')) continue;
+    bucket = b;
+    key = key.replace(`${bucket}/`, '');
+    break;
+  }
 
-  return key;
+  return { key, bucket };
 }
 
 export async function getGetUrl(
   key: string,
-  { s3, expiresIn = 3 * 60 * 60, fileName }: GetObjectOptions = {}
+  { s3, expiresIn = 3 * 60 * 60, fileName, bucket }: GetObjectOptions = {}
 ) {
   if (!s3) s3 = getS3Client();
 
+  const { key: parsedKey, bucket: parsedBucket } = parseKey(key);
+  if (!bucket) bucket = parsedBucket ?? env.S3_UPLOAD_BUCKET;
   const command: GetObjectCommandInput = {
-    Bucket: env.S3_UPLOAD_BUCKET,
-    Key: parseKey(key),
+    Bucket: bucket,
+    Key: parsedKey,
   };
   if (fileName) command.ResponseContentDisposition = `attachment; filename="${fileName}"`;
 
   const url = await getSignedUrl(s3, new GetObjectCommand(command), { expiresIn });
-  return { url, bucket: env.S3_UPLOAD_BUCKET, key };
+  return { url, bucket, key };
 }
 
 export async function checkFileExists(key: string, s3: S3Client | null = null) {
   if (!s3) s3 = getS3Client();
 
   try {
+    const { key: parsedKey, bucket: parsedBucket } = parseKey(key);
     await s3.send(
       new HeadObjectCommand({
-        Key: parseKey(key),
-        Bucket: env.S3_UPLOAD_BUCKET,
+        Key: parsedKey,
+        Bucket: parsedBucket ?? env.S3_UPLOAD_BUCKET,
       })
     );
   } catch {

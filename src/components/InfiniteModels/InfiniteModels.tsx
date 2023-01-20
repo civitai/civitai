@@ -51,10 +51,12 @@ import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { AmbientModelCard } from '~/components/InfiniteModels/AmbientModelCard';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -207,6 +209,7 @@ type MasonryListProps = {
 // https://github.com/jaredLunde/masonic
 export function MasonryList({ columnWidth, data, filters }: MasonryListProps) {
   const router = useRouter();
+  const features = useFeatureFlags();
   const stringified = JSON.stringify(filters);
   const modelId = Number(([] as string[]).concat(router.query.model ?? [])[0]);
 
@@ -241,7 +244,7 @@ export function MasonryList({ columnWidth, data, filters }: MasonryListProps) {
     containerRef,
     items: data,
     overscanBy: 10,
-    render: MasonryItem,
+    render: features.ambientCard ? AmbientModelCard : MasonryItem,
   });
 }
 
@@ -393,7 +396,7 @@ const MasonryItem = ({
         {modelText}
         {modelBadges}
       </Group>
-      <Group position="apart">
+      <Group position="apart" spacing={0}>
         {modelRating}
         <Group spacing={4} align="center" ml="auto">
           {modelLikes}
@@ -521,7 +524,7 @@ const MasonryItem = ({
                           </Menu.Dropdown>
                         </Menu>
                       )}
-                      <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                      <ImageGuard.ToggleConnect />
                       <ImageGuard.Unsafe>
                         <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                           <MediaHash {...image} />

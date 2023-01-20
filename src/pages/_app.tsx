@@ -66,15 +66,15 @@ function MyApp(props: CustomAppProps) {
     <SessionProvider session={session}>
       <CookiesProvider value={cookies}>
         <FeatureFlagsProvider flags={flags}>
-          <CustomModalsProvider>
-            <NotificationsProvider>
-              <RoutedContextProvider>
-                <NsfwWorkerProvider>
+          <NsfwWorkerProvider>
+            <CustomModalsProvider>
+              <NotificationsProvider>
+                <RoutedContextProvider>
                   <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                </NsfwWorkerProvider>
-              </RoutedContextProvider>
-            </NotificationsProvider>
-          </CustomModalsProvider>
+                </RoutedContextProvider>
+              </NotificationsProvider>
+            </CustomModalsProvider>
+          </NsfwWorkerProvider>
         </FeatureFlagsProvider>
       </CookiesProvider>
     </SessionProvider>
@@ -128,23 +128,33 @@ function MyApp(props: CustomAppProps) {
 
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const { pageProps, ...appProps } = await App.getInitialProps(appContext);
-  const session = await getSession(appContext.ctx);
-
-  const flags = getFeatureFlags({ user: session?.user });
-
+  const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'light';
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
 
-  return {
-    pageProps: {
-      ...pageProps,
-      session,
-      colorScheme: getCookie('mantine-color-scheme', appContext.ctx) ?? 'light',
-      cookies: parsedCookies,
-      flags,
-    },
-    ...appProps,
-  };
+  if (env.NEXT_PUBLIC_MAINTENANCE_MODE) {
+    return {
+      pageProps: {
+        ...pageProps,
+        colorScheme,
+        cookies: parsedCookies,
+      },
+      ...appProps,
+    };
+  } else {
+    const session = await getSession(appContext.ctx);
+    const flags = getFeatureFlags({ user: session?.user });
+    return {
+      pageProps: {
+        ...pageProps,
+        session,
+        colorScheme: getCookie('mantine-color-scheme', appContext.ctx) ?? 'light',
+        cookies: parsedCookies,
+        flags,
+      },
+      ...appProps,
+    };
+  }
 };
 
 export default trpc.withTRPC(MyApp);
