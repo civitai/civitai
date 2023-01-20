@@ -140,53 +140,40 @@ type GetObjectOptions = {
   s3?: S3Client | null;
   expiresIn?: number;
   fileName?: string;
-  bucket?: string;
 };
 
-const buckets = [env.S3_UPLOAD_BUCKET, env.S3_SETTLED_BUCKET];
-const keyParser = new RegExp(`https:\\/\\/(.*)\.?${env.CF_ACCOUNT_ID}.*?\\/(.*)`, 'i');
+const keyParser = /https:\/\/.*?\/(.*)/;
 function parseKey(key: string) {
-  let bucket = null;
-  if (key.startsWith('http')) [, bucket, key] = keyParser.exec(key) ?? [, null, key];
-  if (!bucket) {
-    for (const b of buckets) {
-      if (!key.startsWith(b + '/')) continue;
-      bucket = b;
-      key = key.replace(`${bucket}/`, '');
-      break;
-    }
-  }
+  if (key.startsWith('http')) key = keyParser.exec(key)?.[1] ?? key;
+  if (key.startsWith(env.S3_UPLOAD_BUCKET)) key = key.replace(`${env.S3_UPLOAD_BUCKET}/`, '');
 
-  return { key, bucket };
+  return key;
 }
 
 export async function getGetUrl(
   key: string,
-  { s3, expiresIn = 3 * 60 * 60, fileName, bucket }: GetObjectOptions = {}
+  { s3, expiresIn = 3 * 60 * 60, fileName }: GetObjectOptions = {}
 ) {
   if (!s3) s3 = getS3Client();
 
-  const { key: parsedKey, bucket: parsedBucket } = parseKey(key);
-  if (!bucket) bucket = parsedBucket ?? env.S3_UPLOAD_BUCKET;
   const command: GetObjectCommandInput = {
-    Bucket: bucket,
-    Key: parsedKey,
+    Bucket: env.S3_UPLOAD_BUCKET,
+    Key: parseKey(key),
   };
   if (fileName) command.ResponseContentDisposition = `attachment; filename="${fileName}"`;
 
   const url = await getSignedUrl(s3, new GetObjectCommand(command), { expiresIn });
-  return { url, bucket, key };
+  return { url, bucket: env.S3_UPLOAD_BUCKET, key };
 }
 
 export async function checkFileExists(key: string, s3: S3Client | null = null) {
   if (!s3) s3 = getS3Client();
 
   try {
-    const { key: parsedKey, bucket: parsedBucket } = parseKey(key);
     await s3.send(
       new HeadObjectCommand({
-        Key: parsedKey,
-        Bucket: parsedBucket ?? env.S3_UPLOAD_BUCKET,
+        Key: parseKey(key),
+        Bucket: env.S3_UPLOAD_BUCKET,
       })
     );
   } catch {
