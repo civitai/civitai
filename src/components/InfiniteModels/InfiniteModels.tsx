@@ -524,9 +524,7 @@ const MasonryItem = ({
                           </Menu.Dropdown>
                         </Menu>
                       )}
-                      <ImageGuard.ToggleConnect>
-                        <ShowHide />
-                      </ImageGuard.ToggleConnect>
+                      <ImageGuard.ToggleConnect />
                       <ImageGuard.Unsafe>
                         <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                           <MediaHash {...image} />

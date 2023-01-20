@@ -388,9 +388,7 @@ function ReviewCarousel({
         nsfw={review.nsfw}
         render={(image, index) => (
           <div style={{ height, position: 'relative' }}>
-            <ImageGuard.ToggleConnect>
-              <ShowHide />
-            </ImageGuard.ToggleConnect>
+            <ImageGuard.ToggleConnect />
             <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height }}>
               <AspectRatio
                 ratio={1}
@@ -452,9 +450,7 @@ function ReviewCarousel({
           nsfw={review.nsfw}
           render={(image, index) => (
             <Carousel.Slide style={{ height }}>
-              <ImageGuard.ToggleConnect>
-                <ShowHide />
-              </ImageGuard.ToggleConnect>
+              <ImageGuard.ToggleConnect />
               <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height }}>
                 <AspectRatio
                   ratio={1}

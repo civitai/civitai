@@ -1,4 +1,4 @@
-import { Button, Group, Popover, Stack, ThemeIcon, Text } from '@mantine/core';
+import { Button, Group, Popover, Stack, ThemeIcon, Text, Badge } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons';
 import { useRouter } from 'next/router';
@@ -6,7 +6,6 @@ import React, { cloneElement, createContext, useContext, useState } from 'react'
 import create from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
-import type { Props as ShowHideProps } from '~/components/ShowHide/ShowHide';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageModel } from '~/server/selectors/image.selector';
 import { isDefined } from '~/utils/type-guards';
@@ -142,12 +141,12 @@ ImageGuard.Content = function Content({ children }: ToggleProps) {
     connect ? state.showingConnections[getConnectionKey(connect)] : undefined
   );
 
-  if (!image.nsfw) return cloneElement(children, { status: 'show' });
+  if (!image.nsfw) return children({ status: 'show' });
   const showing = showConnection ?? showImage;
 
   // if(showConnection || showImage) return children({status: 'show'})
 
-  return cloneElement(children, { status: showing ? 'show' : 'hide' });
+  return children({ status: showing ? 'show' : 'hide' });
 };
 
 ImageGuard.Unsafe = function Unsafe({ children }: { children: React.ReactNode }) {
@@ -175,8 +174,9 @@ ImageGuard.Safe = function Safe({ children }: { children?: React.ReactNode }) {
   return image.nsfw && !showing ? null : <>{children}</>;
 };
 
+type ToggleStatus = 'show' | 'hide';
 type ToggleProps = {
-  children: React.ReactElement<ShowHideProps>;
+  children: ({ status }: { status: ToggleStatus }) => React.ReactElement;
 };
 
 // !important - don't remove this until we know we'll never need to toggle individual images
@@ -196,7 +196,33 @@ type ToggleProps = {
 //   );
 // };
 
-ImageGuard.ToggleConnect = function ToggleConnect({ children }: ToggleProps) {
+// Old/dynamic version
+// ImageGuard.ToggleConnect = function ToggleConnect({ children }: ToggleProps) {
+//   const { connect, nsfw } = useImageGuardContext();
+//   const { image } = useImageGuardContentContext();
+//   const showImage = useStore((state) => state.showingImages[image.id.toString()] ?? false);
+//   const showConnect = useStore((state) =>
+//     connect ? state.showingConnections[getConnectionKey(connect)] : false
+//   );
+//   const toggleConnect = useStore((state) => state.toggleConnection);
+
+//   if (!connect || !image.nsfw) return null;
+//   const showing = showConnect ?? showImage;
+
+//   return (
+//     <ImageGuardPopover>
+//       {cloneElement(children({ status: showing ? 'hide' : 'show' }), {
+//         onClick: () => toggleConnect(connect),
+//       })}
+//     </ImageGuardPopover>
+//   );
+// };
+
+ImageGuard.ToggleConnect = function ToggleConnect({
+  position = 'top-left',
+}: {
+  position?: 'static' | 'top-left' | 'top-right';
+}) {
   const { connect, nsfw } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
   const showImage = useStore((state) => state.showingImages[image.id.toString()] ?? false);
@@ -210,10 +236,27 @@ ImageGuard.ToggleConnect = function ToggleConnect({ children }: ToggleProps) {
 
   return (
     <ImageGuardPopover>
-      {cloneElement(children, {
-        status: showing ? 'hide' : 'show',
-        onClick: () => toggleConnect(connect),
-      })}
+      <Badge
+        color="red"
+        variant="filled"
+        size="sm"
+        sx={(theme) => ({
+          cursor: 'pointer',
+          userSelect: 'none',
+          ...(position !== 'static'
+            ? {
+                position: 'absolute',
+                top: theme.spacing.xs,
+                left: position === 'top-left' ? theme.spacing.xs : undefined,
+                right: position === 'top-right' ? theme.spacing.xs : undefined,
+                zIndex: 10,
+              }
+            : {}),
+        })}
+        onClick={() => toggleConnect(connect)}
+      >
+        {showing ? 'hide' : 'show'}
+      </Badge>
     </ImageGuardPopover>
   );
 };

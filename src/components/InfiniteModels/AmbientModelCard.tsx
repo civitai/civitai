@@ -364,9 +364,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                       </Menu>
                     )}
                     <Group spacing={4} className={classes.cardBadges}>
-                      <ImageGuard.ToggleConnect>
-                        <ShowHide position="none" />
-                      </ImageGuard.ToggleConnect>
+                      <ImageGuard.ToggleConnect position="static" />
                       {modelBadges}
                     </Group>
                     <ImageGuard.Unsafe>

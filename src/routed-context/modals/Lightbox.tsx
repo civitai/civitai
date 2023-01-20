@@ -128,9 +128,7 @@ export function Lightbox({
                           }}
                         >
                           <div style={{ position: 'relative' }}>
-                            <ImageGuard.ToggleConnect>
-                              <ShowHide />
-                            </ImageGuard.ToggleConnect>
+                            <ImageGuard.ToggleConnect />
                             <ImageGuard.Unsafe>
                               <AspectRatio
                                 ratio={width / height}
