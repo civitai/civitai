@@ -44,10 +44,6 @@ export function ModelDiscussion({ modelId, filters }: Props) {
     (refetchingComments && !fetchingComments) || (refetchingReviews && !fetchingReviews)
   );
 
-  useEffect(() => {
-    console.log({ previousFetching });
-  }, [previousFetching]);
-
   const reviews = useMemo(
     () => reviewsData?.pages.flatMap((x) => x.reviews) ?? [],
     [reviewsData?.pages]

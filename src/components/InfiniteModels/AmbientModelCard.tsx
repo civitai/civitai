@@ -217,6 +217,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
           size="xs"
           value={rank.rating}
           readOnly
+          fractions={4}
           emptySymbol={
             theme.colorScheme === 'dark' ? (
               <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />

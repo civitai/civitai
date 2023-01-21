@@ -493,7 +493,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 radius="sm"
                 color="gray"
                 size="lg"
-                icon={<Rating value={model.rank?.ratingAllTime ?? 0} readOnly />}
+                icon={<Rating value={model.rank?.ratingAllTime ?? 0} fractions={4} readOnly />}
                 sx={{ cursor: 'pointer' }}
                 onClick={() => {
                   if (!discussionSectionRef.current) return;
