@@ -18,15 +18,18 @@ import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelper
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerAuthSession(context);
   const ssg = await getServerProxySSGHelpers(context);
-  if (session) {
-    // Prefetch user's favorite models
-    await ssg.user.getEngagedModels.prefetch(undefined);
-    // Prefetch users' blocked tags
-    await ssg.user.getTags.prefetch({ type: 'Hide' });
-  }
+  const isClient = context.req.url?.startsWith('/_next/data');
+  if (!isClient) {
+    if (session) {
+      // Prefetch user's favorite models
+      await ssg.user.getEngagedModels.prefetch(undefined);
+      // Prefetch users' blocked tags
+      await ssg.user.getTags.prefetch({ type: 'Hide' });
+    }
 
-  // Prefetch trending tags
-  await ssg.tag.getTrending.prefetch({ entityType: 'Model' });
+    // Prefetch trending tags
+    await ssg.tag.getTrending.prefetch({ entityType: 'Model' });
+  }
 
   return {
     props: {
