@@ -1,6 +1,6 @@
-import { Button, Group, Popover, Stack, ThemeIcon, Text, Badge } from '@mantine/core';
+import { Button, Group, Popover, Stack, ThemeIcon, Text, Badge, Box, Sx } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconLock } from '@tabler/icons';
+import { IconLock, IconPlus } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import React, { cloneElement, createContext, useContext, useState } from 'react';
 import create from 'zustand';
@@ -220,8 +220,12 @@ type ToggleProps = {
 
 ImageGuard.ToggleConnect = function ToggleConnect({
   position = 'top-left',
+  sx,
+  className,
 }: {
   position?: 'static' | 'top-left' | 'top-right';
+  sx?: Sx;
+  className?: string;
 }) {
   const { connect, nsfw } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
@@ -252,10 +256,29 @@ ImageGuard.ToggleConnect = function ToggleConnect({
                 zIndex: 10,
               }
             : {}),
+          ...(sx && sx instanceof Function ? sx(theme) : sx),
         })}
+        className={className}
         onClick={() => toggleConnect(connect)}
       >
-        {showing ? 'hide' : 'show'}
+        <Group spacing={5} noWrap>
+          <Text
+            weight="bold"
+            sx={{
+              whiteSpace: 'nowrap',
+              borderRight: '1px solid rgba(0,0,0,.15)',
+              boxShadow: '0 1px 0 1px rgba(255,255,255,.1)',
+              paddingRight: 5,
+            }}
+            component="span"
+          >
+            18
+            <Box component="span" sx={{ marginLeft: 1 }}>
+              <IconPlus size={8} strokeWidth={5} />
+            </Box>
+          </Text>
+          {showing ? 'hide' : 'show'}
+        </Group>
       </Badge>
     </ImageGuardPopover>
   );

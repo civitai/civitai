@@ -102,17 +102,17 @@ const useStyles = createStyles((theme, _params, getRef) => {
     },
 
     typeBadge: {
-      color: 'white',
       background: 'rgb(30 133 230 / 40%)',
+    },
+
+    floatingBadge: {
+      color: 'white',
       backdropFilter: 'blur(7px)',
       boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
     },
 
     statusBadge: {
-      color: 'white',
       background: 'rgb(209 180 30 / 40%)',
-      backdropFilter: 'blur(7px)',
-      boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
     },
 
     floatingAvatar: {
@@ -129,10 +129,21 @@ const useStyles = createStyles((theme, _params, getRef) => {
 
     userAvatar: {
       opacity: 0.8,
-      // Copied from carousel buttons
       boxShadow:
-        '0 1px 3px rgb(0 0 0 / 5%), rgb(0 0 0 / 5%) 0px 20px 25px -5px, rgb(0 0 0 / 4%) 0px 10px 10px -5px',
-      transition: 'opacity .3s ease',
+        '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 20px 25px -5px, rgb(0 0 0 / 50%) 0px 10px 10px -5px',
+      transition: 'opacity .25s ease',
+      position: 'relative',
+
+      '&::before': {
+        content: '""',
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        borderRadius: theme.radius.xl,
+        boxShadow: 'inset 0 0 1px 1px rgba(255,255,255,0.25)',
+      },
 
       '&:hover': {
         opacity: 1,
@@ -145,7 +156,7 @@ const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
 export function AmbientModelCard({ data, width: itemWidth }: Props) {
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
   const theme = useMantineTheme();
 
   const { id, image, name, rank, nsfw, user } = data ?? {};
@@ -186,11 +197,11 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
 
   const modelBadges = (
     <>
-      <Badge className={classes.typeBadge} radius="sm" size="sm">
+      <Badge className={cx(classes.floatingBadge, classes.typeBadge)} radius="sm" size="sm">
         {splitUppercase(data.type)}
       </Badge>
       {data.status !== ModelStatus.Published && (
-        <Badge className={classes.statusBadge} radius="sm" size="sm">
+        <Badge className={cx(classes.floatingBadge, classes.statBadge)} radius="sm" size="sm">
           {data.status}
         </Badge>
       )}
@@ -199,7 +210,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
 
   const modelRating = (
     <IconBadge
-      className={classes.statBadge}
+      className={cx(classes.floatingBadge, classes.statBadge)}
       sx={{ userSelect: 'none' }}
       icon={
         <Rating
@@ -364,7 +375,15 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                       </Menu>
                     )}
                     <Group spacing={4} className={classes.cardBadges}>
-                      <ImageGuard.ToggleConnect position="static" />
+                      <ImageGuard.ToggleConnect
+                        sx={(theme) => ({
+                          backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
+                          color: 'white',
+                          backdropFilter: 'blur(7px)',
+                          boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
+                        })}
+                        position="static"
+                      />
                       {modelBadges}
                     </Group>
                     <ImageGuard.Unsafe>
@@ -388,12 +407,35 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                 {data.user.image && (
                   <Tooltip
                     position="left"
-                    label={data.user.username}
-                    offset={-6}
-                    sx={{ maxWidth: 200 }}
+                    label={
+                      <Text size="xs" weight={500}>
+                        {data.user.username}
+                      </Text>
+                    }
+                    offset={5}
+                    radius="lg"
+                    transition="slide-left"
+                    transitionDuration={500}
+                    openDelay={100}
+                    closeDelay={250}
+                    styles={{
+                      tooltip: {
+                        maxWidth: 200,
+                        backgroundColor: 'rgba(0,0,0,.5)',
+                        padding: '1px 10px 2px',
+                        zIndex: 9,
+                      },
+                    }}
                     multiline
                   >
-                    <Box px="xs" sx={{ alignSelf: 'flex-end' }}>
+                    <Box
+                      mx="xs"
+                      sx={{
+                        alignSelf: 'flex-end',
+                        zIndex: 10,
+                        borderRadius: '50%',
+                      }}
+                    >
                       <UserAvatar
                         size="md"
                         user={data.user}
