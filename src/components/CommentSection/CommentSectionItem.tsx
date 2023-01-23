@@ -3,8 +3,8 @@ import { openConfirmModal } from '@mantine/modals';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconArrowBackUp } from '@tabler/icons';
 import Link from 'next/link';
 import { useState } from 'react';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -195,7 +195,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
             )}
           </Stack>
           {!isEditing ? (
-            <Group position="apart">
+            <Group spacing={4}>
               <ReactionPicker
                 reactions={reactions}
                 onSelect={(reaction) => toggleReactionMutation.mutate({ id: comment.id, reaction })}

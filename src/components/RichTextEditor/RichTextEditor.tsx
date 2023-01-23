@@ -5,14 +5,13 @@ import Mention from '@tiptap/extension-mention';
 import Placeholder from '@tiptap/extension-placeholder';
 import Underline from '@tiptap/extension-underline';
 import Youtube from '@tiptap/extension-youtube';
-import { BubbleMenu, Extensions, useEditor } from '@tiptap/react';
+import { BubbleMenu, Editor, Extensions, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { useEffect } from 'react';
-
-import { getSuggestions } from '~/components/RichTextEditor/suggestion';
+import { useEffect, useImperativeHandle, useRef } from 'react';
 
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
+import { getSuggestions } from './suggestion';
 
 const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
   sm: '30px',
@@ -43,6 +42,7 @@ export function RichTextEditor({
   reset = 0,
   autoFocus,
   defaultSuggestions,
+  innerRef,
   ...props
 }: Props) {
   const { classes } = useStyles();
@@ -95,6 +95,8 @@ export function RichTextEditor({
     editable: !disabled,
   });
 
+  const editorRef = useRef<Editor>();
+
   // To clear content after a form submission
   useEffect(() => {
     if (!value && editor) editor.commands.clearContent();
@@ -109,6 +111,20 @@ export function RichTextEditor({
   useEffect(() => {
     if (editor && autoFocus) editor.commands.focus('end', { scrollIntoView: true });
   }, [editor, autoFocus]);
+
+  useEffect(() => {
+    if (editor && !editorRef.current) editorRef.current = editor;
+  }, [editor]);
+
+  // Used to call editor commands outside the component via a ref
+  useImperativeHandle(innerRef, () => ({
+    insertContentAtCursor: (value) => {
+      if (editorRef.current && innerRef) {
+        const currentPosition = editorRef.current.state.selection.$anchor.pos;
+        editorRef.current.commands.insertContentAt(currentPosition, value);
+      }
+    },
+  }));
 
   return (
     <Input.Wrapper
@@ -205,8 +221,9 @@ export function RichTextEditor({
   );
 }
 
-type ControlType = 'heading' | 'formatting' | 'list' | 'link' | 'media' | 'mentions';
+export type EditorCommandsRef = { insertContentAtCursor: (value: string) => void };
 
+type ControlType = 'heading' | 'formatting' | 'list' | 'link' | 'media' | 'mentions';
 type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;
@@ -218,4 +235,5 @@ type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
     reset?: number;
     autoFocus?: boolean;
     defaultSuggestions?: Array<{ id: number; label: string }>;
+    innerRef?: React.ForwardedRef<EditorCommandsRef>;
   };
