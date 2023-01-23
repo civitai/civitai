@@ -3,6 +3,7 @@ import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { z } from 'zod';
 
+import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { Form, InputRTE, useForm } from '~/libs/form';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { commentUpsertInput } from '~/server/schema/comment.schema';
@@ -24,10 +25,6 @@ export default createRoutedContext({
     );
 
     const loadingComment = (isLoading || isFetching) && !!commentId;
-
-    useEffect(() => {
-      if (data && !loadingComment) form.reset(data);
-    }, [data, loadingComment]) //eslint-disable-line
 
     const form = useForm({
       schema: commentUpsertInput,
@@ -55,6 +52,13 @@ export default createRoutedContext({
       form.reset();
       context.close();
     };
+
+    const { isDirty, isSubmitted } = form.formState;
+    useCatchNavigation({ unsavedChanges: isDirty && !isSubmitted });
+
+    useEffect(() => {
+      if (data && !loadingComment) form.reset(data);
+    }, [data, loadingComment]) //eslint-disable-line
 
     return (
       <Modal

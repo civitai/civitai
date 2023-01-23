@@ -22,7 +22,6 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
@@ -166,7 +165,7 @@ export default createRoutedContext({
                                   width: parsedWidth,
                                 }}
                               >
-                                <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                                <ImageGuard.ToggleConnect />
                                 <ImageGuard.Unsafe>
                                   <AspectRatio
                                     ratio={(image.width ?? 1) / (image.height ?? 1)}

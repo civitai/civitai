@@ -9,7 +9,7 @@ import { filenamize } from '~/utils/string-helpers';
 import { getGetUrl } from '~/utils/s3-utils';
 import requestIp from 'request-ip';
 import { constants, ModelFileType } from '~/server/common/constants';
-import { defaultFilePreferences, getPrimaryFile } from '~/server/utils/model-helpers';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),

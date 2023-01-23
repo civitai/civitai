@@ -3,12 +3,13 @@ import { openConfirmModal } from '@mantine/modals';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconArrowBackUp } from '@tabler/icons';
 import Link from 'next/link';
 import { useState } from 'react';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
+import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
@@ -164,7 +165,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
             <Group spacing={8} align="center">
               <Link href={`/user/${comment.user.username}`} passHref>
                 <Anchor variant="text" size="sm" weight="bold">
-                  {comment.user.username}
+                  <Username {...comment.user} />
                 </Anchor>
               </Link>
               {comment.user.id === model?.user.id ? (
@@ -195,7 +196,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
             )}
           </Stack>
           {!isEditing ? (
-            <Group position="apart">
+            <Group spacing={4}>
               <ReactionPicker
                 reactions={reactions}
                 onSelect={(reaction) => toggleReactionMutation.mutate({ id: comment.id, reaction })}

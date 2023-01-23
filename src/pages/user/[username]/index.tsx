@@ -13,8 +13,8 @@ import {
   Card,
 } from '@mantine/core';
 import { IconDownload, IconHeart, IconStar, IconUpload, IconUsers } from '@tabler/icons';
-import { useRouter } from 'next/router';
 import { GetServerSideProps } from 'next/types';
+
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeImage, getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
@@ -27,6 +27,7 @@ import {
 } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { Meta } from '~/components/Meta/Meta';
+import { Username } from '~/components/User/Username';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -41,14 +42,13 @@ export const getServerSideProps: GetServerSideProps = async (ctx) => {
   return {
     props: {
       trpcState: ssg.dehydrate(),
+      username,
     },
   };
 };
 
-export default function UserPage() {
-  const router = useRouter();
+export default function UserPage({ username }: { username: string }) {
   const theme = useMantineTheme();
-  const username = postgresSlugify(router.query.username as string);
   const { classes } = useStyles();
 
   const { data: user } = trpc.user.getCreator.useQuery({ username });
@@ -98,7 +98,9 @@ export default function UserPage() {
                   )}
                   <Stack spacing="xs">
                     <Group position="apart">
-                      <Title order={2}>{user.username}</Title>
+                      <Title order={2}>
+                        <Username {...user} inherit />
+                      </Title>
                       <FollowUserButton userId={user.id} size="md" compact />
                     </Group>
                     <Group spacing="xs">

@@ -1,10 +1,11 @@
-import { Button, Group, Popover, Stack, ThemeIcon, Text } from '@mantine/core';
+import { Button, Group, Popover, Stack, ThemeIcon, Text, Badge, Box, Sx } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconLock } from '@tabler/icons';
+import { IconLock, IconPlus } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import React, { cloneElement, createContext, useContext, useState } from 'react';
 import create from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageModel } from '~/server/selectors/image.selector';
 import { isDefined } from '~/utils/type-guards';
@@ -195,7 +196,37 @@ type ToggleProps = {
 //   );
 // };
 
-ImageGuard.ToggleConnect = function ToggleConnect({ children }: ToggleProps) {
+// Old/dynamic version
+// ImageGuard.ToggleConnect = function ToggleConnect({ children }: ToggleProps) {
+//   const { connect, nsfw } = useImageGuardContext();
+//   const { image } = useImageGuardContentContext();
+//   const showImage = useStore((state) => state.showingImages[image.id.toString()] ?? false);
+//   const showConnect = useStore((state) =>
+//     connect ? state.showingConnections[getConnectionKey(connect)] : false
+//   );
+//   const toggleConnect = useStore((state) => state.toggleConnection);
+
+//   if (!connect || !image.nsfw) return null;
+//   const showing = showConnect ?? showImage;
+
+//   return (
+//     <ImageGuardPopover>
+//       {cloneElement(children({ status: showing ? 'hide' : 'show' }), {
+//         onClick: () => toggleConnect(connect),
+//       })}
+//     </ImageGuardPopover>
+//   );
+// };
+
+ImageGuard.ToggleConnect = function ToggleConnect({
+  position = 'top-left',
+  sx,
+  className,
+}: {
+  position?: 'static' | 'top-left' | 'top-right';
+  sx?: Sx;
+  className?: string;
+}) {
   const { connect, nsfw } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
   const showImage = useStore((state) => state.showingImages[image.id.toString()] ?? false);
@@ -209,9 +240,46 @@ ImageGuard.ToggleConnect = function ToggleConnect({ children }: ToggleProps) {
 
   return (
     <ImageGuardPopover>
-      {cloneElement(children({ status: showing ? 'hide' : 'show' }), {
-        onClick: () => toggleConnect(connect),
-      })}
+      <Badge
+        color="red"
+        variant="filled"
+        size="sm"
+        sx={(theme) => ({
+          cursor: 'pointer',
+          userSelect: 'none',
+          ...(position !== 'static'
+            ? {
+                position: 'absolute',
+                top: theme.spacing.xs,
+                left: position === 'top-left' ? theme.spacing.xs : undefined,
+                right: position === 'top-right' ? theme.spacing.xs : undefined,
+                zIndex: 10,
+              }
+            : {}),
+          ...(sx && sx instanceof Function ? sx(theme) : sx),
+        })}
+        className={className}
+        onClick={() => toggleConnect(connect)}
+      >
+        <Group spacing={5} noWrap>
+          <Text
+            weight="bold"
+            sx={{
+              whiteSpace: 'nowrap',
+              borderRight: '1px solid rgba(0,0,0,.15)',
+              boxShadow: '0 1px 0 1px rgba(255,255,255,.1)',
+              paddingRight: 5,
+            }}
+            component="span"
+          >
+            18
+            <Box component="span" sx={{ marginLeft: 1 }}>
+              <IconPlus size={8} strokeWidth={5} />
+            </Box>
+          </Text>
+          {showing ? 'hide' : 'show'}
+        </Group>
+      </Badge>
     </ImageGuardPopover>
   );
 };
@@ -267,7 +335,7 @@ function ImageGuardPopover({ children }: { children: React.ReactElement }) {
                 <IconLock />
               </ThemeIcon>
               <Text size="sm" weight={500} sx={{ flex: 1 }}>
-                You must be logged in to view NSFW content
+                You must be logged in to view adult content
               </Text>
             </Group>
 
