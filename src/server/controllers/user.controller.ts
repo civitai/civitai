@@ -1,9 +1,12 @@
+import { ModelEngagementType, ModelVersionEngagementType } from '@prisma/client';
+
 import { Context } from '~/server/createContext';
 import {
   getCreators,
   getUserByUsername,
   getUserCreator,
   getUserEngagedModels,
+  getUserEngagedModelVersions,
   getUserTags,
   getUserUnreadNotificationsCount,
   toggleBlockedTag,
@@ -34,7 +37,6 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { ModelEngagementType } from '@prisma/client';
 
 export const getAllUsersHandler = ({ input }: { input: GetAllUsersInput }) => {
   try {
@@ -168,7 +170,6 @@ export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullabl
 
   try {
     const user = await getUserEngagedModels({ id });
-
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
     // turn array of user.engagedModels into object with `type` as key and array of modelId as value
@@ -181,9 +182,39 @@ export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullabl
       },
       {} as Record<ModelEngagementType, number[]>
     );
+
     return engagedModels;
   } catch (error) {
-    throwDbError(error);
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const getUserEngagedModelVersionsHandler = async ({
+  ctx,
+}: {
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { id } = ctx.user;
+
+  try {
+    const user = await getUserEngagedModelVersions({ id });
+    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    // turn array of user.engagedModelVersions into object with `type` as key and array of modelId as value
+    const engagedModelVersions = user.engagedModelVersions.reduce<
+      Record<ModelVersionEngagementType, number[]>
+    >((acc, engagement) => {
+      const { type, modelVersionId } = engagement;
+      if (!acc[type]) acc[type] = [];
+      acc[type].push(modelVersionId);
+      return acc;
+    }, {} as Record<ModelVersionEngagementType, number[]>);
+
+    return engagedModelVersions;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
   }
 };
 

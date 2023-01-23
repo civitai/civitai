@@ -102,6 +102,13 @@ export const getUserEngagedModels = ({ id }: { id: number }) => {
   });
 };
 
+export const getUserEngagedModelVersions = ({ id }: { id: number }) => {
+  return prisma.user.findUnique({
+    where: { id },
+    select: { engagedModelVersions: { select: { modelVersionId: true, type: true } } },
+  });
+};
+
 export const getUserEngagedModelByModelId = ({
   userId,
   modelId,
@@ -183,7 +190,6 @@ export const toggleModelEngagement = async ({
     where: { userId_modelId: { userId, modelId } },
     select: { type: true },
   });
-  console.log(engagement?.type, type);
 
   if (engagement) {
     if (engagement.type === type)

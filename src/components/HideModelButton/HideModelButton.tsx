@@ -37,7 +37,7 @@ export function HideModelButton({ modelId, as = 'button', onToggleHide, ...props
     onSuccess() {
       showSuccessNotification({
         title: `Model ${alreadyHiding ? 'unhidden' : 'hidden'}`,
-        message: `This model will${alreadyHiding ? ' ' : ' not'} show up in your feed`,
+        message: `This model will${alreadyHiding ? ' ' : ' not '}show up in your feed`,
       });
     },
     onError(_error, _variables, context) {

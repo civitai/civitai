@@ -41,6 +41,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { ModelType } from '@prisma/client';
+import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 
 const VERSION_IMAGES_LIMIT = 8;
 
@@ -188,6 +189,8 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
             </Stack>
             <RunButton modelVersionId={version.id} variant="light" />
           </Group>
+
+          <EarlyAccessAlert versionId={version.id} deadline={version.earlyAccessDeadline} />
           <ModelFileAlert versionId={version.id} modelType={type} files={version.files} />
 
           <DescriptionTable items={versionDetails} labelWidth="30%" />
