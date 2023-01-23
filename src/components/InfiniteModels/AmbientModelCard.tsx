@@ -38,7 +38,6 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
@@ -112,7 +111,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
     },
 
     statusBadge: {
-      background: 'rgb(209 180 30 / 40%)',
+      background: theme.fn.rgba(theme.colors.yellow[theme.fn.primaryShade()], 0.4),
     },
 
     floatingAvatar: {
@@ -201,7 +200,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
         {splitUppercase(data.type)}
       </Badge>
       {data.status !== ModelStatus.Published && (
-        <Badge className={cx(classes.floatingBadge, classes.statBadge)} radius="sm" size="sm">
+        <Badge className={cx(classes.floatingBadge, classes.statusBadge)} radius="sm" size="sm">
           {data.status}
         </Badge>
       )}
