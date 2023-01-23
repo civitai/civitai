@@ -21,7 +21,7 @@ export const getStaticPaths: GetStaticPaths = async () => {
         .split('/'),
     },
   }));
-  console.log(paths.map((x) => x.params.slug));
+
   return {
     paths,
     fallback: false,

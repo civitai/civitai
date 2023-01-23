@@ -9,6 +9,8 @@ import {
   Stack,
   Text,
   Title,
+  Loader,
+  Center,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons';
 import { GetServerSideProps } from 'next';
@@ -20,7 +22,10 @@ import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {
   const ssg = await getServerProxySSGHelpers(ctx);
-  await ssg.user.getLeaderboard.prefetch({ limit: 100 });
+  const isClient = ctx.req.url?.startsWith('/_next/data');
+  if (!isClient) {
+    await ssg.user.getLeaderboard.prefetch({ limit: 100 });
+  }
 
   return {
     props: {
@@ -30,7 +35,7 @@ export const getServerSideProps: GetServerSideProps = async (ctx) => {
 };
 
 export default function Leaderboard() {
-  const { data = [] } = trpc.user.getLeaderboard.useQuery({ limit: 100 });
+  const { data = [], isLoading } = trpc.user.getLeaderboard.useQuery({ limit: 100 });
   const { classes } = useStyles();
 
   return (
@@ -74,7 +79,15 @@ export default function Leaderboard() {
               </Group>
             </Stack>
           </Grid.Col>
-          <Grid.Col span={12}>{data.length > 0 ? <CreatorList items={data} /> : null}</Grid.Col>
+          <Grid.Col span={12}>
+            {isLoading ? (
+              <Center p="xl">
+                <Loader size="xl" />
+              </Center>
+            ) : data.length > 0 ? (
+              <CreatorList items={data} />
+            ) : null}
+          </Grid.Col>
         </Grid>
       </Container>
     </>

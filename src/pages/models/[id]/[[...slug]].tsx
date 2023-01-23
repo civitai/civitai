@@ -89,10 +89,10 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
+import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 
 //TODO - Break model query into multiple queries
 /*
@@ -108,6 +108,10 @@ export const getServerSideProps: GetServerSideProps<{
   id: number;
   slug: string | string[] | null;
 }> = async (context) => {
+  // console.log('------------------------');
+  // console.log(context.req.url);
+  // console.log('------------------------');
+  const isClient = context.req.url?.startsWith('/_next/data');
   const params = (context.params ?? {}) as { id: string; slug: string[] };
   const id = Number(params.id);
   if (!isNumber(id))
@@ -116,7 +120,9 @@ export const getServerSideProps: GetServerSideProps<{
     };
 
   const ssg = await getServerProxySSGHelpers(context);
-  await ssg.model.getById.prefetch({ id });
+  if (!isClient) {
+    await ssg.model.getById.prefetch({ id });
+  }
 
   return {
     props: {
@@ -271,11 +277,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   if (loadingModel)
     return (
-      <Container size="xl">
-        <Center>
-          <Loader size="xl" />
-        </Center>
-      </Container>
+      <AbsoluteCenter>
+        <Loader size="xl" />
+      </AbsoluteCenter>
     );
 
   if (!model) return <NotFound />;
@@ -489,7 +493,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 radius="sm"
                 color="gray"
                 size="lg"
-                icon={<Rating value={model.rank?.ratingAllTime ?? 0} readOnly />}
+                icon={<Rating value={model.rank?.ratingAllTime ?? 0} fractions={4} readOnly />}
                 sx={{ cursor: 'pointer' }}
                 onClick={() => {
                   if (!discussionSectionRef.current) return;

@@ -12,15 +12,14 @@ import {
 } from '@mantine/core';
 import { closeAllModals } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-
 import { useRouter } from 'next/router';
-import { useState } from 'react';
-import { CommentSectionItem } from '~/components/CommentSection/CommentSectionItem';
+import { useRef, useState } from 'react';
 
+import { CommentSectionItem } from '~/components/CommentSection/CommentSectionItem';
+import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputRTE, useForm } from '~/libs/form';
-
 import { commentUpsertInput } from '~/server/schema/comment.schema';
 import {
   CommentGetById,
@@ -29,7 +28,6 @@ import {
   ReviewGetCommentsById,
 } from '~/types/router';
 import { removeDuplicates } from '~/utils/array-helpers';
-
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -40,6 +38,8 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
   const queryUtils = trpc.useContext();
   const { classes } = useStyles();
   highlights = highlights?.filter((x) => x);
+
+  const editorRef = useRef<EditorCommandsRef | null>(null);
 
   const reviewId = review?.id;
   const parentId = parent?.id;
@@ -77,7 +77,7 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
       await queryUtils.comment.getCommentsById.invalidate();
 
       setShowCommentActions(false);
-      form.reset({ modelId, reviewId, parentId, content: undefined });
+      form.reset();
     },
     onError(error, _variables, context) {
       if (reviewId)
@@ -147,6 +147,7 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
                 onFocus={() => setShowCommentActions(true)}
                 defaultSuggestions={suggestedMentions}
                 autoFocus={showCommentActions}
+                innerRef={editorRef}
                 hideToolbar
               />
             </Box>
@@ -155,8 +156,8 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
                 <Button
                   variant="default"
                   onClick={() => {
-                    form.reset({ content: undefined, modelId, reviewId, parentId });
                     setShowCommentActions(false);
+                    form.reset();
                   }}
                 >
                   Cancel
@@ -183,17 +184,9 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
                 modelId={modelId}
                 onReplyClick={(comment) => {
                   setShowCommentActions(true);
-                  const content = form.getValues('content');
-                  form.reset({
-                    modelId,
-                    reviewId,
-                    parentId,
-                    content: `<p><span data-type="mention" data-id="mention:${
-                      comment.user.id
-                    }" data-label="${comment.user.username}" contenteditable="false">@${
-                      comment.user.username
-                    }</span>&nbsp;${content ? content : ''}</p>`,
-                  });
+                  editorRef.current?.insertContentAtCursor(
+                    `<span data-type="mention" data-id="mention:${comment.user.id}" data-label="${comment.user.username}" contenteditable="false">@${comment.user.username}</span>&nbsp;`
+                  );
                 }}
               />
             </List.Item>

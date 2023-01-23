@@ -95,7 +95,7 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
       label: 'Rating',
       value: (
         <Group spacing={4}>
-          <Rating value={version.rank?.ratingAllTime ?? 0} fractions={2} readOnly />
+          <Rating value={version.rank?.ratingAllTime ?? 0} fractions={4} readOnly />
           <Text size="sm">({version.rank?.ratingCountAllTime.toLocaleString() ?? 0})</Text>
         </Group>
       ),
