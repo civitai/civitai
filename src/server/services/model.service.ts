@@ -193,7 +193,7 @@ export const createModel = async ({
       //   data.nsfw,
       publishedAt: data.status === ModelStatus.Published ? new Date() : null,
       lastVersionAt: new Date(),
-      nsfw: data.nsfw || allImagesNSFW,
+      nsfw: data.nsfw || (allImagesNSFW && data.status === ModelStatus.Published),
       userId,
       modelVersions: {
         create: modelVersions.map(({ images, files, ...version }, versionIndex) => ({
@@ -312,7 +312,7 @@ export const updateModel = async ({
     where: { id },
     data: {
       ...data,
-      nsfw: data.nsfw || allImagesNSFW,
+      nsfw: data.nsfw || (allImagesNSFW && data.status === ModelStatus.Published),
       status: data.status,
       publishedAt:
         data.status === ModelStatus.Published && currentModel.status !== ModelStatus.Published
