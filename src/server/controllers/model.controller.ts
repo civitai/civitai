@@ -1,10 +1,10 @@
 import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { prisma } from '~/server/db/client';
 
+import { prisma } from '~/server/db/client';
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
+import { DeleteModelSchema, GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   getAllModelsWithVersionsSelect,
@@ -17,10 +17,13 @@ import {
   getModel,
   getModels,
   getModelVersionsMicro,
+  permaDeleteModelById,
+  restoreModelById,
   updateModel,
   updateModelById,
 } from '~/server/services/model.service';
 import {
+  throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
@@ -254,14 +257,20 @@ export const unpublishModelHandler = async ({ input }: { input: GetByIdInput }) 
   }
 };
 
-export const deleteModelHandler = async ({ input }: { input: GetByIdInput }) => {
+export const deleteModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: DeleteModelSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
-    const { id } = input;
-    const model = await deleteModelById({ id });
+    const { id, permanently } = input;
+    if (permanently && !ctx.user.isModerator) throw throwAuthorizationError();
 
-    if (!model) {
-      throw throwNotFoundError(`No model with id ${id}`);
-    }
+    const deleteModel = permanently ? permaDeleteModelById : deleteModelById;
+    const model = await deleteModel({ id });
+    if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
     return model;
   } catch (error) {
@@ -326,5 +335,25 @@ export const getModelDetailsForReviewHandler = async ({
     return model;
   } catch (error) {
     throw throwDbError(error);
+  }
+};
+
+export const restoreModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  if (!ctx.user.isModerator) throw throwAuthorizationError();
+
+  try {
+    const model = await restoreModelById({ ...input });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    return model;
+  } catch (error) {
+    if (error instanceof TRPCError) error;
+    else throw throwDbError(error);
   }
 };
