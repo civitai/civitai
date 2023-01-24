@@ -33,6 +33,7 @@ import {
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
 import {
+  IconExclamationCircle,
   IconPencil,
   IconPhoto,
   IconRating18Plus,
@@ -46,6 +47,7 @@ import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 
 import { useImageUpload } from '~/hooks/useImageUpload';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -79,6 +81,7 @@ export function ImageUpload({
     filesHandler,
     removeImage,
     upload,
+    canUseScanner,
     // isCompleted,
     // isUploading,
     // isProcessing,
@@ -153,6 +156,13 @@ export function ImageUpload({
             </div>
           </Group>
         </Dropzone>
+        {!canUseScanner && files.length > 0 ? (
+          <AlertWithIcon color="red" iconColor="red" icon={<IconExclamationCircle />}>
+            The AI system that automatically identifies adult content cannot be run on your device.
+            Please review the content of your images and ensure that any adult content is
+            appropriately flagged.
+          </AlertWithIcon>
+        ) : null}
 
         {isClient && (
           <DndContext

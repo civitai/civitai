@@ -1,20 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
-import { ImageAnalysisInput } from '~/server/schema/image.schema';
-import produce from 'immer';
 import { FileWithPath } from '@mantine/dropzone';
+import { useListState } from '@mantine/hooks';
+import produce from 'immer';
+import { useEffect, useRef, useState } from 'react';
+import { v4 as uuidv4 } from 'uuid';
+
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { useNsfwWorkerContext } from '~/providers/NsfwWorkerProvider';
 import { loadImage, blurHashImage } from '~/utils/blurhash';
 import { auditMetaData, getMetadata } from '~/utils/image-metadata';
-import { v4 as uuidv4 } from 'uuid';
-import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import { useListState } from '@mantine/hooks';
-import { useNsfwWorkerContext } from '~/providers/NsfwWorkerProvider';
 
 type ImageUpload = CustomFile;
 
 type QueueItem = { uuid: string; file: FileWithPath };
 
 export const useImageUpload = ({ max = 10, value }: { max?: number; value: CustomFile[] }) => {
-  const { scanImages } = useNsfwWorkerContext();
+  const { scanImages, canUseScanner } = useNsfwWorkerContext();
 
   // const [canUpload, setCanUpload] = useState(!supportsWebWorker);
   const [files, filesHandler] = useListState<ImageUpload>(value);
@@ -174,6 +174,7 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
     removeImage,
     upload: startProcessing,
     canUpload: true,
+    canUseScanner,
     // isCompleted,
     // isUploading,
     // isProcessing,
