@@ -439,7 +439,7 @@ export function ModelForm({ model }: Props) {
                               <InputText
                                 name={`modelVersions.${index}.name`}
                                 label="Name"
-                                placeholder="Version Name"
+                                placeholder="e.g.: v1.0"
                                 withAsterisk
                                 style={{ flex: 1 }}
                               />

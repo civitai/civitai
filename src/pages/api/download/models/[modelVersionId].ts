@@ -105,12 +105,15 @@ export function getDownloadFilename({
   file: { name: string; type: ModelFileType | string };
 }) {
   let fileName = file.name;
+  const modelName = filenamize(model.name);
+  const versionName = filenamize(modelVersion.name).replace(modelName, '');
+
   const ext = file.name.split('.').pop();
   if (!constants.modelFileTypes.includes(file.type as ModelFileType)) return file.name;
   const fileType = file.type as ModelFileType;
 
   if (fileType === 'Training Data') {
-    fileName = `${filenamize(model.name)}_${filenamize(modelVersion.name)}_trainingData.zip`;
+    fileName = `${modelName}_${versionName}_trainingData.zip`;
   } else if (model.type === ModelType.TextualInversion) {
     const trainedWord = modelVersion.trainedWords[0];
     let fileSuffix = '';
@@ -122,7 +125,7 @@ export function getDownloadFilename({
     if (fileName.includes('-inpainting')) fileSuffix = '-inpainting';
     else if (fileType === 'Text Encoder') fileSuffix = '_txt';
 
-    fileName = `${filenamize(model.name)}_${filenamize(modelVersion.name)}${fileSuffix}.${ext}`;
+    fileName = `${modelName}_${versionName}${fileSuffix}.${ext}`;
   }
   return fileName;
 }
