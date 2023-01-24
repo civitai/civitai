@@ -1,5 +1,6 @@
 import { FileWithPath } from '@mantine/dropzone';
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useRef } from 'react';
+
 import { ImageAnalysisInput } from '~/server/schema/image.schema';
 import { getMetadata } from '~/utils/image-metadata';
 
@@ -34,9 +35,12 @@ type NsfwWorkerState = {
     }[],
     cb: ({ data }: { data: MessageTypes }) => void
   ) => void;
+  canUseScanner: boolean;
 };
 
-const NsfwWorkerCtx = createContext<NsfwWorkerState>({} as NsfwWorkerState);
+const NsfwWorkerCtx = createContext<NsfwWorkerState>({
+  canUseScanner: false,
+} as NsfwWorkerState);
 const callbackQueue: Record<string, MessageCallback> = {};
 
 export const useNsfwWorkerContext = () => useContext(NsfwWorkerCtx);
@@ -45,6 +49,9 @@ export const NsfwWorkerProvider = ({ children }: { children: React.ReactNode }) 
   const workerPromise = useRef<Promise<SharedWorker>>();
   const noSharedWorker = typeof window === 'undefined' || !('SharedWorker' in window);
   const supportsWebWorker = !noSharedWorker;
+  const noOffscrenCanvas = typeof window === 'undefined' || !('OffscreenCanvas' in window);
+  const supportsOffscreenCanvas = !noOffscrenCanvas;
+  const canUseScanner = supportsWebWorker && supportsOffscreenCanvas;
 
   const getWorker = () => {
     if (workerPromise.current) return workerPromise.current;
@@ -80,7 +87,7 @@ export const NsfwWorkerProvider = ({ children }: { children: React.ReactNode }) 
     images: { uuid: string; file: FileWithPath; meta: AsyncReturnType<typeof getMetadata> }[],
     cb: ({ data }: { data: MessageTypes }) => void
   ) => {
-    if (!supportsWebWorker) {
+    if (!canUseScanner) {
       for (const image of images) {
         cb({
           data: {
@@ -110,5 +117,9 @@ export const NsfwWorkerProvider = ({ children }: { children: React.ReactNode }) 
     });
   };
 
-  return <NsfwWorkerCtx.Provider value={{ scanImages }}>{children}</NsfwWorkerCtx.Provider>;
+  return (
+    <NsfwWorkerCtx.Provider value={{ scanImages, canUseScanner }}>
+      {children}
+    </NsfwWorkerCtx.Provider>
+  );
 };
