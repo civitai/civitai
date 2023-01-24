@@ -33,9 +33,10 @@ const dictionary = {
 type RoutedContext = {
   openContext: <TName extends keyof typeof dictionary>(
     name: TName,
-    props: React.ComponentProps<typeof dictionary[TName]>
+    props: React.ComponentProps<typeof dictionary[TName]>,
+    options?: { replace?: boolean }
   ) => void;
-  closeContext: () => void;
+  closeContext: () => Promise<void>;
 };
 
 const RoutedCtx = createContext<RoutedContext>({} as any);  // eslint-disable-line
@@ -59,26 +60,23 @@ export function RoutedContextProvider({ children }: { children: React.ReactEleme
     if (previous) sessionStorage.setItem('prevPath', previous);
   }, [previous]);
 
-  const openContext = <TName extends keyof typeof dictionary>(
-    name: TName,
-    props: React.ComponentProps<typeof dictionary[TName]>
-  ) => {
+  const openContext: RoutedContext['openContext'] = (name, props, options) => {
+    const { replace = false } = options || {};
     const [pathname, query] = router.asPath.split('?');
     //TODO - when a value is present in the url params, don't let it be added to the query string
     const ctxProps = { ...QS.parse(query), modal: name, ...props };
+    const navigate = replace ? router.replace : router.push;
 
-    router.push(
+    navigate(
       { pathname, query: { ...router.query, ...ctxProps } },
       { pathname, query: { ...ctxProps } },
-      {
-        shallow: true,
-      }
+      { shallow: true }
     );
   };
 
   const [closing, setClosing] = useState(false);
 
-  const closeContext = async () => {
+  const closeContext: RoutedContext['closeContext'] = async () => {
     // extract the props you don't want to forward
     const { modal, ...query } = router.query;
     const prev = sessionStorage.getItem('prevPath');

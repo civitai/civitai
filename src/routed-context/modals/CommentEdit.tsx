@@ -13,8 +13,9 @@ import { trpc } from '~/utils/trpc';
 export default createRoutedContext({
   schema: z.object({
     commentId: z.number().optional(),
+    content: z.string().optional(),
   }),
-  Element: ({ context, props: { commentId } }) => {
+  Element: ({ context, props: { commentId, content } }) => {
     const router = useRouter();
     const modelId = Number(router.query.id);
 
@@ -28,9 +29,8 @@ export default createRoutedContext({
 
     const form = useForm({
       schema: commentUpsertInput,
-      defaultValues: { modelId },
+      defaultValues: { modelId, content },
       shouldUnregister: false,
-      shouldFocusError: true,
     });
 
     const saveCommentMutation = trpc.comment.upsert.useMutation({
