@@ -9,6 +9,7 @@ import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
 import { prepareFile } from '~/utils/file-helpers';
 import { env } from '~/env/server.mjs';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
+import { TRPCError } from '@trpc/server';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   input: { id },
@@ -164,6 +165,31 @@ export const deleteModelById = ({ id }: GetByIdInput) => {
   return prisma.model.delete({ where: { id } });
 };
 
+const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
+  return versions.map(({ files, ...version }) => {
+    // Keep tab whether there's a file format-type conflict.
+    // We needed to manually check for this because Prisma doesn't do
+    // error handling all too well
+    const fileConflicts: Record<string, boolean> = {};
+
+    return {
+      ...version,
+      files: files.map((file) => {
+        const preparedFile = prepareFile(file);
+
+        if (fileConflicts[`${preparedFile.type}-${preparedFile.format}`])
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: `Only 1 ${preparedFile.format} ${preparedFile.type} file can be attached to a version, please review your uploads and try again`,
+          });
+        else fileConflicts[`${preparedFile.type}-${preparedFile.format}`] = true;
+
+        return preparedFile;
+      }),
+    };
+  });
+};
+
 export const createModel = async ({
   modelVersions,
   userId,
@@ -180,7 +206,9 @@ export const createModel = async ({
   // Upsert ModelFiles: separate function
   // 👆 Ideally the whole thing will only be this many lines
   //    All of the logic would be in the separate functions
-  const allImagesNSFW = modelVersions
+
+  const parsedModelVersions = prepareModelVersions(modelVersions);
+  const allImagesNSFW = parsedModelVersions
     .flatMap((version) => version.images)
     .every((image) => image.nsfw);
 
@@ -196,11 +224,11 @@ export const createModel = async ({
       nsfw: data.nsfw || (allImagesNSFW && data.status === ModelStatus.Published),
       userId,
       modelVersions: {
-        create: modelVersions.map(({ images, files, ...version }, versionIndex) => ({
+        create: parsedModelVersions.map(({ images, files, ...version }, versionIndex) => ({
           ...version,
           index: versionIndex,
           status: data.status,
-          files: files ? { create: files.map(prepareFile) } : undefined,
+          files: files.length > 0 ? { create: files } : undefined,
           images: {
             create: images.map((image, index) => ({
               index,
@@ -239,6 +267,7 @@ export const updateModel = async ({
   userId,
   ...data
 }: ModelInput & { id: number; userId: number }) => {
+  const parsedModelVersions = prepareModelVersions(modelVersions);
   const currentModel = await prisma.model.findUnique({
     where: { id },
     select: { status: true, publishedAt: true },
@@ -287,12 +316,12 @@ export const updateModel = async ({
 
   // Determine which version to create/update
   type PayloadVersion = typeof modelVersions[number] & { index: number };
-  const { versionsToCreate, versionsToUpdate } = modelVersions.reduce(
+  const { versionsToCreate, versionsToUpdate } = parsedModelVersions.reduce(
     (acc, current, index) => {
       if (!current.id) acc.versionsToCreate.push({ ...current, index });
       else {
         const matched = existingVersions.findIndex((version) => version.id === current.id);
-        const different = !isEqual(existingVersions[matched], modelVersions[matched]);
+        const different = !isEqual(existingVersions[matched], parsedModelVersions[matched]);
         if (different) acc.versionsToUpdate.push({ ...current, index });
       }
 
@@ -301,10 +330,10 @@ export const updateModel = async ({
     { versionsToCreate: [] as PayloadVersion[], versionsToUpdate: [] as PayloadVersion[] }
   );
 
-  const versionIds = modelVersions.map((version) => version.id).filter(Boolean) as number[];
-  const hasNewVersions = modelVersions.some((x) => !x.id);
+  const versionIds = parsedModelVersions.map((version) => version.id).filter(Boolean) as number[];
+  const hasNewVersions = parsedModelVersions.some((x) => !x.id);
 
-  const allImagesNSFW = modelVersions
+  const allImagesNSFW = parsedModelVersions
     .flatMap((version) => version.images)
     .every((image) => image.nsfw);
 
@@ -323,7 +352,7 @@ export const updateModel = async ({
         deleteMany: versionIds.length > 0 ? { id: { notIn: versionIds } } : undefined,
         create: versionsToCreate.map(({ images, files, ...version }) => ({
           ...version,
-          files: { create: files.map(prepareFile) },
+          files: { create: files },
           images: {
             create: images.map(({ id, meta, ...image }, index) => ({
               index,
@@ -397,7 +426,7 @@ export const updateModel = async ({
               status: data.status,
               files: {
                 deleteMany: fileIds.length > 0 ? { id: { notIn: fileIds } } : undefined,
-                create: filesToCreate.map(prepareFile),
+                create: filesToCreate,
                 update: filesToUpdate.map(({ id, ...fileData }) => ({
                   where: { id: id ?? -1 },
                   data: { ...fileData },

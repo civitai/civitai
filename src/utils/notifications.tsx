@@ -15,7 +15,7 @@ export function showErrorNotification({
   showNotification({
     icon: <IconX size={18} />,
     color: 'red',
-    message: `Something went wrong: ${message}`,
+    message,
     title,
   });
 }
