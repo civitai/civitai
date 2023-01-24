@@ -1,6 +1,6 @@
 import { Button, Group, Modal, Stack, LoadingOverlay } from '@mantine/core';
 import { useRouter } from 'next/router';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { z } from 'zod';
 
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
@@ -13,11 +13,15 @@ import { trpc } from '~/utils/trpc';
 export default createRoutedContext({
   schema: z.object({
     commentId: z.number().optional(),
-    content: z.string().optional(),
   }),
-  Element: ({ context, props: { commentId, content } }) => {
+  Element: ({ context, props: { commentId } }) => {
     const router = useRouter();
     const modelId = Number(router.query.id);
+    const [initialContent] = useState(localStorage.getItem('commentContent'));
+
+    useEffect(() => {
+      if (initialContent) localStorage.removeItem('commentContent');
+    }, [initialContent]);
 
     const queryUtils = trpc.useContext();
     const { data, isLoading, isFetching } = trpc.comment.getById.useQuery(
@@ -29,7 +33,7 @@ export default createRoutedContext({
 
     const form = useForm({
       schema: commentUpsertInput,
-      defaultValues: { modelId, content },
+      defaultValues: { modelId, content: initialContent ?? '' },
       shouldUnregister: false,
     });
 

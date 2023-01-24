@@ -74,12 +74,9 @@ export default createRoutedContext({
     useCatchNavigation({ unsavedChanges: catchNavigation && isDirty && !isSubmitted });
 
     const goToCommentModal = () => {
+      localStorage.setItem('commentContent', form.getValues().text ?? '');
       setCatchNavigation(false);
-      openContext(
-        'commentEdit',
-        { content: form.getValues().text ?? undefined },
-        { replace: true }
-      );
+      openContext('commentEdit', {}, { replace: true });
     };
 
     useEffect(() => {
@@ -119,7 +116,7 @@ export default createRoutedContext({
               required
             />
             <InputRating name="rating" label="Rate the model" size="xl" withAsterisk required />
-            {rating <= 3 && (
+            {rating <= 3 && !reviewId && (
               <AlertWithIcon icon={<IconAlertCircle size={14} />} iconColor="yellow" color="yellow">
                 {`If you're having trouble with this model or reproducing an example image, `}
                 <Text
