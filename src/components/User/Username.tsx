@@ -33,7 +33,7 @@ export function Username({
   inherit = false,
 }: Props) {
   const features = useFeatureFlags();
-  if (deletedAt) return <Text size={size}>[delete]</Text>;
+  if (deletedAt) return <Text size={size}>[deleted]</Text>;
 
   supportLevel = features.memberBadges ? getRandom(levels) : 'common'; // TODO justin: remove random once final support badge is implemented
   const { textProps, badgeProps } = textBadgeProps[supportLevel];
@@ -62,7 +62,7 @@ export function Username({
 
 type SupportLevel = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 type Props = {
-  username: string | null;
+  username?: string | null;
   deletedAt?: Date | null;
   supportLevel?: SupportLevel;
   size?: MantineSize;

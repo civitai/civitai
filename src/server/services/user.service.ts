@@ -18,7 +18,7 @@ import {
 
 export const getUserCreator = async ({ username }: { username: string }) => {
   return prisma.user.findFirst({
-    where: { username },
+    where: { username, deletedAt: null },
     select: {
       id: true,
       image: true,
@@ -67,6 +67,7 @@ export const getUsers = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>(
           }
         : undefined,
       email: email,
+      deletedAt: null,
     },
   });
 };
@@ -149,6 +150,7 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
       : undefined,
     models: { some: {} },
     id: excludeIds.length ? { notIn: excludeIds } : undefined,
+    deletedAt: null,
   };
   const items = await prisma.user.findMany({
     take,
@@ -287,16 +289,19 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
   });
   if (!user) throw throwNotFoundError('Could not find user');
 
-  if (removeModels)
-    return await prisma.$transaction([
-      prisma.model.deleteMany({ where: { userId: user.id } }),
-      prisma.user.delete({ where: { id: user.id } }),
-    ]);
-  else
-    return await prisma.$transaction([
-      prisma.model.updateMany({ where: { userId: user.id }, data: { userId: -1 } }), // Transfer ownership to Civitai account
-      prisma.user.delete({ where: { id: user.id } }),
-    ]);
+  const modelData: Prisma.ModelUpdateManyArgs['data'] = removeModels
+    ? { deletedAt: new Date(), status: 'Deleted' }
+    : { userId: -1 };
+
+  return await prisma.$transaction([
+    prisma.model.updateMany({ where: { userId: user.id }, data: modelData }),
+    prisma.account.deleteMany({ where: { userId: user.id } }),
+    prisma.session.deleteMany({ where: { userId: user.id } }),
+    prisma.user.update({
+      where: { id: user.id },
+      data: { deletedAt: new Date(), email: null, username: null },
+    }),
+  ]);
 };
 
 export const toggleBlockedTag = async ({

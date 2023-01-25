@@ -55,7 +55,7 @@ export function UserAvatar({
       </Avatar>
       {withUsername || subText ? (
         <Stack spacing={0}>
-          {withUsername && user.username && (
+          {withUsername && (
             <Group spacing={4}>
               <Username username={user.username} deletedAt={user.deletedAt} size={textSize} />
               {badge}
@@ -73,7 +73,7 @@ export function UserAvatar({
     </Group>
   );
 
-  return linkToProfile ? (
+  return linkToProfile && !user.deletedAt ? (
     <Link href={`/user/${user.username}`} passHref>
       <Anchor variant="text">{avatar}</Anchor>
     </Link>
