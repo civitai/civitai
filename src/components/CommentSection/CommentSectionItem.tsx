@@ -163,11 +163,15 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
         <Stack spacing="xs" sx={{ flex: '1 1 0' }}>
           <Stack spacing={0}>
             <Group spacing={8} align="center">
-              <Link href={`/user/${comment.user.username}`} passHref>
-                <Anchor variant="text" size="sm" weight="bold">
-                  <Username {...comment.user} />
-                </Anchor>
-              </Link>
+              {!comment.user.deletedAt ? (
+                <Link href={`/user/${comment.user.username}`} passHref>
+                  <Anchor variant="text" size="sm" weight="bold">
+                    <Username {...comment.user} />
+                  </Anchor>
+                </Link>
+              ) : (
+                <Username {...comment.user} />
+              )}
               {comment.user.id === model?.user.id ? (
                 <Badge color="violet" size="xs">
                   OP
