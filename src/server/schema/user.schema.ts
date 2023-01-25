@@ -47,6 +47,6 @@ export type GetByUsernameSchema = z.infer<typeof getByUsernameSchema>;
 export type DeleteUserInput = z.infer<typeof deleteUserSchema>;
 export const deleteUserSchema = z.object({
   id: z.number(),
-  username: z.string(),
+  username: z.string().optional(),
   removeModels: z.boolean().optional(),
 });

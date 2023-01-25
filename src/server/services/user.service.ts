@@ -286,10 +286,17 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
     select: { id: true },
   });
   if (!user) throw throwNotFoundError('Could not find user');
-  if (removeModels) {
-    await prisma.model.deleteMany({ where: { userId: user.id } });
-  }
-  return await prisma.user.delete({ where: { id: user.id } });
+
+  if (removeModels)
+    return await prisma.$transaction([
+      prisma.model.deleteMany({ where: { userId: user.id } }),
+      prisma.user.delete({ where: { id: user.id } }),
+    ]);
+  else
+    return await prisma.$transaction([
+      prisma.model.updateMany({ where: { userId: user.id }, data: { userId: -1 } }), // Transfer ownership to Civitai account
+      prisma.user.delete({ where: { id: user.id } }),
+    ]);
 };
 
 export const toggleBlockedTag = async ({
