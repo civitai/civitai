@@ -35,6 +35,7 @@ import {
   IconLicense,
   IconMessage,
   IconMessageCircle2,
+  IconRecycle,
   IconStar,
   IconTagOff,
   IconTrash,
@@ -182,13 +183,17 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     });
 
   const deleteMutation = trpc.model.delete.useMutation({
-    onSuccess() {
+    async onSuccess(_, { permanently }) {
+      if (!permanently) await queryUtils.model.getById.invalidate({ id });
+      await queryUtils.model.getAll.invalidate();
+
       showSuccessNotification({
         title: 'Your model has been deleted',
         message: 'Successfully deleted the model',
       });
       closeAllModals();
-      router.replace('/'); // Redirect to the models or user page once available
+
+      if (!isModerator || permanently) await router.replace('/');
     },
     onError(error) {
       showErrorNotification({
@@ -201,6 +206,15 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const unpublishModelMutation = trpc.model.unpublish.useMutation({
     async onSuccess() {
       await queryUtils.model.getById.invalidate({ id });
+    },
+    onError(error) {
+      showErrorNotification({ error: new Error(error.message) });
+    },
+  });
+  const restoreModelMutation = trpc.model.restore.useMutation({
+    async onSuccess() {
+      await queryUtils.model.getById.invalidate({ id });
+      await queryUtils.model.getAll.invalidate();
     },
     onError(error) {
       showErrorNotification({ error: new Error(error.message) });
@@ -288,6 +302,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
   const nsfw = userNotBlurringNsfw && showNsfwRequested && model.nsfw === true;
   const isFavorite = favoriteModels.find((modelId) => modelId === id);
+  const deleted = !!model.deletedAt && model.status === 'Deleted';
 
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model.modelVersions[0];
@@ -310,7 +325,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     />
   );
 
-  if (!!edit && model && isOwner) return <ModelForm model={model} />;
+  if ((!!edit && isOwner && !deleted) || (!!edit && isModerator && deleted))
+    return <ModelForm model={model} />;
   if (model.nsfw && !currentUser)
     return (
       <>
@@ -323,14 +339,28 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     openConfirmModal({
       title: 'Delete Model',
       children: (
-        <Text size="sm">
-          Are you sure you want to delete this model? This action is destructive and you will have
-          to contact support to restore your data.
-        </Text>
+        <Stack>
+          <Text size="sm">
+            Are you sure you want to delete this model? This action is destructive and you will have
+            to contact support to restore your data.
+          </Text>
+          {isModerator && (
+            <Button
+              variant="outline"
+              color="red"
+              onClick={() => deleteMutation.mutate({ id: model.id, permanently: true })}
+              loading={deleteMutation.isLoading}
+              fullWidth
+            >
+              Permanently delete this model
+            </Button>
+          )}
+        </Stack>
       ),
       centered: true,
       labels: { confirm: 'Delete Model', cancel: "No, don't delete it" },
       confirmProps: { color: 'red', loading: deleteMutation.isLoading },
+      groupProps: { grow: isModerator },
       closeOnConfirm: false,
       onConfirm: () => {
         if (model) {
@@ -356,6 +386,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   const handleUnpublishModel = () => {
     unpublishModelMutation.mutate({ id });
+  };
+
+  const handleRestoreModel = () => {
+    restoreModelMutation.mutate({ id });
   };
 
   const handleToggleFavorite = () => {
@@ -521,7 +555,17 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     Unpublish
                   </Menu.Item>
                 )}
-                {currentUser && isOwner && (
+                {currentUser && isModerator && deleted && (
+                  <Menu.Item
+                    icon={<IconRecycle size={14} stroke={1.5} />}
+                    color="green"
+                    onClick={handleRestoreModel}
+                    disabled={restoreModelMutation.isLoading}
+                  >
+                    Restore
+                  </Menu.Item>
+                )}
+                {currentUser && isOwner && !deleted && (
                   <>
                     <Menu.Item
                       color={theme.colors.red[6]}
@@ -567,14 +611,15 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Menu.Dropdown>
             </Menu>
           </Group>
-          {model.status === ModelStatus.Unpublished && (
+          {(model.status === ModelStatus.Unpublished || deleted) && (
             <Alert color="red">
               <Group spacing="xs" noWrap align="flex-start">
                 <ThemeIcon color="red">
                   <IconExclamationMark />
                 </ThemeIcon>
                 <Text size="md">
-                  This model has been unpublished and is not visible to the community.
+                  This model has been {deleted ? 'deleted' : 'unpublished'} and is not visible to
+                  the community.
                 </Text>
               </Group>
             </Alert>

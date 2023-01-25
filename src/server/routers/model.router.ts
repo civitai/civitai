@@ -1,24 +1,28 @@
-import {
-  getModelDetailsForReviewHandler,
-  getModelReportDetailsHandler,
-} from './../controllers/model.controller';
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
 import {
   createModelHandler,
   deleteModelHandler,
+  getModelDetailsForReviewHandler,
   getModelHandler,
+  getModelReportDetailsHandler,
   getModelsInfiniteHandler,
   getModelsPagedSimpleHandler,
   getModelsWithVersionsHandler,
   getModelVersionsHandler,
+  restoreModelHandler,
   unpublishModelHandler,
   updateModelHandler,
 } from '~/server/controllers/model.controller';
 import { prisma } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
-import { getAllModelsSchema, ModelInput, modelSchema } from '~/server/schema/model.schema';
+import {
+  deleteModelSchema,
+  getAllModelsSchema,
+  ModelInput,
+  modelSchema,
+} from '~/server/schema/model.schema';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { checkFileExists, getS3Client } from '~/utils/s3-utils';
@@ -86,7 +90,7 @@ export const modelRouter = router({
     .use(checkFilesExistence)
     .mutation(updateModelHandler),
   delete: protectedProcedure
-    .input(getByIdSchema)
+    .input(deleteModelSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteModelHandler),
   unpublish: protectedProcedure
@@ -98,4 +102,5 @@ export const modelRouter = router({
   getModelDetailsForReview: publicProcedure
     .input(getByIdSchema)
     .query(getModelDetailsForReviewHandler),
+  restore: protectedProcedure.input(getByIdSchema).mutation(restoreModelHandler),
 });

@@ -105,6 +105,7 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
     nsfw: true,
     type: true,
     updatedAt: true,
+    deletedAt: true,
     status: true,
     allowNoCredit: true,
     allowCommercialUse: true,

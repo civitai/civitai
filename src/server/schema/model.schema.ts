@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
 import { ModelSort } from '~/server/common/enums';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
@@ -82,3 +83,6 @@ export const mergePermissionInput = licensingSchema.extend({
   modelId: z.number(),
   permissionDate: z.date().default(new Date()),
 });
+
+export const deleteModelSchema = getByIdSchema.extend({ permanently: z.boolean().optional() });
+export type DeleteModelSchema = z.infer<typeof deleteModelSchema>;

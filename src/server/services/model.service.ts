@@ -11,7 +11,7 @@ import { env } from '~/env/server.mjs';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { TRPCError } from '@trpc/server';
 
-export const getModel = async <TSelect extends Prisma.ModelSelect>({
+export const getModel = <TSelect extends Prisma.ModelSelect>({
   input: { id },
   user,
   select,
@@ -20,7 +20,7 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   select: TSelect;
 }) => {
-  return await prisma.model.findFirst({
+  return prisma.model.findFirst({
     where: {
       id,
       OR: !user?.isModerator
@@ -64,7 +64,9 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   if (!sessionUser?.isModerator) {
-    AND.push({ OR: [{ status: ModelStatus.Published }, { user: { id: sessionUser?.id } }] });
+    AND.push({
+      OR: [{ status: ModelStatus.Published }, { user: { id: sessionUser?.id } }],
+    });
   }
   if (query) {
     AND.push({
@@ -162,6 +164,17 @@ export const updateModelById = ({ id, data }: { id: number; data: Prisma.ModelUp
 };
 
 export const deleteModelById = ({ id }: GetByIdInput) => {
+  return prisma.model.update({
+    where: { id },
+    data: { deletedAt: new Date(), status: 'Deleted' },
+  });
+};
+
+export const restoreModelById = ({ id }: GetByIdInput) => {
+  return prisma.model.update({ where: { id }, data: { deletedAt: null, status: 'Draft' } });
+};
+
+export const permaDeleteModelById = ({ id }: GetByIdInput) => {
   return prisma.model.delete({ where: { id } });
 };
 

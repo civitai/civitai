@@ -187,6 +187,7 @@ enum ModelStatus {
   Published
   Unpublished
   GatherInterest
+  Deleted
 }
 
 enum CommercialUse {
@@ -214,6 +215,7 @@ model Model {
   fromImport    Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId  Int?        @unique
   meta          Json        @default("{}")
+  deletedAt     DateTime?
 
   // Licensing
   allowNoCredit         Boolean       @default(true)
