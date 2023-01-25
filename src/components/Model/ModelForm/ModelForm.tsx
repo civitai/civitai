@@ -13,7 +13,14 @@ import {
   Divider,
   Input,
 } from '@mantine/core';
-import { CommercialUse, Model, ModelStatus, ModelType, TagTarget } from '@prisma/client';
+import {
+  CheckpointType,
+  CommercialUse,
+  Model,
+  ModelStatus,
+  ModelType,
+  TagTarget,
+} from '@prisma/client';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
@@ -160,6 +167,7 @@ export function ModelForm({ model }: Props) {
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
     type: model?.type ?? ModelType.Checkpoint,
     status: model?.status ?? ModelStatus.Published,
+    checkpointType: model?.checkpointType ?? 'Trained',
     tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
     modelVersions: model?.modelVersions.map(
       ({ trainedWords, images, files, baseModel, ...version }) => ({
@@ -324,7 +332,11 @@ export function ModelForm({ model }: Props) {
   };
 
   const handleModelTypeChange = (value: ModelType) => {
+    form.setValue('checkpointType', null);
     switch (value) {
+      case 'Checkpoint':
+        form.setValue('checkpointType', CheckpointType.Trained);
+        break;
       case 'TextualInversion':
         fields.forEach((_, index) => {
           const modelVersion = form.getValues(`modelVersions.${index}`);
@@ -370,17 +382,43 @@ export function ModelForm({ model }: Props) {
               <Paper radius="md" p="xl" withBorder>
                 <Stack>
                   <InputText name="name" label="Name" placeholder="Name" withAsterisk />
-                  <InputSelect
-                    name="type"
-                    label="Type"
-                    placeholder="Type"
-                    data={Object.values(ModelType).map((type) => ({
-                      label: splitUppercase(type),
-                      value: type,
-                    }))}
-                    onChange={handleModelTypeChange}
-                    withAsterisk
-                  />
+                  <Group spacing={8} grow>
+                    <InputSelect
+                      name="type"
+                      label="Type"
+                      placeholder="Type"
+                      data={Object.values(ModelType).map((type) => ({
+                        label: splitUppercase(type),
+                        value: type,
+                      }))}
+                      onChange={handleModelTypeChange}
+                      withAsterisk
+                    />
+                    {type === 'Checkpoint' && (
+                      <Input.Wrapper label="Checkpoint Type" withAsterisk>
+                        <InputSegmentedControl
+                          name="checkpointType"
+                          data={Object.values(CheckpointType).map((type) => ({
+                            label: splitUppercase(type),
+                            value: type,
+                          }))}
+                          color="blue"
+                          styles={(theme) => ({
+                            root: {
+                              border: `1px solid ${
+                                theme.colorScheme === 'dark'
+                                  ? theme.colors.dark[4]
+                                  : theme.colors.gray[4]
+                              }`,
+                              background: 'none',
+                              marginTop: theme.spacing.xs * 0.5, // 5px
+                            },
+                          })}
+                          fullWidth
+                        />
+                      </Input.Wrapper>
+                    )}
+                  </Group>
                   <InputMultiSelect
                     name="tagsOnModels"
                     label="Tags"

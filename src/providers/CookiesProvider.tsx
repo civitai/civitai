@@ -1,4 +1,4 @@
-import { MetricTimeframe, ModelType } from '@prisma/client';
+import { CheckpointType, MetricTimeframe, ModelType } from '@prisma/client';
 import React, { createContext, useContext } from 'react';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
@@ -8,6 +8,7 @@ export const modelFilterSchema = z.object({
   sort: z.nativeEnum(ModelSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
   types: z.nativeEnum(ModelType).array().optional(),
+  checkpointType: z.nativeEnum(CheckpointType).optional(),
   baseModels: z.enum(constants.baseModels).array().optional(),
   hideNSFW: z.boolean().optional(),
 });

@@ -1,5 +1,5 @@
 import create from 'zustand';
-import { ModelType, MetricTimeframe } from '@prisma/client';
+import { ModelType, MetricTimeframe, CheckpointType } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { splitUppercase } from '~/utils/string-helpers';
@@ -16,7 +16,7 @@ import {
   SegmentedControl,
   Button,
 } from '@mantine/core';
-import { IconChevronDown, IconFilter, IconFilterOff, IconX } from '@tabler/icons';
+import { IconChevronDown, IconFilter, IconFilterOff } from '@tabler/icons';
 import { z } from 'zod';
 import { BaseModel, constants } from '~/server/common/constants';
 import dayjs from 'dayjs';
@@ -34,6 +34,7 @@ export const useFilters = create<{
   setSort: (sort?: ModelSort) => void;
   setPeriod: (period?: MetricTimeframe) => void;
   setTypes: (types?: ModelType[]) => void;
+  setCheckpointType: (checkpointType?: CheckpointType) => void;
   setBaseModels: (baseModels?: BaseModel[]) => void;
   setHideNSFW: (includeNSFW?: boolean) => void;
 }>()(
@@ -55,6 +56,12 @@ export const useFilters = create<{
       set((state) => {
         state.filters.types = types;
         !!types?.length ? setCookie('f_types', types) : deleteCookie('f_types');
+      });
+    },
+    setCheckpointType: (type) => {
+      set((state) => {
+        state.filters.checkpointType = type;
+        !!type ? setCookie('f_ckptType', type) : deleteCookie('f_ckptType');
       });
     },
     setBaseModels: (baseModels) => {
@@ -130,13 +137,23 @@ export function InfiniteModelsFilter() {
   const baseModels = useFilters((state) => state.filters.baseModels ?? cookies.baseModels ?? []);
   const hideNSFW = useFilters((state) => state.filters.hideNSFW ?? cookies.hideNSFW ?? false);
   const setHideNSFW = useFilters((state) => state.setHideNSFW);
+  const setCheckpointType = useFilters((state) => state.setCheckpointType);
+  const checkpointType = useFilters(
+    (state) => state.filters.checkpointType ?? cookies.checkpointType ?? 'all'
+  );
   const showNSFWToggle = !user || user.showNsfw;
+  const showCheckpointType = types?.length && types.includes('Checkpoint');
 
-  const filterLength = types.length + baseModels.length + (showNSFWToggle && hideNSFW ? 1 : 0);
+  const filterLength =
+    types.length +
+    baseModels.length +
+    (showNSFWToggle && hideNSFW ? 1 : 0) +
+    (checkpointType !== 'all' ? 1 : 0);
   const handleClear = () => {
     setTypes([]);
     setBaseModels([]);
     setHideNSFW(false);
+    setCheckpointType(undefined);
   };
 
   return (
@@ -197,6 +214,34 @@ export function InfiniteModelsFilter() {
               <Checkbox key={index} value={type} label={splitUppercase(type)} />
             ))}
           </Checkbox.Group>
+          {showCheckpointType ? (
+            <>
+              <Divider label="Chekpoint type" labelProps={{ weight: 'bold' }} />
+              <SegmentedControl
+                my={5}
+                value={checkpointType}
+                size="xs"
+                color="blue"
+                styles={(theme) => ({
+                  root: {
+                    border: `1px solid ${
+                      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+                    }`,
+                    background: 'none',
+                  },
+                })}
+                data={[{ label: 'All', value: 'all' }].concat(
+                  Object.values(CheckpointType).map((type) => ({
+                    label: splitUppercase(type),
+                    value: type,
+                  }))
+                )}
+                onChange={(value: CheckpointType | 'all') => {
+                  setCheckpointType(value !== 'all' ? value : undefined);
+                }}
+              />
+            </>
+          ) : null}
           <Divider label="Base model" labelProps={{ weight: 'bold' }} />
           <Checkbox.Group
             value={baseModels}
