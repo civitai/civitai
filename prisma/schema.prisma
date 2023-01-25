@@ -34,12 +34,21 @@ model Account {
   @@unique([provider, providerAccountId])
 }
 
+// We aren't using DB sessions, but next-auth likes this... I guess.
 model Session {
   id           Int      @id @default(autoincrement())
   sessionToken String   @unique
   userId       Int
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SessionInvalidation {
+  userId        Int
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invalidatedAt DateTime @default(now())
+
+  @@id([userId, invalidatedAt])
 }
 
 model User {
@@ -93,6 +102,7 @@ model User {
   answerVotes          AnswerVote[]
   downloads            DownloadHistory[]
   tagsEngaged          TagEngagement[]
+  SessionInvalidation  SessionInvalidation[]
 }
 
 enum UserEngagementType {

@@ -9,6 +9,7 @@ import {
   GetByUsernameSchema,
   ToggleBlockedTagSchema,
 } from '~/server/schema/user.schema';
+import { invalidateSession } from '~/server/utils/session-helpers';
 
 // const xprisma = prisma.$extends({
 //   result: {
@@ -293,7 +294,7 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
     ? { deletedAt: new Date(), status: 'Deleted' }
     : { userId: -1 };
 
-  return await prisma.$transaction([
+  const result = await prisma.$transaction([
     prisma.model.updateMany({ where: { userId: user.id }, data: modelData }),
     prisma.account.deleteMany({ where: { userId: user.id } }),
     prisma.session.deleteMany({ where: { userId: user.id } }),
@@ -302,6 +303,8 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
       data: { deletedAt: new Date(), email: null, username: null },
     }),
   ]);
+  await invalidateSession(id);
+  return result;
 };
 
 export const toggleBlockedTag = async ({
