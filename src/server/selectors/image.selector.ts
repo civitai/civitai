@@ -1,3 +1,4 @@
+import { simpleUserSelect } from './user.selector';
 import { Prisma } from '@prisma/client';
 
 export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
@@ -17,3 +18,20 @@ export { imageSelectWithoutId };
 const image = Prisma.validator<Prisma.ImageArgs>()({ select: imageSelect });
 
 export type ImageModel = Prisma.ImageGetPayload<typeof image>;
+
+export const imageGallerySelect = Prisma.validator<Prisma.ImageSelect>()({
+  ...imageSelect,
+  createdAt: true,
+  user: { select: simpleUserSelect },
+  connections: {
+    select: {
+      model: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+      reviewId: true,
+    },
+  },
+});

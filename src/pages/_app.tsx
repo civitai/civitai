@@ -27,6 +27,7 @@ import { NsfwWorkerProvider } from '~/providers/NsfwWorkerProvider';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { FeatureFlags } from '~/server/services/feature-flags.service';
+import { NavigateBackProvider } from '~/providers/NavigateBackProvider';
 
 dayjs.extend(duration);
 dayjs.extend(relativeTime);
@@ -63,21 +64,23 @@ function MyApp(props: CustomAppProps) {
   const content = env.NEXT_PUBLIC_MAINTENANCE_MODE ? (
     <MaintenanceMode />
   ) : (
-    <SessionProvider session={session}>
-      <CookiesProvider value={cookies}>
-        <FeatureFlagsProvider flags={flags}>
-          <NsfwWorkerProvider>
-            <CustomModalsProvider>
-              <NotificationsProvider>
-                <RoutedContextProvider>
-                  <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                </RoutedContextProvider>
-              </NotificationsProvider>
-            </CustomModalsProvider>
-          </NsfwWorkerProvider>
-        </FeatureFlagsProvider>
-      </CookiesProvider>
-    </SessionProvider>
+    <NavigateBackProvider>
+      <SessionProvider session={session}>
+        <CookiesProvider value={cookies}>
+          <FeatureFlagsProvider flags={flags}>
+            <NsfwWorkerProvider>
+              <CustomModalsProvider>
+                <NotificationsProvider>
+                  <RoutedContextProvider>
+                    <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                  </RoutedContextProvider>
+                </NotificationsProvider>
+              </CustomModalsProvider>
+            </NsfwWorkerProvider>
+          </FeatureFlagsProvider>
+        </CookiesProvider>
+      </SessionProvider>
+    </NavigateBackProvider>
   );
 
   return (

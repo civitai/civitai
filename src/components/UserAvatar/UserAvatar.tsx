@@ -3,6 +3,7 @@ import {
   Avatar,
   AvatarProps,
   BadgeProps,
+  createStyles,
   Group,
   MantineNumberSize,
   MantineSize,
@@ -39,6 +40,7 @@ export function UserAvatar({
 }: Props) {
   textSize ??= mapAvatarTextSize[size].textSize;
   subTextSize ??= mapAvatarTextSize[size].subTextSize;
+  const { classes, cx } = useStyles();
   const avatar = (
     <Group align="center" spacing={spacing} noWrap>
       <Avatar
@@ -74,7 +76,9 @@ export function UserAvatar({
 
   return linkToProfile ? (
     <Link href={`/user/${user?.username}`} passHref>
-      <Anchor variant="text">{avatar}</Anchor>
+      <Anchor variant="text" className={classes.link}>
+        {avatar}
+      </Anchor>
     </Link>
   ) : (
     avatar
@@ -95,3 +99,11 @@ type Props = {
   textSize?: MantineSize;
   subTextSize?: MantineSize;
 };
+
+const useStyles = createStyles((theme) => ({
+  link: {
+    '&:hover': {
+      textDecoration: 'underline',
+    },
+  },
+}));

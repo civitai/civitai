@@ -8,7 +8,6 @@ import {
   createStyles,
   Grid,
   Group,
-  Loader,
   Menu,
   Stack,
   Text,
@@ -92,7 +91,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
-import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
 
 //TODO - Break model query into multiple queries
 /*
@@ -275,13 +274,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     return () => router.beforePopState(() => true);
   }, [router, id]); // Add any state variables to dependencies array if needed.
 
-  if (loadingModel)
-    return (
-      <AbsoluteCenter>
-        <Loader size="xl" />
-      </AbsoluteCenter>
-    );
-
+  if (loadingModel) return <PageLoader />;
   if (!model) return <NotFound />;
 
   const isModerator = currentUser?.isModerator ?? false;
@@ -313,13 +306,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   );
 
   if (!!edit && model && isOwner) return <ModelForm model={model} />;
-  if (model.nsfw && !currentUser)
-    return (
-      <>
-        {meta}
-        <SensitiveShield redirectTo={router.asPath} />;
-      </>
-    );
+  if (model.nsfw && !currentUser) return <SensitiveShield redirectTo={router.asPath} meta={meta} />;
 
   const handleDeleteModel = () => {
     openConfirmModal({

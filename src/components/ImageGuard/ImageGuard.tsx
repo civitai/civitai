@@ -10,7 +10,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageModel } from '~/server/selectors/image.selector';
 import { isDefined } from '~/utils/type-guards';
 export type ImageGuardConnect = {
-  entityType: 'model' | 'review';
+  entityType: 'model' | 'modelVersion' | 'review' | 'user';
   entityId: number;
 };
 // #region [store]
