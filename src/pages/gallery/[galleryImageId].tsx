@@ -9,26 +9,13 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { useMemo } from 'react';
 import { GalleryCarousel } from '~/components/Gallery/GalleryCarousel';
-import {
-  createStyles,
-  Paper,
-  MantineProvider,
-  Card,
-  Group,
-  CloseButton,
-  ActionIcon,
-} from '@mantine/core';
+import { createStyles, MantineProvider, Card, Group, CloseButton, ActionIcon } from '@mantine/core';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconFlag, IconInfoCircle, IconShare, IconDotsVertical } from '@tabler/icons';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { QS } from '~/utils/qs';
-
-// TODO - mobile first approach
-/*
-  reconsider navbar design (consider artstation)
-*/
 
 export default function GalleryImageDetail() {
   const router = useRouter();
@@ -75,7 +62,6 @@ export default function GalleryImageDetail() {
 
   return (
     <div className={classes.root}>
-      {/* TODO - Visible on mobile when not active */}
       <CloseButton
         style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
         size="lg"

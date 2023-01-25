@@ -8,6 +8,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useRef, useState } from 'react';
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
 import { QS } from '~/utils/qs';
+import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 
 /**
  * Conserve aspect ratio of the original region. Useful when shrinking/enlarging
@@ -52,24 +53,10 @@ export function GalleryCarousel({ current, images, className, connect }: Gallery
   const nextIndex = index + 1;
 
   // #region [aspect ratio calculations]
-  // used for getting/setting correct aspectRatio of canvas
-  const containerRef = useRef<HTMLDivElement>(null);
-  const container = {
-    width: containerRef.current?.clientWidth ?? 0,
-    height: containerRef.current?.clientHeight ?? 0,
-  };
-  const getAspectRatio = () =>
-    calculateAspectRatioFit(
-      current.width ?? 1200,
-      current.height ?? 1200,
-      container.width,
-      container.height
-    );
-
-  const [resized, setResized] = useDebouncedState(0, 200);
-  const { width, height } = getAspectRatio();
-  const handleResize = () => setResized(resized + 1); // use this to reset component
-  useWindowEvent('resize', handleResize);
+  const { ref, height, width } = useAspectRatioFit({
+    height: current.height ?? 1200,
+    width: current.width ?? 1200,
+  });
   // #endregion
 
   // #region [navigation]
@@ -93,7 +80,7 @@ export function GalleryCarousel({ current, images, className, connect }: Gallery
   // #endregion
 
   return (
-    <div ref={containerRef} className={cx(classes.root, className)}>
+    <div ref={ref} className={cx(classes.root, className)}>
       {images.length > 0 && (
         <>
           <UnstyledButton className={cx(classes.control, classes.prev)} onClick={handlePrev}>

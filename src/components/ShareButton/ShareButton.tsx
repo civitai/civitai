@@ -13,7 +13,9 @@ export function ShareButton({
 }) {
   const router = useRouter();
   const isMobile = useIsMobile();
-  const url = `${window.location.origin}${initialUrl ?? router.asPath}`;
+  const origin =
+    typeof window !== 'undefined' && window.location.origin ? window.location.origin : '';
+  const url = `${origin}${initialUrl ?? router.asPath}`;
 
   return isMobile ? (
     <MobileShare url={url}>{children}</MobileShare>
