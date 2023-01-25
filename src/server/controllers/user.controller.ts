@@ -153,10 +153,7 @@ export const deleteUserHandler = async ({
 
   try {
     const user = await deleteUser(input);
-
-    if (!user) {
-      throw throwNotFoundError(`No user with id ${id}`);
-    }
+    if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
     return user;
   } catch (error) {

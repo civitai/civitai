@@ -1,6 +1,7 @@
 import { Stack, Button, Alert, Card, Title } from '@mantine/core';
-import { useSession } from 'next-auth/react';
 import { z } from 'zod';
+
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputProfileImageUpload, InputText, useForm } from '~/libs/form';
 import { reloadSession } from '~/utils/next-auth-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
@@ -15,7 +16,7 @@ const schema = z.object({
 });
 
 export function ProfileCard() {
-  const { data: session } = useSession();
+  const currentUser = useCurrentUser();
   const utils = trpc.useContext();
 
   const { mutate, isLoading, error } = trpc.user.update.useMutation({
@@ -35,12 +36,12 @@ export function ProfileCard() {
   const form = useForm({
     schema,
     mode: 'onChange',
-    defaultValues: session?.user,
+    defaultValues: { ...currentUser },
   });
 
   return (
     <Card withBorder>
-      <Form form={form} onSubmit={(data) => mutate({ id: session?.user?.id, ...data })}>
+      <Form form={form} onSubmit={(data) => mutate({ id: currentUser?.id, ...data })}>
         <Stack>
           <Title order={2}>Profile</Title>
           {error && (
