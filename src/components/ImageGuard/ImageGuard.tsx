@@ -1,6 +1,6 @@
 import { Button, Group, Popover, Stack, ThemeIcon, Text, Badge, Box, Sx } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconLock, IconPlus } from '@tabler/icons';
+import { IconEye, IconEyeOff, IconLock, IconPlus } from '@tabler/icons';
 import { SessionUser } from 'next-auth';
 import { useRouter } from 'next/router';
 import React, { cloneElement, createContext, useContext, useState } from 'react';
@@ -52,7 +52,7 @@ const useStore = create<SfwStore>()(
 
 // #region [ImageGuardContext]
 type ImageGuardState = {
-  images: ImageModel[];
+  images: Array<ImageModel & { imageNsfw: boolean }>;
   connect: ImageGuardConnect;
   nsfw?: boolean;
   currentUser?: SessionUser | null;
@@ -70,8 +70,10 @@ const useImageGuardContext = () => {
     - use case: home page, model card, toggle image - since I don't have all the images yet, I need to be able to still manage nsfw state for all the images without having the knowledge of which images are nsfw
 */
 
+type CustomImageModel = ImageModel & { imageNsfw?: boolean };
+
 type ImageGuardProps = {
-  images: ImageModel[];
+  images: CustomImageModel[];
   connect: ImageGuardConnect;
   render: (image: ImageModel, index: number) => React.ReactNode;
   /** Make all images nsfw by default */
@@ -96,8 +98,8 @@ export function ImageGuard({
     .filter(isDefined)
     .filter((x) => x.id)
     .map((image) => {
-      const nsfw = (globalNsfw || image.nsfw) && shouldBlur;
-      return { ...image, nsfw };
+      const nsfw = image.nsfw && shouldBlur;
+      return { ...image, nsfw, imageNsfw: image.nsfw };
     });
 
   // if the showConnection is true, set nsfw = false for all images
@@ -117,7 +119,7 @@ export function ImageGuard({
   );
 }
 
-const ImageGuardContentCtx = createContext<{ image: ImageModel }>({} as any);
+const ImageGuardContentCtx = createContext<{ image: CustomImageModel }>({} as any);
 const useImageGuardContentContext = () => {
   const context = useContext(ImageGuardContentCtx);
   if (!context)
@@ -230,6 +232,8 @@ ImageGuard.ToggleConnect = function ToggleConnect({
   sx?: Sx;
   className?: string;
 }) {
+  const currentUser = useCurrentUser();
+  const { isModerator, blurNsfw: toggleable } = currentUser ?? {};
   const { connect, nsfw } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
   const showImage = useStore((state) => state.showingImages[image?.id.toString()] ?? false);
@@ -238,18 +242,19 @@ ImageGuard.ToggleConnect = function ToggleConnect({
   );
   const toggleConnect = useStore((state) => state.toggleConnection);
 
-  if (!image.nsfw) return null;
+  const showToModerator = image.imageNsfw && isModerator;
+  if (!image.nsfw && !showToModerator) return null;
 
   const showing = showConnect ?? showImage;
-
   return (
     <ImageGuardPopover>
       <Badge
         color="red"
         variant="filled"
         size="sm"
+        px={6}
         sx={(theme) => ({
-          cursor: 'pointer',
+          cursor: toggleable ? 'pointer' : undefined,
           userSelect: 'none',
           ...(position !== 'static'
             ? {
@@ -263,16 +268,21 @@ ImageGuard.ToggleConnect = function ToggleConnect({
           ...(sx && sx instanceof Function ? sx(theme) : sx),
         })}
         className={className}
-        onClick={() => toggleConnect(connect)}
+        onClick={toggleable ? () => toggleConnect(connect) : undefined}
       >
         <Group spacing={5} noWrap>
           <Text
             weight="bold"
             sx={{
               whiteSpace: 'nowrap',
-              borderRight: '1px solid rgba(0,0,0,.15)',
-              boxShadow: '0 1px 0 1px rgba(255,255,255,.1)',
-              paddingRight: 5,
+
+              ...(toggleable
+                ? {
+                    borderRight: '1px solid rgba(0,0,0,.15)',
+                    boxShadow: '0 1px 0 1px rgba(255,255,255,.1)',
+                    paddingRight: 5,
+                  }
+                : {}),
             }}
             component="span"
           >
@@ -281,7 +291,12 @@ ImageGuard.ToggleConnect = function ToggleConnect({
               <IconPlus size={8} strokeWidth={5} />
             </Box>
           </Text>
-          {showing ? 'hide' : 'show'}
+          {toggleable &&
+            (showing ? (
+              <IconEyeOff size={14} strokeWidth={2.5} />
+            ) : (
+              <IconEye size={14} strokeWidth={2.5} />
+            ))}
         </Group>
       </Badge>
     </ImageGuardPopover>
