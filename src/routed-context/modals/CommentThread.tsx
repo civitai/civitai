@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { CommentSection } from '~/components/CommentSection/CommentSection';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { CommentDiscussionMenu } from '~/components/Model/ModelDiscussion/CommentDiscussionMenu';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -103,7 +104,10 @@ export default createRoutedContext({
                 withUsername
                 linkToProfile
               />
-              <CloseButton onClick={context.close} />
+              <Group>
+                <CommentDiscussionMenu comment={comment} user={currentUser} />
+                <CloseButton onClick={context.close} />
+              </Group>
             </Group>
             <Stack spacing="xl">
               <RenderHtml html={comment.content} withMentions />

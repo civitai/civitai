@@ -81,7 +81,7 @@ export function RoutedContextProvider({ children }: { children: React.ReactEleme
     const { modal, ...query } = router.query;
     const prev = sessionStorage.getItem('prevPath');
 
-    if (!closing) {
+    if (modal && !closing) {
       if (!prev)
         await router.push(
           { pathname: router.asPath.split('?')[0], query },

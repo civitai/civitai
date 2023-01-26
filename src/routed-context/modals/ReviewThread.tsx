@@ -27,6 +27,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { trpc } from '~/utils/trpc';
+import { ReviewDiscussionMenu } from '~/components/Model/ModelDiscussion/ReviewDiscussionMenu';
 
 const TRANSITION_DURATION = 200;
 
@@ -129,7 +130,10 @@ export default createRoutedContext({
                 />
                 <Rating value={review.rating} fractions={2} readOnly />
               </Group>
-              <CloseButton onClick={context.close} />
+              <Group>
+                <ReviewDiscussionMenu review={review} user={currentUser} replaceNavigation />
+                <CloseButton onClick={context.close} />
+              </Group>
             </Group>
             <Grid gutter="xl">
               <Grid.Col span={12}>
