@@ -34,6 +34,7 @@ import {
   IconLicense,
   IconMessage,
   IconMessageCircle2,
+  IconRecycle,
   IconStar,
   IconTagOff,
   IconTrash,
@@ -92,6 +93,8 @@ import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
+import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 
 //TODO - Break model query into multiple queries
 /*
@@ -107,9 +110,6 @@ export const getServerSideProps: GetServerSideProps<{
   id: number;
   slug: string | string[] | null;
 }> = async (context) => {
-  // console.log('------------------------');
-  // console.log(context.req.url);
-  // console.log('------------------------');
   const isClient = context.req.url?.startsWith('/_next/data');
   const params = (context.params ?? {}) as { id: string; slug: string[] };
   const id = Number(params.id);
@@ -183,13 +183,17 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     });
 
   const deleteMutation = trpc.model.delete.useMutation({
-    onSuccess() {
+    async onSuccess(_, { permanently }) {
+      if (!permanently) await queryUtils.model.getById.invalidate({ id });
+      await queryUtils.model.getAll.invalidate();
+
       showSuccessNotification({
         title: 'Your model has been deleted',
         message: 'Successfully deleted the model',
       });
       closeAllModals();
-      router.replace('/'); // Redirect to the models or user page once available
+
+      if (!isModerator || permanently) await router.replace('/');
     },
     onError(error) {
       showErrorNotification({
@@ -202,6 +206,15 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const unpublishModelMutation = trpc.model.unpublish.useMutation({
     async onSuccess() {
       await queryUtils.model.getById.invalidate({ id });
+    },
+    onError(error) {
+      showErrorNotification({ error: new Error(error.message) });
+    },
+  });
+  const restoreModelMutation = trpc.model.restore.useMutation({
+    async onSuccess() {
+      await queryUtils.model.getById.invalidate({ id });
+      await queryUtils.model.getAll.invalidate();
     },
     onError(error) {
       showErrorNotification({ error: new Error(error.message) });
@@ -283,6 +296,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
   const nsfw = userNotBlurringNsfw && showNsfwRequested && model.nsfw === true;
   const isFavorite = favoriteModels.find((modelId) => modelId === id);
+  const deleted = !!model.deletedAt && model.status === 'Deleted';
 
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model.modelVersions[0];
@@ -305,21 +319,36 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     />
   );
 
-  if (!!edit && model && isOwner) return <ModelForm model={model} />;
+  if ((!!edit && isOwner && !deleted) || (!!edit && isModerator && deleted))
+    return <ModelForm model={model} />;
   if (model.nsfw && !currentUser) return <SensitiveShield redirectTo={router.asPath} meta={meta} />;
 
   const handleDeleteModel = () => {
     openConfirmModal({
       title: 'Delete Model',
       children: (
-        <Text size="sm">
-          Are you sure you want to delete this model? This action is destructive and you will have
-          to contact support to restore your data.
-        </Text>
+        <Stack>
+          <Text size="sm">
+            Are you sure you want to delete this model? This action is destructive and you will have
+            to contact support to restore your data.
+          </Text>
+          {isModerator && (
+            <Button
+              variant="outline"
+              color="red"
+              onClick={() => deleteMutation.mutate({ id: model.id, permanently: true })}
+              loading={deleteMutation.isLoading}
+              fullWidth
+            >
+              Permanently delete this model
+            </Button>
+          )}
+        </Stack>
       ),
       centered: true,
       labels: { confirm: 'Delete Model', cancel: "No, don't delete it" },
       confirmProps: { color: 'red', loading: deleteMutation.isLoading },
+      groupProps: { grow: isModerator },
       closeOnConfirm: false,
       onConfirm: () => {
         if (model) {
@@ -345,6 +374,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   const handleUnpublishModel = () => {
     unpublishModelMutation.mutate({ id });
+  };
+
+  const handleRestoreModel = () => {
+    restoreModelMutation.mutate({ id });
   };
 
   const handleToggleFavorite = () => {
@@ -510,7 +543,17 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     Unpublish
                   </Menu.Item>
                 )}
-                {currentUser && isOwner && (
+                {currentUser && isModerator && deleted && (
+                  <Menu.Item
+                    icon={<IconRecycle size={14} stroke={1.5} />}
+                    color="green"
+                    onClick={handleRestoreModel}
+                    disabled={restoreModelMutation.isLoading}
+                  >
+                    Restore
+                  </Menu.Item>
+                )}
+                {currentUser && isOwner && !deleted && (
                   <>
                     <Menu.Item
                       color={theme.colors.red[6]}
@@ -556,14 +599,15 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Menu.Dropdown>
             </Menu>
           </Group>
-          {model.status === ModelStatus.Unpublished && (
+          {(model.status === ModelStatus.Unpublished || deleted) && (
             <Alert color="red">
               <Group spacing="xs" noWrap align="flex-start">
                 <ThemeIcon color="red">
                   <IconExclamationMark />
                 </ThemeIcon>
                 <Text size="md">
-                  This model has been unpublished and is not visible to the community.
+                  This model has been {deleted ? 'deleted' : 'unpublished'} and is not visible to
+                  the community.
                 </Text>
               </Group>
             </Alert>
@@ -585,82 +629,82 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         <Grid gutter="xl">
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
             <Stack>
-              {latestVersion && (
-                <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
-                  <Stack sx={{ flex: 1 }} spacing={4}>
-                    <MultiActionButton
-                      component="a"
-                      href={createModelFileDownloadUrl({
-                        versionId: latestVersion.id,
-                        primary: true,
-                      })}
-                      leftIcon={<IconDownload size={16} />}
-                      disabled={!primaryFile}
-                      menuItems={
-                        latestVersion?.files.length > 1
-                          ? latestVersion?.files.map((file, index) => (
-                              <Menu.Item
-                                key={index}
-                                component="a"
-                                py={4}
-                                icon={<VerifiedText file={file} iconOnly />}
-                                href={createModelFileDownloadUrl({
-                                  versionId: latestVersion.id,
-                                  type: file.type,
-                                  format: file.format,
-                                })}
-                                download
-                              >
-                                {`${startCase(file.type)}${
-                                  ['Model', 'Pruned Model'].includes(file.type)
-                                    ? ' ' + file.format
-                                    : ''
-                                } (${formatKBytes(file.sizeKB)})`}
-                              </Menu.Item>
-                            ))
-                          : []
-                      }
-                      menuTooltip="Other Downloads"
-                      download
-                    >
-                      <Text align="center">
-                        {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+              <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
+                <Stack sx={{ flex: 1 }} spacing={4}>
+                  <MultiActionButton
+                    component="a"
+                    href={createModelFileDownloadUrl({
+                      versionId: latestVersion.id,
+                      primary: true,
+                    })}
+                    leftIcon={<IconDownload size={16} />}
+                    disabled={!primaryFile}
+                    menuItems={
+                      latestVersion?.files.length > 1
+                        ? latestVersion?.files.map((file, index) => (
+                            <Menu.Item
+                              key={index}
+                              component="a"
+                              py={4}
+                              icon={<VerifiedText file={file} iconOnly />}
+                              href={createModelFileDownloadUrl({
+                                versionId: latestVersion.id,
+                                type: file.type,
+                                format: file.format,
+                              })}
+                              download
+                            >
+                              {`${startCase(file.type)}${
+                                ['Model', 'Pruned Model'].includes(file.type)
+                                  ? ' ' + file.format
+                                  : ''
+                              } (${formatKBytes(file.sizeKB)})`}
+                            </Menu.Item>
+                          ))
+                        : []
+                    }
+                    menuTooltip="Other Downloads"
+                    download
+                  >
+                    <Text align="center">
+                      {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+                    </Text>
+                  </MultiActionButton>
+                  {primaryFile && (
+                    <Group position="apart" noWrap spacing={0}>
+                      <VerifiedText file={primaryFile} />
+                      <Text size="xs" color="dimmed">
+                        {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+                        {primaryFile.format}
                       </Text>
-                    </MultiActionButton>
-                    {primaryFile && (
-                      <Group position="apart" noWrap spacing={0}>
-                        <VerifiedText file={primaryFile} />
-                        <Text size="xs" color="dimmed">
-                          {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                          {primaryFile.format}
-                        </Text>
-                      </Group>
-                    )}
-                  </Stack>
+                    </Group>
+                  )}
+                </Stack>
 
-                  <RunButton modelVersionId={latestVersion.id} />
-                  <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-                    <div>
-                      <LoginRedirect reason="favorite-model">
-                        <Button
-                          onClick={() => handleToggleFavorite()}
-                          color={isFavorite ? 'red' : 'gray'}
-                          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                        >
-                          <IconHeart color="#fff" />
-                        </Button>
-                      </LoginRedirect>
-                    </div>
-                  </Tooltip>
-                </Group>
-              )}
-              {latestVersion && (
-                <ModelFileAlert
-                  versionId={latestVersion.id}
-                  modelType={model.type}
-                  files={latestVersion.files}
-                />
-              )}
+                <RunButton modelVersionId={latestVersion.id} />
+                <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
+                  <div>
+                    <LoginRedirect reason="favorite-model">
+                      <Button
+                        onClick={() => handleToggleFavorite()}
+                        color={isFavorite ? 'red' : 'gray'}
+                        sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                      >
+                        <IconHeart color="#fff" />
+                      </Button>
+                    </LoginRedirect>
+                  </div>
+                </Tooltip>
+              </Group>
+              <EarlyAccessAlert
+                versionId={latestVersion.id}
+                deadline={latestVersion.earlyAccessDeadline}
+              />
+              <ModelFileAlert
+                versionId={latestVersion.id}
+                modelType={model.type}
+                files={latestVersion.files}
+              />
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
                 <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>

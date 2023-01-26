@@ -1,11 +1,14 @@
 import { Alert, Button, Group, LoadingOverlay, Modal, Stack, ThemeIcon, Text } from '@mantine/core';
-import { IconExclamationMark } from '@tabler/icons';
+import { IconAlertCircle, IconExclamationMark } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
+import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { Form, InputImageUpload, InputRating, InputRTE, InputSelect, useForm } from '~/libs/form';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
+import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReviewUpsertInput, reviewUpsertSchema } from '~/server/schema/review.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -17,13 +20,16 @@ export default createRoutedContext({
   }),
   Element: ({ context, props: { reviewId } }) => {
     const router = useRouter();
+    const queryUtils = trpc.useContext();
+    const { openContext } = useRoutedContext();
     const modelId = Number(router.query.id);
 
     const [isUploading, setIsUploading] = useState(false);
     const [isComplete, setIsComplete] = useState(true);
     const [isBlocked, setIsBlocked] = useState(false);
+    const [nsfwPoi, setNsfwPoi] = useState(false);
+    const [catchNavigation, setCatchNavigation] = useState(true);
 
-    const queryUtils = trpc.useContext();
     const {
       data: review,
       isLoading: reviewLoading,
@@ -32,11 +38,7 @@ export default createRoutedContext({
       { id: reviewId ?? 0 },
       { enabled: !!reviewId, keepPreviousData: false }
     );
-    // const { data: versions = [] } = trpc.model.getVersions.useQuery({ id: modelId });
     const { data: modelDetail } = trpc.model.getModelDetailsForReview.useQuery({ id: modelId });
-    const { mutate, isLoading } = trpc.review.upsert.useMutation();
-
-    const loadingReview = (reviewLoading || reviewRefetching) && !!reviewId;
 
     const form = useForm({
       schema: reviewUpsertSchema,
@@ -48,24 +50,7 @@ export default createRoutedContext({
       shouldUnregister: false,
     });
 
-    useEffect(() => {
-      if (review && !loadingReview) form.reset(review as any);  // eslint-disable-line
-    }, [review, loadingReview]) //eslint-disable-line
-
-
-    const [nsfwPoi, setNsfwPoi] = useState(false);
-    useEffect(() => {
-      const subscription = form.watch((value, { name }) => {
-        if (!modelDetail) return;
-        if (name === 'nsfw' || name === 'images' || name === undefined) {
-          const { nsfw, images } = value;
-          const hasNsfwImages = images?.filter(isDefined).some((x) => x.nsfw) ?? false;
-          setNsfwPoi(modelDetail.poi && (nsfw || hasNsfwImages));
-        }
-      });
-      return () => subscription.unsubscribe();
-    }, [form, modelDetail]);
-
+    const { mutate, isLoading } = trpc.review.upsert.useMutation();
     const handleSubmit = (data: ReviewUpsertInput) => {
       mutate(data, {
         onSuccess: async (_, { modelId }) => {
@@ -83,12 +68,38 @@ export default createRoutedContext({
       });
     };
 
+    const loadingReview = (reviewLoading || reviewRefetching) && !!reviewId;
+    const { isDirty, isSubmitted } = form.formState;
+    const rating = form.watch('rating');
+    useCatchNavigation({ unsavedChanges: catchNavigation && isDirty && !isSubmitted });
+
+    const goToCommentModal = () => {
+      localStorage.setItem('commentContent', form.getValues().text ?? '');
+      setCatchNavigation(false);
+      openContext('commentEdit', {}, { replace: true });
+    };
+
+    useEffect(() => {
+      if (review && !loadingReview) form.reset(review as any); // eslint-disable-line
+    }, [review, loadingReview]) //eslint-disable-line
+
+    useEffect(() => {
+      const subscription = form.watch((value, { name }) => {
+        if (!modelDetail) return;
+        if (name === 'nsfw' || name === 'images' || name === undefined) {
+          const { nsfw, images } = value;
+          const hasNsfwImages = images?.filter(isDefined).some((x) => x.nsfw) ?? false;
+          setNsfwPoi(modelDetail.poi && (nsfw || hasNsfwImages));
+        }
+      });
+      return () => subscription.unsubscribe();
+    }, [form, modelDetail]);
+
     return (
       <Modal
         title={reviewId ? 'Editing review' : 'Add a review'}
         opened={context.opened}
         onClose={context.close}
-        styles={{}}
       >
         <LoadingOverlay visible={loadingReview} />
         <Form form={form} onSubmit={handleSubmit}>
@@ -105,6 +116,19 @@ export default createRoutedContext({
               required
             />
             <InputRating name="rating" label="Rate the model" size="xl" withAsterisk required />
+            {rating <= 3 && !reviewId && (
+              <AlertWithIcon icon={<IconAlertCircle size={14} />} iconColor="yellow" color="yellow">
+                {`If you're having trouble with this model or reproducing an example image, `}
+                <Text
+                  variant="link"
+                  sx={{ cursor: 'pointer', lineHeight: 1 }}
+                  onClick={goToCommentModal}
+                  span
+                >
+                  consider leaving a comment instead.
+                </Text>
+              </AlertWithIcon>
+            )}
             <InputRTE
               name="text"
               label="Comments or feedback"

@@ -1,5 +1,6 @@
 import { FileWithPath } from '@mantine/dropzone';
 import exifr from 'exifr';
+import { unescape } from 'lodash';
 import { ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
 import blocked from './blocklist.json';
 
@@ -32,7 +33,8 @@ export async function getMetadata(file: FileWithPath) {
 // #region [infra]
 function parseMetadata(meta: string): Record<string, unknown> {
   if (!meta) return {};
-  meta = meta.replace('UNICODE', '');
+  meta = meta.replace('UNICODE', '').replace(/�/g, '');
+  meta = unescape(meta);
   const { parse } = parsers.find((x) => x.canHandle(meta)) ?? {};
   if (!parse) return {};
 
@@ -58,6 +60,8 @@ const decoder = new TextDecoder('utf-8');
 // #endregion
 
 // #region [parsers]
+const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.]+):([0-9.]+)>/g;
+const automaticNameHash = /([a-zA-Z0-9_\.]+)\(([a-zA-Z0-9]+)\)/;
 const automaticSDKeyMap = new Map<string, keyof ImageMetaProps>([
   ['Seed', 'seed'],
   ['CFG scale', 'cfgScale'],
@@ -81,16 +85,66 @@ const automaticSDParser = createMetadataParser(
       metadata[propKey] = v.trim();
     }
 
+    // Extract prompts
     const [prompt, negativePrompt] = metaLines
       .join('\n')
       .split('Negative prompt:')
       .map((x) => x.trim());
     metadata.prompt = prompt;
     metadata.negativePrompt = negativePrompt;
+
+    // Extract resources
+    const extranets = [...prompt.matchAll(automaticExtraNetsRegex)];
+    const resources: SDResource[] = extranets.map(([, type, name, weight]) => ({
+      type,
+      name,
+      weight: parseFloat(weight),
+    }));
+
+    if (metadata['Model'] && metadata['Model hash'])
+      resources.push({
+        type: 'model',
+        name: metadata['Model'] as string,
+        hash: metadata['Model hash'] as string,
+      });
+
+    if (metadata['Hypernet'] && metadata['Hypernet strength'])
+      resources.push({
+        type: 'hypernet',
+        name: metadata['Hypernet'] as string,
+        weight: parseFloat(metadata['Hypernet strength'] as string),
+      });
+
+    if (metadata['AddNet Enabled'] === 'True') {
+      let i = 1;
+      while (true) {
+        const fullname = metadata[`AddNet Model ${i}`] as string;
+        if (!fullname) break;
+        const [, name, hash] = fullname.match(automaticNameHash) ?? [];
+
+        resources.push({
+          type: (metadata[`AddNet Module ${i}`] as string).toLowerCase(),
+          name,
+          hash,
+          weight: parseFloat(metadata[`AddNet Weight ${i}`] as string),
+        });
+        i++;
+      }
+    }
+
+    metadata.resources = resources;
+
     return metadata;
   }
 );
 const parsers = [automaticSDParser];
+
+type SDResource = {
+  type: string;
+  name: string;
+  weight?: number;
+  hash?: string;
+};
 // #endregion
 
 // #region [encoders]
@@ -104,7 +158,7 @@ export function encodeMetadata(
 const automaticSDEncodeMap = new Map<keyof ImageMetaProps, string>(
   Array.from(automaticSDKeyMap, (a) => a.reverse()) as Iterable<readonly [string, string]>
 );
-function automaticEncoder({ prompt, negativePrompt, ...other }: ImageMetaProps) {
+function automaticEncoder({ prompt, negativePrompt, resources, ...other }: ImageMetaProps) {
   const lines = [prompt];
   if (negativePrompt) lines.push(`Negative prompt: ${negativePrompt}`);
   const fineDetails = [];

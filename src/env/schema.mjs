@@ -48,6 +48,10 @@ export const serverSchema = z.object({
   SCANNING_TOKEN: z.string(),
   UNAUTHENTICATED_DOWNLOAD: z.preprocess((val) => val === true || val === 'true', z.boolean()),
   UNAUTHENTICATE_LIST_NSFW: z.preprocess((val) => val === true || val === 'true', z.boolean()),
+  LOGGING: z.preprocess((value) => {
+    const str = String(value);
+    return str.split(',');
+  }, z.array(z.string())),
 });
 
 /**

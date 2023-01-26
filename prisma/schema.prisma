@@ -34,12 +34,21 @@ model Account {
   @@unique([provider, providerAccountId])
 }
 
+// We aren't using DB sessions, but next-auth likes this... I guess.
 model Session {
   id           Int      @id @default(autoincrement())
   sessionToken String   @unique
   userId       Int
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SessionInvalidation {
+  userId        Int
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invalidatedAt DateTime @default(now())
+
+  @@id([userId, invalidatedAt])
 }
 
 model User {
@@ -81,6 +90,7 @@ model User {
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
   engagedUsers         UserEngagement[]           @relation("engagedUsers")
   engagedModels        ModelEngagement[]
+  engagedModelVersions ModelVersionEngagement[]
   metrics              UserMetric[]
   reports              Report[]
   questions            Question[]
@@ -92,8 +102,10 @@ model User {
   answerVotes          AnswerVote[]
   downloads            DownloadHistory[]
   tagsEngaged          TagEngagement[]
-  imageReactions       ImageReaction[]
-  imageConnections     ImageConnection[]
+
+  imageReactions      ImageReaction[]
+  imageConnections    ImageConnection[]
+  sessionInvalidation SessionInvalidation[]
 }
 
 enum UserEngagementType {
@@ -188,6 +200,7 @@ enum ModelStatus {
   Published
   Unpublished
   GatherInterest
+  Deleted
 }
 
 enum CommercialUse {
@@ -197,24 +210,31 @@ enum CommercialUse {
   Sell
 }
 
+enum CheckpointType {
+  Trained
+  Merge
+}
+
 model Model {
-  id            Int         @id @default(autoincrement())
-  name          String
-  description   String?
-  type          ModelType
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  lastVersionAt DateTime?
-  nsfw          Boolean     @default(false)
-  tosViolation  Boolean     @default(false)
-  poi           Boolean     @default(false)
-  userId        Int
-  user          User        @relation(fields: [userId], references: [id])
-  status        ModelStatus @default(Draft)
-  publishedAt   DateTime?
-  fromImport    Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
-  fromImportId  Int?        @unique
-  meta          Json        @default("{}")
+  id             Int             @id @default(autoincrement())
+  name           String
+  description    String?
+  type           ModelType
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  lastVersionAt  DateTime?
+  nsfw           Boolean         @default(false)
+  tosViolation   Boolean         @default(false)
+  poi            Boolean         @default(false)
+  userId         Int
+  user           User            @relation(fields: [userId], references: [id])
+  status         ModelStatus     @default(Draft)
+  publishedAt    DateTime?
+  fromImport     Import?         @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImportId   Int?            @unique
+  meta           Json            @default("{}")
+  deletedAt      DateTime?
+  checkpointType CheckpointType?
 
   // Licensing
   allowNoCredit         Boolean       @default(true)
@@ -272,23 +292,24 @@ model ModelEngagement {
 }
 
 model ModelVersion {
-  id           Int         @id @default(autoincrement())
-  index        Int?
-  name         String
-  description  String?
-  modelId      Int
-  model        Model       @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  trainedWords String[]
-  steps        Int?
-  epochs       Int?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  status       ModelStatus @default(Draft)
-  fromImport   Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
-  fromImportId Int?
-  inaccurate   Boolean     @default(false)
-  baseModel    String?
-  meta         Json        @default("{}")
+  id                   Int         @id @default(autoincrement())
+  index                Int?
+  name                 String
+  description          String?
+  modelId              Int
+  model                Model       @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  trainedWords         String[]
+  steps                Int?
+  epochs               Int?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  status               ModelStatus @default(Draft)
+  fromImport           Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImportId         Int?
+  inaccurate           Boolean     @default(false)
+  baseModel            String?
+  meta                 Json        @default("{}")
+  earlyAccessTimeFrame Int         @default(0)
 
   reviews         Review[]
   images          ImagesOnModels[]
@@ -297,7 +318,23 @@ model ModelVersion {
   files           ModelFile[]
   runStrategies   RunStrategy[]
   downloads       DownloadHistory[]
-  ImageConnection ImageConnection[]
+  imageConnection ImageConnection[]
+  engagements     ModelVersionEngagement[]
+}
+
+enum ModelVersionEngagementType {
+  Notify
+}
+
+model ModelVersionEngagement {
+  userId         Int
+  user           User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelVersionId Int
+  modelVersion   ModelVersion               @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  type           ModelVersionEngagementType
+  createdAt      DateTime                   @default(now())
+
+  @@id([userId, modelVersionId])
 }
 
 enum ModelHashType {
@@ -1322,5 +1359,5 @@ model ImageConnection {
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
   reviewId       Int?
   review         Review?       @relation(fields: [reviewId], references: [id], onDelete: NoAction)
-  // TODO - add index
+  index          Int?
 }

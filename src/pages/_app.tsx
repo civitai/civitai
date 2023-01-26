@@ -5,6 +5,8 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { getCookie, getCookies, setCookie } from 'cookies-next';
 import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
+import isBetween from 'dayjs/plugin/isBetween';
+import minMax from 'dayjs/plugin/minMax';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import type { NextPage } from 'next';
 import type { AppContext, AppProps } from 'next/app';
@@ -30,6 +32,8 @@ import type { FeatureFlags } from '~/server/services/feature-flags.service';
 import { HistoryProvider } from '~/providers/NavigateBackProvider';
 
 dayjs.extend(duration);
+dayjs.extend(isBetween);
+dayjs.extend(minMax);
 dayjs.extend(relativeTime);
 
 type CustomNextPage = NextPage & {

@@ -9,6 +9,7 @@ import {
   GetByUsernameSchema,
   ToggleBlockedTagSchema,
 } from '~/server/schema/user.schema';
+import { invalidateSession } from '~/server/utils/session-helpers';
 
 // const xprisma = prisma.$extends({
 //   result: {
@@ -18,7 +19,7 @@ import {
 
 export const getUserCreator = async ({ username }: { username: string }) => {
   return prisma.user.findFirst({
-    where: { username },
+    where: { username, deletedAt: null },
     select: {
       id: true,
       image: true,
@@ -67,6 +68,7 @@ export const getUsers = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>(
           }
         : undefined,
       email: email,
+      deletedAt: null,
     },
   });
 };
@@ -99,6 +101,13 @@ export const getUserEngagedModels = ({ id }: { id: number }) => {
   return prisma.user.findUnique({
     where: { id },
     select: { engagedModels: { select: { modelId: true, type: true } } },
+  });
+};
+
+export const getUserEngagedModelVersions = ({ id }: { id: number }) => {
+  return prisma.user.findUnique({
+    where: { id },
+    select: { engagedModelVersions: { select: { modelVersionId: true, type: true } } },
   });
 };
 
@@ -142,6 +151,7 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
       : undefined,
     models: { some: {} },
     id: excludeIds.length ? { notIn: excludeIds } : undefined,
+    deletedAt: null,
   };
   const items = await prisma.user.findMany({
     take,
@@ -183,7 +193,6 @@ export const toggleModelEngagement = async ({
     where: { userId_modelId: { userId, modelId } },
     select: { type: true },
   });
-  console.log(engagement?.type, type);
 
   if (engagement) {
     if (engagement.type === type)
@@ -280,10 +289,22 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
     select: { id: true },
   });
   if (!user) throw throwNotFoundError('Could not find user');
-  if (removeModels) {
-    await prisma.model.deleteMany({ where: { userId: user.id } });
-  }
-  return await prisma.user.delete({ where: { id: user.id } });
+
+  const modelData: Prisma.ModelUpdateManyArgs['data'] = removeModels
+    ? { deletedAt: new Date(), status: 'Deleted' }
+    : { userId: -1 };
+
+  const result = await prisma.$transaction([
+    prisma.model.updateMany({ where: { userId: user.id }, data: modelData }),
+    prisma.account.deleteMany({ where: { userId: user.id } }),
+    prisma.session.deleteMany({ where: { userId: user.id } }),
+    prisma.user.update({
+      where: { id: user.id },
+      data: { deletedAt: new Date(), email: null, username: null },
+    }),
+  ]);
+  await invalidateSession(id);
+  return result;
 };
 
 export const toggleBlockedTag = async ({

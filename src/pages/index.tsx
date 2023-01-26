@@ -23,6 +23,8 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     if (session) {
       // Prefetch user's favorite models
       await ssg.user.getEngagedModels.prefetch(undefined);
+      // Prefetch user's engaged models versions
+      await ssg.user.getEngagedModelVersions.prefetch(undefined);
       // Prefetch users' blocked tags
       await ssg.user.getTags.prefetch({ type: 'Hide' });
     }
@@ -110,8 +112,8 @@ export default Home;
 const useStyles = createStyles((theme) => ({
   welcome: {
     maxWidth: 600,
-    top: 75,
-    marginBottom: -25,
+    top: 'calc(var(--mantine-header-height,0) + 16px)',
+    marginBottom: -35,
     position: 'sticky',
     alignSelf: 'center',
     zIndex: 11,

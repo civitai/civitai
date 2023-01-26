@@ -54,7 +54,6 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { AmbientModelCard } from '~/components/InfiniteModels/AmbientModelCard';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';

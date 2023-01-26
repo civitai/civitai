@@ -1,7 +1,7 @@
 import { usePrevious } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import React, { createContext, useContext, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { QS } from '~/utils/qs';
 
 const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
@@ -33,9 +33,10 @@ const dictionary = {
 type RoutedContext = {
   openContext: <TName extends keyof typeof dictionary>(
     name: TName,
-    props: React.ComponentProps<typeof dictionary[TName]>
+    props: React.ComponentProps<typeof dictionary[TName]>,
+    options?: { replace?: boolean }
   ) => void;
-  closeContext: () => void;
+  closeContext: () => Promise<void>;
 };
 
 const RoutedCtx = createContext<RoutedContext>({} as any);  // eslint-disable-line
@@ -59,43 +60,59 @@ export function RoutedContextProvider({ children }: { children: React.ReactEleme
     if (previous) sessionStorage.setItem('prevPath', previous);
   }, [previous]);
 
-  function openContext<TName extends keyof typeof dictionary>(
-    name: TName,
-    props: React.ComponentProps<typeof dictionary[TName]>
-  ) {
+  const openContext: RoutedContext['openContext'] = (name, props, options) => {
+    const { replace = false } = options || {};
     const [pathname, query] = router.asPath.split('?');
     //TODO - when a value is present in the url params, don't let it be added to the query string
     const ctxProps = { ...QS.parse(query), modal: name, ...props };
+    const navigate = replace ? router.replace : router.push;
 
-    router.push(
+    navigate(
       { pathname, query: { ...router.query, ...ctxProps } },
       { pathname, query: { ...ctxProps } },
-      {
-        shallow: true,
-      }
+      { shallow: true }
     );
-  }
+  };
 
-  function closeContext() {
+  const [closing, setClosing] = useState(false);
+
+  const closeContext: RoutedContext['closeContext'] = async () => {
     // extract the props you don't want to forward
     const { modal, ...query } = router.query;
     const prev = sessionStorage.getItem('prevPath');
-    // console.log(!prev ? 'push' : 'back', { prev });
-    !prev
-      ? router.push(
+
+    if (modal && !closing) {
+      if (!prev)
+        await router.push(
           { pathname: router.asPath.split('?')[0], query },
           { pathname: router.asPath.split('?')[0] },
           { shallow: true }
-        )
-      : router.back();
-  }
+        );
+      else router.back();
+    }
+  };
 
   function renderModal() {
     if (!modal || Array.isArray(modal)) return null;
     const Modal = dictionary[modal as keyof typeof dictionary];
     const [, query] = router.asPath.split('?');
-    return Modal ? <Modal {...(QS.parse(query) as any)} /> : null;  // eslint-disable-line
+
+    return Modal ? <Modal {...(QS.parse(query) as any)} /> : null; // eslint-disable-line
   }
+
+  // Prevent triggering the closing event multiple times while still navigating
+  useEffect(() => {
+    function toggleClosing(toggle: boolean) {
+      return () => setClosing(toggle);
+    }
+    router.events.on('routeChangeStart', toggleClosing(true));
+    router.events.on('routeChangeComplete', toggleClosing(false));
+
+    return () => {
+      router.events.off('routeChangeStart', toggleClosing(true));
+      router.events.off('routeChangeComplete', toggleClosing(false));
+    };
+  }, [router.events]);
 
   return (
     <RoutedCtx.Provider value={{ openContext, closeContext }}>

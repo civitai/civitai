@@ -1,8 +1,15 @@
-import { ModelType, ModelStatus, MetricTimeframe, CommercialUse } from '@prisma/client';
+import {
+  ModelType,
+  ModelStatus,
+  MetricTimeframe,
+  CommercialUse,
+  CheckpointType,
+} from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
 import { ModelSort } from '~/server/common/enums';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
@@ -25,6 +32,7 @@ export const getAllModelsSchema = z.object({
     .optional()
     .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
     .optional(),
+  checkpointType: z.nativeEnum(CheckpointType).optional(),
   baseModels: z
     .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
     .optional()
@@ -67,6 +75,7 @@ export const modelSchema = licensingSchema.extend({
   description: getSanitizedStringSchema().nullish(),
   type: z.nativeEnum(ModelType),
   status: z.nativeEnum(ModelStatus),
+  checkpointType: z.nativeEnum(CheckpointType).nullish(),
   tagsOnModels: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   poi: z.boolean().optional(),
@@ -82,3 +91,6 @@ export const mergePermissionInput = licensingSchema.extend({
   modelId: z.number(),
   permissionDate: z.date().default(new Date()),
 });
+
+export const deleteModelSchema = getByIdSchema.extend({ permanently: z.boolean().optional() });
+export type DeleteModelSchema = z.infer<typeof deleteModelSchema>;

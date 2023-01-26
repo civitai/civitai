@@ -71,6 +71,7 @@
     "arraybuffer-to-buffer": "^0.0.7",
     "babel-plugin-superjson-next": "^0.4.4",
     "blurhash": "^2.0.4",
+    "chalk": "^5.2.0",
     "cookies-next": "^2.1.1",
     "cron-parser": "^4.6.0",
     "dayjs": "^1.11.6",

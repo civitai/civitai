@@ -9,6 +9,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
+import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
@@ -162,11 +163,15 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
         <Stack spacing="xs" sx={{ flex: '1 1 0' }}>
           <Stack spacing={0}>
             <Group spacing={8} align="center">
-              <Link href={`/user/${comment.user.username}`} passHref>
-                <Anchor variant="text" size="sm" weight="bold">
-                  {comment.user.username}
-                </Anchor>
-              </Link>
+              {!comment.user.deletedAt ? (
+                <Link href={`/user/${comment.user.username}`} passHref>
+                  <Anchor variant="text" size="sm" weight="bold">
+                    <Username {...comment.user} />
+                  </Anchor>
+                </Link>
+              ) : (
+                <Username {...comment.user} />
+              )}
               {comment.user.id === model?.user.id ? (
                 <Badge color="violet" size="xs">
                   OP

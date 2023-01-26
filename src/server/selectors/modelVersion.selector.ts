@@ -9,6 +9,7 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   updatedAt: true,
   trainedWords: true,
   baseModel: true,
+  earlyAccessTimeFrame: true,
   images: {
     orderBy: {
       index: 'asc',
@@ -40,3 +41,15 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
     },
   },
 });
+
+export const getModelVersionApiSelect = Prisma.validator<Prisma.ModelVersionSelect>()({
+  ...getModelVersionDetailsSelect,
+  modelId: true,
+  model: {
+    select: { name: true, type: true, nsfw: true, poi: true },
+  },
+});
+const modelVersionApi = Prisma.validator<Prisma.ModelVersionArgs>()({
+  select: getModelVersionApiSelect,
+});
+export type ModelVersionApiReturn = Prisma.ModelVersionGetPayload<typeof modelVersionApi>;

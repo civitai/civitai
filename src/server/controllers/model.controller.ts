@@ -1,10 +1,10 @@
 import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { prisma } from '~/server/db/client';
 
+import { prisma } from '~/server/db/client';
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
+import { DeleteModelSchema, GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   getAllModelsWithVersionsSelect,
@@ -17,16 +17,21 @@ import {
   getModel,
   getModels,
   getModelVersionsMicro,
+  permaDeleteModelById,
+  restoreModelById,
   updateModel,
   updateModelById,
 } from '~/server/services/model.service';
 import {
+  throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { env } from '~/env/server.mjs';
+import { increaseDate, maxDate } from '~/utils/date-helpers';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -43,6 +48,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     }
 
     const isOwnerOrModerator = model.user.id === ctx.user?.id || ctx.user?.isModerator;
+    const features = getFeatureFlags({ user: ctx.user });
 
     return {
       ...model,
@@ -55,9 +61,17 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
                   return a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1;
                 })
             : version.images.flatMap((x) => x.image);
+        const earlyAccessDeadline = features.earlyAccessModel
+          ? increaseDate(
+              model.publishedAt ? maxDate(version.createdAt, model.publishedAt) : version.createdAt,
+              version.earlyAccessTimeFrame,
+              'days'
+            )
+          : undefined;
         return {
           ...version,
           images,
+          earlyAccessDeadline,
         };
       }),
     };
@@ -223,9 +237,8 @@ export const updateModelHandler = async ({
 
     return model;
   } catch (error) {
-    console.log(error);
     if (error instanceof TRPCError) throw error;
-    else throwDbError(error);
+    else throw throwDbError(error);
   }
 };
 
@@ -244,14 +257,20 @@ export const unpublishModelHandler = async ({ input }: { input: GetByIdInput }) 
   }
 };
 
-export const deleteModelHandler = async ({ input }: { input: GetByIdInput }) => {
+export const deleteModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: DeleteModelSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
-    const { id } = input;
-    const model = await deleteModelById({ id });
+    const { id, permanently } = input;
+    if (permanently && !ctx.user.isModerator) throw throwAuthorizationError();
 
-    if (!model) {
-      throw throwNotFoundError(`No model with id ${id}`);
-    }
+    const deleteModel = permanently ? permaDeleteModelById : deleteModelById;
+    const model = await deleteModel({ id });
+    if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
     return model;
   } catch (error) {
@@ -316,5 +335,25 @@ export const getModelDetailsForReviewHandler = async ({
     return model;
   } catch (error) {
     throw throwDbError(error);
+  }
+};
+
+export const restoreModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  if (!ctx.user.isModerator) throw throwAuthorizationError();
+
+  try {
+    const model = await restoreModelById({ ...input });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    return model;
+  } catch (error) {
+    if (error instanceof TRPCError) error;
+    else throw throwDbError(error);
   }
 };

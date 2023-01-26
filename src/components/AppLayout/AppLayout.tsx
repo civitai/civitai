@@ -14,11 +14,15 @@ export function AppLayout({ children, showNavbar }: Props) {
         className={`theme-${colorScheme}`}
         navbar={showNavbar ? <SideNavigation /> : undefined}
         styles={{
+          body: {
+            display: 'block',
+            maxWidth: '100vw',
+          },
           main: {
             paddingLeft: 0,
             paddingRight: 0,
             paddingBottom: 61,
-            overflowX: 'hidden',
+            maxWidth: '100%',
           },
         }}
       >

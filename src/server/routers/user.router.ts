@@ -12,6 +12,7 @@ import {
   toggleBlockedTagHandler,
   batchBlockTagsHandler,
   getUserEngagedModelsHandler,
+  getUserEngagedModelVersionsHandler,
   toggleHideModelHandler,
 } from '~/server/controllers/user.controller';
 import {
@@ -42,6 +43,7 @@ export const userRouter = router({
   getAll: publicProcedure.input(getAllUsersInput).query(getAllUsersHandler),
   getById: publicProcedure.input(getByIdSchema).query(getUserByIdHandler),
   getEngagedModels: protectedProcedure.query(getUserEngagedModelsHandler),
+  getEngagedModelVersions: protectedProcedure.query(getUserEngagedModelVersionsHandler),
   getFollowingUsers: protectedProcedure.query(getUserFollowingListHandler),
   getHiddenUsers: protectedProcedure.query(getUserHiddenListHandler),
   getTags: protectedProcedure.input(getUserTagsSchema.optional()).query(getUserTagsHandler),

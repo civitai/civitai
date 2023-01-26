@@ -175,7 +175,7 @@ export const convertReviewToComment = ({
 }: Pick<DeepNonNullable<Review>, 'id' | 'text' | 'modelId' | 'userId' | 'createdAt'>) => {
   return prisma.$transaction(async (tx) => {
     const reviewReactions = await tx.reviewReaction.findMany({
-      where: { reviewId: id, userId },
+      where: { reviewId: id },
       select: { reaction: true, userId: true, createdAt: true },
     });
     const comment = await tx.comment.create({

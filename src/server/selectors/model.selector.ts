@@ -105,12 +105,15 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
     nsfw: true,
     type: true,
     updatedAt: true,
+    deletedAt: true,
     status: true,
+    checkpointType: true,
     allowNoCredit: true,
     allowCommercialUse: true,
     allowDerivatives: true,
     allowDifferentLicense: true,
     licenses: true,
+    publishedAt: true,
     reportStats: {
       select: {
         ownershipProcessing: true,
@@ -137,6 +140,7 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
         trainedWords: true,
         inaccurate: true,
         baseModel: true,
+        earlyAccessTimeFrame: true,
         images: {
           orderBy: { index: 'asc' },
           select: {

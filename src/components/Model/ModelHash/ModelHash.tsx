@@ -1,16 +1,28 @@
 import { ActionIcon, Badge, CopyButton, Group, MantineColor, Tooltip } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { ModelHashType } from '@prisma/client';
 import { IconChevronRight } from '@tabler/icons';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
-export const ModelHash = ({ hashes, initialType = 'AutoV1', color = 'gray' }: Props) => {
+export const ModelHash = ({ hashes, initialType = 'AutoV2', color = 'gray' }: Props) => {
+  const [preferredType, setPreferredType] = useLocalStorage({
+    key: 'preferredModelHashType',
+    defaultValue: initialType,
+  });
   const [selected, setSelected] = useState(
-    hashes.find((hash) => hash.type === initialType) ?? hashes[0]
+    hashes.find((hash) => hash.type === preferredType) ?? hashes[0]
   );
   const { hash, type } = selected;
   const hasMore = hashes.length > 1;
 
-  const handleNext = () => setSelected(hashes[(hashes.indexOf(selected) + 1) % hashes.length]);
+  useEffect(() => {
+    setSelected(hashes.find((hash) => hash.type === preferredType) ?? hashes[0]);
+  }, [preferredType, hashes]);
+
+  const handleNext = () => {
+    const next = hashes[(hashes.indexOf(selected) + 1) % hashes.length];
+    setPreferredType(next.type);
+  };
 
   return (
     <Group spacing={0} noWrap sx={{ userSelect: 'none' }}>
@@ -38,7 +50,7 @@ export const ModelHash = ({ hashes, initialType = 'AutoV1', color = 'gray' }: Pr
               sx={{
                 cursor: 'pointer',
                 overflow: 'hidden',
-                width: 80,
+                width: 90,
                 borderTopLeftRadius: 0,
                 borderBottomLeftRadius: 0,
                 borderTopRightRadius: hasMore ? 0 : undefined,
