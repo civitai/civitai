@@ -1,5 +1,5 @@
 // src/server/db/client.ts
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { env } from '~/env/server.mjs';
 
 declare global {
@@ -12,7 +12,10 @@ if (env.NODE_ENV === 'production') {
   prisma = new PrismaClient({ log: ['error'] });
 } else {
   if (!global.prisma) {
-    global.prisma = new PrismaClient({ log: ['query', 'error', 'warn'] });
+    const log = env.LOGGING.filter((x) => x.startsWith('prisma:')).map(
+      (x) => x.replace('prisma:', '') as Prisma.LogLevel
+    );
+    global.prisma = new PrismaClient({ log });
   }
   prisma = global.prisma;
 }

@@ -1,18 +1,21 @@
 import { User } from '@prisma/client';
 import { JWT } from 'next-auth/jwt';
 import { prisma } from '~/server/db/client';
+import { createLogger } from '~/utils/logging';
 
-const SHOW_LOGS = false;
-const log = (...args: any[]) => { //eslint-disable-line
-  if (SHOW_LOGS) console.log('[session-helpers]', ...args);
-};
+const log = createLogger('session-helpers', 'green');
+declare global {
+  // eslint-disable-next-line no-var, vars-on-top
+  var sessionsToInvalidate: Record<number, Date>;
+  // eslint-disable-next-line no-var, vars-on-top
+  var sessionsFetch: Promise<Record<number, Date>> | null;
+}
 
-let sessionsToInvalidate: Record<number, Date>;
-let sessionsFetch: Promise<Record<number, Date>> | null = null;
 async function getSessionsToInvalidate() {
-  if (sessionsToInvalidate) return sessionsToInvalidate;
-  if (sessionsFetch) return sessionsFetch;
-  sessionsFetch = prisma.sessionInvalidation
+  if (global.sessionsToInvalidate) return global.sessionsToInvalidate;
+  if (global.sessionsFetch) return global.sessionsFetch;
+  log('Fetching sessions to invalidate', global.sessionsFetch);
+  global.sessionsFetch = prisma.sessionInvalidation
     .groupBy({
       by: ['userId'],
       _max: { invalidatedAt: true },
@@ -25,15 +28,17 @@ async function getSessionsToInvalidate() {
       } of x) {
         toInvalidate[userId] = invalidatedAt ?? new Date();
       }
-      sessionsToInvalidate = toInvalidate;
-      return sessionsToInvalidate;
+      global.sessionsToInvalidate = toInvalidate;
+      log(`Fetched ${x.length} sessions to invalidate`);
+      return global.sessionsToInvalidate;
     })
     .catch(() => {
-      sessionsToInvalidate = {};
-      return sessionsToInvalidate;
+      global.sessionsToInvalidate = {};
+      log(`Failed to get sessions to invalidate`);
+      return global.sessionsToInvalidate;
     });
 
-  return sessionsFetch;
+  return global.sessionsFetch;
 }
 
 export async function refreshToken(token: JWT) {
