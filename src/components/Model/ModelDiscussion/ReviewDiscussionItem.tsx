@@ -1,55 +1,29 @@
 import { Carousel } from '@mantine/carousel';
-import {
-  ActionIcon,
-  AspectRatio,
-  Badge,
-  Button,
-  Card,
-  Group,
-  Menu,
-  Rating,
-  Stack,
-  Text,
-} from '@mantine/core';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
+import { AspectRatio, Badge, Button, Card, Group, Rating, Stack, Text } from '@mantine/core';
 import { ReviewReactions } from '@prisma/client';
-import {
-  IconDotsVertical,
-  IconTrash,
-  IconEdit,
-  IconFlag,
-  IconMessageCircle2,
-  IconCalculatorOff,
-  IconCalculator,
-  IconSwitchHorizontal,
-} from '@tabler/icons';
+import { IconMessageCircle2 } from '@tabler/icons';
 import { useEffect, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
-import { ReportEntity } from '~/server/schema/report.schema';
 import { ReviewGetAllItem } from '~/types/router';
-import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { ShowHide } from '~/components/ShowHide/ShowHide';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ReviewDiscussionMenu } from '~/components/Model/ModelDiscussion/ReviewDiscussionMenu';
 
 export function ReviewDiscussionItem({ review, width }: Props) {
   const { openContext } = useRoutedContext();
   const currentUser = useCurrentUser();
-  const isOwner = currentUser?.id === review.user.id;
-  const isMod = currentUser?.isModerator ?? false;
   const { ref, inView } = useInView();
   const [visible, setVisible] = useState(false);
   useEffect(() => {
@@ -67,70 +41,6 @@ export function ReviewDiscussionItem({ review, width }: Props) {
   const { data: model } = trpc.model.getById.useQuery({ id: review.modelId });
 
   const queryUtils = trpc.useContext();
-  const deleteMutation = trpc.review.delete.useMutation({
-    async onSuccess() {
-      await queryUtils.review.getAll.invalidate();
-      closeAllModals();
-    },
-    onError(error) {
-      showErrorNotification({
-        error: new Error(error.message),
-        title: 'Could not delete review',
-      });
-    },
-  });
-  const handleDeleteReview = () => {
-    openConfirmModal({
-      title: 'Delete Review',
-      children: (
-        <Text size="sm">
-          Are you sure you want to delete this review? This action is destructive and cannot be
-          reverted.
-        </Text>
-      ),
-      centered: true,
-      labels: { confirm: 'Delete Review', cancel: "No, don't delete it" },
-      confirmProps: { color: 'red', loading: deleteMutation.isLoading },
-      closeOnConfirm: false,
-      onConfirm: () => {
-        deleteMutation.mutate({ id: review.id });
-      },
-    });
-  };
-
-  const excludeMutation = trpc.review.toggleExclude.useMutation({
-    async onSuccess() {
-      await queryUtils.review.getAll.invalidate();
-      closeAllModals();
-    },
-    onError(error) {
-      showErrorNotification({
-        error: new Error(error.message),
-        title: 'Could not exclude review',
-      });
-    },
-  });
-  const handleExcludeReview = () => {
-    openConfirmModal({
-      title: 'Exclude Review',
-      children: (
-        <Text size="sm">
-          Are you sure you want to exclude this review from the average score of this model? You
-          will not be able to revert this.
-        </Text>
-      ),
-      centered: true,
-      labels: { confirm: 'Exclude Review', cancel: "No, don't exclude it" },
-      confirmProps: { color: 'red', loading: deleteMutation.isLoading },
-      closeOnConfirm: false,
-      onConfirm: () => {
-        excludeMutation.mutate({ id: review.id });
-      },
-    });
-  };
-  const handleUnexcludeReview = () => {
-    excludeMutation.mutate({ id: review.id });
-  };
 
   const toggleReactionMutation = trpc.review.toggleReaction.useMutation({
     async onMutate({ id, reaction }) {
@@ -174,39 +84,6 @@ export function ReviewDiscussionItem({ review, width }: Props) {
     toggleReactionMutation.mutate({ id: review.id, reaction });
   };
 
-  const convertToCommentMutation = trpc.review.convertToComment.useMutation({
-    async onSuccess() {
-      await queryUtils.review.getAll.invalidate();
-      await queryUtils.comment.getAll.invalidate();
-    },
-    onError(error) {
-      showErrorNotification({
-        error: new Error(error.message),
-      });
-    },
-    onSettled() {
-      closeAllModals();
-    },
-  });
-  const handleConvertToComment = () => {
-    openConfirmModal({
-      title: 'Convert to Review',
-      children: (
-        <Text size="sm">
-          Are you sure you want to convert this review to a comment? You will not be able to revert
-          this.
-        </Text>
-      ),
-      centered: true,
-      labels: { confirm: 'Convert', cancel: 'Cancel' },
-      confirmProps: { loading: convertToCommentMutation.isLoading },
-      closeOnConfirm: false,
-      onConfirm: () => {
-        convertToCommentMutation.mutate({ id: review.id });
-      },
-    });
-  };
-
   const hasImages = review.images.length > 0;
 
   return (
@@ -231,68 +108,7 @@ export function ReviewDiscussionItem({ review, width }: Props) {
             withUsername
             linkToProfile
           />
-          <Menu position="bottom-end" withinPortal>
-            <Menu.Target>
-              <ActionIcon size="xs" variant="subtle">
-                <IconDotsVertical size={14} />
-              </ActionIcon>
-            </Menu.Target>
-            <Menu.Dropdown>
-              {(isOwner || isMod) && (
-                <>
-                  <Menu.Item
-                    icon={<IconTrash size={14} stroke={1.5} />}
-                    color="red"
-                    onClick={handleDeleteReview}
-                  >
-                    Delete review
-                  </Menu.Item>
-                  <Menu.Item
-                    icon={<IconEdit size={14} stroke={1.5} />}
-                    onClick={() => openContext('reviewEdit', { reviewId: review.id })}
-                  >
-                    Edit review
-                  </Menu.Item>
-                  {!review.exclude && (
-                    <Menu.Item
-                      icon={<IconCalculatorOff size={14} stroke={1.5} />}
-                      onClick={handleExcludeReview}
-                    >
-                      Exclude from average
-                    </Menu.Item>
-                  )}
-                  {isMod && (
-                    <Menu.Item
-                      icon={<IconSwitchHorizontal size={14} stroke={1.5} />}
-                      onClick={handleConvertToComment}
-                    >
-                      Convert to comment
-                    </Menu.Item>
-                  )}
-                  {isMod && review.exclude && (
-                    <Menu.Item
-                      icon={<IconCalculator size={14} stroke={1.5} />}
-                      onClick={handleUnexcludeReview}
-                    >
-                      Unexclude from average
-                    </Menu.Item>
-                  )}
-                </>
-              )}
-              {(!currentUser || !isOwner) && (
-                <LoginRedirect reason="report-model">
-                  <Menu.Item
-                    icon={<IconFlag size={14} stroke={1.5} />}
-                    onClick={() =>
-                      openContext('report', { type: ReportEntity.Review, entityId: review.id })
-                    }
-                  >
-                    Report
-                  </Menu.Item>
-                </LoginRedirect>
-              )}
-            </Menu.Dropdown>
-          </Menu>
+          <ReviewDiscussionMenu review={review} user={currentUser} />
         </Group>
         <Group position="apart">
           <Rating
@@ -365,7 +181,6 @@ function ReviewCarousel({
 }) {
   const { openContext } = useRoutedContext();
   const [renderIndexes, setRenderIndexes] = useState([0]);
-  const [index, setIndex] = useState(0);
 
   useEffect(() => {
     // if (!!review.images && !review.images.some((x) => renderImages.includes(x.id))) {
@@ -430,7 +245,6 @@ function ReviewCarousel({
         style={{ height }}
         onSlideChange={(index) => {
           setRenderIndexes((indexes) => (!indexes.includes(index) ? [...indexes, index] : indexes));
-          setIndex(index);
         }}
         withIndicators={hasMultipleImages}
         styles={{
