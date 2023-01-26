@@ -73,6 +73,7 @@ import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { isBetweenToday } from '~/utils/date-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { uniq } from 'lodash';
 
 /**NOTES**
   - If a model depicts an actual person, it cannot have nsfw content
@@ -335,7 +336,8 @@ export function ModelForm({ model }: Props) {
   const [createdTags, setCreatedTags] = useState<string[]>([]);
   useEffect(() => {
     if (createdTags.length > 0) {
-      form.setValue('tagsOnModels', [...tagsOnModels, ...createdTags]);
+      const tags = uniq([...tagsOnModels, ...createdTags]);
+      form.setValue('tagsOnModels', tags);
       setCreatedTags([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -442,7 +444,7 @@ export function ModelForm({ model }: Props) {
                         .filter(Boolean);
                       if (rest.length > 0) setCreatedTags(rest);
 
-                      return first;
+                      return !tagsOnModels.includes(first) ? first : undefined;
                     }}
                     creatable
                     clearable
