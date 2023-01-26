@@ -89,7 +89,7 @@ export function ImageMeta({ meta }: Props) {
       ))}
       <SimpleGrid cols={2} verticalSpacing="xs">
         {metas.short.map(({ label, value }) => (
-          <Group key={label} spacing={0}>
+          <Group key={label} spacing="xs">
             <Text size="sm" mr="xs" weight={500}>
               {label}
             </Text>
