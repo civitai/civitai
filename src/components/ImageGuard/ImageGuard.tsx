@@ -1,7 +1,6 @@
 import { Button, Group, Popover, Stack, ThemeIcon, Text, Badge, Box, Sx } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconEye, IconEyeOff, IconLock, IconPlus } from '@tabler/icons';
-import { SessionUser } from 'next-auth';
 import { useRouter } from 'next/router';
 import React, { cloneElement, createContext, useContext, useState } from 'react';
 import create from 'zustand';
@@ -53,9 +52,7 @@ const useStore = create<SfwStore>()(
 // #region [ImageGuardContext]
 type ImageGuardState = {
   images: Array<ImageModel & { imageNsfw: boolean }>;
-  connect: ImageGuardConnect;
-  nsfw?: boolean;
-  currentUser?: SessionUser | null;
+  connect?: ImageGuardConnect;
 };
 const ImageGuardCtx = createContext<ImageGuardState>({} as any);
 const useImageGuardContext = () => {
@@ -74,42 +71,28 @@ type CustomImageModel = ImageModel & { imageNsfw?: boolean };
 
 type ImageGuardProps = {
   images: CustomImageModel[];
-  connect: ImageGuardConnect;
+  connect?: ImageGuardConnect;
   render: (image: ImageModel, index: number) => React.ReactNode;
   /** Make all images nsfw by default */
   nsfw?: boolean;
 };
 
-export function ImageGuard({
-  images: initialImages,
-  connect,
-  render,
-  nsfw: globalNsfw,
-}: ImageGuardProps) {
+export function ImageGuard({ images: initialImages, connect, render }: ImageGuardProps) {
   const currentUser = useCurrentUser();
   const shouldBlur = currentUser?.blurNsfw ?? true;
-
-  // const showConnection = useStore((state) =>
-  //   connect ? state.showingConnections[getConnectionKey(connect)] : undefined
-  // );
 
   // alter image nsfw - only allow to be true if shouldBlur is true
   const images = initialImages
     .filter(isDefined)
     .filter((x) => x.id)
-    .map((image) => {
-      const nsfw = image.nsfw && shouldBlur;
-      return { ...image, nsfw, imageNsfw: image.nsfw };
-    });
-
-  // if the showConnection is true, set nsfw = false for all images
-  // const connectedImages =
-  //   showConnection !== undefined
-  //     ? images.map((image) => ({ ...image, nsfw: showConnection ? false : image.nsfw }))
-  //     : images;
+    .map((image) => ({
+      ...image,
+      nsfw: image.nsfw && shouldBlur,
+      imageNsfw: image.nsfw,
+    }));
 
   return (
-    <ImageGuardCtx.Provider value={{ images, nsfw: globalNsfw, connect, currentUser }}>
+    <ImageGuardCtx.Provider value={{ images, connect }}>
       {images.map((image, index) => (
         <ImageGuardContentProvider key={image.id} image={image}>
           {render(image, index)}
@@ -234,7 +217,7 @@ ImageGuard.ToggleConnect = function ToggleConnect({
 }) {
   const currentUser = useCurrentUser();
   const { isModerator, blurNsfw: toggleable } = currentUser ?? {};
-  const { connect, nsfw } = useImageGuardContext();
+  const { connect } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
   const showImage = useStore((state) => state.showingImages[image?.id.toString()] ?? false);
   const showConnect = useStore((state) =>
@@ -243,7 +226,7 @@ ImageGuard.ToggleConnect = function ToggleConnect({
   const toggleConnect = useStore((state) => state.toggleConnection);
 
   const showToModerator = image.imageNsfw && isModerator;
-  if (!image.nsfw && !showToModerator) return null;
+  if (!connect || (!image.nsfw && !showToModerator)) return null;
 
   const showing = showConnect ?? showImage;
   return (
@@ -322,12 +305,11 @@ ImageGuard.ToggleConnect = function ToggleConnect({
 function ImageGuardPopover({ children }: { children: React.ReactElement }) {
   const user = useCurrentUser();
   const isAuthenticated = !!user;
-  const { nsfw } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
   const [opened, setOpened] = useState(false);
   const router = useRouter();
 
-  if ((nsfw || image.nsfw) && !isAuthenticated)
+  if (image.nsfw && !isAuthenticated)
     return (
       <Popover
         width={300}
