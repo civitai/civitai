@@ -60,18 +60,25 @@ export default WebhookEndpoint(async (req, res) => {
 
   // Update hashes
   if (tasks.includes('Hash') && scanResult.hashes) {
-    await prisma.modelHash.deleteMany({ where: { fileId } });
-    await prisma.modelHash.createMany({
-      data: Object.entries(scanResult.hashes).map(([type, hash]) => ({
-        fileId,
-        type: type as ModelHashType,
-        hash,
-      })),
-    });
+    await prisma.$transaction([
+      prisma.modelHash.deleteMany({ where: { fileId } }),
+      prisma.modelHash.createMany({
+        data: Object.entries(scanResult.hashes)
+          .filter(([type]) => hashTypeMap[type.toLowerCase()])
+          .map(([type, hash]) => ({
+            fileId,
+            type: hashTypeMap[type.toLowerCase()] as ModelHashType,
+            hash,
+          })),
+      }),
+    ]);
   }
 
   res.status(200).json({ ok: true });
 });
+
+const hashTypeMap: Record<string, string> = {};
+for (const t of Object.keys(ModelHashType)) hashTypeMap[t.toLowerCase()] = t;
 
 async function unpublish(modelVersionId: number) {
   await prisma.modelVersion.update({
