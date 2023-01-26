@@ -118,10 +118,10 @@ export default function GalleryImageDetail() {
             ? { entityType: 'user', entityId: userId }
             : reviewId
             ? { entityType: 'review', entityId: reviewId }
-            : modelVersionId
-            ? // ? { entityType: 'modelVersion', entityId: modelVersionId }
-              // : modelId
-              { entityType: 'model', entityId: modelId }
+            : // : modelVersionId
+            // ? { entityType: 'modelVersion', entityId: modelVersionId }
+            modelId
+            ? { entityType: 'model', entityId: modelId }
             : undefined
         }
       />
