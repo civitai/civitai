@@ -112,8 +112,8 @@ export default Home;
 const useStyles = createStyles((theme) => ({
   welcome: {
     maxWidth: 600,
-    top: 75,
-    marginBottom: -25,
+    top: 'calc(var(--mantine-header-height,0) + 16px)',
+    marginBottom: -35,
     position: 'sticky',
     alignSelf: 'center',
     zIndex: 11,
