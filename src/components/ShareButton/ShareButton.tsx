@@ -7,9 +7,11 @@ import React from 'react';
 export function ShareButton({
   children,
   url: initialUrl,
+  title,
 }: {
   children: React.ReactElement;
   url?: string;
+  title?: string;
 }) {
   const router = useRouter();
   const isMobile = useIsMobile();
@@ -18,7 +20,9 @@ export function ShareButton({
   const url = `${origin}${initialUrl ?? router.asPath}`;
 
   return isMobile ? (
-    <MobileShare url={url}>{children}</MobileShare>
+    <MobileShare url={url} title={title}>
+      {children}
+    </MobileShare>
   ) : (
     <DesktopShare url={url}>{children}</DesktopShare>
   );
@@ -50,12 +54,20 @@ function DesktopShare({ children, url }: { children: React.ReactElement; url: st
   );
 }
 
-function MobileShare({ children, url }: { children: React.ReactElement; url: string }) {
+function MobileShare({
+  children,
+  url,
+  title,
+}: {
+  children: React.ReactElement;
+  url: string;
+  title?: string;
+}) {
   const handleClick = (e?: React.MouseEvent) => {
     e?.preventDefault();
     // https://web.dev/web-share/
     navigator.share({
-      // title,
+      title,
       url,
     });
   };

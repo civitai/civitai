@@ -26,25 +26,36 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';
+import { useRouter } from 'next/router';
 
 const reports = [
   {
     reason: ReportReason.NSFW,
     label: 'NSFW',
     Element: NsfwForm,
-    availableFor: [ReportEntity.Model, ReportEntity.Review],
+    availableFor: [ReportEntity.Model, ReportEntity.Review, ReportEntity.Image],
   },
   {
     reason: ReportReason.TOSViolation,
     label: 'TOS Violation',
     Element: TosViolationForm,
-    availableFor: [ReportEntity.Model, ReportEntity.Review, ReportEntity.Comment],
+    availableFor: [
+      ReportEntity.Model,
+      ReportEntity.Review,
+      ReportEntity.Comment,
+      ReportEntity.Image,
+    ],
   },
   {
     reason: ReportReason.AdminAttention,
     label: 'Needs Moderator Review',
     Element: AdminAttentionForm,
-    availableFor: [ReportEntity.Model, ReportEntity.Review, ReportEntity.Comment],
+    availableFor: [
+      ReportEntity.Model,
+      ReportEntity.Review,
+      ReportEntity.Comment,
+      ReportEntity.Image,
+    ],
   },
   {
     reason: ReportReason.Claim,
@@ -70,6 +81,12 @@ export default createRoutedContext({
     entityId: z.number(),
   }),
   Element: ({ context, props: { type, entityId } }) => {
+    // #region [temp for gallery image reports]
+    const router = useRouter();
+    const modelId = router.query.modelId ? Number(router.query.modelId) : undefined;
+    const reviewId = router.query.reviewId ? Number(router.query.reviewId) : undefined;
+    // #endregion
+
     //TODO - redirect if no user is authenticated
     const [reason, setReason] = useState<ReportReason>();
     const [uploading, setUploading] = useState(false);
@@ -128,6 +145,20 @@ export default createRoutedContext({
               await queryUtils.comment.getById.invalidate({ id: variables.id });
               await queryUtils.comment.getAll.invalidate();
               await queryUtils.comment.getCommentsById.invalidate();
+              break;
+            case ReportEntity.Image:
+              await queryUtils.image.getGalleryImageDetail.invalidate();
+              await queryUtils.image.getGalleryImagesInfinite.invalidate();
+              // review invalidate
+              if (reviewId) {
+                await queryUtils.review.getDetail.invalidate({ id: reviewId });
+                await queryUtils.review.getAll.invalidate();
+              }
+              // model invalidate
+              if (modelId) {
+                await queryUtils.model.getById.invalidate({ id: modelId });
+                await queryUtils.model.getAll.invalidate();
+              }
               break;
             default:
               break;

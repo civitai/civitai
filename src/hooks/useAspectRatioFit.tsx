@@ -1,5 +1,5 @@
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
-import { useRef } from 'react';
+import { RefObject, useCallback, useEffect, useRef, useState } from 'react';
 
 /**
  * Conserve aspect ratio of the original region. Useful when shrinking/enlarging
@@ -26,26 +26,44 @@ function calculateAspectRatioFit(
   }
 }
 
-export function useAspectRatioFit<TElement extends HTMLElement = HTMLDivElement>(srcDimensions: {
+export function useAspectRatioFit<TElement extends HTMLElement = HTMLDivElement>({
+  width,
+  height,
+}: {
   width: number;
   height: number;
 }) {
-  const containerRef = useRef<TElement>(null);
-  const container = {
-    width: containerRef.current?.clientWidth ?? 0,
-    height: containerRef.current?.clientHeight ?? 0,
-  };
+  const [ref, setRef] = useState<TElement | null>(null);
+  const [dimensions, setDimensions] = useState<{ width: number; height: number }>({
+    width: 0,
+    height: 0,
+  });
+  // const containerRef = useRef<TElement>(null);
 
-  const aspectRatio = calculateAspectRatioFit(
-    srcDimensions.width,
-    srcDimensions.height,
-    container.width,
-    container.height
-  );
+  // const container = {
+  //   width: ref?.current?.clientWidth ?? 0,
+  //   height: ref?.current?.clientHeight ?? 0,
+  // };
+
+  const handleSetDimensions = useCallback(() => {
+    setDimensions(
+      calculateAspectRatioFit(width, height, ref?.clientWidth ?? 0, ref?.clientHeight ?? 0)
+    );
+  }, [ref, width, height]);
+
+  useEffect(() => {
+    if (ref) handleSetDimensions();
+  }, [ref, handleSetDimensions]);
 
   const [resized, setResized] = useDebouncedState(0, 200);
   const handleResize = () => setResized(resized + 1); // use this to reset component
   useWindowEvent('resize', handleResize);
 
-  return { ref: containerRef, ...aspectRatio };
+  useEffect(() => {
+    if (resized !== 0) {
+      handleSetDimensions();
+    }
+  }, [resized, handleSetDimensions]);
+
+  return { setRef, ...dimensions };
 }

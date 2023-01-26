@@ -65,8 +65,6 @@ export const createReport = async ({
         }
         break;
       case ReportEntity.Comment:
-        console.log('_____CREATE COMMENT REPORT____');
-        console.log({ id, report });
         await prisma.commentReport.create({
           data: {
             comment: { connect: { id } },
@@ -75,6 +73,17 @@ export const createReport = async ({
         });
         if (toUpdate) {
           await tx.comment.update({ where: { id }, data: toUpdate });
+        }
+        break;
+      case ReportEntity.Image:
+        await tx.imageReport.create({
+          data: {
+            image: { connect: { id } },
+            report,
+          },
+        });
+        if (toUpdate) {
+          await tx.image.update({ where: { id }, data: toUpdate });
         }
         break;
       default:

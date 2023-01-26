@@ -5,35 +5,7 @@ import { IconChevronLeft, IconChevronRight } from '@tabler/icons';
 import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { useRef, useState } from 'react';
-import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
-import { QS } from '~/utils/qs';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
-
-/**
- * Conserve aspect ratio of the original region. Useful when shrinking/enlarging
- * images to fit into a certain area.
- *
- * @param {Number} srcWidth width of source image
- * @param {Number} srcHeight height of source image
- * @param {Number} maxWidth maximum available width
- * @param {Number} maxHeight maximum available height
- * @return {Object} { width, height }
- */
-function calculateAspectRatioFit(
-  srcWidth: number,
-  srcHeight: number,
-  maxWidth: number,
-  maxHeight: number
-) {
-  if (srcWidth > maxWidth || srcHeight > maxHeight) {
-    const ratio = Math.min(maxWidth / srcWidth, maxHeight / srcHeight);
-
-    return { width: srcWidth * ratio, height: srcHeight * ratio };
-  } else {
-    return { width: srcWidth, height: srcHeight };
-  }
-}
 
 type GalleryCarouselProps = {
   current: GetGalleryImagesReturnType[0];
@@ -43,7 +15,7 @@ type GalleryCarouselProps = {
 };
 
 /**NOTES**
-
+  - when our current image is not found in the images array, we can navigate away from it, but we can't use the arrows to navigate back to it.
 */
 export function GalleryCarousel({ current, images, className, connect }: GalleryCarouselProps) {
   const router = useRouter();
@@ -53,7 +25,7 @@ export function GalleryCarousel({ current, images, className, connect }: Gallery
   const nextIndex = index + 1;
 
   // #region [aspect ratio calculations]
-  const { ref, height, width } = useAspectRatioFit({
+  const { setRef, height, width } = useAspectRatioFit({
     height: current.height ?? 1200,
     width: current.width ?? 1200,
   });
@@ -80,8 +52,10 @@ export function GalleryCarousel({ current, images, className, connect }: Gallery
   // #endregion
 
   return (
-    <div ref={ref} className={cx(classes.root, className)}>
-      {images.length > 0 && (
+    <div ref={setRef} className={cx(classes.root, className)}>
+      {(index > -1 // see notes
+        ? images.length > 1
+        : images.length > 0) && (
         <>
           <UnstyledButton className={cx(classes.control, classes.prev)} onClick={handlePrev}>
             <IconChevronLeft />

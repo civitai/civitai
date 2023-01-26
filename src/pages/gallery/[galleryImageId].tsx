@@ -9,13 +9,29 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { useMemo } from 'react';
 import { GalleryCarousel } from '~/components/Gallery/GalleryCarousel';
-import { createStyles, MantineProvider, Card, Group, CloseButton, ActionIcon } from '@mantine/core';
+import {
+  createStyles,
+  MantineProvider,
+  Card,
+  Group,
+  CloseButton,
+  ActionIcon,
+  ScrollArea,
+  Stack,
+  Paper,
+} from '@mantine/core';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconFlag, IconInfoCircle, IconShare, IconDotsVertical } from '@tabler/icons';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { QS } from '~/utils/qs';
+import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { ReportEntity } from '~/server/schema/report.schema';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
+import { useNavigateBack } from '~/providers/NavigateBackProvider';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
 
 export default function GalleryImageDetail() {
   const router = useRouter();
@@ -23,21 +39,28 @@ export default function GalleryImageDetail() {
   const filters = useGalleryFilters();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
+  const { openContext } = useRoutedContext();
+  const { back: goBack } = useNavigateBack();
 
-  const { data: gallery } = trpc.image.getGalleryImagesInfinite.useInfiniteQuery({ ...filters });
+  const { data: gallery, isLoading } = trpc.image.getGalleryImagesInfinite.useInfiniteQuery({
+    ...filters,
+  });
 
   const galleryImages = useMemo(() => gallery?.pages.flatMap((x) => x.items) ?? [], [gallery]);
 
-  const { data: image = galleryImages.find((x) => x.id === id) } =
-    trpc.image.getGalleryImageDetail.useQuery(
-      {
-        id,
-      },
-      {
-        // only allow this to run if the detail data isn't included in the list result
-        enabled: !galleryImages.some((x) => x.id === id),
-      }
-    );
+  const { data: prefetchImage } = trpc.image.getGalleryImageDetail.useQuery(
+    {
+      id,
+    },
+    {
+      // only allow this to run if the detail data isn't included in the list result
+      enabled: !galleryImages.some((x) => x.id === id),
+    }
+  );
+
+  const image = galleryImages.find((x) => x.id === id) ?? prefetchImage;
+
+  // console.log({ image });
 
   const shareUrl = useMemo(() => {
     const [pathname, queryString] = router.asPath.split('?');
@@ -45,28 +68,45 @@ export default function GalleryImageDetail() {
     return Object.keys(query).length > 0 ? `${pathname}?${QS.stringify(query)}` : pathname;
   }, [router]);
 
-  // if (imageLoading) return <PageLoader />;
+  if (!image && isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
   if (image?.nsfw && !currentUser?.showNsfw) return <SensitiveShield />;
   const { modelId, modelVersionId, reviewId, userId } = filters;
 
   const handleToggleInfo = () => {
     const active = router.query.active === 'true';
-    router.replace({ query: { ...router.query, active: !active } }, undefined, { shallow: true });
+    router.push({ query: { ...router.query, active: !active } }, undefined, { shallow: true });
+  };
+
+  const handleReportClick = () =>
+    openContext('report', { type: ReportEntity.Image, entityId: image.id });
+
+  // #region [back button functionality]
+  const getReturnUrl = () => {
+    if (modelId) {
+      const url = `/models/${modelId}`;
+      return reviewId ? `${url}?modal=reviewThread&reviewId=${reviewId}` : url;
+    }
+    return '/gallery';
   };
 
   const handleCloseContext = () => {
     const { active, ...query } = router.query;
-    active === 'true' ? router.replace({ query }, undefined, { shallow: true }) : router.back();
+    // active === 'true' ? router.replace({ query }, undefined, { shallow: true }) : router.back();
+    goBack({ query }, undefined, { shallow: true });
   };
 
+  const handleBackClick = () => goBack(getReturnUrl());
+  // #endregion
+
   return (
+    // TODO - <Meta />
     <div className={classes.root}>
       <CloseButton
         style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
         size="lg"
         variant="default"
-        onClick={router.back}
+        onClick={handleBackClick}
         className={classes.mobileOnly}
       />
       <GalleryCarousel
@@ -74,14 +114,14 @@ export default function GalleryImageDetail() {
         current={image}
         images={galleryImages}
         connect={
-          modelId
-            ? { entityType: 'model', entityId: modelId }
-            : modelVersionId
-            ? { entityType: 'modelVersion', entityId: modelVersionId }
+          userId
+            ? { entityType: 'user', entityId: userId }
             : reviewId
             ? { entityType: 'review', entityId: reviewId }
-            : userId
-            ? { entityType: 'user', entityId: userId }
+            : modelVersionId
+            ? // ? { entityType: 'modelVersion', entityId: modelVersionId }
+              // : modelId
+              { entityType: 'model', entityId: modelId }
             : undefined
         }
       />
@@ -109,30 +149,36 @@ export default function GalleryImageDetail() {
             />
             <Group>
               <Group spacing={4}>
-                {/* TODO - determine if we need to add a title/description */}
-                <ShareButton url={shareUrl}>
+                <ShareButton url={shareUrl} title={`Image by ${image.user.username}`}>
                   <ActionIcon size="lg">
                     <IconShare />
                   </ActionIcon>
                 </ShareButton>
-                <ActionIcon size="lg">
+                {/* TODO - reporting */}
+                <ActionIcon size="lg" onClick={handleReportClick}>
                   <IconFlag />
                 </ActionIcon>
-                {/* TODO - consider moving edit/delete somewhere else */}
-                <ActionIcon size="lg">
+                {/* <ActionIcon size="lg">
                   <IconDotsVertical />
-                </ActionIcon>
+                </ActionIcon> */}
               </Group>
               <CloseButton size="lg" variant="default" onClick={handleCloseContext} />
             </Group>
           </Group>
         </Card.Section>
-        <Card.Section>
-          {/* TODO - REACTIONS */}
-          {/* TODO - COMMENTS */}
-          {/* TODO - TAGS */}
-          {/* TODO - RESOURCES */}
-          {/* TODO - META */}
+        <Card.Section component={ScrollArea} style={{ flex: 1 }}>
+          <Stack spacing="md">
+            {/* TODO - REACTIONS */}
+            {/* TODO - COMMENTS */}
+            {/* TODO - TAGS */}
+            {/* TODO - RESOURCES */}
+            {/* TODO - META */}
+            {image.meta && (
+              <Paper p="md">
+                <ImageMeta meta={image.meta as ImageMetaProps} />
+              </Paper>
+            )}
+          </Stack>
         </Card.Section>
       </Card>
     </div>
@@ -181,6 +227,8 @@ const useStyles = createStyles((theme, _props, getRef) => {
       width: 400,
       borderRadius: 0,
       borderLeft: `1px solid ${theme.colors.dark[4]}`,
+      display: 'flex',
+      flexDirection: 'column',
 
       [isMobile]: {
         position: 'absolute',
@@ -197,16 +245,8 @@ const useStyles = createStyles((theme, _props, getRef) => {
         },
       },
     },
-    mobileOnly: {
-      [isDesktop]: {
-        display: 'none',
-      },
-    },
-    desktopOnly: {
-      [isMobile]: {
-        display: 'none',
-      },
-    },
+    mobileOnly: { [isDesktop]: { display: 'none' } },
+    desktopOnly: { [isMobile]: { display: 'none' } },
     info: {
       position: 'absolute',
       bottom: theme.spacing.md,

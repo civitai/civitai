@@ -329,19 +329,19 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     });
   };
 
-  const handleReviewFilterChange = (values: ReviewFilter[]) => {
-    setReviewFilters((current) => ({
-      ...current,
-      filterBy: values,
-    }));
-  };
+  // const handleReviewFilterChange = (values: ReviewFilter[]) => {
+  //   setReviewFilters((current) => ({
+  //     ...current,
+  //     filterBy: values,
+  //   }));
+  // };
 
-  const handleReviewSortChange = (value: ReviewSort) => {
-    setReviewFilters((current) => ({
-      ...current,
-      sort: value,
-    }));
-  };
+  // const handleReviewSortChange = (value: ReviewSort) => {
+  //   setReviewFilters((current) => ({
+  //     ...current,
+  //     sort: value,
+  //   }));
+  // };
 
   const handleUnpublishModel = () => {
     unpublishModelMutation.mutate({ id });
@@ -774,10 +774,13 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                                 edgeImageProps={{ width: 400 }}
                                 radius="md"
                                 onClick={() =>
-                                  openContext('modelVersionLightbox', {
-                                    modelVersionId: latestVersion.id,
-                                    initialSlide: index,
-                                  })
+                                  // openContext('modelVersionLightbox', {
+                                  //   modelVersionId: latestVersion.id,
+                                  //   initialSlide: index,
+                                  // })
+                                  router.push(
+                                    `/gallery/${image.id}?modelId=${model.id}&modelVersionId=${latestVersion.id}`
+                                  )
                                 }
                                 style={{ width: '100%' }}
                                 withMeta

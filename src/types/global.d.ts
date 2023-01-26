@@ -34,4 +34,7 @@ declare global {
   };
 
   type DeepNonNullable<T> = { [P in keyof T]-?: NonNullable<T[P]> } & NonNullable<T>;
+
+  // eslint-disable-next-line no-var, vars-on-top
+  var navigation: { currentEntry: { index: number } };
 }
