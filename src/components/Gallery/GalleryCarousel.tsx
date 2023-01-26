@@ -6,6 +6,8 @@ import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuar
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
+import { useHotkeys } from '@mantine/hooks';
+import { QS } from '~/utils/qs';
 
 type GalleryCarouselProps = {
   current: GetGalleryImagesReturnType[0];
@@ -24,38 +26,45 @@ export function GalleryCarousel({ current, images, className, connect }: Gallery
   const prevIndex = index - 1;
   const nextIndex = index + 1;
 
-  // #region [aspect ratio calculations]
   const { setRef, height, width } = useAspectRatioFit({
     height: current.height ?? 1200,
     width: current.width ?? 1200,
   });
-  // #endregion
 
   // #region [navigation]
+  const canNavigate = index > -1 ? images.length > 1 : images.length > 0; // see notes
   const handleNavigate = (id: number) => {
     const { galleryImageId, ...query } = router.query;
     const [, queryString] = router.asPath.split('?');
-    const pathname = `/gallery/${id}`;
-    const asPath = !!queryString.length ? `${pathname}?${queryString}` : pathname;
-    router.replace({ pathname: `/gallery/${id}`, query }, asPath, { shallow: true });
+    router.replace(
+      { query: { ...query, galleryImageId: id } },
+      { pathname: `/gallery/${id}`, query: { ...QS.parse(queryString) } as any },
+      { shallow: true }
+    );
   };
 
   const handlePrev = () => {
-    const id = prevIndex > -1 ? images[prevIndex].id : images[images.length - 1].id;
-    handleNavigate(id);
+    if (canNavigate) {
+      const id = prevIndex > -1 ? images[prevIndex].id : images[images.length - 1].id;
+      handleNavigate(id);
+    }
   };
 
   const handleNext = () => {
-    const id = nextIndex < images.length ? images[nextIndex].id : images[0].id;
-    handleNavigate(id);
+    if (canNavigate) {
+      const id = nextIndex < images.length ? images[nextIndex].id : images[0].id;
+      handleNavigate(id);
+    }
   };
+  useHotkeys([
+    ['ArrowLeft', handlePrev],
+    ['ArrowRight', handleNext],
+  ]);
   // #endregion
 
   return (
     <div ref={setRef} className={cx(classes.root, className)}>
-      {(index > -1 // see notes
-        ? images.length > 1
-        : images.length > 0) && (
+      {canNavigate && (
         <>
           <UnstyledButton className={cx(classes.control, classes.prev)} onClick={handlePrev}>
             <IconChevronLeft />

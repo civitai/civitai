@@ -28,6 +28,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { trpc } from '~/utils/trpc';
+import { useRouter } from 'next/router';
 
 const TRANSITION_DURATION = 200;
 
@@ -37,6 +38,7 @@ export default createRoutedContext({
     highlight: z.number().optional(),
   }),
   Element: ({ context, props: { reviewId, highlight } }) => {
+    const router = useRouter();
     const queryUtils = trpc.useContext();
     const currentUser = useCurrentUser();
 
@@ -101,6 +103,16 @@ export default createRoutedContext({
     const hasMultipleImages = hasImages && review.images.length > 1;
 
     useAnimationOffsetEffect(emblaRef.current, TRANSITION_DURATION);
+
+    const handleNavigate = (imageId: number) => {
+      router.push({
+        pathname: `/gallery/${imageId}`,
+        query: {
+          reviewId,
+          returnUrl: router.asPath,
+        },
+      });
+    };
 
     return (
       <Modal opened={context.opened} onClose={context.close} withCloseButton={false} size={800}>
@@ -186,6 +198,7 @@ export default createRoutedContext({
                                     edgeImageProps={{ height: screenHeight }}
                                     radius="md"
                                     withMeta
+                                    onClick={() => handleNavigate(image.id)}
                                   />
                                 </ImageGuard.Safe>
                               </div>

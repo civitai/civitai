@@ -254,9 +254,13 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
                       radius="md"
                       aspectRatio={1}
                       onClick={() =>
-                        openContext('modelVersionLightbox', {
-                          initialSlide: index,
-                          modelVersionId: version.id,
+                        router.push({
+                          pathname: `/gallery/${image.id}`,
+                          query: {
+                            modelId,
+                            modelVersionId: version.id,
+                            returnUrl: router.asPath,
+                          },
                         })
                       }
                       withMeta
@@ -271,9 +275,13 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
               variant="outline"
               sx={!mobile ? { height: '100%' } : undefined}
               onClick={() =>
-                openContext('modelVersionLightbox', {
-                  initialSlide: imagesLimit,
-                  modelVersionId: version.id,
+                router.push({
+                  pathname: `/gallery/${versionImages[imagesLimit].id}`,
+                  query: {
+                    modelId,
+                    modelVersionId: version.id,
+                    returnUrl: router.asPath,
+                  },
                 })
               }
             >

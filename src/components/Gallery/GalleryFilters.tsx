@@ -7,7 +7,6 @@ const queryStringSchema = z
     modelVersionId: z.preprocess(Number, z.number()),
     reviewId: z.preprocess(Number, z.number()),
     userId: z.preprocess(Number, z.number()),
-    active: z.preprocess((arg) => Boolean(arg !== undefined), z.boolean()),
   })
   .partial();
 

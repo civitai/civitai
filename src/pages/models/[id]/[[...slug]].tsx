@@ -774,13 +774,14 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                                 edgeImageProps={{ width: 400 }}
                                 radius="md"
                                 onClick={() =>
-                                  // openContext('modelVersionLightbox', {
-                                  //   modelVersionId: latestVersion.id,
-                                  //   initialSlide: index,
-                                  // })
-                                  router.push(
-                                    `/gallery/${image.id}?modelId=${model.id}&modelVersionId=${latestVersion.id}`
-                                  )
+                                  router.push({
+                                    pathname: `/gallery/${image.id}`,
+                                    query: {
+                                      modelId: model.id,
+                                      modelVersionId: latestVersion.id,
+                                      returnUrl: router.asPath,
+                                    },
+                                  })
                                 }
                                 style={{ width: '100%' }}
                                 withMeta

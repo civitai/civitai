@@ -54,6 +54,8 @@ export const getGalleryImagesHandler = async ({
 }) => {
   try {
     const canViewNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+    // TODO - discuss with Justing
+    const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
     const take = limit + 1;
 
     const items = await prisma.image.findMany({
@@ -71,13 +73,16 @@ export const getGalleryImagesHandler = async ({
         // TODO - excludedTagIds (hidden tags)
       },
       select: imageGallerySelect,
-      orderBy: [{ createdAt: 'desc' }],
+      orderBy: { createdAt: 'desc' },
     });
 
     let nextCursor: number | undefined;
     if (items.length > limit) {
       const nextItem = items.pop();
       nextCursor = nextItem?.id;
+    } else if (!!modelId || !!modelVersionId || !!reviewId) {
+      // TODO - don't do this
+      // this condition should only trigger for galleries where
     }
 
     return {

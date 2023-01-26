@@ -44,6 +44,7 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { useRouter } from 'next/router';
 
 export function ReviewDiscussionItem({ review, width }: Props) {
   const { openContext } = useRoutedContext();
@@ -365,7 +366,8 @@ function ReviewCarousel({
 }) {
   const { openContext } = useRoutedContext();
   const [renderIndexes, setRenderIndexes] = useState([0]);
-  const [index, setIndex] = useState(0);
+  // const [index, setIndex] = useState(0);
+  const router = useRouter();
 
   useEffect(() => {
     // if (!!review.images && !review.images.some((x) => renderImages.includes(x.id))) {
@@ -379,6 +381,16 @@ function ReviewCarousel({
   // }
 
   const hasMultipleImages = review.images.length > 1;
+
+  const handleNavigate = (imageId: number) => {
+    router.push({
+      pathname: `/gallery/${imageId}`,
+      query: {
+        reviewId: review.id,
+        returnUrl: router.asPath,
+      },
+    });
+  };
 
   if (!inView && review.images.length > 0)
     return (
@@ -406,12 +418,7 @@ function ReviewCarousel({
                   image={image}
                   edgeImageProps={{ width: 400 }}
                   aspectRatio={1}
-                  onClick={() =>
-                    openContext('reviewLightbox', {
-                      initialSlide: index,
-                      reviewId: review.id,
-                    })
-                  }
+                  onClick={() => handleNavigate(image.id)}
                   withMeta
                 />
               )}
@@ -430,7 +437,6 @@ function ReviewCarousel({
         style={{ height }}
         onSlideChange={(index) => {
           setRenderIndexes((indexes) => (!indexes.includes(index) ? [...indexes, index] : indexes));
-          setIndex(index);
         }}
         withIndicators={hasMultipleImages}
         styles={{
@@ -468,12 +474,7 @@ function ReviewCarousel({
                     image={image}
                     edgeImageProps={{ width: 400 }}
                     aspectRatio={1}
-                    onClick={() =>
-                      openContext('reviewLightbox', {
-                        initialSlide: index,
-                        reviewId: review.id,
-                      })
-                    }
+                    onClick={() => handleNavigate(image.id)}
                     withMeta
                   />
                 )}

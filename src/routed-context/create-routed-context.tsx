@@ -72,3 +72,16 @@ export function createRoutedContext<TSchema extends z.AnyZodObject>({
 
   return RoutedContext;
 }
+
+/*
+  - consider keeping track of state outside of the context of `useRouter`
+  - clicking to open a modal could set some global state var and then use window.history to push a new url like this
+  ```
+  history.pushState({
+    ...history.state,
+    as: "/models/2220/babes?modal=reviewThread&reviewId=5513",
+    key: 'frupy',
+    url: "/models/[id]/[[...slug]]?id=2220&slug=babes&reviewId=5513&modal=reviewThread"
+  })
+  ```
+*/

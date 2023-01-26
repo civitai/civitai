@@ -1322,4 +1322,5 @@ model ImageConnection {
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
   reviewId       Int?
   review         Review?       @relation(fields: [reviewId], references: [id], onDelete: NoAction)
+  // TODO - add index
 }

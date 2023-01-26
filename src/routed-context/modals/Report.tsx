@@ -147,16 +147,43 @@ export default createRoutedContext({
               await queryUtils.comment.getCommentsById.invalidate();
               break;
             case ReportEntity.Image:
-              await queryUtils.image.getGalleryImageDetail.invalidate();
+              if (variables.reason === ReportReason.NSFW)
+                await queryUtils.image.getGalleryImageDetail.invalidate();
               await queryUtils.image.getGalleryImagesInfinite.invalidate();
               // review invalidate
               if (reviewId) {
-                await queryUtils.review.getDetail.invalidate({ id: reviewId });
-                await queryUtils.review.getAll.invalidate();
+                await queryUtils.review.getDetail.setData(
+                  { id: reviewId },
+                  produce((old) => {
+                    if (old) {
+                      if (variables.reason === ReportReason.NSFW) {
+                        const index = old.images.findIndex((x) => x.id === variables.id);
+                        if (index > -1) old.images[index].nsfw = true;
+                      }
+                    }
+                  })
+                );
               }
+              await queryUtils.review.getAll.invalidate();
               // model invalidate
               if (modelId) {
-                await queryUtils.model.getById.invalidate({ id: modelId });
+                queryUtils.model.getById.setData(
+                  { id: modelId },
+                  produce((old) => {
+                    if (old) {
+                      if (variables.reason === ReportReason.NSFW) {
+                        const [modelVersionIndex, imageIndex] = old.modelVersions.reduce<
+                          [number, number]
+                        >((acc, value, modelVersionIndex) => {
+                          const imageIndex = value.images.findIndex((x) => x.id === variables.id);
+                          return imageIndex > -1 ? [modelVersionIndex, imageIndex] : acc;
+                        }, [] as any);
+                        if (modelVersionIndex > -1 && imageIndex > -1)
+                          old.modelVersions[modelVersionIndex].images[imageIndex].nsfw = true;
+                      }
+                    }
+                  })
+                );
                 await queryUtils.model.getAll.invalidate();
               }
               break;

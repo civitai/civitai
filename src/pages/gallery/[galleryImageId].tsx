@@ -26,12 +26,12 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconFlag, IconInfoCircle, IconShare, IconDotsVertical } from '@tabler/icons';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { QS } from '~/utils/qs';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
-import { ReportEntity } from '~/server/schema/report.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
 import { useNavigateBack } from '~/providers/NavigateBackProvider';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { useHotkeys } from '@mantine/hooks';
+import { ReportImageButton } from '~/components/Gallery/ReportImageButton';
 
 export default function GalleryImageDetail() {
   const router = useRouter();
@@ -39,9 +39,13 @@ export default function GalleryImageDetail() {
   const filters = useGalleryFilters();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
-  const { openContext } = useRoutedContext();
   const { back: goBack } = useNavigateBack();
+  const returnUrl = router.query.returnUrl as string;
+  const active = router.query.active === 'true';
 
+  const { modelId, modelVersionId, reviewId, userId } = filters;
+
+  // #region [data fetching]
   const { data: gallery, isLoading } = trpc.image.getGalleryImagesInfinite.useInfiniteQuery({
     ...filters,
   });
@@ -59,8 +63,21 @@ export default function GalleryImageDetail() {
   );
 
   const image = galleryImages.find((x) => x.id === id) ?? prefetchImage;
+  // #endregion
 
-  // console.log({ image });
+  // #region [back button functionality]
+  const handleBackClick = () => goBack(returnUrl ?? '/gallery');
+
+  const handleCloseContext = () => {
+    const { active, ...query } = router.query;
+    if (active === 'true') {
+      goBack({ query }, undefined, { shallow: true });
+    } else {
+      handleBackClick();
+    }
+  };
+  useHotkeys([['Escape', handleBackClick]]);
+  // #endregion
 
   const shareUrl = useMemo(() => {
     const [pathname, queryString] = router.asPath.split('?');
@@ -68,36 +85,14 @@ export default function GalleryImageDetail() {
     return Object.keys(query).length > 0 ? `${pathname}?${QS.stringify(query)}` : pathname;
   }, [router]);
 
-  if (!image && isLoading) return <PageLoader />;
-  if (!image) return <NotFound />;
-  if (image?.nsfw && !currentUser?.showNsfw) return <SensitiveShield />;
-  const { modelId, modelVersionId, reviewId, userId } = filters;
-
   const handleToggleInfo = () => {
     const active = router.query.active === 'true';
     router.push({ query: { ...router.query, active: !active } }, undefined, { shallow: true });
   };
 
-  const handleReportClick = () =>
-    openContext('report', { type: ReportEntity.Image, entityId: image.id });
-
-  // #region [back button functionality]
-  const getReturnUrl = () => {
-    if (modelId) {
-      const url = `/models/${modelId}`;
-      return reviewId ? `${url}?modal=reviewThread&reviewId=${reviewId}` : url;
-    }
-    return '/gallery';
-  };
-
-  const handleCloseContext = () => {
-    const { active, ...query } = router.query;
-    // active === 'true' ? router.replace({ query }, undefined, { shallow: true }) : router.back();
-    goBack({ query }, undefined, { shallow: true });
-  };
-
-  const handleBackClick = () => goBack(getReturnUrl());
-  // #endregion
+  if (!image && isLoading) return <PageLoader />;
+  if (!image) return <NotFound />;
+  if (image?.nsfw && !currentUser?.showNsfw) return <SensitiveShield />;
 
   return (
     // TODO - <Meta />
@@ -135,7 +130,7 @@ export default function GalleryImageDetail() {
       </ActionIcon>
       <Card
         className={cx(classes.sidebar, {
-          [classes.active]: filters.active,
+          [classes.active]: active,
         })}
       >
         <Card.Section withBorder>
@@ -155,9 +150,11 @@ export default function GalleryImageDetail() {
                   </ActionIcon>
                 </ShareButton>
                 {/* TODO - reporting */}
-                <ActionIcon size="lg" onClick={handleReportClick}>
-                  <IconFlag />
-                </ActionIcon>
+                <ReportImageButton imageId={image.id}>
+                  <ActionIcon size="lg">
+                    <IconFlag />
+                  </ActionIcon>
+                </ReportImageButton>
                 {/* <ActionIcon size="lg">
                   <IconDotsVertical />
                 </ActionIcon> */}
