@@ -1,6 +1,7 @@
 import { Button, Group, Popover, Stack, ThemeIcon, Text, Badge, Box, Sx } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconLock, IconPlus } from '@tabler/icons';
+import { SessionUser } from 'next-auth';
 import { useRouter } from 'next/router';
 import React, { cloneElement, createContext, useContext, useState } from 'react';
 import create from 'zustand';
@@ -9,6 +10,7 @@ import { immer } from 'zustand/middleware/immer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageModel } from '~/server/selectors/image.selector';
 import { isDefined } from '~/utils/type-guards';
+
 export type ImageGuardConnect = {
   entityType: 'model' | 'review';
   entityId: number;
@@ -51,8 +53,9 @@ const useStore = create<SfwStore>()(
 // #region [ImageGuardContext]
 type ImageGuardState = {
   images: ImageModel[];
+  connect: ImageGuardConnect;
   nsfw?: boolean;
-  connect?: ImageGuardConnect;
+  currentUser?: SessionUser | null;
 };
 const ImageGuardCtx = createContext<ImageGuardState>({} as any);
 const useImageGuardContext = () => {
@@ -69,7 +72,7 @@ const useImageGuardContext = () => {
 
 type ImageGuardProps = {
   images: ImageModel[];
-  connect?: ImageGuardConnect;
+  connect: ImageGuardConnect;
   render: (image: ImageModel, index: number) => React.ReactNode;
   /** Make all images nsfw by default */
   nsfw?: boolean;
@@ -81,8 +84,8 @@ export function ImageGuard({
   render,
   nsfw: globalNsfw,
 }: ImageGuardProps) {
-  const user = useCurrentUser();
-  const shouldBlur = user?.blurNsfw ?? true;
+  const currentUser = useCurrentUser();
+  const shouldBlur = currentUser?.blurNsfw ?? true;
 
   // const showConnection = useStore((state) =>
   //   connect ? state.showingConnections[getConnectionKey(connect)] : undefined
@@ -104,7 +107,7 @@ export function ImageGuard({
   //     : images;
 
   return (
-    <ImageGuardCtx.Provider value={{ images, nsfw: globalNsfw, connect }}>
+    <ImageGuardCtx.Provider value={{ images, nsfw: globalNsfw, connect, currentUser }}>
       {images.map((image, index) => (
         <ImageGuardContentProvider key={image.id} image={image}>
           {render(image, index)}
@@ -229,13 +232,14 @@ ImageGuard.ToggleConnect = function ToggleConnect({
 }) {
   const { connect, nsfw } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
-  const showImage = useStore((state) => state.showingImages[image.id.toString()] ?? false);
+  const showImage = useStore((state) => state.showingImages[image?.id.toString()] ?? false);
   const showConnect = useStore((state) =>
     connect ? state.showingConnections[getConnectionKey(connect)] : false
   );
   const toggleConnect = useStore((state) => state.toggleConnection);
 
-  if (!connect || !image.nsfw) return null;
+  if (!image.nsfw) return null;
+
   const showing = showConnect ?? showImage;
 
   return (

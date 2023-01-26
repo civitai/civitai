@@ -1,4 +1,5 @@
 import { Button, Group, Modal, Stack, LoadingOverlay } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
@@ -16,12 +17,12 @@ export default createRoutedContext({
   }),
   Element: ({ context, props: { commentId } }) => {
     const router = useRouter();
+    const [value, , removeValue] = useLocalStorage<string | undefined>({
+      key: 'commentContent',
+      defaultValue: undefined,
+    });
     const modelId = Number(router.query.id);
-    const [initialContent] = useState(localStorage.getItem('commentContent'));
-
-    useEffect(() => {
-      if (initialContent) localStorage.removeItem('commentContent');
-    }, [initialContent]);
+    const [initialContent, setInitialContent] = useState(value);
 
     const queryUtils = trpc.useContext();
     const { data, isLoading, isFetching } = trpc.comment.getById.useQuery(
@@ -53,7 +54,7 @@ export default createRoutedContext({
     });
 
     const handleClose = () => {
-      form.reset();
+      form.reset({ modelId, content: undefined });
       context.close();
     };
 
@@ -62,7 +63,17 @@ export default createRoutedContext({
 
     useEffect(() => {
       if (data && !loadingComment) form.reset(data);
-    }, [data, loadingComment]) //eslint-disable-line
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [data, loadingComment]);
+
+    useEffect(() => {
+      if (!initialContent && value) {
+        setInitialContent(value);
+        form.reset({ modelId, content: value });
+        removeValue();
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [initialContent, removeValue, value]);
 
     return (
       <Modal
