@@ -1,9 +1,10 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
-  getGalleryImagesHandler,
+  getGalleryImagesInfiniteHandler,
   getGalleryImageDetailHandler,
   getModelVersionImagesHandler,
   getReviewImagesHandler,
+  getGalleryImagesHandler,
 } from './../controllers/image.controller';
 import {
   getModelVersionImageSchema,
@@ -19,6 +20,7 @@ export const imageRouter = router({
   getReviewImages: publicProcedure.input(getReviewImagesSchema).query(getReviewImagesHandler),
   getGalleryImagesInfinite: publicProcedure
     .input(getGalleryImageSchema)
-    .query(getGalleryImagesHandler),
+    .query(getGalleryImagesInfiniteHandler),
+  getGalleryImages: publicProcedure.input(getGalleryImageSchema).query(getGalleryImagesHandler),
   getGalleryImageDetail: publicProcedure.input(getByIdSchema).query(getGalleryImageDetailHandler),
 });

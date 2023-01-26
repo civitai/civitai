@@ -571,7 +571,7 @@ model Image {
   reports         ImageReport[]
   reactions       ImageReaction[]
   comments        ImageComment[]
-  connections     ImageConnection[]
+  connections     ImageConnection?
   tags            TagsOnImage[]
 }
 

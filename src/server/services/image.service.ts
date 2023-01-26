@@ -21,7 +21,7 @@ export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
   return await result.map((x) => x.image);
 };
 
-export const getImages = async <
+export const getGalleryImages = async <
   TOrderBy extends Prisma.Enumerable<Prisma.ImageOrderByWithRelationInput>
 >({
   limit,

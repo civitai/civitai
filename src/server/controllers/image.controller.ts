@@ -7,9 +7,12 @@ import {
   GetReviewImagesSchema,
   GetGalleryImageInput,
 } from './../schema/image.schema';
-import { getModelVersionImages, getReviewImages } from './../services/image.service';
+import {
+  getModelVersionImages,
+  getReviewImages,
+  getGalleryImages,
+} from './../services/image.service';
 import { prisma } from '~/server/db/client';
-import { env } from '~/env/server.mjs';
 
 export const getModelVersionImagesHandler = async ({
   input: { modelVersionId },
@@ -44,8 +47,7 @@ export const getGalleryImageDetailHandler = async ({ input: { id } }: { input: G
   }
 };
 
-export type GetGalleryImagesReturnType = AsyncReturnType<typeof getGalleryImagesHandler>['items'];
-export const getGalleryImagesHandler = async ({
+export const getGalleryImagesInfiniteHandler = async ({
   input: { limit, cursor, modelId, modelVersionId, reviewId, userId },
   ctx,
 }: {
@@ -53,42 +55,50 @@ export const getGalleryImagesHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const canViewNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
-    // TODO - discuss with Justing
-    const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
     const take = limit + 1;
-
-    const items = await prisma.image.findMany({
-      cursor: cursor ? { id: cursor } : undefined,
-      take,
-      where: {
-        // query modelId or modelVersionId
-        userId,
-        imagesOnModels:
-          modelVersionId || modelId
-            ? { modelVersionId, modelVersion: modelId ? { modelId } : undefined }
-            : undefined,
-        imagesOnReviews: reviewId ? { reviewId } : undefined,
-        nsfw: !canViewNsfw ? { equals: false } : undefined,
-        // TODO - excludedTagIds (hidden tags)
-      },
-      select: imageGallerySelect,
-      orderBy: { createdAt: 'desc' },
+    const items = await getGalleryImages({
+      limit: take,
+      cursor,
+      modelId,
+      modelVersionId,
+      reviewId,
+      userId,
+      user: ctx.user,
     });
 
     let nextCursor: number | undefined;
     if (items.length > limit) {
       const nextItem = items.pop();
       nextCursor = nextItem?.id;
-    } else if (!!modelId || !!modelVersionId || !!reviewId) {
-      // TODO - don't do this
-      // this condition should only trigger for galleries where
     }
 
     return {
       nextCursor,
       items,
     };
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export type GetGalleryImagesReturnType = AsyncReturnType<typeof getGalleryImagesHandler>;
+export const getGalleryImagesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetGalleryImageInput;
+  ctx: Context;
+}) => {
+  try {
+    const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
+    const items = await getGalleryImages({
+      ...input,
+      user: ctx.user,
+      orderBy: [{ connections: { index: 'asc' } }, { createAt: 'desc' }],
+    });
+    return prioritizeSafeImages
+      ? items.sort((a, b) => (a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1))
+      : items;
   } catch (error) {
     throw throwDbError(error);
   }
