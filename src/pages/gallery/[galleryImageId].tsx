@@ -19,6 +19,7 @@ import {
   ScrollArea,
   Stack,
   Paper,
+  Box,
 } from '@mantine/core';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 
@@ -32,6 +33,7 @@ import { useNavigateBack } from '~/providers/NavigateBackProvider';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { useHotkeys } from '@mantine/hooks';
 import { ReportImageButton } from '~/components/Gallery/ReportImageButton';
+import { Reactions } from '~/components/Reaction/Reactions';
 
 export default function GalleryImageDetail() {
   const router = useRouter();
@@ -171,7 +173,15 @@ export default function GalleryImageDetail() {
           </Group>
         </Card.Section>
         <Card.Section component={ScrollArea} style={{ flex: 1 }}>
-          <Stack spacing="md">
+          <Stack spacing="md" pt="md">
+            <Box px="md">
+              <Reactions
+                entityId={image.id}
+                entityType="image"
+                reactions={image.reactions}
+                metrics={image.metrics}
+              />
+            </Box>
             {/* TODO.gallery - REACTIONS */}
             {/* TODO.gallery - COMMENTS */}
             {/* TODO.gallery - TAGS */}

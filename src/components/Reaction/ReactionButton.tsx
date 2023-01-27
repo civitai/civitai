@@ -1,68 +1,95 @@
-import { Button, useMantineTheme, Badge, Center } from '@mantine/core';
-import { IconArrowRight, IconCheck, IconHeart, IconX } from '@tabler/icons';
-import { ToggleReactionInput } from '~/server/schema/reaction.schema';
-import { trpc } from '~/utils/trpc';
-import { useState } from 'react';
-import { useDidUpdate } from '@mantine/hooks';
 import { ReviewReactions } from '@prisma/client';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { cloneElement, useMemo, useState } from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ToggleReactionInput } from '~/server/schema/reaction.schema';
+import { ReactionDetails } from '~/server/selectors/reaction.selector';
+import { trpc } from '~/utils/trpc';
+import create from 'zustand';
+import { immer } from 'zustand/middleware/immer';
 
-const reactionIcons = {
-  [ReviewReactions.Heart]: IconHeart,
-  [ReviewReactions.Like]: IconArrowRight,
-  [ReviewReactions.Dislike]: IconArrowRight,
-  [ReviewReactions.Laugh]: IconArrowRight,
-  [ReviewReactions.Cry]: IconArrowRight,
+/**NOTES**
+  Why use zustand?
+    - When a user adds a reaction, we're not going to invalidate the react-query cache of parent data. This means that, if a user were to navigate to another page and then come back, the reaction data from the react-query cache would not be accurate.
+*/
+type ReactionStore = {
+  reactions: Record<string, Partial<Record<ReviewReactions, boolean>>>;
+  toggleReaction: ({
+    entityType,
+    entityId,
+    reaction,
+    value,
+  }: ToggleReactionInput & { value: boolean }) => void;
 };
 
-type ReactionButtonProps = ToggleReactionInput & {
-  userReacted?: boolean;
+const getReactionKey = ({ entityType, entityId }: Omit<ToggleReactionInput, 'reaction'>) =>
+  `${entityType}_${entityId}`;
+
+const useStore = create<ReactionStore>()(
+  immer((set) => ({
+    reactions: {},
+    toggleReaction: ({ entityType, entityId, reaction, value }) => {
+      const key = getReactionKey({ entityType, entityId });
+      set((state) => {
+        if (!state.reactions[key]) state.reactions[key] = { [reaction]: value };
+        else state.reactions[key][reaction] = value;
+      });
+    },
+  }))
+);
+
+export type ReactionButtonProps = ToggleReactionInput & {
+  userReaction?: ReactionDetails;
   count?: number;
-  disabled?: boolean;
+  noEmpty?: boolean;
+  children: ({
+    hasReacted,
+    count,
+    reaction,
+  }: {
+    hasReacted: boolean;
+    count: number;
+    reaction: ReviewReactions;
+  }) => React.ReactElement;
+  readonly?: boolean;
 };
 
-export const ReactionButton = ({
-  entityId,
+export function ReactionButton({
+  userReaction,
+  count: initialCount = 0,
   entityType,
+  entityId,
   reaction,
-  userReacted,
-  count: initialCount,
-  disabled,
-}: ReactionButtonProps) => {
-  const theme = useMantineTheme();
-  const [hasReacted, setHasReacted] = useState(!!userReacted);
-  const [count, setCount] = useState(initialCount ?? 0);
-  const { mutate, isLoading } = trpc.reaction.toggle.useMutation();
+  readonly,
+  children,
+  noEmpty,
+}: ReactionButtonProps) {
+  const currentUser = useCurrentUser();
 
-  const toggleReaction = () => {
-    setCount((c) => (hasReacted ? c - 1 : c + 1));
-    setHasReacted((r) => !r);
-  };
+  const key = getReactionKey({ entityType, entityId });
+  const hasReactedInitial = !!userReaction;
+  const hasReacted = useStore((state) => state.reactions?.[key]?.[reaction] ?? !!userReaction);
+  const toggleReaction = useStore((state) => state.toggleReaction);
 
-  useDidUpdate(() => {
+  const count = useMemo(() => {
+    if (hasReactedInitial) return hasReacted ? initialCount : initialCount - 1;
+    else return hasReacted ? initialCount + 1 : initialCount;
+  }, [hasReactedInitial, hasReacted, initialCount]);
+
+  const { mutate } = trpc.reaction.toggle.useMutation();
+
+  const handleClick = () => {
+    toggleReaction({ entityType, entityId, reaction, value: !hasReacted });
     mutate({
       entityId,
       entityType,
       reaction,
     });
-  }, [hasReacted]);
+  };
 
-  const Icon = reactionIcons[reaction];
-  return (
-    <Badge
-      variant={'light'}
-      color={hasReacted ? 'pink' : 'gray'}
-      leftSection={
-        <Center>
-          <Icon size={18} />
-        </Center>
-      }
-      sx={{ userSelect: 'none', ...(!disabled && { cursor: 'pointer' }) }}
-      onClick={!disabled ? toggleReaction : undefined}
-      size="lg"
-      px={5}
-    >
-      {count}
-    </Badge>
-  );
-};
+  if (noEmpty && count < 1) return null;
+
+  const canClick = currentUser && !readonly;
+  const child = children({ hasReacted, count, reaction });
+
+  return canClick ? cloneElement(child, { onClick: handleClick }) : child;
+}

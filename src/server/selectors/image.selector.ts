@@ -45,7 +45,7 @@ export const imageGallerySelect = ({
     },
     metrics: {
       where: {
-        timeframe: period,
+        timeframe: MetricTimeframe.AllTime,
       },
       select: {
         likeCount: true,

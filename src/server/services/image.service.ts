@@ -71,5 +71,8 @@ export const getGalleryImages = async <
     ],
   });
 
-  return items.map(({ metrics, ...image }) => ({ ...image, metrics: metrics[0] }));
+  return items.map(({ metrics, ...image }) => ({
+    ...image,
+    metrics: metrics[0] as typeof metrics[0] | undefined,
+  }));
 };
