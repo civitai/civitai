@@ -1,4 +1,7 @@
+import { ImageSort } from './../common/enums';
+import { MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
+import { constants } from '~/server/common/constants';
 
 const stringToNumber = z.preprocess((value) => Number(value), z.number());
 
@@ -54,11 +57,13 @@ export const getReviewImagesSchema = z.object({
 
 export type GetGalleryImageInput = z.infer<typeof getGalleryImageSchema>;
 export const getGalleryImageSchema = z.object({
-  limit: z.number().min(0).max(200).default(50),
+  limit: z.number().min(0).max(200).default(constants.imageFilterDefaults.limit),
   cursor: z.number().optional(),
   modelId: z.number().optional(),
   reviewId: z.number().optional(),
   modelVersionId: z.number().optional(),
   userId: z.number().optional(),
   infinite: z.boolean().default(true),
+  period: z.nativeEnum(MetricTimeframe).default(constants.imageFilterDefaults.period),
+  sort: z.nativeEnum(ImageSort).default(constants.imageFilterDefaults.sort),
 });

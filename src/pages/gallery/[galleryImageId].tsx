@@ -63,14 +63,10 @@ export default function GalleryImageDetail() {
     [infiniteGallery, finiteGallery]
   );
 
+  // only allow this to run if the detail data isn't included in the list result
   const { data: prefetchImage } = trpc.image.getGalleryImageDetail.useQuery(
-    {
-      id,
-    },
-    {
-      // only allow this to run if the detail data isn't included in the list result
-      enabled: !galleryImages.some((x) => x.id === id),
-    }
+    { id },
+    { enabled: !galleryImages.some((x) => x.id === id) }
   );
 
   const image = galleryImages.find((x) => x.id === id) ?? prefetchImage;

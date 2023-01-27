@@ -1,9 +1,11 @@
+import { throwDbError } from '~/server/utils/errorHandling';
 import { SessionUser } from 'next-auth';
 import { GetGalleryImageInput } from './../schema/image.schema';
 import { prisma } from '~/server/db/client';
 import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server.mjs';
+import { ImageSort } from '~/server/common/enums';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await prisma.imagesOnModels.findMany({
@@ -33,6 +35,8 @@ export const getGalleryImages = async <
   user,
   orderBy,
   infinite,
+  period,
+  sort,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
 
@@ -51,7 +55,7 @@ export const getGalleryImages = async <
     imagesOnReviews: reviewId ? { reviewId } : undefined,
   };
 
-  return await prisma.image.findMany({
+  const items = await prisma.image.findMany({
     cursor: cursor ? { id: cursor } : undefined,
     take: limit,
     where: {
@@ -60,7 +64,12 @@ export const getGalleryImages = async <
       ...(infinite ? infiniteWhere : finiteWhere),
       // TODO.gallery - excludedTagIds (hidden tags)
     },
-    select: imageGallerySelect,
-    orderBy: orderBy ?? { createdAt: 'desc' },
+    select: imageGallerySelect({ period, user }),
+    orderBy: orderBy ?? [
+      // TODO.gallery - order by 'sort' (missing image rank)
+      { createdAt: 'desc' },
+    ],
   });
+
+  return items.map(({ metrics, ...image }) => ({ ...image, metrics: metrics[0] }));
 };

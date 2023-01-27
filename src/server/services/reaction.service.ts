@@ -35,6 +35,11 @@ const getReaction = async ({
         where: { userId, reaction, commentId: entityId },
         select: { id: true },
       });
+    case 'image':
+      return await prisma.imageReaction.findFirst({
+        where: { userId, reaction, imageId: entityId },
+        select: { id: true },
+      });
     default:
       throw throwBadRequestError();
   }
@@ -54,6 +59,8 @@ const deleteReaction = async ({
       return await prisma.answerReaction.delete({ where: { id }, select: { reaction: true } });
     case 'comment':
       return await prisma.commentV2Reaction.delete({ where: { id }, select: { reaction: true } });
+    case 'image':
+      return await prisma.imageReaction.delete({ where: { id }, select: { reaction: true } });
     default:
       throw throwBadRequestError();
   }
@@ -78,6 +85,11 @@ const createReaction = async ({
     case 'comment':
       return await prisma.commentV2Reaction.create({
         data: { ...data, commentId: entityId },
+        select: { reaction: true },
+      });
+    case 'image':
+      return await prisma.imageReaction.create({
+        data: { ...data, imageId: entityId },
         select: { reaction: true },
       });
     default:

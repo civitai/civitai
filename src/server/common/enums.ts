@@ -37,3 +37,8 @@ export enum QuestionStatus {
   Answered = 'Answered',
   Unanswered = 'Unanswered',
 }
+
+export enum ImageSort {
+  MostComments = 'Most Comments',
+  Newest = 'Newest',
+}

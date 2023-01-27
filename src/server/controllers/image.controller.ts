@@ -1,3 +1,4 @@
+import { MetricTimeframe } from '@prisma/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { Context } from '~/server/createContext';
 import { imageGallerySelect } from '~/server/selectors/image.selector';
@@ -13,6 +14,7 @@ import {
   getGalleryImages,
 } from './../services/image.service';
 import { prisma } from '~/server/db/client';
+import { input } from '@tensorflow/tfjs';
 
 export const getModelVersionImagesHandler = async ({
   input: { modelVersionId },
@@ -39,9 +41,19 @@ export const getReviewImagesHandler = async ({
 };
 
 export type GetGalleryImageDetailReturnType = AsyncReturnType<typeof getGalleryImageDetailHandler>;
-export const getGalleryImageDetailHandler = async ({ input: { id } }: { input: GetByIdInput }) => {
+export const getGalleryImageDetailHandler = async ({
+  input: { id },
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
   try {
-    return await prisma.image.findUnique({ where: { id }, select: imageGallerySelect });
+    return await prisma.image.findUnique({
+      where: { id },
+      // TODO.gallery - If the gallery is infinite, use the current gallery filters. If the gallery is finite, use MetricTimeFrame.AllTime
+      select: imageGallerySelect({ period: MetricTimeframe.AllTime, user: ctx.user }),
+    });
   } catch (error) {
     throw throwDbError(error);
   }
