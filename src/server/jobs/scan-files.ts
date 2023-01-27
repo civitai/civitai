@@ -21,7 +21,7 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
   });
 
   const s3 = getS3Client();
-  for (const file of files) await requestScannerTasks(file, s3);
+  for (const file of files) await requestScannerTasks({ file, s3 });
 
   await prisma.modelFile.updateMany({
     where,
@@ -31,11 +31,19 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
   });
 });
 
-export async function requestScannerTasks(
-  { modelVersionId, type, format, url: s3Url }: FileScanRequest,
-  s3: S3Client,
-  tasks: ScannerTask[] | ScannerTask = ['Import', 'Scan', 'Hash']
-) {
+type ScannerRequest = {
+  file: FileScanRequest;
+  s3: S3Client;
+  tasks?: ScannerTask[] | ScannerTask;
+  lowPriority?: boolean;
+};
+
+export async function requestScannerTasks({
+  file: { modelVersionId, type, format, url: s3Url },
+  s3,
+  tasks = ['Import', 'Scan', 'Hash'],
+  lowPriority = false,
+}: ScannerRequest) {
   if (!Array.isArray(tasks)) tasks = [tasks];
 
   const callbackUrl =
@@ -60,6 +68,7 @@ export async function requestScannerTasks(
       ['token', env.SCANNING_TOKEN],
       ['callbackUrl', callbackUrl],
       ['fileUrl', fileUrl],
+      ...(lowPriority ? [['lowPrio', 'true']] : []),
       ...tasks.map((task) => ['tasks', task]),
     ]);
 

@@ -10,8 +10,7 @@ export const createContext = async ({
   res: NextApiResponse;
 }) => {
   const session = await getServerAuthSession({ req, res });
-  // const acceptableOrigin = !req.headers.referer?.startsWith(env.NEXTAUTH_URL);
-  const acceptableOrigin = true;
+  const acceptableOrigin = req.headers.referer?.startsWith(env.NEXTAUTH_URL) ?? false;
   return {
     user: session?.user,
     acceptableOrigin,

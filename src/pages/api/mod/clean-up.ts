@@ -40,8 +40,8 @@ export default ModEndpoint(
     });
 
     const s3 = getS3Client();
-    const promises = modelFiles.map(async (modelFile) => {
-      await requestScannerTasks(modelFile, s3, ['Import', 'Hash']);
+    const promises = modelFiles.map(async (file) => {
+      await requestScannerTasks({ file, s3, tasks: ['Import', 'Hash'], lowPriority: true });
     });
 
     if (wait) {
