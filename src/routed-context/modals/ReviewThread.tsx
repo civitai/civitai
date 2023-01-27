@@ -199,7 +199,7 @@ export default createRoutedContext({
                                   <ImagePreview
                                     image={image}
                                     aspectRatio={0}
-                                    edgeImageProps={{ height: screenHeight }}
+                                    edgeImageProps={{ height: screenHeight }} // TODO Optimization: look at using width 400, since we already have that in cache
                                     radius="md"
                                     withMeta
                                     onClick={() => handleNavigate(image.id)}
