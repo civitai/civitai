@@ -1,6 +1,5 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import superjson from 'superjson';
-import { env } from '~/env/server.mjs';
 import type { Context } from './createContext';
 
 const t = initTRPC.context<Context>().create({
