@@ -2,7 +2,7 @@ import { MetricTimeframe } from '@prisma/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { Context } from '~/server/createContext';
 import { imageGallerySelect } from '~/server/selectors/image.selector';
-import { throwDbError } from '~/server/utils/errorHandling';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
   GetModelVersionImagesSchema,
   GetReviewImagesSchema,
@@ -49,11 +49,13 @@ export const getGalleryImageDetailHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return await prisma.image.findUnique({
+    const image = await prisma.image.findUnique({
       where: { id },
       // TODO.gallery - If the gallery is infinite, use the current gallery filters. If the gallery is finite, use MetricTimeFrame.AllTime
       select: imageGallerySelect({ period: MetricTimeframe.AllTime, user: ctx.user }),
     });
+    if (!image) throw throwNotFoundError();
+    return { ...image, metrics: image.metrics[0] };
   } catch (error) {
     throw throwDbError(error);
   }
