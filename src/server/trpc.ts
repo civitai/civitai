@@ -15,24 +15,20 @@ export const { router, middleware } = t;
 /**
  * Unprotected procedure
  **/
-const isFromApp = t.middleware(({ ctx, next }) => {
-  if (!ctx.referrer?.startsWith(env.NEXTAUTH_URL)) {
-    throw new TRPCError({ code: 'UNAUTHORIZED' });
-  }
-  return next({ ctx: { user: ctx.user } });
+const isAcceptableOrigin = t.middleware(({ ctx: { user, acceptableOrigin }, next }) => {
+  if (!acceptableOrigin) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  return next({ ctx: { user, acceptableOrigin } });
 });
 
-export const publicProcedure = t.procedure.use(isFromApp);
+export const publicProcedure = t.procedure.use(isAcceptableOrigin);
 
 /**
  * Reusable middleware to ensure
  * users are logged in
  */
-const isAuthed = t.middleware(({ ctx, next }) => {
-  if (!ctx.user) {
-    throw new TRPCError({ code: 'UNAUTHORIZED' });
-  }
-  return next({ ctx: { user: ctx.user } });
+const isAuthed = t.middleware(({ ctx: { user, acceptableOrigin }, next }) => {
+  if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  return next({ ctx: { user, acceptableOrigin } });
 });
 
 /**

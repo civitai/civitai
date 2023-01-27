@@ -1,4 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
+import { env } from '~/env/server.mjs';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 
 export const createContext = async ({
@@ -9,10 +10,16 @@ export const createContext = async ({
   res: NextApiResponse;
 }) => {
   const session = await getServerAuthSession({ req, res });
+  const acceptableOrigin = !req.headers.referer?.startsWith(env.NEXTAUTH_URL);
   return {
     user: session?.user,
-    referrer: req.headers.referer,
+    acceptableOrigin,
   };
+};
+
+export const publicApiContext = {
+  user: undefined,
+  acceptableOrigin: true,
 };
 
 export type Context = AsyncReturnType<typeof createContext>;
