@@ -60,4 +60,5 @@ export const getGalleryImageSchema = z.object({
   reviewId: z.number().optional(),
   modelVersionId: z.number().optional(),
   userId: z.number().optional(),
+  infinite: z.boolean().default(true),
 });

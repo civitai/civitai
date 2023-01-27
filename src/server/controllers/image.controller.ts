@@ -48,7 +48,7 @@ export const getGalleryImageDetailHandler = async ({ input: { id } }: { input: G
 };
 
 export const getGalleryImagesInfiniteHandler = async ({
-  input: { limit, cursor, modelId, modelVersionId, reviewId, userId },
+  input: { limit, ...input },
   ctx,
 }: {
   input: GetGalleryImageInput;
@@ -58,11 +58,7 @@ export const getGalleryImagesInfiniteHandler = async ({
     const take = limit + 1;
     const items = await getGalleryImages({
       limit: take,
-      cursor,
-      modelId,
-      modelVersionId,
-      reviewId,
-      userId,
+      ...input,
       user: ctx.user,
     });
 
@@ -94,7 +90,7 @@ export const getGalleryImagesHandler = async ({
     const items = await getGalleryImages({
       ...input,
       user: ctx.user,
-      orderBy: [{ connections: { index: 'asc' } }, { createAt: 'desc' }],
+      orderBy: [{ connections: { index: 'asc' } }, { createdAt: 'desc' }],
     });
     return prioritizeSafeImages
       ? items.sort((a, b) => (a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1))

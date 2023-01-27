@@ -8,8 +8,6 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useHotkeys } from '@mantine/hooks';
 import { QS } from '~/utils/qs';
-import create from 'zustand';
-import { immer } from 'zustand/middleware/immer';
 
 type GalleryCarouselProps = {
   current: GetGalleryImagesReturnType[0];
@@ -18,22 +16,10 @@ type GalleryCarouselProps = {
   connect?: ImageGuardConnect;
 };
 
-const useStore = create<{ index?: number; setIndex: (index: number) => void }>()(
-  immer((set, get) => ({
-    setIndex: (index) => {
-      set((state) => {
-        state.index = index;
-      });
-    },
-  }))
-);
-
 /**NOTES**
   - when our current image is not found in the images array, we can navigate away from it, but we can't use the arrows to navigate back to it.
 */
 export function GalleryCarousel({ current, images, className, connect }: GalleryCarouselProps) {
-  const storeIndex = useStore((state) => state.index);
-  const setIndex = useStore((state) => state.setIndex);
   const router = useRouter();
   const { classes, cx } = useStyles();
   const index = images.findIndex((x) => x.id === current.id);
@@ -91,7 +77,6 @@ export function GalleryCarousel({ current, images, className, connect }: Gallery
       <ImageGuard
         images={[current]}
         connect={connect}
-        // nsfw={nsfw}
         render={(image) => {
           return (
             <Center
@@ -127,6 +112,7 @@ export function GalleryCarousel({ current, images, className, connect }: Gallery
           );
         }}
       />
+      {/* TODO.gallery - indicators */}
     </div>
   );
 }

@@ -109,6 +109,7 @@ export default createRoutedContext({
         pathname: `/gallery/${imageId}`,
         query: {
           reviewId,
+          infinite: false,
           returnUrl: router.asPath,
         },
       });

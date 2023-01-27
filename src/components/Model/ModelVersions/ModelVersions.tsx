@@ -262,6 +262,7 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
                           query: {
                             modelId,
                             modelVersionId: version.id,
+                            infinite: false,
                             returnUrl: router.asPath,
                           },
                         })
@@ -283,6 +284,7 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
                   query: {
                     modelId,
                     modelVersionId: version.id,
+                    infinite: false,
                     returnUrl: router.asPath,
                   },
                 })

@@ -823,6 +823,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                                     query: {
                                       modelId: model.id,
                                       modelVersionId: latestVersion.id,
+                                      infinite: false,
                                       returnUrl: router.asPath,
                                     },
                                   })

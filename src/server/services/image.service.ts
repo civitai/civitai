@@ -32,21 +32,33 @@ export const getGalleryImages = async <
   userId,
   user,
   orderBy,
+  infinite,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+
+  const infiniteWhere: Prisma.ImageWhereInput = {
+    connections: {
+      modelId,
+      modelVersionId,
+      reviewId,
+    },
+  };
+  const finiteWhere: Prisma.ImageWhereInput = {
+    imagesOnModels:
+      modelVersionId || modelId
+        ? { modelVersionId, modelVersion: modelId ? { modelId } : undefined }
+        : undefined,
+    imagesOnReviews: reviewId ? { reviewId } : undefined,
+  };
+
   return await prisma.image.findMany({
     cursor: cursor ? { id: cursor } : undefined,
     take: limit,
     where: {
-      // query modelId or modelVersionId
       userId,
-      imagesOnModels:
-        modelVersionId || modelId
-          ? { modelVersionId, modelVersion: modelId ? { modelId } : undefined }
-          : undefined,
-      imagesOnReviews: reviewId ? { reviewId } : undefined,
       nsfw: !canViewNsfw ? { equals: false } : undefined,
-      // TODO - excludedTagIds (hidden tags)
+      ...(infinite ? infiniteWhere : finiteWhere),
+      // TODO.gallery - excludedTagIds (hidden tags)
     },
     select: imageGallerySelect,
     orderBy: orderBy ?? { createdAt: 'desc' },

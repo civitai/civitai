@@ -7,12 +7,13 @@ const queryStringSchema = z
     modelVersionId: z.preprocess(Number, z.number()),
     reviewId: z.preprocess(Number, z.number()),
     userId: z.preprocess(Number, z.number()),
+    infinite: z.preprocess((arg) => (arg === 'false' ? false : true), z.boolean()),
   })
   .partial();
 
 export const useGalleryFilters = () => {
   const router = useRouter();
   const result = queryStringSchema.safeParse(router.query);
-  // TODO - get additional zustand filters (if any)
+  // TODO.gallery - get additional zustand filters (if any)
   return result.success ? { ...result.data } : {};
 };

@@ -43,14 +43,25 @@ export default function GalleryImageDetail() {
   const returnUrl = router.query.returnUrl as string;
   const active = router.query.active === 'true';
 
-  const { modelId, modelVersionId, reviewId, userId } = filters;
+  const { modelId, modelVersionId, reviewId, userId, infinite = true } = filters;
 
   // #region [data fetching]
-  const { data: gallery, isLoading } = trpc.image.getGalleryImagesInfinite.useInfiniteQuery({
-    ...filters,
-  });
+  const { data: infiniteGallery, isLoading: infiniteLoading } =
+    trpc.image.getGalleryImagesInfinite.useInfiniteQuery(filters, { enabled: infinite });
 
-  const galleryImages = useMemo(() => gallery?.pages.flatMap((x) => x.items) ?? [], [gallery]);
+  const { data: finiteGallery, isLoading: finiteLoading } = trpc.image.getGalleryImages.useQuery(
+    filters,
+    {
+      enabled: !infinite,
+    }
+  );
+  const isLoading = infiniteLoading || finiteLoading;
+
+  // const {data: }
+  const galleryImages = useMemo(
+    () => infiniteGallery?.pages.flatMap((x) => x.items) ?? finiteGallery ?? [],
+    [infiniteGallery, finiteGallery]
+  );
 
   const { data: prefetchImage } = trpc.image.getGalleryImageDetail.useQuery(
     {
@@ -95,7 +106,7 @@ export default function GalleryImageDetail() {
   if (image?.nsfw && !currentUser?.showNsfw) return <SensitiveShield />;
 
   return (
-    // TODO - <Meta />
+    // TODO.gallery - <Meta />
     <div className={classes.root}>
       <CloseButton
         style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
@@ -134,22 +145,22 @@ export default function GalleryImageDetail() {
         })}
       >
         <Card.Section withBorder>
-          <Group p="sm" position="apart">
-            <UserAvatar
-              user={image.user}
-              subText={<DaysFromNow date={image.createdAt} />}
-              subTextForce
-              withUsername
-              linkToProfile
-            />
-            <Group>
+          <Group p="sm" noWrap>
+            <Group position="apart" style={{ flex: 1 }}>
+              <UserAvatar
+                user={image.user}
+                subText={<DaysFromNow date={image.createdAt} />}
+                subTextForce
+                withUsername
+                linkToProfile
+              />
               <Group spacing={4}>
                 <ShareButton url={shareUrl} title={`Image by ${image.user.username}`}>
                   <ActionIcon size="lg">
                     <IconShare />
                   </ActionIcon>
                 </ShareButton>
-                {/* TODO - reporting */}
+                {/* TODO.gallery - reporting */}
                 <ReportImageButton imageId={image.id}>
                   <ActionIcon size="lg">
                     <IconFlag />
@@ -159,17 +170,17 @@ export default function GalleryImageDetail() {
                   <IconDotsVertical />
                 </ActionIcon> */}
               </Group>
-              <CloseButton size="lg" variant="default" onClick={handleCloseContext} />
             </Group>
+            <CloseButton size="lg" variant="default" onClick={handleCloseContext} />
           </Group>
         </Card.Section>
         <Card.Section component={ScrollArea} style={{ flex: 1 }}>
           <Stack spacing="md">
-            {/* TODO - REACTIONS */}
-            {/* TODO - COMMENTS */}
-            {/* TODO - TAGS */}
-            {/* TODO - RESOURCES */}
-            {/* TODO - META */}
+            {/* TODO.gallery - REACTIONS */}
+            {/* TODO.gallery - COMMENTS */}
+            {/* TODO.gallery - TAGS */}
+            {/* TODO.gallery - RESOURCES */}
+            {/* TODO.gallery - META */}
             {image.meta && (
               <Paper p="md">
                 <ImageMeta meta={image.meta as ImageMetaProps} />

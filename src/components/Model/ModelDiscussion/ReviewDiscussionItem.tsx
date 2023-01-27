@@ -190,6 +190,7 @@ function ReviewCarousel({
       pathname: `/gallery/${imageId}`,
       query: {
         reviewId: review.id,
+        infinite: false,
         returnUrl: router.asPath,
       },
     });
