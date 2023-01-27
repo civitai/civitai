@@ -573,6 +573,20 @@ model Image {
   comments        ImageComment[]
   connections     ImageConnection?
   tags            TagsOnImage[]
+  metrics         ImageMetric[]
+}
+
+model ImageMetric {
+  image        Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  imageId      Int
+  timeframe    MetricTimeframe
+  likeCount    Int             @default(0)
+  dislikeCount Int             @default(0)
+  laughCount   Int             @default(0)
+  cryCount     Int             @default(0)
+  heartCount   Int             @default(0)
+
+  @@id([imageId, timeframe])
 }
 
 enum ImageOnModelType {
@@ -1360,4 +1374,64 @@ model ImageConnection {
   reviewId       Int?
   review         Review?       @relation(fields: [reviewId], references: [id], onDelete: NoAction)
   index          Int?
+}
+
+/// @view
+model ImageStats {
+  imageId             Int @id
+  cryCountDay         Int @default(0)
+  cryCountWeek        Int @default(0)
+  cryCountMonth       Int @default(0)
+  cryCountYear        Int @default(0)
+  cryCountAllTime     Int @default(0)
+  dislikeCountDay     Int @default(0)
+  dislikeCountWeek    Int @default(0)
+  dislikeCountMonth   Int @default(0)
+  dislikeCountYear    Int @default(0)
+  dislikeCountAllTime Int @default(0)
+  heartCountDay       Int @default(0)
+  heartCountWeek      Int @default(0)
+  heartCountMonth     Int @default(0)
+  heartCountYear      Int @default(0)
+  heartCountAllTime   Int @default(0)
+  laughCountDay       Int @default(0)
+  laughCountWeek      Int @default(0)
+  laughCountMonth     Int @default(0)
+  laughCountYear      Int @default(0)
+  laughCountAllTime   Int @default(0)
+  likeCountDay        Int @default(0)
+  likeCountWeek       Int @default(0)
+  likeCountMonth      Int @default(0)
+  likeCountYear       Int @default(0)
+  likeCountAllTime    Int @default(0)
+}
+
+/// @view
+model ImageRank {
+  imageId                 Int @id
+  cryCountDayRank         Int @default(0)
+  cryCountWeekRank        Int @default(0)
+  cryCountMonthRank       Int @default(0)
+  cryCountYearRank        Int @default(0)
+  cryCountAllTimeRank     Int @default(0)
+  dislikeCountDayRank     Int @default(0)
+  dislikeCountWeekRank    Int @default(0)
+  dislikeCountMonthRank   Int @default(0)
+  dislikeCountYearRank    Int @default(0)
+  dislikeCountAllTimeRank Int @default(0)
+  heartCountDayRank       Int @default(0)
+  heartCountWeekRank      Int @default(0)
+  heartCountMonthRank     Int @default(0)
+  heartCountYearRank      Int @default(0)
+  heartCountAllTimeRank   Int @default(0)
+  laughCountDayRank       Int @default(0)
+  laughCountWeekRank      Int @default(0)
+  laughCountMonthRank     Int @default(0)
+  laughCountYearRank      Int @default(0)
+  laughCountAllTimeRank   Int @default(0)
+  likeCountDayRank        Int @default(0)
+  likeCountWeekRank       Int @default(0)
+  likeCountMonthRank      Int @default(0)
+  likeCountYearRank       Int @default(0)
+  likeCountAllTimeRank    Int @default(0)
 }
