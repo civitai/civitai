@@ -212,7 +212,7 @@ function ReviewCarousel({
                   overflow: 'hidden',
                 }}
               >
-                <MediaHash {...image} />
+                <MediaHash {...image} cropFocus="top" />
               </AspectRatio>
             </div>
             <ImageGuard.Safe>
@@ -221,6 +221,7 @@ function ReviewCarousel({
                   image={image}
                   edgeImageProps={{ width: 400 }}
                   aspectRatio={1}
+                  cropFocus="top"
                   onClick={() =>
                     openContext('reviewLightbox', {
                       initialSlide: index,
@@ -273,7 +274,7 @@ function ReviewCarousel({
                     overflow: 'hidden',
                   }}
                 >
-                  <MediaHash {...image} />
+                  <MediaHash {...image} cropFocus="top" />
                 </AspectRatio>
               </div>
               <ImageGuard.Safe>
@@ -282,6 +283,7 @@ function ReviewCarousel({
                     image={image}
                     edgeImageProps={{ width: 400 }}
                     aspectRatio={1}
+                    cropFocus="top"
                     onClick={() =>
                       openContext('reviewLightbox', {
                         initialSlide: index,

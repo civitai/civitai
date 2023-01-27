@@ -7,9 +7,10 @@ export type MediaHashProps = {
   width?: number | null;
   height?: number | null;
   style?: CSSProperties;
+  cropFocus?: 'top' | 'bottom' | 'left' | 'right' | 'center';
 };
 
-export function MediaHash({ hash, height, width, style }: MediaHashProps) {
+export function MediaHash({ hash, height, width, style, cropFocus }: MediaHashProps) {
   if (!hash || !width || !height) return null;
 
   const size = getClampedSize(width, height, 32);
@@ -26,7 +27,7 @@ export function MediaHash({ hash, height, width, style }: MediaHashProps) {
         top: 0,
         left: 0,
         objectFit: 'cover',
-        objectPosition: 'center',
+        objectPosition: cropFocus ?? 'center',
         ...style,
       }}
     />
