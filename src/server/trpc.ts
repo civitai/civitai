@@ -1,5 +1,6 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import superjson from 'superjson';
+import { env } from '~/env/server.mjs';
 import type { Context } from './createContext';
 
 const t = initTRPC.context<Context>().create({
@@ -14,7 +15,14 @@ export const { router, middleware } = t;
 /**
  * Unprotected procedure
  **/
-export const publicProcedure = t.procedure;
+const isFromApp = t.middleware(({ ctx, next }) => {
+  if (!ctx.referrer?.startsWith(env.NEXTAUTH_URL)) {
+    throw new TRPCError({ code: 'UNAUTHORIZED' });
+  }
+  return next({ ctx: { user: ctx.user } });
+});
+
+export const publicProcedure = t.procedure.use(isFromApp);
 
 /**
  * Reusable middleware to ensure

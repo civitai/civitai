@@ -11,6 +11,7 @@ export const createContext = async ({
   const session = await getServerAuthSession({ req, res });
   return {
     user: session?.user,
+    referrer: req.headers.referer,
   };
 };
 
