@@ -1,7 +1,9 @@
-import { SessionUser } from 'next-auth';
-import { simpleUserSelect } from './user.selector';
 import { Prisma, MetricTimeframe } from '@prisma/client';
+import { SessionUser } from 'next-auth';
+
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
+
+import { simpleUserSelect } from './user.selector';
 
 export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   id: true,
@@ -13,7 +15,7 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   hash: true,
   meta: true,
 });
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+
 const { id, name, ...imageSelectWithoutId } = imageSelect;
 export { imageSelectWithoutId };
 
@@ -24,9 +26,11 @@ export type ImageModel = Prisma.ImageGetPayload<typeof image>;
 export const imageGallerySelect = ({
   period,
   user,
+  infinite = false,
 }: {
   period: MetricTimeframe;
   user?: SessionUser;
+  infinite?: boolean;
 }) =>
   Prisma.validator<Prisma.ImageSelect>()({
     ...imageSelect,
@@ -53,11 +57,14 @@ export const imageGallerySelect = ({
         laughCount: true,
         cryCount: true,
         heartCount: true,
+        commentCount: true,
       },
     },
-    reactions: {
-      where: { userId: user?.id },
-      take: !user?.id ? 0 : undefined,
-      select: getReactionsSelect,
-    },
+    reactions: !infinite
+      ? {
+          where: { userId: user?.id },
+          take: !user?.id ? 0 : undefined,
+          select: getReactionsSelect,
+        }
+      : undefined,
   });

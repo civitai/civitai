@@ -1,11 +1,4 @@
-import create from 'zustand';
 import { ModelType, MetricTimeframe, CheckpointType } from '@prisma/client';
-import { ModelSort } from '~/server/common/enums';
-import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
-import { splitUppercase } from '~/utils/string-helpers';
-import { deleteCookie, setCookie as sc } from 'cookies-next';
-import { immer } from 'zustand/middleware/immer';
-import { modelFilterSchema, useCookies } from '~/providers/CookiesProvider';
 import {
   Popover,
   ActionIcon,
@@ -17,15 +10,18 @@ import {
   Button,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter, IconFilterOff } from '@tabler/icons';
+import { deleteCookie } from 'cookies-next';
 import { z } from 'zod';
-import { BaseModel, constants } from '~/server/common/constants';
-import dayjs from 'dayjs';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import create from 'zustand';
+import { immer } from 'zustand/middleware/immer';
 
-const setCookie = (key: string, data: any) => // eslint-disable-line
-  sc(key, data, {
-    expires: dayjs().add(1, 'year').toDate(),
-  });
+import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { modelFilterSchema, useCookies } from '~/providers/CookiesProvider';
+import { BaseModel, constants } from '~/server/common/constants';
+import { ModelSort } from '~/server/common/enums';
+import { setCookie } from '~/utils/cookies-helpers';
+import { splitUppercase } from '~/utils/string-helpers';
 
 type FilterProps = z.input<typeof modelFilterSchema>;
 
@@ -38,7 +34,7 @@ export const useFilters = create<{
   setBaseModels: (baseModels?: BaseModel[]) => void;
   setHideNSFW: (includeNSFW?: boolean) => void;
 }>()(
-  immer((set, get) => ({//eslint-disable-line
+  immer((set) => ({
     filters: {},
     setSort: (sort) => {
       set((state) => {

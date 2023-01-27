@@ -63,7 +63,7 @@ const mantineColors: DefaultMantineColor[] = [
   'yellow',
 ];
 
-const useStyles = createStyles((theme, _params, getRef) => {
+const useStyles = createStyles((theme) => {
   const base = theme.colors[getRandom(mantineColors)];
   const background = theme.colorScheme === 'dark' ? theme.colors.dark[6] : '#fff';
 
@@ -74,8 +74,6 @@ const useStyles = createStyles((theme, _params, getRef) => {
     },
 
     content: {
-      ref: getRef('content'),
-
       background: theme.fn.gradient({
         from: 'rgba(37,38,43,0.8)',
         to: 'rgba(37,38,43,0)',
@@ -224,7 +222,6 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
           }
         />
       }
-      // variant={theme.colorScheme === 'dark' && rank.ratingCount > 0 ? 'filled' : 'light'}
     >
       <Text size="xs" color={rank.ratingCount > 0 ? undefined : 'dimmed'}>
         {abbreviateNumber(rank.ratingCount)}
@@ -233,11 +230,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
   );
 
   const modelDownloads = (
-    <IconBadge
-      className={classes.statBadge}
-      icon={<IconDownload size={14} />}
-      // variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-    >
+    <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
       <Text size={12}>{abbreviateNumber(rank.downloadCount)}</Text>
     </IconBadge>
   );
@@ -253,18 +246,13 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
         />
       }
       color={isFavorite ? 'red' : 'gray'}
-      // variant={theme.colorScheme === 'dark' && !isFavorite ? 'filled' : 'light'}
     >
       <Text size="xs">{abbreviateNumber(rank.favoriteCount)}</Text>
     </IconBadge>
   );
 
   const modelComments = !!rank.commentCount && (
-    <IconBadge
-      className={classes.statBadge}
-      icon={<IconMessageCircle2 size={14} />}
-      // variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-    >
+    <IconBadge className={classes.statBadge} icon={<IconMessageCircle2 size={14} />}>
       <Text size="xs">{abbreviateNumber(rank.commentCount)}</Text>
     </IconBadge>
   );

@@ -1,11 +1,4 @@
-import create from 'zustand';
 import { MetricTimeframe } from '@prisma/client';
-import { QuestionSort, QuestionStatus } from '~/server/common/enums';
-import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
-import { slugit, splitUppercase } from '~/utils/string-helpers';
-import { deleteCookie, setCookie as sc } from 'cookies-next';
-import { immer } from 'zustand/middleware/immer';
-import { questionsFilterSchema, useCookies } from '~/providers/CookiesProvider';
 import {
   Popover,
   ActionIcon,
@@ -25,19 +18,22 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { IconCloudOff, IconFilter, IconHeart, IconMessageCircle } from '@tabler/icons';
-import { z } from 'zod';
-import { constants } from '~/server/common/constants';
-import dayjs from 'dayjs';
-import router, { useRouter } from 'next/router';
-import createContext from 'zustand/context';
-import { trpc } from '~/utils/trpc';
+import { deleteCookie } from 'cookies-next';
 import Link from 'next/link';
-import { QS } from '~/utils/qs';
+import router, { useRouter } from 'next/router';
+import { z } from 'zod';
+import create from 'zustand';
+import createContext from 'zustand/context';
+import { immer } from 'zustand/middleware/immer';
 
-const setCookie = (key: string, data: any) => // eslint-disable-line
-  sc(key, data, {
-    expires: dayjs().add(1, 'year').toDate(),
-  });
+import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
+import { questionsFilterSchema, useCookies } from '~/providers/CookiesProvider';
+import { constants } from '~/server/common/constants';
+import { QuestionSort, QuestionStatus } from '~/server/common/enums';
+import { QS } from '~/utils/qs';
+import { slugit, splitUppercase } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
+import { setCookie } from '~/utils/cookies-helpers';
 
 type FilterProps = z.input<typeof questionsFilterSchema>;
 type Store = {
@@ -50,7 +46,7 @@ type Store = {
 const { Provider, useStore } = createContext<ReturnType<typeof createMyStore>>();
 const createMyStore = (initialState: FilterProps) => {
   return create<Store>()(
-    immer((set, get) => {
+    immer((set) => {
       return {
         filters: { ...initialState },
         setSort: (sort) => {

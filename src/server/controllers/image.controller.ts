@@ -1,40 +1,40 @@
 import { MetricTimeframe } from '@prisma/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
+
 import { Context } from '~/server/createContext';
-import { imageGallerySelect } from '~/server/selectors/image.selector';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { prisma } from '~/server/db/client';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetModelVersionImagesSchema,
   GetReviewImagesSchema,
   GetGalleryImageInput,
-} from './../schema/image.schema';
+} from '~/server/schema/image.schema';
+import { imageGallerySelect } from '~/server/selectors/image.selector';
 import {
   getModelVersionImages,
   getReviewImages,
   getGalleryImages,
-} from './../services/image.service';
-import { prisma } from '~/server/db/client';
-import { input } from '@tensorflow/tfjs';
+} from '~/server/services/image.service';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
-export const getModelVersionImagesHandler = async ({
+export const getModelVersionImagesHandler = ({
   input: { modelVersionId },
 }: {
   input: GetModelVersionImagesSchema;
 }) => {
   try {
-    return await getModelVersionImages({ modelVersionId });
+    return getModelVersionImages({ modelVersionId });
   } catch (error) {
     throw throwDbError(error);
   }
 };
 
-export const getReviewImagesHandler = async ({
+export const getReviewImagesHandler = ({
   input: { reviewId },
 }: {
   input: GetReviewImagesSchema;
 }) => {
   try {
-    return await getReviewImages({ reviewId });
+    return getReviewImages({ reviewId });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -73,6 +73,7 @@ export const getGalleryImagesInfiniteHandler = async ({
     const items = await getGalleryImages({
       limit: take,
       ...input,
+      infinite: true,
       user: ctx.user,
     });
 

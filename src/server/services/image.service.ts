@@ -1,11 +1,11 @@
-import { throwDbError } from '~/server/utils/errorHandling';
-import { SessionUser } from 'next-auth';
-import { GetGalleryImageInput } from './../schema/image.schema';
-import { prisma } from '~/server/db/client';
-import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
 import { Prisma } from '@prisma/client';
+import { SessionUser } from 'next-auth';
+
 import { env } from '~/env/server.mjs';
 import { ImageSort } from '~/server/common/enums';
+import { prisma } from '~/server/db/client';
+import { GetGalleryImageInput } from '~/server/schema/image.schema';
+import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await prisma.imagesOnModels.findMany({
@@ -20,7 +20,7 @@ export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
     where: { reviewId },
     select: { image: { select: imageSelect } },
   });
-  return await result.map((x) => x.image);
+  return result.map((x) => x.image);
 };
 
 export const getGalleryImages = async <
@@ -40,7 +40,7 @@ export const getGalleryImages = async <
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
 
-  const infiniteWhere: Prisma.ImageWhereInput = {
+  const infiniteWhere: Prisma.ImageFindManyArgs['where'] = {
     connections: {
       modelId,
       modelVersionId,
@@ -64,9 +64,11 @@ export const getGalleryImages = async <
       ...(infinite ? infiniteWhere : finiteWhere),
       // TODO.gallery - excludedTagIds (hidden tags)
     },
-    select: imageGallerySelect({ period, user }),
+    select: imageGallerySelect({ period, user, infinite }),
     orderBy: orderBy ?? [
-      // TODO.gallery - order by 'sort' (missing image rank)
+      ...(sort === ImageSort.MostComments
+        ? [{ ranks: { [`commentCount${period}Rank`]: 'asc' } }]
+        : []),
       { createdAt: 'desc' },
     ],
   });
