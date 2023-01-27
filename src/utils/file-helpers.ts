@@ -22,7 +22,7 @@ const unscannedFile = {
 export function prepareFile(file: ModelFileInput) {
   return {
     ...file,
-    ...unscannedFile,
+    ...(file.id ? {} : unscannedFile), // Only set unscannedFile on new files
     format:
       file.type === 'Model' || file.type === 'Pruned Model'
         ? getModelFileFormat(file.name)
