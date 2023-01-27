@@ -52,20 +52,24 @@ export default createRoutedContext({
 
     const { mutate, isLoading } = trpc.review.upsert.useMutation();
     const handleSubmit = (data: ReviewUpsertInput) => {
-      mutate(data, {
-        onSuccess: async (_, { modelId }) => {
-          context.close();
-          await queryUtils.review.getAll.invalidate({ modelId });
-          if (reviewId) await queryUtils.review.getDetail.invalidate({ id: reviewId });
-        },
-        onError: (error) => {
-          showErrorNotification({
-            error: new Error(error.message),
-            title: 'Could not save the review',
-            reason: `There was an error when trying to save your review. Please try again`,
-          });
-        },
-      });
+      if (form.formState.isDirty) {
+        mutate(data, {
+          onSuccess: async (_, { modelId }) => {
+            await context.close();
+            await queryUtils.review.getAll.invalidate({ modelId });
+            if (reviewId) await queryUtils.review.getDetail.invalidate({ id: reviewId });
+          },
+          onError: (error) => {
+            showErrorNotification({
+              error: new Error(error.message),
+              title: 'Could not save the review',
+              reason: `There was an error when trying to save your review. Please try again`,
+            });
+          },
+        });
+      } else {
+        context.close();
+      }
     };
 
     const loadingReview = (reviewLoading || reviewRefetching) && !!reviewId;
@@ -99,7 +103,9 @@ export default createRoutedContext({
       <Modal
         title={reviewId ? 'Editing review' : 'Add a review'}
         opened={context.opened}
-        onClose={context.close}
+        onClose={!isLoading ? context.close : () => ({})}
+        closeOnClickOutside={!isLoading}
+        closeOnEscape={!isLoading}
       >
         <LoadingOverlay visible={loadingReview} />
         <Form form={form} onSubmit={handleSubmit}>

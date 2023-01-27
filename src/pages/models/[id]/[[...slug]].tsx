@@ -335,36 +335,21 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       </>
     );
 
-  const handleDeleteModel = () => {
+  const handleDeleteModel = (options?: { permanently: boolean }) => {
+    const { permanently = false } = options || {};
+
     openConfirmModal({
       title: 'Delete Model',
-      children: (
-        <Stack>
-          <Text size="sm">
-            Are you sure you want to delete this model? This action is destructive and you will have
-            to contact support to restore your data.
-          </Text>
-          {isModerator && (
-            <Button
-              variant="outline"
-              color="red"
-              onClick={() => deleteMutation.mutate({ id: model.id, permanently: true })}
-              loading={deleteMutation.isLoading}
-              fullWidth
-            >
-              Permanently delete this model
-            </Button>
-          )}
-        </Stack>
-      ),
+      children: permanently
+        ? 'Are you sure you want to permanently delete this model? This action is destructive and cannot be reverted.'
+        : 'Are you sure you want to delete this model? This action is destructive and you will have to contact support to restore your data.',
       centered: true,
       labels: { confirm: 'Delete Model', cancel: "No, don't delete it" },
       confirmProps: { color: 'red', loading: deleteMutation.isLoading },
-      groupProps: { grow: isModerator },
       closeOnConfirm: false,
       onConfirm: () => {
         if (model) {
-          deleteMutation.mutate({ id: model.id });
+          deleteMutation.mutate({ id: model.id, permanently });
         }
       },
     });
@@ -565,12 +550,21 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     Restore
                   </Menu.Item>
                 )}
+                {currentUser && isModerator && (
+                  <Menu.Item
+                    color={theme.colors.red[6]}
+                    icon={<IconTrash size={14} stroke={1.5} />}
+                    onClick={() => handleDeleteModel({ permanently: true })}
+                  >
+                    Permanently Delete Model
+                  </Menu.Item>
+                )}
                 {currentUser && isOwner && !deleted && (
                   <>
                     <Menu.Item
                       color={theme.colors.red[6]}
                       icon={<IconTrash size={14} stroke={1.5} />}
-                      onClick={handleDeleteModel}
+                      onClick={() => handleDeleteModel()}
                     >
                       Delete Model
                     </Menu.Item>

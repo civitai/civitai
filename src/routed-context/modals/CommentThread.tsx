@@ -87,7 +87,7 @@ export default createRoutedContext({
           <Alert>Comment could not be found</Alert>
         ) : (
           <Stack>
-            <Group position="apart" align="flex-start">
+            <Group position="apart" align="flex-start" noWrap>
               <UserAvatar
                 user={comment.user}
                 subText={<DaysFromNow date={comment.createdAt} />}
@@ -104,7 +104,7 @@ export default createRoutedContext({
                 withUsername
                 linkToProfile
               />
-              <Group>
+              <Group spacing={4} noWrap>
                 <CommentDiscussionMenu comment={comment} user={currentUser} />
                 <CloseButton onClick={context.close} />
               </Group>
