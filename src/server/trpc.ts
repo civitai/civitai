@@ -16,7 +16,12 @@ export const { router, middleware } = t;
  * Unprotected procedure
  **/
 const isAcceptableOrigin = t.middleware(({ ctx: { user, acceptableOrigin }, next }) => {
-  if (!acceptableOrigin) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  if (!acceptableOrigin)
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message:
+        'Please use the public API instead: https://github.com/civitai/civitai/wiki/REST-API-Reference',
+    });
   return next({ ctx: { user, acceptableOrigin } });
 });
 
