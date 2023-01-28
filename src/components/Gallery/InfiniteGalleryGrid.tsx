@@ -42,6 +42,7 @@ export function InfiniteGalleryGrid({ columnWidth, data, filters }: Props) {
     align: 'center',
   });
 
+  // TODO.gallery - scrollTo entityId
   useEffect(() => {
     if (!data?.length || !modelId) return;
     // if (!modelId) scrollToIndex(0);

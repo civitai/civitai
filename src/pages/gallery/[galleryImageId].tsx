@@ -7,7 +7,7 @@ import { isNumber } from '~/utils/type-guards';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { GalleryCarousel } from '~/components/Gallery/GalleryCarousel';
 import {
   createStyles,

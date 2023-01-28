@@ -71,8 +71,10 @@ export function ReactionButton({
   const toggleReaction = useStore((state) => state.toggleReaction);
 
   const count = useMemo(() => {
-    if (hasReactedInitial) return hasReacted ? initialCount : initialCount - 1;
-    else return hasReacted ? initialCount + 1 : initialCount;
+    if (hasReactedInitial) {
+      const optimisticCount = initialCount > 0 ? initialCount : 1;
+      return hasReacted ? optimisticCount : optimisticCount - 1;
+    } else return hasReacted ? initialCount + 1 : initialCount;
   }, [hasReactedInitial, hasReacted, initialCount]);
 
   const { mutate } = trpc.reaction.toggle.useMutation();
