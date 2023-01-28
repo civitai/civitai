@@ -5,7 +5,7 @@ import Mention from '@tiptap/extension-mention';
 import Placeholder from '@tiptap/extension-placeholder';
 import Underline from '@tiptap/extension-underline';
 import Youtube from '@tiptap/extension-youtube';
-import { BubbleMenu, Editor, Extensions, useEditor } from '@tiptap/react';
+import { BubbleMenu, Editor, Extension, Extensions, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useEffect, useImperativeHandle, useRef } from 'react';
 
@@ -43,6 +43,7 @@ export function RichTextEditor({
   autoFocus,
   defaultSuggestions,
   innerRef,
+  onSuperEnter,
   ...props
 }: Props) {
   const { classes } = useStyles();
@@ -66,6 +67,19 @@ export function RichTextEditor({
       blockquote: !addFormatting ? false : undefined,
       codeBlock: !addFormatting ? false : undefined,
     }),
+    ...(onSuperEnter
+      ? [
+          Extension.create({
+            name: 'onSubmitShortcut',
+            addKeyboardShortcuts: () => ({
+              'Mod-Enter': () => {
+                onSuperEnter();
+                return true; // Dunno why they want a boolean here
+              },
+            }),
+          }),
+        ]
+      : []),
     ...(addFormatting ? [Underline] : []),
     ...(addLink ? [Link] : []),
     // Casting width as any to be able to use `100%`
@@ -236,4 +250,5 @@ type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
     autoFocus?: boolean;
     defaultSuggestions?: Array<{ id: number; label: string }>;
     innerRef?: React.ForwardedRef<EditorCommandsRef>;
+    onSuperEnter?: () => void;
   };

@@ -99,6 +99,7 @@ export const CommentForm = ({
           placeholder="Type your comment..."
           autoFocus={focused}
           onFocus={!autoFocus ? () => setFocused(true) : undefined}
+          onSuperEnter={() => form.handleSubmit(handleSubmit)()}
         />
         {focused && (
           <Group position="right">
