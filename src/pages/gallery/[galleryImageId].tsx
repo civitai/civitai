@@ -45,7 +45,7 @@ export default function GalleryImageDetail() {
   const returnUrl = router.query.returnUrl as string;
   const active = router.query.active === 'true';
 
-  const { modelId, modelVersionId, reviewId, userId, infinite = true } = filters;
+  const { modelId, modelVersionId, reviewId, userId, infinite } = filters;
 
   // #region [data fetching]
   const { data: infiniteGallery, isLoading: infiniteLoading } =

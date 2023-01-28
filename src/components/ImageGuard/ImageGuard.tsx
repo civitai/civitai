@@ -184,8 +184,7 @@ ImageGuard.ToggleImage = function ToggleImage({
   const toggleImage = useStore((state) => state.toggleImage);
 
   const showToModerator = image.imageNsfw && isModerator;
-
-  if (!image.nsfw && !showToModerator && !connect) return null;
+  if ((!image.nsfw && !showToModerator) || !!connect) return null;
   const showing = showImage;
 
   return (

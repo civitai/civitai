@@ -96,6 +96,7 @@ export function GalleryCarousel({ current, images, className, connect }: Gallery
                 }}
               >
                 <ImageGuard.ToggleConnect />
+                <ImageGuard.ToggleImage />
                 <ImageGuard.Unsafe>
                   <MediaHash {...image} />
                 </ImageGuard.Unsafe>

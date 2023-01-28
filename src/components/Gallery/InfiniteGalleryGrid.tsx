@@ -27,7 +27,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 export function InfiniteGalleryGrid({ columnWidth, data, filters }: Props) {
   const router = useRouter();
   const stringified = JSON.stringify(filters);
-  const modelId = Number(([] as string[]).concat(router.query.model ?? [])[0]);
+  // const modelId = Number(([] as string[]).concat(router.query.model ?? [])[0]);
 
   const containerRef = useRef(null);
   const [windowWidth, height] = useWindowSize();
@@ -43,14 +43,14 @@ export function InfiniteGalleryGrid({ columnWidth, data, filters }: Props) {
   });
 
   // TODO.gallery - scrollTo entityId
-  useEffect(() => {
-    if (!data?.length || !modelId) return;
-    // if (!modelId) scrollToIndex(0);
-    const index = data.findIndex((x) => x.id === modelId);
-    if (index === -1 || data.length < index) return;
+  // useEffect(() => {
+  //   if (!data?.length || !modelId) return;
+  //   // if (!modelId) scrollToIndex(0);
+  //   const index = data.findIndex((x) => x.id === modelId);
+  //   if (index === -1 || data.length < index) return;
 
-    scrollToIndex(index);
-  }, [stringified]); //eslint-disable-line
+  //   scrollToIndex(index);
+  // }, [stringified]); //eslint-disable-line
 
   return useMasonry({
     resizeObserver,
@@ -138,8 +138,6 @@ function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
           <>
             <ImageGuard
               images={[image]}
-              connect={{ entityId: image.id, entityType: 'model' }}
-              nsfw={image.nsfw} // if the image is nsfw, then most/all of the model is nsfw
               render={(image) => (
                 <Box sx={{ position: 'relative' }}>
                   <Menu position="left">
@@ -172,7 +170,8 @@ function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
                       </ReportImageButton>
                     </Menu.Dropdown>
                   </Menu>
-                  <ImageGuard.ToggleConnect />
+                  <ImageGuard.ToggleImage />
+                  {/* <ImageGuard.ToggleConnect /> */}
                   <ImageGuard.Unsafe>
                     <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                       <MediaHash {...image} />

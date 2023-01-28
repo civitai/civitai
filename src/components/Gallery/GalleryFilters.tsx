@@ -12,13 +12,19 @@ import { ImageSort } from '~/server/common/enums';
 import { setCookie } from '~/utils/cookies-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 
+const numberType = z.preprocess((arg) => {
+  return !!arg ? Number(arg) : undefined;
+}, z.number().optional());
+
 const queryStringSchema = z
   .object({
-    modelId: z.preprocess(Number, z.number()),
-    modelVersionId: z.preprocess(Number, z.number()),
-    reviewId: z.preprocess(Number, z.number()),
-    userId: z.preprocess(Number, z.number()),
-    infinite: z.preprocess((arg) => (arg === 'false' ? false : true), z.boolean()),
+    modelId: numberType,
+    modelVersionId: numberType,
+    reviewId: numberType,
+    userId: numberType,
+    infinite: z.preprocess((arg) => {
+      return arg === 'false' ? false : true;
+    }, z.boolean()),
   })
   .optional();
 

@@ -150,6 +150,7 @@ export default createRoutedContext({
               if (variables.reason === ReportReason.NSFW)
                 await queryUtils.image.getGalleryImageDetail.invalidate();
               await queryUtils.image.getGalleryImagesInfinite.invalidate();
+              await queryUtils.image.getGalleryImages.invalidate();
               // review invalidate
               if (reviewId) {
                 await queryUtils.review.getDetail.setData(
