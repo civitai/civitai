@@ -14,6 +14,7 @@ import { closeAllModals } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
+import { z } from 'zod';
 
 import { CommentSectionItem } from '~/components/CommentSection/CommentSectionItem';
 import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
@@ -104,6 +105,9 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
     'id'
   ).slice(0, 5);
 
+  const handleSubmitComment = (data: z.infer<typeof commentUpsertInput>) =>
+    saveCommentMutation.mutate({ ...data });
+
   return (
     <Stack spacing="xl">
       <Group position="apart">
@@ -113,11 +117,7 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
       </Group>
       <Group align="flex-start">
         <UserAvatar user={currentUser} avatarProps={{ size: 'md' }} />
-        <Form
-          form={form}
-          onSubmit={(data) => saveCommentMutation.mutate({ ...data })}
-          style={{ flex: '1 1 0' }}
-        >
+        <Form form={form} onSubmit={handleSubmitComment} style={{ flex: '1 1 0' }}>
           <Stack spacing="xs">
             <Box sx={{ position: 'relative' }}>
               {!currentUser ? (
@@ -148,6 +148,7 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
                 defaultSuggestions={suggestedMentions}
                 autoFocus={showCommentActions}
                 innerRef={editorRef}
+                onSuperEnter={() => form.handleSubmit(handleSubmitComment)()}
                 hideToolbar
               />
             </Box>

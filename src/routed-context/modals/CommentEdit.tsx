@@ -56,7 +56,8 @@ export default createRoutedContext({
       },
     });
     const handleSaveComment = (values: z.infer<typeof commentUpsertInput>) => {
-      if (isDirty) saveCommentMutation.mutate(values);
+      values.content = values.content.trim();
+      if (values.content) saveCommentMutation.mutate(values);
       else context.close();
     };
 
@@ -97,6 +98,7 @@ export default createRoutedContext({
               placeholder="Type your thoughts..."
               includeControls={['formatting', 'link', 'mentions']}
               editorSize="xl"
+              onSuperEnter={() => form.handleSubmit(handleSaveComment)()}
             />
             <Group position="apart">
               <Button variant="default" onClick={handleClose}>

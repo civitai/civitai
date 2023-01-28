@@ -11,6 +11,7 @@ import {
 } from '@mantine/core';
 import { User } from '@prisma/client';
 import Link from 'next/link';
+import { MouseEventHandler } from 'react';
 
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { Username } from '~/components/User/Username';
@@ -73,9 +74,10 @@ export function UserAvatar({
     </Group>
   );
 
+  // TODO: typefix
   return linkToProfile && !user.deletedAt ? (
     <Link href={`/user/${user.username}`} passHref>
-      <Anchor variant="text" onClick={(e) => e.stopPropagation()}>
+      <Anchor variant="text" onClick={(e: any) => e.stopPropagation()}>
         {avatar}
       </Anchor>
     </Link>
