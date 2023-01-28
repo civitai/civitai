@@ -142,13 +142,13 @@ export function InfiniteModelsFilter() {
     (state) => state.filters.checkpointType ?? cookies.checkpointType ?? 'all'
   );
   const showNSFWToggle = !user || user.showNsfw;
-  const showCheckpointType = types?.length && types.includes('Checkpoint');
+  const showCheckpointType = !types?.length || types.includes('Checkpoint');
 
   const filterLength =
     types.length +
     baseModels.length +
     (showNSFWToggle && hideNSFW ? 1 : 0) +
-    (checkpointType !== 'all' ? 1 : 0);
+    (showCheckpointType && checkpointType !== 'all' ? 1 : 0);
   const handleClear = () => {
     setTypes([]);
     setBaseModels([]);
@@ -216,7 +216,7 @@ export function InfiniteModelsFilter() {
           </Checkbox.Group>
           {showCheckpointType ? (
             <>
-              <Divider label="Chekpoint type" labelProps={{ weight: 'bold' }} />
+              <Divider label="Checkpoint type" labelProps={{ weight: 'bold' }} />
               <SegmentedControl
                 my={5}
                 value={checkpointType}

@@ -424,7 +424,10 @@ export function ModelForm({ model }: Props) {
                                   : theme.colors.gray[4]
                               }`,
                               background: 'none',
-                              marginTop: theme.spacing.xs * 0.5, // 5px
+                              height: 36,
+                            },
+                            label: {
+                              padding: '2px 10px',
                             },
                           })}
                           fullWidth
