@@ -75,7 +75,9 @@ export function UserAvatar({
 
   return linkToProfile && !user.deletedAt ? (
     <Link href={`/user/${user.username}`} passHref>
-      <Anchor variant="text">{avatar}</Anchor>
+      <Anchor variant="text" onClick={(e) => e.stopPropagation()}>
+        {avatar}
+      </Anchor>
     </Link>
   ) : (
     avatar

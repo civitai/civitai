@@ -128,8 +128,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
 
     userAvatar: {
       opacity: 0.8,
-      boxShadow:
-        '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 20px 25px -5px, rgb(0 0 0 / 50%) 0px 10px 10px -5px',
+      boxShadow: '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 8px 15px -5px',
       transition: 'opacity .25s ease',
       position: 'relative',
 
@@ -141,7 +140,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
         right: 0,
         bottom: 0,
         borderRadius: theme.radius.xl,
-        boxShadow: 'inset 0 0 1px 1px rgba(255,255,255,0.25)',
+        boxShadow: 'inset 0 0 0px 1px rgba(255,255,255,0.8)',
       },
 
       '&:hover': {
@@ -440,6 +439,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                         size="md"
                         user={data.user}
                         avatarProps={{ className: classes.userAvatar }}
+                        linkToProfile
                       />
                     </Box>
                   </Tooltip>
