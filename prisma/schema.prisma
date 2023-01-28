@@ -884,6 +884,14 @@ model AnswerVote {
   @@id([answerId, userId])
 }
 
+model MetricUpdateQueue {
+  type      String
+  id        Int
+  createdAt DateTime @default(now())
+
+  @@id([type, id])
+}
+
 model AnswerMetric {
   answerId     Int
   answer       Answer          @relation(fields: [answerId], references: [id], onDelete: Cascade)

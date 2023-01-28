@@ -38,6 +38,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           WHERE (a."createdAt" > '${lastUpdate}')
           AND (a.activity IN ('ModelDownload'))
 
+          UNION
+
+          SELECT muq.id AS model_id, mv.id AS model_version_id
+          FROM "MetricUpdateQueue" muq
+          JOIN "ModelVersion" mv ON mv."modelId" = muq.id
+          WHERE type = 'Model'
         ),
         -- Get all reviews that have been created/updated since then
         recent_reviews AS
@@ -256,6 +262,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         ON CONFLICT ("${tableId}", timeframe) DO UPDATE
           SET "downloadCount" = EXCLUDED."downloadCount", "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating, "favoriteCount" = EXCLUDED."favoriteCount", "commentCount" = EXCLUDED."commentCount";
         `);
+    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Model'`);
   };
 
   const updateUserMetrics = async () => {
@@ -303,6 +310,13 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           "userId"
         FROM "Answer" ar
         WHERE "createdAt" > '${lastUpdate}'
+
+        UNION
+
+        SELECT
+          "id"
+        FROM "MetricUpdateQueue"
+        WHERE type = 'User'
       ),
       -- Get all affected users
       affected_users AS
@@ -483,6 +497,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("userId", timeframe) DO UPDATE
         SET "followerCount" = EXCLUDED."followerCount", "followingCount" = EXCLUDED."followingCount", "hiddenCount" = EXCLUDED."hiddenCount", "uploadCount" = EXCLUDED."uploadCount", "reviewCount" = EXCLUDED."reviewCount", "answerCount" = EXCLUDED."answerCount", "answerAcceptCount" = EXCLUDED."answerAcceptCount";
     `);
+    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'User'`);
   };
 
   const updateQuestionMetrics = async () => {
@@ -508,6 +523,13 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         FROM "QuestionComment" a
         JOIN "CommentV2" c ON a."commentId" = c.id
         WHERE (c."createdAt" > '${lastUpdate}')
+
+        UNION
+
+        SELECT
+          "id"
+        FROM "MetricUpdateQueue"
+        WHERE type = 'Question'
       ),
       -- Get all affected users
       affected AS
@@ -606,6 +628,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("questionId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "answerCount" = EXCLUDED."answerCount";
     `);
+    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Question'`);
   };
 
   const updateAnswerMetrics = async () => {
@@ -631,6 +654,13 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           "answerId" AS id
         FROM "AnswerVote"
         WHERE "createdAt" > '${lastUpdate}'
+
+        UNION
+
+        SELECT
+          "id"
+        FROM "MetricUpdateQueue"
+        WHERE type = 'Answer'
       ),
       -- Get all affected users
       affected AS
@@ -751,6 +781,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("answerId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "checkCount" = EXCLUDED."checkCount", "crossCount" = EXCLUDED."crossCount";
     `);
+    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Answer'`);
   };
 
   const updateTagMetrics = async () => {
@@ -770,6 +801,13 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           "tagId" AS id
         FROM "TagEngagement"
         WHERE ("createdAt" > '${lastUpdate}')
+
+        UNION
+
+        SELECT
+          "id"
+        FROM "MetricUpdateQueue"
+        WHERE type = 'Tag'
       ),
       -- Get all affected
       affected AS
@@ -862,6 +900,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("tagId", timeframe) DO UPDATE
         SET "followerCount" = EXCLUDED."followerCount", "modelCount" = EXCLUDED."modelCount", "hiddenCount" = EXCLUDED."hiddenCount";
     `);
+    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Tag'`);
   };
 
   const updateImageMetrics = async () => {
@@ -880,6 +919,13 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         FROM "ImageComment" a
         JOIN "CommentV2" c ON a."commentId" = c.id
         WHERE (c."createdAt" > '${lastUpdate}')
+
+        UNION
+
+        SELECT
+          "id"
+        FROM "MetricUpdateQueue"
+        WHERE type = 'Image'
       ),
       -- Get all affected users
       affected AS
@@ -1023,6 +1069,8 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("imageId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount";
     `);
+
+    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Image'`);
   };
 
   const refreshModelRank = async () =>
@@ -1086,3 +1134,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
     });
   }
 });
+
+type MetricUpdateType = 'Model' | 'ModelVersion' | 'Answer' | 'Question' | 'User' | 'Tag' | 'Image';
+export const queueMetricUpdate = async (type: MetricUpdateType, id: number) => {
+  try {
+    await prisma.metricUpdateQueue.createMany({ data: { type, id } });
+  } catch (e) {
+    // Ignore duplicate errors
+  }
+};
