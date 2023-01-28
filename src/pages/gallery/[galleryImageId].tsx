@@ -20,6 +20,7 @@ import {
   Stack,
   Paper,
   Box,
+  Divider,
 } from '@mantine/core';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 
@@ -188,9 +189,12 @@ export default function GalleryImageDetail() {
             {/* TODO.gallery - RESOURCES */}
             {/* TODO.gallery - META */}
             {image.meta && (
-              <Paper p="md">
-                <ImageMeta meta={image.meta as ImageMetaProps} />
-              </Paper>
+              <>
+                <Divider label="Generation Data" labelPosition="center" mb={-15} />
+                <Box px="md">
+                  <ImageMeta meta={image.meta as ImageMetaProps} />
+                </Box>
+              </>
             )}
           </Stack>
         </Card.Section>
