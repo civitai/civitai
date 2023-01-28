@@ -3,6 +3,7 @@ import { SessionUser } from 'next-auth';
 
 import { ReviewSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
+import { queueMetricUpdate } from '~/server/jobs/update-metrics';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllReviewsInput,
@@ -156,10 +157,16 @@ export const createOrUpdateReview = async ({
   });
 };
 
-export const deleteReviewById = ({ id }: GetByIdInput) => {
-  return prisma.review.delete({
-    where: { id },
-  });
+export const deleteReviewById = async ({ id }: GetByIdInput) => {
+  const { modelId, model } =
+    (await prisma.review.findUnique({
+      where: { id },
+      select: { modelId: true, model: { select: { userId: true } } },
+    })) ?? {};
+
+  await prisma.review.delete({ where: { id } });
+  if (modelId) await queueMetricUpdate('Model', modelId);
+  if (model?.userId) await queueMetricUpdate('User', model.userId);
 };
 
 export const updateReviewById = ({ id, data }: { id: number; data: Prisma.ReviewUpdateInput }) => {

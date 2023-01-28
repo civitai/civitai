@@ -2,8 +2,7 @@
 ALTER TABLE "ImageMetric" ADD COLUMN     "commentCount" INTEGER NOT NULL DEFAULT 0;
 
 -- Add Stats
-DROP VIEW IF EXISTS "ImageStat";
-CREATE VIEW "ImageStat" AS
+CREATE OR REPLACE VIEW "ImageStat" AS
 WITH timeframe_stats AS (
   SELECT
 		i.id AS "imageId",
@@ -46,7 +45,12 @@ SELECT
 	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountWeek",
 	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountMonth",
 	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountYear",
-	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountAllTime"
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountAllTime"
 FROM timeframe_stats
 GROUP BY "imageId";
 

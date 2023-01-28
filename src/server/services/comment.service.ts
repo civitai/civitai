@@ -4,6 +4,7 @@ import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
+import { queueMetricUpdate } from '~/server/jobs/update-metrics';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CommentUpsertInput,
@@ -103,10 +104,16 @@ export const createOrUpdateComment = ({
   });
 };
 
-export const deleteCommentById = ({ id }: GetByIdInput) => {
-  return prisma.comment.delete({
-    where: { id },
-  });
+export const deleteCommentById = async ({ id }: GetByIdInput) => {
+  const { modelId, model } =
+    (await prisma.comment.findUnique({
+      where: { id },
+      select: { modelId: true, model: { select: { userId: true } } },
+    })) ?? {};
+
+  await prisma.comment.delete({ where: { id } });
+  if (modelId) await queueMetricUpdate('Model', modelId);
+  if (model?.userId) await queueMetricUpdate('User', model.userId);
 };
 
 export const updateCommentById = ({
