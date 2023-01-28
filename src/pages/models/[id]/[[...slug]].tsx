@@ -95,6 +95,7 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
+import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 
 //TODO - Break model query into multiple queries
 /*
@@ -385,12 +386,14 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     {
       label: 'Type',
       value: (
-        <Group spacing="xs">
+        <Group spacing="xs" position="apart">
           <Badge radius="sm">{splitUppercase(model.type)}</Badge>
-          {model?.status !== ModelStatus.Published && (
+          {model?.status !== ModelStatus.Published ? (
             <Badge color="yellow" radius="sm">
               {model.status}
             </Badge>
+          ) : (
+            <HowToUseModel type={model.type} />
           )}
         </Group>
       ),
