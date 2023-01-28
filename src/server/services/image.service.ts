@@ -64,17 +64,24 @@ export const getGalleryImages = async <
       ...(infinite ? infiniteWhere : finiteWhere),
       // TODO.gallery - excludedTagIds (hidden tags)
     },
-    select: imageGallerySelect({ period, user, infinite }),
-    orderBy: orderBy ?? [
-      ...(sort === ImageSort.MostComments
-        ? [{ ranks: { [`commentCount${period}Rank`]: 'asc' } }]
-        : []),
-      { createdAt: 'desc' },
-    ],
+    select: imageGallerySelect({ user }),
+    // orderBy: orderBy ?? [
+    //   ...(sort === ImageSort.MostComments
+    //     ? [{ ranks: { [`commentCount${period}Rank`]: 'asc' } }]
+    //     : []),
+    //   { createdAt: 'desc' },
+    // ],
   });
 
-  return items.map(({ metrics, ...image }) => ({
+  return items.map(({ stats, ...image }) => ({
     ...image,
-    metrics: metrics[0] as typeof metrics[0] | undefined,
+    metrics: {
+      likeCount: stats?.likeCountAllTime,
+      dislikeCount: stats?.dislikeCountAllTime,
+      laughCount: stats?.laughCountAllTime,
+      cryCount: stats?.cryCountAllTime,
+      heartCount: stats?.heartCountAllTime,
+      commentCount: stats?.commentCountAllTime,
+    },
   }));
 };

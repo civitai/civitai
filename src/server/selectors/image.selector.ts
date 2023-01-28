@@ -23,48 +23,43 @@ const image = Prisma.validator<Prisma.ImageArgs>()({ select: imageSelect });
 
 export type ImageModel = Prisma.ImageGetPayload<typeof image>;
 
-export const imageGallerySelect = ({
-  period,
-  user,
-  infinite = false,
-}: {
-  period: MetricTimeframe;
-  user?: SessionUser;
-  infinite?: boolean;
-}) =>
+export const imageGallerySelect = ({ user }: { user?: SessionUser }) =>
   Prisma.validator<Prisma.ImageSelect>()({
     ...imageSelect,
     createdAt: true,
     user: { select: simpleUserSelect },
     connections: {
       select: {
-        model: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        modelId: true,
         reviewId: true,
       },
     },
-    metrics: {
-      where: {
-        timeframe: MetricTimeframe.AllTime,
-      },
+    // metrics: {
+    //   where: {
+    //     timeframe: MetricTimeframe.AllTime,
+    //   },
+    //   select: {
+    //     likeCount: true,
+    //     dislikeCount: true,
+    //     laughCount: true,
+    //     cryCount: true,
+    //     heartCount: true,
+    //     commentCount: true,
+    //   },
+    // },
+    stats: {
       select: {
-        likeCount: true,
-        dislikeCount: true,
-        laughCount: true,
-        cryCount: true,
-        heartCount: true,
-        commentCount: true,
+        cryCountAllTime: true,
+        dislikeCountAllTime: true,
+        heartCountAllTime: true,
+        laughCountAllTime: true,
+        likeCountAllTime: true,
+        commentCountAllTime: true,
       },
     },
-    reactions: !infinite
-      ? {
-          where: { userId: user?.id },
-          take: !user?.id ? 0 : undefined,
-          select: getReactionsSelect,
-        }
-      : undefined,
+    reactions: {
+      where: { userId: user?.id },
+      take: !user?.id ? 0 : undefined,
+      select: getReactionsSelect,
+    },
   });

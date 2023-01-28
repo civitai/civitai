@@ -49,13 +49,24 @@ export const getGalleryImageDetailHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const image = await prisma.image.findUnique({
+    const item = await prisma.image.findUnique({
       where: { id },
       // TODO.gallery - If the gallery is infinite, use the current gallery filters. If the gallery is finite, use MetricTimeFrame.AllTime
-      select: imageGallerySelect({ period: MetricTimeframe.AllTime, user: ctx.user }),
+      select: imageGallerySelect({ user: ctx.user }),
     });
-    if (!image) throw throwNotFoundError();
-    return { ...image, metrics: image.metrics[0] };
+    if (!item) throw throwNotFoundError();
+    const { stats, ...image } = item;
+    return {
+      ...image,
+      metrics: {
+        likeCount: stats?.likeCountAllTime,
+        dislikeCount: stats?.dislikeCountAllTime,
+        laughCount: stats?.laughCountAllTime,
+        cryCount: stats?.cryCountAllTime,
+        heartCount: stats?.heartCountAllTime,
+        commentCount: stats?.commentCountAllTime,
+      },
+    };
   } catch (error) {
     throw throwDbError(error);
   }

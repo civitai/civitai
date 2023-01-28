@@ -12,6 +12,7 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef, useEffect, useMemo } from 'react';
+import { useInView } from 'react-intersection-observer';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useGalleryFilters } from '~/components/Gallery/GalleryFilters';
@@ -111,6 +112,7 @@ const useStyles = createStyles((theme) => {
 
 function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
   const { classes, cx } = useStyles();
+  const { ref, inView } = useInView();
 
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
@@ -123,6 +125,7 @@ function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
   return (
     <Link href={`/gallery/${image.id}`} passHref>
       <Card
+        ref={ref}
         className={classes.card}
         component="a"
         shadow="sm"
@@ -130,73 +133,80 @@ function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
         sx={{ height: `${height}px` }}
         withBorder
       >
-        <ImageGuard
-          images={[image]}
-          connect={{ entityId: image.id, entityType: 'model' }}
-          nsfw={image.nsfw} // if the image is nsfw, then most/all of the model is nsfw
-          render={(image) => (
-            <Box sx={{ position: 'relative' }}>
-              <Menu position="left">
-                <Menu.Target>
-                  <ActionIcon
-                    variant="transparent"
-                    p={0}
-                    onClick={(e: React.MouseEvent) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                    }}
-                    sx={{
-                      width: 30,
-                      position: 'absolute',
-                      top: 10,
-                      right: 4,
-                      zIndex: 8,
-                    }}
-                  >
-                    <IconDotsVertical
-                      size={24}
-                      color="#fff"
-                      style={{ filter: `drop-shadow(0 0 2px #000)` }}
+        {inView && (
+          <>
+            <ImageGuard
+              images={[image]}
+              connect={{ entityId: image.id, entityType: 'model' }}
+              nsfw={image.nsfw} // if the image is nsfw, then most/all of the model is nsfw
+              render={(image) => (
+                <Box sx={{ position: 'relative' }}>
+                  <Menu position="left">
+                    <Menu.Target>
+                      <ActionIcon
+                        variant="transparent"
+                        p={0}
+                        onClick={(e: React.MouseEvent) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                        sx={{
+                          width: 30,
+                          position: 'absolute',
+                          top: 10,
+                          right: 4,
+                          zIndex: 8,
+                        }}
+                      >
+                        <IconDotsVertical
+                          size={24}
+                          color="#fff"
+                          style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                        />
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <ReportImageButton imageId={image.id}>
+                        <Menu.Item icon={<IconFlag size={14} stroke={1.5} />}>Report</Menu.Item>
+                      </ReportImageButton>
+                    </Menu.Dropdown>
+                  </Menu>
+                  <ImageGuard.ToggleConnect />
+                  <ImageGuard.Unsafe>
+                    <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                      <MediaHash {...image} />
+                    </AspectRatio>
+                  </ImageGuard.Unsafe>
+                  <ImageGuard.Safe>
+                    <EdgeImage
+                      src={image.url}
+                      alt={image.name ?? undefined}
+                      width={450}
+                      placeholder="empty"
+                      style={{ width: '100%', zIndex: 2, position: 'relative' }}
                     />
-                  </ActionIcon>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  <ReportImageButton imageId={image.id}>
-                    <Menu.Item icon={<IconFlag size={14} stroke={1.5} />}>Report</Menu.Item>
-                  </ReportImageButton>
-                </Menu.Dropdown>
-              </Menu>
-              <ImageGuard.ToggleConnect />
-              <ImageGuard.Unsafe>
-                <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
-                  <MediaHash {...image} />
-                </AspectRatio>
-              </ImageGuard.Unsafe>
-              <ImageGuard.Safe>
-                <EdgeImage
-                  src={image.url}
-                  alt={image.name ?? undefined}
-                  width={450}
-                  placeholder="empty"
-                  style={{ width: '100%', zIndex: 2, position: 'relative' }}
-                />
-              </ImageGuard.Safe>
-            </Box>
-          )}
-        />
-        <Group className={cx(classes.info, classes.content)} p="xs" position="apart">
-          {/* TODO.gallery: Display reaction counts instead */}
-          <ReactionPicker reactions={image.reactions} onSelect={(emoji) => console.log(emoji)} />
-          {/* TODO.gallery: Adjust background and icon/text size */}
-          <IconBadge
-            color="blue"
-            radius="xl"
-            variant="light"
-            icon={<IconMessageCircle2 size={14} />}
-          >
-            <Text size="xs">{abbreviateNumber(image.metrics?.commentCount ?? 0)}</Text>
-          </IconBadge>
-        </Group>
+                  </ImageGuard.Safe>
+                </Box>
+              )}
+            />
+            <Group className={cx(classes.info, classes.content)} p="xs" position="apart">
+              {/* TODO.gallery: Display reaction counts instead */}
+              <ReactionPicker
+                reactions={image.reactions}
+                onSelect={(emoji) => console.log(emoji)}
+              />
+              {/* TODO.gallery: Adjust background and icon/text size */}
+              <IconBadge
+                color="blue"
+                radius="xl"
+                variant="light"
+                icon={<IconMessageCircle2 size={14} />}
+              >
+                <Text size="xs">{abbreviateNumber(image.metrics?.commentCount ?? 0)}</Text>
+              </IconBadge>
+            </Group>
+          </>
+        )}
       </Card>
     </Link>
   );
