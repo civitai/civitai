@@ -60,6 +60,20 @@ export const createReport = async ({
             where: { imagesOnReviews: { reviewId: id } },
             data: { nsfw: true },
           });
+
+          const review = await tx.review.findUnique({
+            where: { id },
+            select: { model: { select: { poi: true } } },
+          });
+          if (review?.model?.poi && report.create) {
+            report.create.reason = ReportReason.TOSViolation;
+            await prisma.reviewReport.create({
+              data: {
+                review: { connect: { id } },
+                report,
+              },
+            });
+          }
         } else if (data.reason === ReportReason.TOSViolation) {
           await tx.review.update({ where: { id }, data: { tosViolation: true } });
         }
