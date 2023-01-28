@@ -20,14 +20,14 @@ import { ReportImageButton } from '~/components/Gallery/ReportImageButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
+import { Reactions } from '~/components/Reaction/Reactions';
 import { ImageGetAllInfinite } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 export function InfiniteGalleryGrid({ columnWidth, data, filters }: Props) {
   const router = useRouter();
   const stringified = JSON.stringify(filters);
-  const modelId = Number(([] as string[]).concat(router.query.model ?? [])[0]);
+  // const modelId = Number(([] as string[]).concat(router.query.model ?? [])[0]);
 
   const containerRef = useRef(null);
   const [windowWidth, height] = useWindowSize();
@@ -42,14 +42,15 @@ export function InfiniteGalleryGrid({ columnWidth, data, filters }: Props) {
     align: 'center',
   });
 
-  useEffect(() => {
-    if (!data?.length || !modelId) return;
-    // if (!modelId) scrollToIndex(0);
-    const index = data.findIndex((x) => x.id === modelId);
-    if (index === -1 || data.length < index) return;
+  // TODO.gallery - scrollTo entityId
+  // useEffect(() => {
+  //   if (!data?.length || !modelId) return;
+  //   // if (!modelId) scrollToIndex(0);
+  //   const index = data.findIndex((x) => x.id === modelId);
+  //   if (index === -1 || data.length < index) return;
 
-    scrollToIndex(index);
-  }, [stringified]); //eslint-disable-line
+  //   scrollToIndex(index);
+  // }, [stringified]); //eslint-disable-line
 
   return useMasonry({
     resizeObserver,
@@ -137,8 +138,6 @@ function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
           <>
             <ImageGuard
               images={[image]}
-              connect={{ entityId: image.id, entityType: 'model' }}
-              nsfw={image.nsfw} // if the image is nsfw, then most/all of the model is nsfw
               render={(image) => (
                 <Box sx={{ position: 'relative' }}>
                   <Menu position="left">
@@ -171,7 +170,8 @@ function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
                       </ReportImageButton>
                     </Menu.Dropdown>
                   </Menu>
-                  <ImageGuard.ToggleConnect />
+                  <ImageGuard.ToggleImage />
+                  {/* <ImageGuard.ToggleConnect /> */}
                   <ImageGuard.Unsafe>
                     <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                       <MediaHash {...image} />
@@ -189,11 +189,13 @@ function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
                 </Box>
               )}
             />
-            <Group className={cx(classes.info, classes.content)} p="xs" position="apart">
+            <Group className={cx(classes.info, classes.content)} p="xs" position="apart" noWrap>
               {/* TODO.gallery: Display reaction counts instead */}
-              <ReactionPicker
+              <Reactions
+                entityId={image.id}
+                entityType="image"
                 reactions={image.reactions}
-                onSelect={(emoji) => console.log(emoji)}
+                metrics={image.metrics}
               />
               {/* TODO.gallery: Adjust background and icon/text size */}
               <IconBadge

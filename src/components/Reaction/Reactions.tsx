@@ -39,7 +39,14 @@ export function Reactions({
   const currentUser = useCurrentUser();
 
   return (
-    <Group spacing={4} align="center">
+    <Group
+      spacing={4}
+      align="center"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+    >
       <Popover shadow="md" position={popoverPosition} withArrow withinPortal>
         <Popover.Target>
           <Button variant="subtle" size="xs" color="gray" radius="xl" compact>

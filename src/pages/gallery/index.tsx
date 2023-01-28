@@ -10,7 +10,7 @@ export default function Gallery() {
   const filters = useGalleryFilters();
   const { ref, inView } = useInView();
 
-  const { data, isLoading, isFetching, fetchNextPage, hasNextPage } =
+  const { data, isLoading, fetchNextPage, hasNextPage } =
     trpc.image.getGalleryImagesInfinite.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
     });
@@ -20,10 +20,10 @@ export default function Gallery() {
   );
 
   useEffect(() => {
-    if (inView && hasNextPage && !isFetching) {
+    if (inView) {
       fetchNextPage();
     }
-  }, [fetchNextPage, hasNextPage, inView, isFetching]);
+  }, [fetchNextPage, inView]);
 
   return (
     <Container size={1920}>

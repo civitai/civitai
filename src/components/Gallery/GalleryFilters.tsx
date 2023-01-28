@@ -12,6 +12,23 @@ import { ImageSort } from '~/server/common/enums';
 import { setCookie } from '~/utils/cookies-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 
+const numberType = z.preprocess((arg) => {
+  return !!arg ? Number(arg) : undefined;
+}, z.number().optional());
+
+const queryStringSchema = z
+  .object({
+    modelId: numberType,
+    modelVersionId: numberType,
+    reviewId: numberType,
+    userId: numberType,
+    infinite: z.preprocess((arg) => {
+      return arg === 'false' ? false : true;
+    }, z.boolean()),
+  })
+  .optional();
+
+type QueryFilterProps = z.infer<typeof queryStringSchema>;
 type FilterProps = z.input<typeof galleryFilterSchema>;
 type Store = {
   filters: FilterProps;
@@ -44,12 +61,13 @@ const useFiltersStore = create<Store>()(
   }))
 );
 
-export const useGalleryFilters = () => {
+export const useGalleryFilters = (): Partial<QueryFilterProps> & FilterProps => {
   const router = useRouter();
-  const page = router.query.page ? Number(router.query.page) : 1;
   const limit = constants.imageFilterDefaults.limit;
-  const filters = useFiltersStore((state) => state.filters);
-  return { ...filters, page, limit };
+  const storeFilters = useFiltersStore((state) => state.filters);
+  const filters = { ...storeFilters, limit };
+  const result = queryStringSchema.safeParse(router.query);
+  return result.success ? { ...result.data, ...filters } : filters;
 };
 
 const sortOptions = Object.values(ImageSort);

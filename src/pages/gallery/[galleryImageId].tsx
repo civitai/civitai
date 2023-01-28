@@ -7,7 +7,7 @@ import { isNumber } from '~/utils/type-guards';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { GalleryCarousel } from '~/components/Gallery/GalleryCarousel';
 import {
   createStyles,
@@ -46,7 +46,7 @@ export default function GalleryImageDetail() {
   const returnUrl = router.query.returnUrl as string;
   const active = router.query.active === 'true';
 
-  const { modelId, modelVersionId, reviewId, userId, infinite = true } = filters;
+  const { modelId, modelVersionId, reviewId, userId, infinite } = filters;
 
   // #region [data fetching]
   const { data: infiniteGallery, isLoading: infiniteLoading } =
