@@ -386,8 +386,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     {
       label: 'Type',
       value: (
-        <Group spacing="xs" position="apart">
-          <Badge radius="sm">{splitUppercase(model.type)}</Badge>
+        <Group spacing={0} noWrap position="apart">
+          <Badge radius="sm" px={5}>
+            {splitUppercase(model.type)} {model.checkpointType}
+          </Badge>
           {model?.status !== ModelStatus.Published ? (
             <Badge color="yellow" radius="sm">
               {model.status}
