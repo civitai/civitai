@@ -20,7 +20,7 @@ import { ReportImageButton } from '~/components/Gallery/ReportImageButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
+import { Reactions } from '~/components/Reaction/Reactions';
 import { ImageGetAllInfinite } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
@@ -189,11 +189,13 @@ function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
                 </Box>
               )}
             />
-            <Group className={cx(classes.info, classes.content)} p="xs" position="apart">
+            <Group className={cx(classes.info, classes.content)} p="xs" position="apart" noWrap>
               {/* TODO.gallery: Display reaction counts instead */}
-              <ReactionPicker
+              <Reactions
+                entityId={image.id}
+                entityType="image"
                 reactions={image.reactions}
-                onSelect={(emoji) => console.log(emoji)}
+                metrics={image.metrics}
               />
               {/* TODO.gallery: Adjust background and icon/text size */}
               <IconBadge

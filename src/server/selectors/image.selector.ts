@@ -34,19 +34,6 @@ export const imageGallerySelect = ({ user }: { user?: SessionUser }) =>
         reviewId: true,
       },
     },
-    // metrics: {
-    //   where: {
-    //     timeframe: MetricTimeframe.AllTime,
-    //   },
-    //   select: {
-    //     likeCount: true,
-    //     dislikeCount: true,
-    //     laughCount: true,
-    //     cryCount: true,
-    //     heartCount: true,
-    //     commentCount: true,
-    //   },
-    // },
     stats: {
       select: {
         cryCountAllTime: true,

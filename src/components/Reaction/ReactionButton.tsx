@@ -77,7 +77,9 @@ export function ReactionButton({
 
   const { mutate } = trpc.reaction.toggle.useMutation();
 
-  const handleClick = () => {
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     toggleReaction({ entityType, entityId, reaction, value: !hasReacted });
     mutate({
       entityId,
