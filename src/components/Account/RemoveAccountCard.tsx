@@ -30,10 +30,6 @@ export function RemoveAccountCard() {
 
   const form = useForm({ schema });
 
-  const handleSubmit = ({ username }: z.infer<typeof schema>) => {
-    console.log({ username });
-  };
-
   return (
     <Card>
       <Title order={2}>Remove Account</Title>

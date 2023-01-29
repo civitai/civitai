@@ -5,7 +5,7 @@ import { notificationBatches } from '~/server/notifications/utils.notifications'
 const NOTIFICATIONS_LAST_SENT_KEY = 'last-sent-notifications';
 export const sendNotificationsJob = createJob(
   'send-notifications',
-  '*/1 * * * *',
+  '*/4 * * * *',
   async () => {
     // Get the last run time from keyValue
     const lastSent = new Date(
