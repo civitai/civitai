@@ -14,7 +14,7 @@ import App from 'next/app';
 import Head from 'next/head';
 import type { Session } from 'next-auth';
 import { getSession, SessionProvider } from 'next-auth/react';
-import { ReactElement, ReactNode, useEffect, useState } from 'react';
+import { ReactElement, ReactNode, useState } from 'react';
 
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { trpc } from '~/utils/trpc';
@@ -66,7 +66,7 @@ function MyApp(props: CustomAppProps) {
   const content = env.NEXT_PUBLIC_MAINTENANCE_MODE ? (
     <MaintenanceMode />
   ) : (
-    <SessionProvider session={session} refetchInterval={0}>
+    <SessionProvider session={session}>
       <CookiesProvider value={cookies}>
         <FeatureFlagsProvider flags={flags}>
           <NsfwWorkerProvider>
@@ -139,14 +139,29 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
 
-  return {
-    pageProps: {
-      ...pageProps,
-      colorScheme,
-      cookies: parsedCookies,
-    },
-    ...appProps,
-  };
+  if (env.NEXT_PUBLIC_MAINTENANCE_MODE) {
+    return {
+      pageProps: {
+        ...pageProps,
+        colorScheme,
+        cookies: parsedCookies,
+      },
+      ...appProps,
+    };
+  } else {
+    const session = await getSession(appContext.ctx);
+    const flags = getFeatureFlags({ user: session?.user });
+    return {
+      pageProps: {
+        ...pageProps,
+        colorScheme,
+        cookies: parsedCookies,
+        session,
+        flags,
+      },
+      ...appProps,
+    };
+  }
 };
 
 export default trpc.withTRPC(MyApp);

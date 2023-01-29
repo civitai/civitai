@@ -4,7 +4,6 @@ import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { appRouter } from '~/server/routers';
 import superjson from 'superjson';
 import { Session } from 'next-auth';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export const getServerProxySSGHelpers = async (
   ctx: GetServerSidePropsContext,
@@ -22,7 +21,6 @@ export function createServerSideProps<P>({ resolver, useSSG }: CreateServerSideP
   return async (context: GetServerSidePropsContext) => {
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
     const session = await getServerAuthSession(context);
-    const flags = getFeatureFlags({ user: session?.user });
 
     const ssg = useSSG && !isClient ? await getServerProxySSGHelpers(context, session) : undefined;
     const result = (await resolver({
@@ -44,8 +42,6 @@ export function createServerSideProps<P>({ resolver, useSSG }: CreateServerSideP
       props: {
         ...(props ?? {}),
         ...(ssg ? { trpcState: ssg.dehydrate() } : {}),
-        session,
-        flags,
       },
     };
   };
