@@ -30,6 +30,9 @@ export default defineNextConfig({
       'civitai-dev.s3.us-west-1.wasabisys.com',
     ],
   },
+  experimental: {
+    largePageDataBytes: 512 * 100000,
+  },
   redirects: async () => {
     return [
       {

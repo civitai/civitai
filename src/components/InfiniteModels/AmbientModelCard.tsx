@@ -436,7 +436,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                         zIndex: 10,
                         borderRadius: '50%',
                       }}
-                      onClick={(e) => {
+                      onClick={(e: any) => {
                         e.preventDefault();
                         e.stopPropagation();
                         push(`/user/${data.user.username}`);
