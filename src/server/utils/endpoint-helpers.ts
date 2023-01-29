@@ -45,6 +45,7 @@ export function PublicEndpoint(
       `public, s-maxage=${PUBLIC_CACHE_MAX_AGE}, stale-while-revalidate=${PUBLIC_CACHE_STALE_WHILE_REVALIDATE}`
     );
     if (req.method === 'OPTIONS') return res.status(200).json({});
+    return res.status(429).json({ error: 'Too many requests' });
     await handler(req, res);
   };
 }
