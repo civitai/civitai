@@ -28,6 +28,7 @@ import {
 } from '@tabler/icons';
 import dayjs from 'dayjs';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import React, { useState, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 
@@ -156,6 +157,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   const theme = useMantineTheme();
+  const { push } = useRouter();
 
   const { id, image, name, rank, nsfw, user } = data ?? {};
 
@@ -434,12 +436,16 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                         zIndex: 10,
                         borderRadius: '50%',
                       }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        push(`/user/${data.user.username}`);
+                      }}
                     >
                       <UserAvatar
                         size="md"
                         user={data.user}
                         avatarProps={{ className: classes.userAvatar }}
-                        linkToProfile
                       />
                     </Box>
                   </Tooltip>
