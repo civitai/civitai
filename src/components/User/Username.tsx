@@ -1,6 +1,7 @@
 import { Badge, BadgeProps, Group, MantineSize, Text, TextProps } from '@mantine/core';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getRandom } from '~/utils/array-helpers';
+import { useEffect, useState } from 'react';
 
 // TODO justin: remove once final support badge is implemented
 const levels: SupportLevel[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
@@ -28,14 +29,21 @@ const textBadgeProps: Record<SupportLevel, { textProps: TextProps; badgeProps: B
 export function Username({
   username,
   deletedAt,
-  supportLevel,
+  supportLevel: initialSupportLevel,
   size = 'sm',
   inherit = false,
 }: Props) {
   const features = useFeatureFlags();
+
+  // TODO justin: remove random once final support badge is implemented
+  // Briant made a change to `supportLevel` to fix ssr mismatches
+  const [supportLevel, setSupportLevel] = useState<SupportLevel>('common');
+  useEffect(() => {
+    setSupportLevel(features.memberBadges ? getRandom(levels) : 'common');
+  }, []); // eslint-disable-line
+
   if (deletedAt) return <Text size={size}>[deleted]</Text>;
 
-  supportLevel = features.memberBadges ? getRandom(levels) : 'common'; // TODO justin: remove random once final support badge is implemented
   const { textProps, badgeProps } = textBadgeProps[supportLevel];
 
   return (

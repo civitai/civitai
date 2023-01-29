@@ -79,8 +79,6 @@ export const createReport = async ({
         }
         break;
       case ReportEntity.Comment:
-        console.log('_____CREATE COMMENT REPORT____');
-        console.log({ id, report });
         await prisma.commentReport.create({
           data: {
             comment: { connect: { id } },

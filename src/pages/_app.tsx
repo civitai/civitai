@@ -54,7 +54,7 @@ function MyApp(props: CustomAppProps) {
     pageProps: { session, colorScheme: initialColorScheme, cookies, flags, ...pageProps },
   } = props;
   const [colorScheme, setColorScheme] = useState<ColorScheme>(initialColorScheme);
-
+  console.log({ session, flags });
   const toggleColorScheme = (value?: ColorScheme) => {
     const nextColorScheme = value || (colorScheme === 'dark' ? 'light' : 'dark');
     setColorScheme(nextColorScheme);
@@ -67,7 +67,7 @@ function MyApp(props: CustomAppProps) {
   const content = env.NEXT_PUBLIC_MAINTENANCE_MODE ? (
     <MaintenanceMode />
   ) : (
-    <SessionProvider session={session}>
+    <SessionProvider session={session} refetchInterval={0}>
       <CookiesProvider value={cookies}>
         <FeatureFlagsProvider flags={flags}>
           <NsfwWorkerProvider>
@@ -140,29 +140,14 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
 
-  if (env.NEXT_PUBLIC_MAINTENANCE_MODE) {
-    return {
-      pageProps: {
-        ...pageProps,
-        colorScheme,
-        cookies: parsedCookies,
-      },
-      ...appProps,
-    };
-  } else {
-    const session = await getSession(appContext.ctx);
-    const flags = getFeatureFlags({ user: session?.user });
-    return {
-      pageProps: {
-        ...pageProps,
-        session,
-        flags,
-        colorScheme: getCookie('mantine-color-scheme', appContext.ctx) ?? 'light',
-        cookies: parsedCookies,
-      },
-      ...appProps,
-    };
-  }
+  return {
+    pageProps: {
+      ...pageProps,
+      colorScheme,
+      cookies: parsedCookies,
+    },
+    ...appProps,
+  };
 };
 
 export default trpc.withTRPC(MyApp);

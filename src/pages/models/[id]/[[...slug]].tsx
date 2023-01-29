@@ -96,6 +96,7 @@ import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 //TODO - Break model query into multiple queries
 /*
@@ -107,31 +108,23 @@ import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
   - model-version reviews (for users who only want to see reviews for specific versions)
 */
 
-export const getServerSideProps: GetServerSideProps<{
-  id: number;
-  slug: string | string[] | null;
-}> = async (context) => {
-  const isClient = context.req.url?.startsWith('/_next/data');
-  const params = (context.params ?? {}) as { id: string; slug: string[] };
-  const id = Number(params.id);
-  if (!isNumber(id))
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  resolver: async ({ ctx, ssg }) => {
+    const params = (ctx.params ?? {}) as { id: string; slug: string[] };
+    const id = Number(params.id);
+    if (!isNumber(id)) return { notFound: true };
+
+    await ssg?.model.getById.prefetch({ id });
+
     return {
-      notFound: true,
+      props: {
+        id,
+        slug: params.slug?.[0] ?? '',
+      },
     };
-
-  const ssg = await getServerProxySSGHelpers(context);
-  if (!isClient) {
-    await ssg.model.getById.prefetch({ id });
-  }
-
-  return {
-    props: {
-      trpcState: ssg.dehydrate(),
-      id,
-      slug: params.slug?.[0] ?? '',
-    },
-  };
-};
+  },
+});
 
 const useStyles = createStyles((theme) => ({
   actions: {
