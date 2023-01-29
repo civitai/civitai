@@ -30,11 +30,11 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { QS } from '~/utils/qs';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
-import { useNavigateBack } from '~/providers/NavigateBackProvider';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { useHotkeys } from '@mantine/hooks';
 import { ReportImageButton } from '~/components/Gallery/ReportImageButton';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { useClientHistoryIndex } from '~/store/ClientHistoryStore';
 
 export default function GalleryImageDetail() {
   const router = useRouter();
@@ -42,9 +42,10 @@ export default function GalleryImageDetail() {
   const filters = useGalleryFilters();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
-  const { back: goBack } = useNavigateBack();
+  // const { back: goBack } = useNavigateBack();
   const returnUrl = router.query.returnUrl as string;
   const active = router.query.active === 'true';
+  const historyIndex = useClientHistoryIndex();
 
   const { modelId, modelVersionId, reviewId, userId, infinite } = filters;
 
@@ -76,12 +77,16 @@ export default function GalleryImageDetail() {
   // #endregion
 
   // #region [back button functionality]
-  const handleBackClick = () => goBack(returnUrl ?? '/gallery');
+  const handleBackClick = () => {
+    if (historyIndex > 0) router.back();
+    else router.push(returnUrl ?? '/gallery', undefined, { shallow: true });
+  };
 
   const handleCloseContext = () => {
     const { active, ...query } = router.query;
     if (active === 'true') {
-      goBack({ query }, undefined, { shallow: true });
+      if (historyIndex > 0) router.back();
+      else router.replace({ query }, undefined, { shallow: true });
     } else {
       handleBackClick();
     }
@@ -106,7 +111,7 @@ export default function GalleryImageDetail() {
 
   return (
     // TODO.gallery - <Meta />
-    <div className={classes.root}>
+    <Paper className={classes.root}>
       <CloseButton
         style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
         size="lg"
@@ -199,7 +204,7 @@ export default function GalleryImageDetail() {
           </Stack>
         </Card.Section>
       </Card>
-    </div>
+    </Paper>
   );
 }
 

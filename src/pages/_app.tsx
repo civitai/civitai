@@ -29,7 +29,7 @@ import { NsfwWorkerProvider } from '~/providers/NsfwWorkerProvider';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { FeatureFlags } from '~/server/services/feature-flags.service';
-import { HistoryProvider } from '~/providers/NavigateBackProvider';
+import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -68,7 +68,8 @@ function MyApp(props: CustomAppProps) {
   const content = env.NEXT_PUBLIC_MAINTENANCE_MODE ? (
     <MaintenanceMode />
   ) : (
-    <HistoryProvider>
+    <>
+      <ClientHistoryStore />
       <SessionProvider session={session}>
         <CookiesProvider value={cookies}>
           <FeatureFlagsProvider flags={flags}>
@@ -84,7 +85,7 @@ function MyApp(props: CustomAppProps) {
           </FeatureFlagsProvider>
         </CookiesProvider>
       </SessionProvider>
-    </HistoryProvider>
+    </>
   );
 
   return (
