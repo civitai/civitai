@@ -332,7 +332,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     return (
       <>
         {meta}
-        <SensitiveShield redirectTo={router.asPath} />;
+        <SensitiveShield redirectTo={router.asPath} />
       </>
     );
 
