@@ -52,6 +52,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     excludedTagIds,
     excludedIds,
     checkpointType,
+    status,
   },
   select,
   user: sessionUser,
@@ -68,6 +69,9 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     AND.push({
       OR: [{ status: ModelStatus.Published }, { user: { id: sessionUser?.id } }],
     });
+  }
+  if (sessionUser?.isModerator) {
+    AND.push({ status: status && status.length > 0 ? { in: status } : ModelStatus.Published });
   }
   if (query) {
     AND.push({

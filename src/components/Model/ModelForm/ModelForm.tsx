@@ -35,6 +35,7 @@ import {
   IconPlus,
   IconShoppingCart,
   IconTrash,
+  IconExclamationCircle,
 } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -74,6 +75,7 @@ import { isBetweenToday } from '~/utils/date-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { uniq } from 'lodash';
+import { useLocalStorage } from '@mantine/hooks';
 
 /**NOTES**
   - If a model depicts an actual person, it cannot have nsfw content
@@ -138,6 +140,11 @@ export function ModelForm({ model }: Props) {
   const isBlocked = Object.values(blocked).some((bool) => bool);
   const isComplete = Object.values(complete).every((bool) => bool);
   const isUploading = Object.values(uploading).some((bool) => bool);
+
+  const [showAlert, setShowAlert] = useLocalStorage<boolean | undefined>({
+    key: 'showFormAlert',
+    defaultValue: undefined,
+  });
 
   const defaultModelFile = {
     name: '',
@@ -373,12 +380,34 @@ export function ModelForm({ model }: Props) {
 
   return (
     <Container>
-      <Group spacing="lg" mb="lg">
-        <ActionIcon variant="outline" size="lg" onClick={() => router.back()}>
-          <IconArrowLeft size={20} stroke={1.5} />
-        </ActionIcon>
-        <Title order={3}>{model ? 'Editing model' : 'Upload model'}</Title>
-      </Group>
+      <Stack mb="lg">
+        <Group spacing="lg">
+          <ActionIcon variant="outline" size="lg" onClick={() => router.back()}>
+            <IconArrowLeft size={20} stroke={1.5} />
+          </ActionIcon>
+          <Title order={3}>{model ? 'Editing model' : 'Upload model'}</Title>
+        </Group>
+        {(showAlert == null || showAlert === true) && (
+          <Alert
+            color="yellow"
+            title="NOTE"
+            icon={<IconExclamationCircle />}
+            onClose={() => setShowAlert(false)}
+            closeButtonLabel="Close alert"
+            withCloseButton
+          >
+            Models cannot be{' '}
+            <Text weight="bold" span>
+              trained
+            </Text>{' '}
+            or{' '}
+            <Text weight="bold" span>
+              used for generation
+            </Text>{' '}
+            here.
+          </Alert>
+        )}
+      </Stack>
       <Form
         form={form}
         onSubmit={handleSubmit}
@@ -615,7 +644,7 @@ export function ModelForm({ model }: Props) {
                             label="Training Epochs"
                             placeholder="Training Epochs"
                             min={0}
-                            max={1000}
+                            max={100000}
                           />
                         </Grid.Col>
                         <Grid.Col span={6}>
