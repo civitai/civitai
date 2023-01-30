@@ -45,7 +45,7 @@ export default WebhookEndpoint(async (req, res) => {
   // Update url if we imported/moved the file
   if (tasks.includes('Import')) {
     data.exists = scanResult.fileExists === 1;
-    const bucket = env.S3_UPLOAD_BUCKET;
+    const bucket = env.S3_SETTLED_BUCKET;
     const scannerImportedFile = !url.includes(bucket) && scanResult.url.includes(bucket);
     if (data.exists && scannerImportedFile) data.url = scanResult.url;
     if (!data.exists) await unpublish(modelVersionId);

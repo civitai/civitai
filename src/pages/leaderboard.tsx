@@ -13,26 +13,18 @@ import {
   Center,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons';
-import { GetServerSideProps } from 'next';
 
 import { CreatorList } from '~/components/Leaderboard/CreatorList';
 import { Meta } from '~/components/Meta/Meta';
-import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 
-export const getServerSideProps: GetServerSideProps = async (ctx) => {
-  const ssg = await getServerProxySSGHelpers(ctx);
-  const isClient = ctx.req.url?.startsWith('/_next/data');
-  if (!isClient) {
-    await ssg.user.getLeaderboard.prefetch({ limit: 100 });
-  }
-
-  return {
-    props: {
-      trpcState: ssg.dehydrate(),
-    },
-  };
-};
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  resolver: async ({ ssg }) => {
+    await ssg?.user.getLeaderboard.prefetch({ limit: 100 });
+  },
+});
 
 export default function Leaderboard() {
   const { data = [], isLoading } = trpc.user.getLeaderboard.useQuery({ limit: 100 });

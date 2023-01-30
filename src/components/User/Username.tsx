@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useMemo } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getRandom } from '~/utils/array-helpers';
+import { useEffect, useState } from 'react';
 
 // TODO justin: remove once final support badge is implemented
 const levels: SupportLevel[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];

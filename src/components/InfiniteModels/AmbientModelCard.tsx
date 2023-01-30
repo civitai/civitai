@@ -28,6 +28,7 @@ import {
 } from '@tabler/icons';
 import dayjs from 'dayjs';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import React, { useState, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 
@@ -126,8 +127,7 @@ const useStyles = createStyles((theme) => {
 
     userAvatar: {
       opacity: 0.8,
-      boxShadow:
-        '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 20px 25px -5px, rgb(0 0 0 / 50%) 0px 10px 10px -5px',
+      boxShadow: '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 8px 15px -5px',
       transition: 'opacity .25s ease',
       position: 'relative',
 
@@ -139,7 +139,7 @@ const useStyles = createStyles((theme) => {
         right: 0,
         bottom: 0,
         borderRadius: theme.radius.xl,
-        boxShadow: 'inset 0 0 1px 1px rgba(255,255,255,0.25)',
+        boxShadow: 'inset 0 0 0px 1px rgba(255,255,255,0.8)',
       },
 
       '&:hover': {
@@ -155,6 +155,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   const theme = useMantineTheme();
+  const { push } = useRouter();
 
   const { id, image, name, rank, nsfw, user } = data ?? {};
 
@@ -422,6 +423,11 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                         alignSelf: 'flex-end',
                         zIndex: 10,
                         borderRadius: '50%',
+                      }}
+                      onClick={(e: any) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        push(`/user/${data.user.username}`);
                       }}
                     >
                       <UserAvatar

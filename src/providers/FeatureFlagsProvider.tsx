@@ -1,5 +1,5 @@
-import type { FeatureFlags } from '~/server/services/feature-flags.service';
-import { createContext, useContext } from 'react';
+import { FeatureFlags } from '~/server/services/feature-flags.service';
+import { createContext, useContext, useState } from 'react';
 
 const FeatureFlagsCtx = createContext<FeatureFlags>({} as FeatureFlags);
 
@@ -10,10 +10,11 @@ export const useFeatureFlags = () => {
 };
 export const FeatureFlagsProvider = ({
   children,
-  flags,
+  flags: initialFlags,
 }: {
   children: React.ReactNode;
   flags: FeatureFlags;
 }) => {
+  const [flags] = useState(initialFlags);
   return <FeatureFlagsCtx.Provider value={flags}>{children}</FeatureFlagsCtx.Provider>;
 };

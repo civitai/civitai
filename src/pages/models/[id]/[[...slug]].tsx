@@ -42,7 +42,7 @@ import {
 import startCase from 'lodash/startCase';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
+import Router, { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -95,6 +95,8 @@ import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
+import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 //TODO - Break model query into multiple queries
 /*
@@ -106,31 +108,24 @@ import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAcces
   - model-version reviews (for users who only want to see reviews for specific versions)
 */
 
-export const getServerSideProps: GetServerSideProps<{
-  id: number;
-  slug: string | string[] | null;
-}> = async (context) => {
-  const isClient = context.req.url?.startsWith('/_next/data');
-  const params = (context.params ?? {}) as { id: string; slug: string[] };
-  const id = Number(params.id);
-  if (!isNumber(id))
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  resolver: async ({ ctx, ssg }) => {
+    const params = (ctx.params ?? {}) as { id: string; slug: string[] };
+    const id = Number(params.id);
+    console.log({ ctx });
+    if (!isNumber(id)) return { notFound: true };
+
+    await ssg?.model.getById.prefetch({ id });
+
     return {
-      notFound: true,
+      props: {
+        id,
+        slug: params.slug?.[0] ?? '',
+      },
     };
-
-  const ssg = await getServerProxySSGHelpers(context);
-  if (!isClient) {
-    await ssg.model.getById.prefetch({ id });
-  }
-
-  return {
-    props: {
-      trpcState: ssg.dehydrate(),
-      id,
-      slug: params.slug?.[0] ?? '',
-    },
-  };
-};
+  },
+});
 
 const useStyles = createStyles((theme) => ({
   actions: {
@@ -154,7 +149,7 @@ const useStyles = createStyles((theme) => ({
 
 export default function ModelDetail(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
-  const router = useRouter();
+  // const router = useRouter();
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
   const mobile = useIsMobile();
@@ -163,7 +158,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const { openContext } = useRoutedContext();
 
   const { id, slug } = props;
-  const { edit } = router.query;
+  // const { edit } = router.query;
 
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
   const [reviewFilters, setReviewFilters] = useState<{
@@ -193,7 +188,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       });
       closeAllModals();
 
-      if (!isModerator || permanently) await router.replace('/');
+      if (!isModerator || permanently) await Router.replace('/');
     },
     onError(error) {
       showErrorNotification({
@@ -264,13 +259,13 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
-    router.beforePopState(({ as, url }) => {
+    Router.beforePopState(({ as, url }) => {
       if (as === '/' || as.startsWith('/?') || as.startsWith('/user/') || as.startsWith('/tag/')) {
         const [route, queryString] = as.split('?');
         const [, otherQueryString] = url.split('?');
         const queryParams = QS.parse(queryString);
         const otherParams = QS.parse(otherQueryString);
-        router.replace(
+        Router.replace(
           { pathname: route, query: { ...queryParams, ...otherParams, model: id } },
           as,
           {
@@ -284,17 +279,17 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       return true;
     });
 
-    return () => router.beforePopState(() => true);
-  }, [router, id]); // Add any state variables to dependencies array if needed.
+    return () => Router.beforePopState(() => true);
+  }, [id]); // Add any state variables to dependencies array if needed.
 
   if (loadingModel) return <PageLoader />;
   if (!model) return <NotFound />;
 
   const isModerator = currentUser?.isModerator ?? false;
   const isOwner = model.user.id === currentUser?.id || isModerator;
-  const showNsfwRequested = router.query.showNsfw !== 'true';
+  // const showNsfwRequested = router.query.showNsfw !== 'true';
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
-  const nsfw = userNotBlurringNsfw && showNsfwRequested && model.nsfw === true;
+  const nsfw = userNotBlurringNsfw && model.nsfw === true;
   const isFavorite = favoriteModels.find((modelId) => modelId === id);
   const deleted = !!model.deletedAt && model.status === 'Deleted';
 
@@ -319,40 +314,31 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     />
   );
 
-  if ((!!edit && isOwner && !deleted) || (!!edit && isModerator && deleted))
-    return <ModelForm model={model} />;
-  if (model.nsfw && !currentUser) return <SensitiveShield redirectTo={router.asPath} meta={meta} />;
+  // if ((!!edit && isOwner && !deleted) || (!!edit && isModerator && deleted))
+  //   return <ModelForm model={model} />;
+  if (model.nsfw && !currentUser)
+    return (
+      <>
+        {meta}
+        <SensitiveShield />
+      </>
+    );
 
-  const handleDeleteModel = () => {
+  const handleDeleteModel = (options?: { permanently: boolean }) => {
+    const { permanently = false } = options || {};
+
     openConfirmModal({
       title: 'Delete Model',
-      children: (
-        <Stack>
-          <Text size="sm">
-            Are you sure you want to delete this model? This action is destructive and you will have
-            to contact support to restore your data.
-          </Text>
-          {isModerator && (
-            <Button
-              variant="outline"
-              color="red"
-              onClick={() => deleteMutation.mutate({ id: model.id, permanently: true })}
-              loading={deleteMutation.isLoading}
-              fullWidth
-            >
-              Permanently delete this model
-            </Button>
-          )}
-        </Stack>
-      ),
+      children: permanently
+        ? 'Are you sure you want to permanently delete this model? This action is destructive and cannot be reverted.'
+        : 'Are you sure you want to delete this model? This action is destructive and you will have to contact support to restore your data.',
       centered: true,
       labels: { confirm: 'Delete Model', cancel: "No, don't delete it" },
       confirmProps: { color: 'red', loading: deleteMutation.isLoading },
-      groupProps: { grow: isModerator },
       closeOnConfirm: false,
       onConfirm: () => {
         if (model) {
-          deleteMutation.mutate({ id: model.id });
+          deleteMutation.mutate({ id: model.id, permanently });
         }
       },
     });
@@ -388,12 +374,16 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     {
       label: 'Type',
       value: (
-        <Group spacing="xs">
-          <Badge radius="sm">{splitUppercase(model.type)}</Badge>
-          {model?.status !== ModelStatus.Published && (
+        <Group spacing={0} noWrap position="apart">
+          <Badge radius="sm" px={5}>
+            {splitUppercase(model.type)} {model.checkpointType}
+          </Badge>
+          {model?.status !== ModelStatus.Published ? (
             <Badge color="yellow" radius="sm">
               {model.status}
             </Badge>
+          ) : (
+            <HowToUseModel type={model.type} />
           )}
         </Group>
       ),
@@ -553,12 +543,21 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     Restore
                   </Menu.Item>
                 )}
+                {currentUser && isModerator && (
+                  <Menu.Item
+                    color={theme.colors.red[6]}
+                    icon={<IconTrash size={14} stroke={1.5} />}
+                    onClick={() => handleDeleteModel({ permanently: true })}
+                  >
+                    Permanently Delete Model
+                  </Menu.Item>
+                )}
                 {currentUser && isOwner && !deleted && (
                   <>
                     <Menu.Item
                       color={theme.colors.red[6]}
                       icon={<IconTrash size={14} stroke={1.5} />}
-                      onClick={handleDeleteModel}
+                      onClick={() => handleDeleteModel()}
                     >
                       Delete Model
                     </Menu.Item>
@@ -818,13 +817,13 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                                 edgeImageProps={{ width: 400 }}
                                 radius="md"
                                 onClick={() =>
-                                  router.push({
+                                  Router.push({
                                     pathname: `/gallery/${image.id}`,
                                     query: {
                                       modelId: model.id,
                                       modelVersionId: latestVersion.id,
                                       infinite: false,
-                                      returnUrl: router.asPath,
+                                      returnUrl: Router.asPath,
                                     },
                                   })
                                 }

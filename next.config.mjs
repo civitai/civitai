@@ -32,6 +32,7 @@ export default defineNextConfig({
   },
   experimental: {
     scrollRestoration: true,
+    largePageDataBytes: 512 * 100000,
   },
   redirects: async () => {
     return [

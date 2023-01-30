@@ -8,7 +8,7 @@ import useIsClient from '~/hooks/useIsClient';
 
 export type RoutedContext = {
   opened: boolean;
-  close: () => void;
+  close: () => Promise<void>;
 };
 
 export type RoutedContextProps<TSchema extends z.AnyZodObject> = {

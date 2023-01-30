@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
+import { publicApiContext } from '~/server/createContext';
 
 import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
@@ -9,7 +10,7 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 const schema = z.object({ query: z.string().optional() });
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const apiCaller = appRouter.createCaller({ user: undefined });
+  const apiCaller = appRouter.createCaller(publicApiContext);
   try {
     const query = await schema.parseAsync(req.query);
     const users = await apiCaller.user.getAll({ ...query, limit: 5 });

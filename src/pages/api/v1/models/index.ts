@@ -6,6 +6,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import { publicApiContext } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
@@ -15,7 +16,7 @@ const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const apiCaller = appRouter.createCaller({ user: undefined });
+  const apiCaller = appRouter.createCaller(publicApiContext);
   try {
     const { items, ...metadata } = await apiCaller.model.getAllWithVersions(req.query);
     const { nextPage, prevPage, baseUrl } = getPaginationLinks({ ...metadata, req });

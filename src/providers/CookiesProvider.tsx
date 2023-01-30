@@ -1,3 +1,4 @@
+import { useSetState } from '@mantine/hooks';
 import { CheckpointType, MetricTimeframe, ModelType } from '@prisma/client';
 import React, { createContext, useContext } from 'react';
 import { z } from 'zod';
@@ -29,11 +30,14 @@ const CookiesCtx = createContext<CookiesContext>({} as CookiesContext);
 export const useCookies = () => useContext(CookiesCtx);
 export const CookiesProvider = ({
   children,
-  value,
+  value: initialValue,
 }: {
   children: React.ReactNode;
   value: CookiesContext;
-}) => <CookiesCtx.Provider value={value}>{children}</CookiesCtx.Provider>;
+}) => {
+  const [value] = useSetState(initialValue);
+  return <CookiesCtx.Provider value={value}>{children}</CookiesCtx.Provider>;
+};
 
 const cookiesSchema = z.object({
   models: modelFilterSchema,

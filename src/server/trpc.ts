@@ -14,17 +14,25 @@ export const { router, middleware } = t;
 /**
  * Unprotected procedure
  **/
-export const publicProcedure = t.procedure;
+const isAcceptableOrigin = t.middleware(({ ctx: { user, acceptableOrigin }, next }) => {
+  if (!acceptableOrigin)
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message:
+        'Please use the public API instead: https://github.com/civitai/civitai/wiki/REST-API-Reference',
+    });
+  return next({ ctx: { user, acceptableOrigin } });
+});
+
+export const publicProcedure = t.procedure.use(isAcceptableOrigin);
 
 /**
  * Reusable middleware to ensure
  * users are logged in
  */
-const isAuthed = t.middleware(({ ctx, next }) => {
-  if (!ctx.user) {
-    throw new TRPCError({ code: 'UNAUTHORIZED' });
-  }
-  return next({ ctx: { user: ctx.user } });
+const isAuthed = t.middleware(({ ctx: { user, acceptableOrigin }, next }) => {
+  if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  return next({ ctx: { user, acceptableOrigin } });
 });
 
 /**

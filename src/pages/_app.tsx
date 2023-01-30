@@ -55,7 +55,6 @@ function MyApp(props: CustomAppProps) {
     pageProps: { session, colorScheme: initialColorScheme, cookies, flags, ...pageProps },
   } = props;
   const [colorScheme, setColorScheme] = useState<ColorScheme>(initialColorScheme);
-
   const toggleColorScheme = (value?: ColorScheme) => {
     const nextColorScheme = value || (colorScheme === 'dark' ? 'light' : 'dark');
     setColorScheme(nextColorScheme);
@@ -135,7 +134,11 @@ function MyApp(props: CustomAppProps) {
 }
 
 MyApp.getInitialProps = async (appContext: AppContext) => {
-  const { pageProps, ...appProps } = await App.getInitialProps(appContext);
+  const initialProps = await App.getInitialProps(appContext);
+  const isClient = appContext.ctx?.req?.url?.startsWith('/_next/data');
+  if (isClient) return initialProps;
+
+  const { pageProps, ...appProps } = initialProps;
   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'light';
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
@@ -155,9 +158,9 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     return {
       pageProps: {
         ...pageProps,
-        session,
-        colorScheme: getCookie('mantine-color-scheme', appContext.ctx) ?? 'light',
+        colorScheme,
         cookies: parsedCookies,
+        session,
         flags,
       },
       ...appProps,

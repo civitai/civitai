@@ -16,7 +16,7 @@ import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
 
 export const getAllModelsSchema = z.object({
-  limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).optional(),
+  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
   page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
   cursor: z.preprocess((val) => Number(val), z.number()).optional(),
   query: z.string().optional(),

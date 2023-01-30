@@ -29,8 +29,8 @@ export function WebhookEndpoint(
   return TokenSecuredEndpoint(env.WEBHOOK_TOKEN, handler);
 }
 
-const PUBLIC_CACHE_MAX_AGE = 60;
-const PUBLIC_CACHE_STALE_WHILE_REVALIDATE = 30;
+const PUBLIC_CACHE_MAX_AGE = 300;
+const PUBLIC_CACHE_STALE_WHILE_REVALIDATE = PUBLIC_CACHE_MAX_AGE / 2;
 
 export function PublicEndpoint(
   handler: (req: NextApiRequest, res: NextApiResponse) => Promise<void>,

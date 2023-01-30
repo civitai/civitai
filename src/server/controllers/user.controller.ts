@@ -226,7 +226,7 @@ export const getCreatorsHandler = async ({ input }: { input: Partial<GetAllSchem
       skip,
       count: true,
       excludeIds: [-1], // Exclude civitai user
-      select: { username: true, models: { select: { id: true } } },
+      select: { username: true, models: { select: { id: true }, where: { status: 'Published' } } },
     });
 
     return getPagingData(results, take, page);

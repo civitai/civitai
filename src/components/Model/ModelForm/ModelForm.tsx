@@ -125,10 +125,11 @@ export function ModelForm({ model }: Props) {
   const mobile = useIsMobile();
   const editing = !!model;
 
-  const { data: { items: tags } = { items: [] } } = trpc.tag.getAll.useQuery(
-    { limit: 0, entityType: TagTarget.Model },
-    { cacheTime: Infinity, staleTime: Infinity }
-  );
+  const { data: { items: tags } = { items: [] }, isLoading: loadingTags } =
+    trpc.tag.getAll.useQuery(
+      { limit: 0, entityType: TagTarget.Model },
+      { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
+    );
   const addMutation = trpc.model.add.useMutation();
   const updateMutation = trpc.model.update.useMutation();
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
@@ -265,7 +266,7 @@ export function ModelForm({ model }: Props) {
             message: `Successfully ${editing ? 'updated' : 'created'} the model.`,
           });
           await queryUtils.model.invalidate();
-          await queryUtils.tag.invalidate();
+          await queryUtils.tag.getAll.invalidate({ limit: 0, entityType: TagTarget.Model });
           router.push({ pathname: modelLink, query: { showNsfw: true } }, modelLink, {
             shallow: !!input.id,
           });
@@ -423,7 +424,10 @@ export function ModelForm({ model }: Props) {
                                   : theme.colors.gray[4]
                               }`,
                               background: 'none',
-                              marginTop: theme.spacing.xs * 0.5, // 5px
+                              height: 36,
+                            },
+                            label: {
+                              padding: '2px 10px',
                             },
                           })}
                           fullWidth
@@ -828,7 +832,11 @@ export function ModelForm({ model }: Props) {
                 >
                   Discard changes
                 </Button>
-                <Button type="submit" loading={mutating} disabled={nsfwPoi || !isComplete}>
+                <Button
+                  type="submit"
+                  loading={mutating}
+                  disabled={nsfwPoi || !isComplete || loadingTags}
+                >
                   {isUploading ? 'Uploading...' : mutating ? 'Saving...' : 'Save'}
                 </Button>
               </Group>
