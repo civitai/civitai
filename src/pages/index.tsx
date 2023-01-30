@@ -71,6 +71,7 @@ function Home() {
               py={8}
               className={classes.welcome}
               onClose={closeWelcomeAlert}
+              closeButtonLabel="Close welcome alert"
               withCloseButton
             >
               <Group spacing="xs" noWrap>

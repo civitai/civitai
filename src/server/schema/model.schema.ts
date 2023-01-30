@@ -32,6 +32,11 @@ export const getAllModelsSchema = z.object({
     .optional()
     .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
     .optional(),
+  status: z
+    .union([z.nativeEnum(ModelStatus), z.nativeEnum(ModelStatus).array()])
+    .optional()
+    .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
+    .optional(),
   checkpointType: z.nativeEnum(CheckpointType).optional(),
   baseModels: z
     .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])

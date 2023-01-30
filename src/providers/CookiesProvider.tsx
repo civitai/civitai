@@ -1,5 +1,5 @@
 import { useSetState } from '@mantine/hooks';
-import { CheckpointType, MetricTimeframe, ModelType } from '@prisma/client';
+import { CheckpointType, MetricTimeframe, ModelStatus, ModelType } from '@prisma/client';
 import React, { createContext, useContext } from 'react';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
@@ -12,6 +12,7 @@ export const modelFilterSchema = z.object({
   checkpointType: z.nativeEnum(CheckpointType).optional(),
   baseModels: z.enum(constants.baseModels).array().optional(),
   hideNSFW: z.boolean().optional(),
+  status: z.nativeEnum(ModelStatus).array().optional(),
 });
 
 export const questionsFilterSchema = z.object({
@@ -51,6 +52,7 @@ export function parseCookies(
       types: cookies?.['f_types'],
       baseModels: cookies?.['f_baseModels'],
       hideNSFW: cookies?.['f_hideNSFW'],
+      status: cookies?.['f_status'],
     },
     questions: {
       sort: cookies?.['q_sort'],
@@ -71,6 +73,7 @@ const zodParse = z
           types: z.string(),
           baseModels: z.string(),
           hideNSFW: z.string(),
+          status: z.string(),
         })
         .partial(),
       questions: z
@@ -90,6 +93,7 @@ const zodParse = z
           types: !!models.types ? JSON.parse(decodeURIComponent(models.types)) : [],
           baseModels: !!models.baseModels ? JSON.parse(decodeURIComponent(models.baseModels)) : [],
           hideNSFW: models?.hideNSFW === 'true',
+          status: !!models.status ? JSON.parse(decodeURIComponent(models.status)) : [],
         },
         questions,
       } as CookiesContext)
