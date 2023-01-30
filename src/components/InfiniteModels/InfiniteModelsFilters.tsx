@@ -1,5 +1,5 @@
 import create from 'zustand';
-import { ModelType, MetricTimeframe, CheckpointType } from '@prisma/client';
+import { ModelType, MetricTimeframe, CheckpointType, ModelStatus } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { splitUppercase } from '~/utils/string-helpers';
@@ -15,6 +15,7 @@ import {
   Divider,
   SegmentedControl,
   Button,
+  Chip,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter, IconFilterOff } from '@tabler/icons';
 import { z } from 'zod';
@@ -37,8 +38,9 @@ export const useFilters = create<{
   setCheckpointType: (checkpointType?: CheckpointType) => void;
   setBaseModels: (baseModels?: BaseModel[]) => void;
   setHideNSFW: (includeNSFW?: boolean) => void;
+  setStatus: (status?: ModelStatus[]) => void;
 }>()(
-  immer((set, get) => ({//eslint-disable-line
+  immer((set) => ({
     filters: {},
     setSort: (sort) => {
       set((state) => {
@@ -76,6 +78,12 @@ export const useFilters = create<{
         hideNSFW ? setCookie('f_hideNSFW', hideNSFW) : deleteCookie('f_hideNSFW');
       });
     },
+    setStatus: (status) => {
+      set((state) => {
+        state.filters.status = status;
+        !!status?.length ? setCookie('f_status', status) : deleteCookie('f_status');
+      });
+    },
   }))
 );
 
@@ -86,10 +94,11 @@ export const useInfiniteModelsFilters = () => {
     baseModels,
     types,
     hideNSFW,
+    status,
   } = useCookies().models;
 
   const filters = useFilters((state) => state.filters);
-  return { limit: 100, sort, period, types, baseModels, hideNSFW, ...filters };
+  return { limit: 100, sort, period, types, baseModels, hideNSFW, status, ...filters };
 };
 
 const sortOptions = Object.values(ModelSort);
@@ -128,11 +137,17 @@ export function InfiniteModelsPeriod() {
   );
 }
 
+const availableStatus = Object.values(ModelStatus).filter((status) =>
+  ['Draft', 'Deleted'].includes(status)
+);
+
 export function InfiniteModelsFilter() {
   const cookies = useCookies().models;
   const user = useCurrentUser();
   const setTypes = useFilters((state) => state.setTypes);
   const types = useFilters((state) => state.filters.types ?? cookies.types ?? []);
+  const setStatus = useFilters((state) => state.setStatus);
+  const status = useFilters((state) => state.filters.status ?? cookies.status ?? []);
   const setBaseModels = useFilters((state) => state.setBaseModels);
   const baseModels = useFilters((state) => state.filters.baseModels ?? cookies.baseModels ?? []);
   const hideNSFW = useFilters((state) => state.filters.hideNSFW ?? cookies.hideNSFW ?? false);
@@ -200,6 +215,23 @@ export function InfiniteModelsFilter() {
                   setHideNSFW(value === 'sfw');
                 }}
               />
+            </>
+          )}
+          {user?.isModerator && (
+            <>
+              <Divider label="Model status" labelProps={{ weight: 'bold' }} />
+              <Chip.Group
+                spacing={4}
+                value={status}
+                onChange={(status: ModelStatus[]) => setStatus(status)}
+                multiple
+              >
+                {availableStatus.map((status) => (
+                  <Chip key={status} value={status} size="xs">
+                    {status}
+                  </Chip>
+                ))}
+              </Chip.Group>
             </>
           )}
           <Divider label="Model types" labelProps={{ weight: 'bold' }} />
