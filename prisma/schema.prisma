@@ -661,6 +661,7 @@ model Partner {
   startupTime      Int? //Seconds
   onDemand         Boolean
   onDemandStrategy String? // URL Template
+  onDemandTypes    ModelType[]         @default([])
   stepsPerSecond   Int
   pricingModel     PartnerPricingModel
   price            String
