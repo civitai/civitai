@@ -940,6 +940,18 @@ model TagEngagement {
   @@id([userId, tagId])
 }
 
+model Announcement {
+  id        Int       @id @default(autoincrement())
+  title     String
+  content   String
+  emoji     String?
+  color     String    @default("blue")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  startsAt  DateTime?
+  endsAt    DateTime?
+}
+
 /// @view
 model QuestionRank {
   questionId              Int      @id

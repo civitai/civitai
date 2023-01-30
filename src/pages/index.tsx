@@ -2,6 +2,7 @@ import { Alert, createStyles, Container, Group, Stack, Text, Title } from '@mant
 import { useLocalStorage } from '@mantine/hooks';
 import { GetServerSideProps } from 'next';
 import { useRouter } from 'next/router';
+import { Announcements } from '~/components/Announcements/Announcements';
 
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
 import {
@@ -43,14 +44,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 function Home() {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
-  const [welcomeAlert, setWelcomeAlert] = useLocalStorage({
-    key: 'welcomeAlert',
-    defaultValue: true,
-  });
   const { username, favorites, hidden } = router.query;
-
-  const closeWelcomeAlert = () => setWelcomeAlert(false);
 
   return (
     <>
@@ -65,32 +59,7 @@ function Home() {
         {favorites && <Title>Your Liked Models</Title>}
         {hidden && <Title>Your Hidden Models</Title>}
         <Stack spacing="xs">
-          {welcomeAlert && (
-            <Alert
-              color="blue"
-              py={8}
-              className={classes.welcome}
-              onClose={closeWelcomeAlert}
-              withCloseButton
-            >
-              <Group spacing="xs" noWrap>
-                <Text size={36} p={0}>
-                  👋
-                </Text>
-                <Stack spacing={0}>
-                  <Text size="md" weight={500} className={classes.welcomeTitle} mb={4}>
-                    Welcome to Civitai!
-                  </Text>
-                  <Text size="sm" className={classes.welcomeText}>
-                    Browse, share, and review custom AI art models,{' '}
-                    <Text component="a" variant="link" href="/content/guides/what-is-civitai">
-                      learn more...
-                    </Text>
-                  </Text>
-                </Stack>
-              </Group>
-            </Alert>
-          )}
+          <Announcements />
           <Group position="apart" spacing={0}>
             <InfiniteModelsSort />
             <Group spacing={4}>
@@ -108,35 +77,3 @@ function Home() {
 
 // Home.getLayout = (page: React.ReactElement) => <>{page}</>;
 export default Home;
-
-const useStyles = createStyles((theme) => ({
-  welcome: {
-    maxWidth: 600,
-    top: 'calc(var(--mantine-header-height,0) + 16px)',
-    marginBottom: -35,
-    position: 'sticky',
-    alignSelf: 'center',
-    zIndex: 11,
-    boxShadow: theme.shadows.md,
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.blue[9] : theme.colors.blue[2]
-    }`,
-    backgroundColor:
-      theme.colorScheme === 'dark'
-        ? theme.fn.darken(theme.colors.blue[8], 0.5)
-        : theme.colors.blue[1],
-    [theme.fn.smallerThan('md')]: {
-      marginBottom: -5,
-      marginLeft: -5,
-      marginRight: -5,
-    },
-  },
-  welcomeTitle: {
-    color: theme.colorScheme === 'dark' ? theme.colors.blue[0] : theme.colors.blue[7],
-    lineHeight: 1.1,
-  },
-  welcomeText: {
-    color: theme.colorScheme === 'dark' ? theme.colors.blue[2] : undefined,
-    lineHeight: 1.1,
-  },
-}));

@@ -113,7 +113,6 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ctx, ssg }) => {
     const params = (ctx.params ?? {}) as { id: string; slug: string[] };
     const id = Number(params.id);
-    console.log({ ctx });
     if (!isNumber(id)) return { notFound: true };
 
     await ssg?.model.getById.prefetch({ id });
