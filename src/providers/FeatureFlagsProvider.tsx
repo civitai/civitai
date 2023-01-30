@@ -1,6 +1,5 @@
-import { FeatureFlags, getFeatureFlags } from '~/server/services/feature-flags.service';
+import { FeatureFlags } from '~/server/services/feature-flags.service';
 import { createContext, useContext, useState } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const FeatureFlagsCtx = createContext<FeatureFlags>({} as FeatureFlags);
 
@@ -14,9 +13,8 @@ export const FeatureFlagsProvider = ({
   flags: initialFlags,
 }: {
   children: React.ReactNode;
-  flags: FeatureFlags | undefined;
+  flags: FeatureFlags;
 }) => {
-  const user = useCurrentUser() ?? undefined;
-  const [flags] = useState(initialFlags ?? getFeatureFlags({ user }));
+  const [flags] = useState(initialFlags);
   return <FeatureFlagsCtx.Provider value={flags}>{children}</FeatureFlagsCtx.Provider>;
 };

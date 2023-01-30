@@ -3,8 +3,8 @@ import { prisma } from '~/server/db/client';
 
 const METRIC_LAST_UPDATED_KEY = 'last-metrics-update';
 const RANK_LAST_UPDATED_KEY = 'last-rank-update';
-const RANK_UPDATE_DELAY = 1000 * 60 * 30; // 30 minutes
-export const updateMetricsJob = createJob('update-metrics', '*/5 * * * *', async () => {
+const RANK_UPDATE_DELAY = 1000 * 60 * 5; // 5 minutes
+export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async () => {
   // Get the last time this ran from the KeyValue store
   // --------------------------------------
   const dates = await prisma.keyValue.findMany({
