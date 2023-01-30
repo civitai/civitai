@@ -149,7 +149,7 @@ const useStyles = createStyles((theme) => ({
 
 export default function ModelDetail(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
-  // const router = useRouter();
+  const router = useRouter();
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
   const mobile = useIsMobile();
@@ -158,7 +158,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const { openContext } = useRoutedContext();
 
   const { id, slug } = props;
-  // const { edit } = router.query;
+  const { edit } = router.query;
 
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
   const [reviewFilters, setReviewFilters] = useState<{
@@ -320,8 +320,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     />
   );
 
-  // if ((!!edit && isOwner && !deleted) || (!!edit && isModerator && deleted))
-  //   return <ModelForm model={model} />;
+  if ((!!edit && isOwner && !deleted) || (!!edit && isModerator && deleted))
+    return <ModelForm model={model} />;
   if (model.nsfw && !currentUser)
     return (
       <>
