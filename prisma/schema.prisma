@@ -497,7 +497,7 @@ model Review {
   id             Int           @id @default(autoincrement())
   model          Model         @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId        Int
-  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
   modelVersionId Int?
   user           User          @relation(fields: [userId], references: [id])
   userId         Int
@@ -540,7 +540,7 @@ model Image {
   id           Int      @id @default(autoincrement())
   name         String?
   url          String
-  user         User     @relation(fields: [userId], references: [id])
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId       Int
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
