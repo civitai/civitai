@@ -43,7 +43,7 @@ import {
 import startCase from 'lodash/startCase';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
+import Router, { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -113,6 +113,7 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ctx, ssg }) => {
     const params = (ctx.params ?? {}) as { id: string; slug: string[] };
     const id = Number(params.id);
+    console.log({ ctx });
     if (!isNumber(id)) return { notFound: true };
 
     await ssg?.model.getById.prefetch({ id });
@@ -187,7 +188,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       });
       closeAllModals();
 
-      if (!isModerator || permanently) await router.replace('/');
+      if (!isModerator || permanently) await Router.replace('/');
     },
     onError(error) {
       showErrorNotification({
@@ -258,13 +259,13 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
-    router.beforePopState(({ as, url }) => {
+    Router.beforePopState(({ as, url }) => {
       if (as === '/' || as.startsWith('/?') || as.startsWith('/user/') || as.startsWith('/tag/')) {
         const [route, queryString] = as.split('?');
         const [, otherQueryString] = url.split('?');
         const queryParams = QS.parse(queryString);
         const otherParams = QS.parse(otherQueryString);
-        router.replace(
+        Router.replace(
           { pathname: route, query: { ...queryParams, ...otherParams, model: id } },
           as,
           {
@@ -278,8 +279,8 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       return true;
     });
 
-    return () => router.beforePopState(() => true);
-  }, [router, id]); // Add any state variables to dependencies array if needed.
+    return () => Router.beforePopState(() => true);
+  }, [id]); // Add any state variables to dependencies array if needed.
 
   if (loadingModel)
     return (
@@ -292,9 +293,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   const isModerator = currentUser?.isModerator ?? false;
   const isOwner = model.user.id === currentUser?.id || isModerator;
-  const showNsfwRequested = router.query.showNsfw !== 'true';
+  // const showNsfwRequested = router.query.showNsfw !== 'true';
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
-  const nsfw = userNotBlurringNsfw && showNsfwRequested && model.nsfw === true;
+  const nsfw = userNotBlurringNsfw && model.nsfw === true;
   const isFavorite = favoriteModels.find((modelId) => modelId === id);
   const deleted = !!model.deletedAt && model.status === 'Deleted';
 
