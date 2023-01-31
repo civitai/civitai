@@ -67,7 +67,12 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   if (!sessionUser?.isModerator) {
     AND.push({
-      OR: [{ status: ModelStatus.Published }, { user: { id: sessionUser?.id } }],
+      OR: [
+        { status: ModelStatus.Published },
+        ...(sessionUser
+          ? [{ AND: [{ user: { id: sessionUser?.id } }, { status: ModelStatus.Draft }] }]
+          : []),
+      ],
     });
   }
   if (sessionUser?.isModerator) {

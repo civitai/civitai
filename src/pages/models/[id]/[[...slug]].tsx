@@ -178,16 +178,15 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   const deleteMutation = trpc.model.delete.useMutation({
     async onSuccess(_, { permanently }) {
-      if (!permanently) await queryUtils.model.getById.invalidate({ id });
       await queryUtils.model.getAll.invalidate();
+      if (!permanently) await queryUtils.model.getById.invalidate({ id });
+      if (!isModerator || permanently) await Router.replace('/');
 
       showSuccessNotification({
         title: 'Your model has been deleted',
         message: 'Successfully deleted the model',
       });
       closeAllModals();
-
-      if (!isModerator || permanently) await Router.replace('/');
     },
     onError(error) {
       showErrorNotification({
