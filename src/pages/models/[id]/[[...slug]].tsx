@@ -21,7 +21,6 @@ import {
   AspectRatio,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
 import {
   IconBan,
@@ -40,10 +39,10 @@ import {
   IconTrash,
 } from '@tabler/icons';
 import startCase from 'lodash/startCase';
-import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
+import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
-import Router, { useRouter } from 'next/router';
-import { useEffect, useRef, useState } from 'react';
+import Router from 'next/router';
+import { useEffect, useRef } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -57,14 +56,12 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
-import { ModelForm } from '~/components/Model/ModelForm/ModelForm';
 import { ModelDiscussion } from '~/components/Model/ModelDiscussion/ModelDiscussion';
 import { ModelVersions } from '~/components/Model/ModelVersions/ModelVersions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
@@ -148,16 +145,13 @@ const useStyles = createStyles((theme) => ({
 export default function ModelDetail({
   id,
   slug,
-  ...params
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
-  // const router = useRouter();
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
   const mobile = useIsMobile();
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();
-  // const { edit } = router.query;
 
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
 
@@ -171,16 +165,15 @@ export default function ModelDetail({
 
   const deleteMutation = trpc.model.delete.useMutation({
     async onSuccess(_, { permanently }) {
-      if (!permanently) await queryUtils.model.getById.invalidate({ id });
       await queryUtils.model.getAll.invalidate();
+      if (!permanently) await queryUtils.model.getById.invalidate({ id });
+      if (!isModerator || permanently) await Router.replace('/');
 
       showSuccessNotification({
         title: 'Your model has been deleted',
         message: 'Successfully deleted the model',
       });
       closeAllModals();
-
-      if (!isModerator || permanently) await Router.replace('/');
     },
     onError(error) {
       showErrorNotification({
@@ -306,8 +299,6 @@ export default function ModelDetail({
     />
   );
 
-  // if ((!!edit && isOwner && !deleted) || (!!edit && isModerator && deleted))
-  //   return <ModelForm model={model} />;
   if (model.nsfw && !currentUser)
     return (
       <>

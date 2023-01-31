@@ -102,6 +102,10 @@ model User {
 
   imageReactions      ImageReaction[]
   sessionInvalidation SessionInvalidation[]
+  stats               UserStat?
+  rank                UserRank?
+  downloads           DownloadHistory[]
+  imageConnections    ImageConnection[]
 }
 
 enum UserEngagementType {
@@ -248,6 +252,10 @@ model Model {
   comments         Comment[]
   interests        ModelInterest[]
   licenses         License[]
+  rank             ModelRank?
+  reportStats      ModelReportStat?
+  downloads        DownloadHistory[]
+  imageConnections ImageConnection[]
 }
 
 model License {
@@ -303,12 +311,15 @@ model ModelVersion {
   meta                 Json        @default("{}")
   earlyAccessTimeFrame Int         @default(0)
 
-  reviews         Review[]
-  images          ImagesOnModels[]
-  metrics         ModelVersionMetric[]
-  files           ModelFile[]
-  runStrategies   RunStrategy[]
-  engagements     ModelVersionEngagement[]
+  reviews          Review[]
+  images           ImagesOnModels[]
+  metrics          ModelVersionMetric[]
+  files            ModelFile[]
+  runStrategies    RunStrategy[]
+  engagements      ModelVersionEngagement[]
+  rank             ModelVersionRank?
+  downloads        DownloadHistory[]
+  imageConnections ImageConnection[]
 }
 
 enum ModelVersionEngagementType {
@@ -499,7 +510,7 @@ model Review {
   id             Int           @id @default(autoincrement())
   model          Model         @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId        Int
-  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
   modelVersionId Int?
   user           User          @relation(fields: [userId], references: [id])
   userId         Int
@@ -515,6 +526,7 @@ model Review {
   imagesOnReviews  ImagesOnReviews[]
   reports          ReviewReport[]
   comments         Comment[]
+  imageConnections ImageConnection[]
 }
 
 enum ReviewReactions {
@@ -542,7 +554,7 @@ model Image {
   id           Int      @id @default(autoincrement())
   name         String?
   url          String
-  user         User     @relation(fields: [userId], references: [id])
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId       Int
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -561,6 +573,9 @@ model Image {
   comments        ImageComment[]
   tags            TagsOnImage[]
   metrics         ImageMetric[]
+  connections     ImageConnection?
+  stats           ImageStat?
+  rank            ImageRank?
 }
 
 model ImageMetric {
@@ -622,6 +637,8 @@ model Tag {
   tagsOnImage    TagsOnImage[]
   usersEngaged   TagEngagement[]
   metrics        TagMetric[]
+  stats          TagStat?
+  rank           TagRank?
 
   @@unique([name, target])
 }
@@ -701,6 +718,7 @@ model Partner {
   startupTime      Int? //Seconds
   onDemand         Boolean
   onDemandStrategy String? // URL Template
+  onDemandTypes    ModelType[]         @default([])
   stepsPerSecond   Int
   pricingModel     PartnerPricingModel
   price            String
@@ -824,6 +842,7 @@ model Question {
   comments  QuestionComment[]
   answers   Answer[]           @relation("Question")
   metrics   QuestionMetric[]
+  rank      QuestionRank?
 }
 
 model QuestionMetric {
@@ -852,6 +871,7 @@ model Answer {
   metrics   AnswerMetric[]
   answerFor Question?        @relation("SelectedAnswer")
   votes     AnswerVote[]
+  rank      AnswerRank?
 }
 
 model AnswerVote {
@@ -997,4 +1017,457 @@ model TagEngagement {
   createdAt DateTime          @default(now())
 
   @@id([userId, tagId])
+}
+
+model Announcement {
+  id        Int       @id @default(autoincrement())
+  title     String
+  content   String
+  emoji     String?
+  color     String    @default("blue")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  startsAt  DateTime?
+  endsAt    DateTime?
+}
+
+/// @view
+model QuestionRank {
+  questionId              Int      @id
+  question                Question @relation(fields: [questionId], references: [id], onDelete: NoAction)
+  answerCountDay          Int
+  answerCountWeek         Int
+  answerCountMonth        Int
+  answerCountYear         Int
+  answerCountAllTime      Int
+  heartCountDay           Int
+  heartCountWeek          Int
+  heartCountMonth         Int
+  heartCountYear          Int
+  heartCountAllTime       Int
+  commentCountDay         Int
+  commentCountWeek        Int
+  commentCountMonth       Int
+  commentCountYear        Int
+  commentCountAllTime     Int
+  answerCountDayRank      Int
+  answerCountWeekRank     Int
+  answerCountMonthRank    Int
+  answerCountYearRank     Int
+  answerCountAllTimeRank  Int
+  heartCountDayRank       Int
+  heartCountWeekRank      Int
+  heartCountMonthRank     Int
+  heartCountYearRank      Int
+  heartCountAllTimeRank   Int
+  commentCountDayRank     Int
+  commentCountWeekRank    Int
+  commentCountMonthRank   Int
+  commentCountYearRank    Int
+  commentCountAllTimeRank Int
+}
+
+/// @view
+model AnswerRank {
+  answerId                Int    @id
+  answer                  Answer @relation(fields: [answerId], references: [id], onDelete: NoAction)
+  checkCountDay           Int
+  checkCountWeek          Int
+  checkCountMonth         Int
+  checkCountYear          Int
+  checkCountAllTime       Int
+  crossCountDay           Int
+  crossCountWeek          Int
+  crossCountMonth         Int
+  crossCountYear          Int
+  crossCountAllTime       Int
+  heartCountDay           Int
+  heartCountWeek          Int
+  heartCountMonth         Int
+  heartCountYear          Int
+  heartCountAllTime       Int
+  commentCountDay         Int
+  commentCountWeek        Int
+  commentCountMonth       Int
+  commentCountYear        Int
+  commentCountAllTime     Int
+  checkCountDayRank       Int
+  checkCountWeekRank      Int
+  checkCountMonthRank     Int
+  checkCountYearRank      Int
+  checkCountAllTimeRank   Int
+  crossCountDayRank       Int
+  crossCountWeekRank      Int
+  crossCountMonthRank     Int
+  crossCountYearRank      Int
+  crossCountAllTimeRank   Int
+  heartCountDayRank       Int
+  heartCountWeekRank      Int
+  heartCountMonthRank     Int
+  heartCountYearRank      Int
+  heartCountAllTimeRank   Int
+  commentCountDayRank     Int
+  commentCountWeekRank    Int
+  commentCountMonthRank   Int
+  commentCountYearRank    Int
+  commentCountAllTimeRank Int
+}
+
+/// @view
+model ModelRank {
+  model                    Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
+  modelId                  Int   @id
+  downloadCountDay         Int
+  downloadCountWeek        Int
+  downloadCountMonth       Int
+  downloadCountYear        Int
+  downloadCountAllTime     Int
+  ratingCountDay           Int
+  ratingCountWeek          Int
+  ratingCountMonth         Int
+  ratingCountYear          Int
+  ratingCountAllTime       Int
+  ratingDay                Float
+  ratingWeek               Float
+  ratingMonth              Float
+  ratingYear               Float
+  ratingAllTime            Float
+  favoriteCountDay         Int
+  favoriteCountWeek        Int
+  favoriteCountMonth       Int
+  favoriteCountYear        Int
+  favoriteCountAllTime     Int
+  commentCountDay          Int
+  commentCountWeek         Int
+  commentCountMonth        Int
+  commentCountYear         Int
+  commentCountAllTime      Int
+  downloadCountDayRank     Int
+  downloadCountWeekRank    Int
+  downloadCountMonthRank   Int
+  downloadCountYearRank    Int
+  downloadCountAllTimeRank Int
+  ratingCountDayRank       Int
+  ratingCountWeekRank      Int
+  ratingCountMonthRank     Int
+  ratingCountYearRank      Int
+  ratingCountAllTimeRank   Int
+  ratingDayRank            Int
+  ratingWeekRank           Int
+  ratingMonthRank          Int
+  ratingYearRank           Int
+  ratingAllTimeRank        Int
+  favoriteCountDayRank     Int
+  favoriteCountWeekRank    Int
+  favoriteCountMonthRank   Int
+  favoriteCountYearRank    Int
+  favoriteCountAllTimeRank Int
+  commentCountDayRank      Int
+  commentCountWeekRank     Int
+  commentCountMonthRank    Int
+  commentCountYearRank     Int
+  commentCountAllTimeRank  Int
+  newRank                  Int
+}
+
+/// @view
+model ModelReportStat {
+  model                 Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
+  modelId               Int   @id
+  tosViolationPending   Int
+  tosViolationValid     Int
+  tosViolationInvalid   Int
+  nsfwPending           Int
+  nsfwValid             Int
+  nsfwInvalid           Int
+  ownershipPending      Int
+  ownershipProcessing   Int
+  ownershipValid        Int
+  ownershipInvalid      Int
+  adminAttentionPending Int
+  adminAttentionValid   Int
+  adminAttentionInvalid Int
+  claimPending          Int
+  claimValid            Int
+  claimInvalid          Int
+}
+
+/// @view
+model ModelVersionRank {
+  modelVersion             ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
+  modelVersionId           Int          @id
+  downloadCountDay         Int
+  downloadCountWeek        Int
+  downloadCountMonth       Int
+  downloadCountYear        Int
+  downloadCountAllTime     Int
+  ratingCountDay           Int
+  ratingCountWeek          Int
+  ratingCountMonth         Int
+  ratingCountYear          Int
+  ratingCountAllTime       Int
+  ratingDay                Float
+  ratingWeek               Float
+  ratingMonth              Float
+  ratingYear               Float
+  ratingAllTime            Float
+  downloadCountDayRank     Int
+  downloadCountWeekRank    Int
+  downloadCountMonthRank   Int
+  downloadCountYearRank    Int
+  downloadCountAllTimeRank Int
+  ratingCountDayRank       Int
+  ratingCountWeekRank      Int
+  ratingCountMonthRank     Int
+  ratingCountYearRank      Int
+  ratingCountAllTimeRank   Int
+  ratingDayRank            Int
+  ratingWeekRank           Int
+  ratingMonthRank          Int
+  ratingYearRank           Int
+  ratingAllTimeRank        Int
+}
+
+/// @view
+model UserStat {
+  user                     User  @relation(fields: [userId], references: [id], onDelete: NoAction)
+  userId                   Int   @id
+  uploadCountDay           Int
+  uploadCountWeek          Int
+  uploadCountMonth         Int
+  uploadCountYear          Int
+  uploadCountAllTime       Int
+  reviewCountDay           Int
+  reviewCountWeek          Int
+  reviewCountMonth         Int
+  reviewCountYear          Int
+  reviewCountAllTime       Int
+  downloadCountDay         Int
+  downloadCountWeek        Int
+  downloadCountMonth       Int
+  downloadCountYear        Int
+  downloadCountAllTime     Int
+  ratingCountDay           Int
+  ratingCountWeek          Int
+  ratingCountMonth         Int
+  ratingCountYear          Int
+  ratingCountAllTime       Int
+  followingCountDay        Int
+  followingCountWeek       Int
+  followingCountMonth      Int
+  followingCountYear       Int
+  followingCountAllTime    Int
+  followerCountDay         Int
+  followerCountWeek        Int
+  followerCountMonth       Int
+  followerCountYear        Int
+  followerCountAllTime     Int
+  hiddenCountDay           Int
+  hiddenCountWeek          Int
+  hiddenCountMonth         Int
+  hiddenCountYear          Int
+  hiddenCountAllTime       Int
+  ratingDay                Float
+  ratingWeek               Float
+  ratingMonth              Float
+  ratingYear               Float
+  ratingAllTime            Float
+  favoriteCountDay         Int
+  favoriteCountWeek        Int
+  favoriteCountMonth       Int
+  favoriteCountYear        Int
+  favoriteCountAllTime     Int
+  answerCountDay           Int
+  answerCountWeek          Int
+  answerCountMonth         Int
+  answerCountYear          Int
+  answerCountAllTime       Int
+  answerAcceptCountDay     Int
+  answerAcceptCountWeek    Int
+  answerAcceptCountMonth   Int
+  answerAcceptCountYear    Int
+  answerAcceptCountAllTime Int
+}
+
+/// @view
+model UserRank {
+  user                         User @relation(fields: [userId], references: [id], onDelete: NoAction)
+  userId                       Int  @id
+  downloadCountDayRank         Int
+  downloadCountWeekRank        Int
+  downloadCountMonthRank       Int
+  downloadCountYearRank        Int
+  downloadCountAllTimeRank     Int
+  ratingCountDayRank           Int
+  ratingCountWeekRank          Int
+  ratingCountMonthRank         Int
+  ratingCountYearRank          Int
+  ratingCountAllTimeRank       Int
+  followerCountDayRank         Int
+  followerCountWeekRank        Int
+  followerCountMonthRank       Int
+  followerCountYearRank        Int
+  followerCountAllTimeRank     Int
+  ratingDayRank                Int
+  ratingWeekRank               Int
+  ratingMonthRank              Int
+  ratingYearRank               Int
+  ratingAllTimeRank            Int
+  favoriteCountDayRank         Int
+  favoriteCountWeekRank        Int
+  favoriteCountMonthRank       Int
+  favoriteCountYearRank        Int
+  favoriteCountAllTimeRank     Int
+  answerCountDayRank           Int
+  answerCountWeekRank          Int
+  answerCountMonthRank         Int
+  answerCountYearRank          Int
+  answerCountAllTimeRank       Int
+  answerAcceptCountDayRank     Int
+  answerAcceptCountWeekRank    Int
+  answerAcceptCountMonthRank   Int
+  answerAcceptCountYearRank    Int
+  answerAcceptCountAllTimeRank Int
+  leaderboardRank              Int
+}
+
+/// @view
+model TagStat {
+  tag                  Tag @relation(fields: [tagId], references: [id], onDelete: NoAction)
+  tagId                Int @id
+  followerCountDay     Int
+  followerCountWeek    Int
+  followerCountMonth   Int
+  followerCountYear    Int
+  followerCountAllTime Int
+  hiddenCountDay       Int
+  hiddenCountWeek      Int
+  hiddenCountMonth     Int
+  hiddenCountYear      Int
+  hiddenCountAllTime   Int
+  modelCountDay        Int
+  modelCountWeek       Int
+  modelCountMonth      Int
+  modelCountYear       Int
+  modelCountAllTime    Int
+}
+
+/// @view
+model TagRank {
+  tag                      Tag @relation(fields: [tagId], references: [id], onDelete: NoAction)
+  tagId                    Int @id
+  followerCountDayRank     Int
+  followerCountWeekRank    Int
+  followerCountMonthRank   Int
+  followerCountYearRank    Int
+  followerCountAllTimeRank Int
+  hiddenCountDayRank       Int
+  hiddenCountWeekRank      Int
+  hiddenCountMonthRank     Int
+  hiddenCountYearRank      Int
+  hiddenCountAllTimeRank   Int
+  modelCountDayRank        Int
+  modelCountWeekRank       Int
+  modelCountMonthRank      Int
+  modelCountYearRank       Int
+  modelCountAllTimeRank    Int
+}
+
+/// @view
+model DownloadHistory {
+  id             Int          @id
+  userId         Int
+  user           User         @relation(fields: [userId], references: [id], onDelete: NoAction)
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
+  modelId        Int
+  model          Model        @relation(fields: [modelId], references: [id], onDelete: NoAction)
+  createdAt      DateTime
+}
+
+/// @view
+model ImageConnection {
+  imageId        Int           @id
+  image          Image         @relation(fields: [imageId], references: [id], onDelete: NoAction)
+  userId         Int
+  user           User          @relation(fields: [userId], references: [id], onDelete: NoAction)
+  modelId        Int?
+  model          Model?        @relation(fields: [modelId], references: [id], onDelete: NoAction)
+  modelVersionId Int?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
+  reviewId       Int?
+  review         Review?       @relation(fields: [reviewId], references: [id], onDelete: NoAction)
+  index          Int?
+}
+
+/// @view
+model ImageStat {
+  imageId             Int   @id
+  image               Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
+  cryCountDay         Int   @default(0)
+  cryCountWeek        Int   @default(0)
+  cryCountMonth       Int   @default(0)
+  cryCountYear        Int   @default(0)
+  cryCountAllTime     Int   @default(0)
+  dislikeCountDay     Int   @default(0)
+  dislikeCountWeek    Int   @default(0)
+  dislikeCountMonth   Int   @default(0)
+  dislikeCountYear    Int   @default(0)
+  dislikeCountAllTime Int   @default(0)
+  heartCountDay       Int   @default(0)
+  heartCountWeek      Int   @default(0)
+  heartCountMonth     Int   @default(0)
+  heartCountYear      Int   @default(0)
+  heartCountAllTime   Int   @default(0)
+  laughCountDay       Int   @default(0)
+  laughCountWeek      Int   @default(0)
+  laughCountMonth     Int   @default(0)
+  laughCountYear      Int   @default(0)
+  laughCountAllTime   Int   @default(0)
+  likeCountDay        Int   @default(0)
+  likeCountWeek       Int   @default(0)
+  likeCountMonth      Int   @default(0)
+  likeCountYear       Int   @default(0)
+  likeCountAllTime    Int   @default(0)
+  commentCountDay     Int   @default(0)
+  commentCountWeek    Int   @default(0)
+  commentCountMonth   Int   @default(0)
+  commentCountYear    Int   @default(0)
+  commentCountAllTime Int   @default(0)
+}
+
+/// @view
+model ImageRank {
+  imageId                 Int   @id
+  image                   Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
+  cryCountDayRank         Int   @default(0)
+  cryCountWeekRank        Int   @default(0)
+  cryCountMonthRank       Int   @default(0)
+  cryCountYearRank        Int   @default(0)
+  cryCountAllTimeRank     Int   @default(0)
+  dislikeCountDayRank     Int   @default(0)
+  dislikeCountWeekRank    Int   @default(0)
+  dislikeCountMonthRank   Int   @default(0)
+  dislikeCountYearRank    Int   @default(0)
+  dislikeCountAllTimeRank Int   @default(0)
+  heartCountDayRank       Int   @default(0)
+  heartCountWeekRank      Int   @default(0)
+  heartCountMonthRank     Int   @default(0)
+  heartCountYearRank      Int   @default(0)
+  heartCountAllTimeRank   Int   @default(0)
+  laughCountDayRank       Int   @default(0)
+  laughCountWeekRank      Int   @default(0)
+  laughCountMonthRank     Int   @default(0)
+  laughCountYearRank      Int   @default(0)
+  laughCountAllTimeRank   Int   @default(0)
+  likeCountDayRank        Int   @default(0)
+  likeCountWeekRank       Int   @default(0)
+  likeCountMonthRank      Int   @default(0)
+  likeCountYearRank       Int   @default(0)
+  likeCountAllTimeRank    Int   @default(0)
+  commentCountDayRank     Int   @default(0)
+  commentCountWeekRank    Int   @default(0)
+  commentCountMonthRank   Int   @default(0)
+  commentCountYearRank    Int   @default(0)
+  commentCountAllTimeRank Int   @default(0)
 }

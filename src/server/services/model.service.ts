@@ -1,4 +1,4 @@
-import { MetricTimeframe, ModelStatus, Prisma, TagTarget } from '@prisma/client';
+import { MetricTimeframe, ModelStatus, ModelType, Prisma, TagTarget } from '@prisma/client';
 import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
 
@@ -52,6 +52,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     excludedTagIds,
     excludedIds,
     checkpointType,
+    status,
   },
   select,
   user: sessionUser,
@@ -66,8 +67,16 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   if (!sessionUser?.isModerator) {
     AND.push({
-      OR: [{ status: ModelStatus.Published }, { user: { id: sessionUser?.id } }],
+      OR: [
+        { status: ModelStatus.Published },
+        ...(sessionUser
+          ? [{ AND: [{ user: { id: sessionUser?.id } }, { status: ModelStatus.Draft }] }]
+          : []),
+      ],
     });
+  }
+  if (sessionUser?.isModerator) {
+    AND.push({ status: status && status.length > 0 ? { in: status } : ModelStatus.Published });
   }
   if (query) {
     AND.push({
@@ -232,10 +241,7 @@ export const createModel = async ({
   return prisma.model.create({
     data: {
       ...data,
-      //TODO - if all images are nsfw and !data.nsfw, then data.nsfw needs to be true
-      // nsfw:
-      //   modelVersions.flatMap((version) => version.images).every((image) => image.nsfw) ??
-      //   data.nsfw,
+      checkpointType: data.type === ModelType.Checkpoint ? data.checkpointType : null,
       publishedAt: data.status === ModelStatus.Published ? new Date() : null,
       lastVersionAt: new Date(),
       nsfw: data.nsfw || (allImagesNSFW && data.status === ModelStatus.Published),
@@ -358,6 +364,7 @@ export const updateModel = async ({
     where: { id },
     data: {
       ...data,
+      checkpointType: data.type === ModelType.Checkpoint ? data.checkpointType : null,
       nsfw: data.nsfw || (allImagesNSFW && data.status === ModelStatus.Published),
       status: data.status,
       publishedAt:

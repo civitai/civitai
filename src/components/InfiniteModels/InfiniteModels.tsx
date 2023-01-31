@@ -100,14 +100,22 @@ export function InfiniteModels({
     { enabled: !!currentUser }
   );
   const excludedTagIds = blockedTags?.map((tag) => tag.id);
-  const { data: { Hide: excludedIds = [] } = { Hide: [] } } = trpc.user.getEngagedModels.useQuery(
-    undefined,
-    {
+
+  // Hidden Models
+  const { data: { Hide } = { Hide: [] }, isFetched: isHiddenFetched } =
+    trpc.user.getEngagedModels.useQuery(undefined, {
       enabled: !!currentUser,
       cacheTime: Infinity,
       staleTime: Infinity,
-    }
-  );
+    });
+
+  // State is kept separate to prevent unnecessary re-fetch
+  // when the user toggles a model's hidden state updating the list above
+  const [excludedIds, setExcludedIds] = useState<number[]>();
+  useEffect(() => {
+    if (isHiddenFetched && !excludedIds) setExcludedIds(Hide);
+  }, [isHiddenFetched]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const { data, isLoading, fetchNextPage, hasNextPage } = trpc.model.getAll.useInfiniteQuery(
     {
       ...filters,
