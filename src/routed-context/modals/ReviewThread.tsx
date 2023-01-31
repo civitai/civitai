@@ -1,36 +1,34 @@
-import { Embla, useAnimationOffsetEffect, Carousel } from '@mantine/carousel';
+import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
 import {
+  Alert,
+  AspectRatio,
   Badge,
-  Loader,
-  Modal,
   Center,
+  CloseButton,
   Grid,
   Group,
+  Loader,
+  Modal,
   Rating,
   Stack,
-  CloseButton,
-  Alert,
-  Button,
-  AspectRatio,
 } from '@mantine/core';
 import { useRef } from 'react';
 import { z } from 'zod';
-import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 
-import CommentSection from '~/components/CommentSection/CommentSection';
+import { CommentSection } from '~/components/CommentSection/CommentSection';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { SensitiveContent } from '~/components/SensitiveContent/SensitiveContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { trpc } from '~/utils/trpc';
-import { ShowHide } from '~/components/ShowHide/ShowHide';
+import { useRouter } from 'next/router';
+import { ReviewDiscussionMenu } from '~/components/Model/ModelDiscussion/ReviewDiscussionMenu';
 
 const TRANSITION_DURATION = 200;
 
@@ -40,6 +38,7 @@ export default createRoutedContext({
     highlight: z.number().optional(),
   }),
   Element: ({ context, props: { reviewId, highlight } }) => {
+    const router = useRouter();
     const queryUtils = trpc.useContext();
     const currentUser = useCurrentUser();
 
@@ -102,36 +101,19 @@ export default createRoutedContext({
     const loading = reviewLoading || commentsLoading;
     const hasImages = !!review?.images.length;
     const hasMultipleImages = hasImages && review.images.length > 1;
-    const firstImage = hasImages ? review.images[0] : undefined;
 
     useAnimationOffsetEffect(emblaRef.current, TRANSITION_DURATION);
 
-    const carousel = review && (
-      <Carousel
-        align="center"
-        slidesToScroll={1}
-        slideSize="100%"
-        withControls={hasMultipleImages}
-        getEmblaApi={(embla) => (emblaRef.current = embla)}
-        loop
-      >
-        {review.images.map((image) => {
-          return (
-            <Carousel.Slide key={image.id}>
-              <Center style={{ height: '100%' }}>
-                <ImagePreview
-                  image={image}
-                  aspectRatio={0}
-                  edgeImageProps={{ height: 400 }}
-                  radius="md"
-                  withMeta
-                />
-              </Center>
-            </Carousel.Slide>
-          );
-        })}
-      </Carousel>
-    );
+    const handleNavigate = (imageId: number) => {
+      router.push({
+        pathname: `/gallery/${imageId}`,
+        query: {
+          reviewId,
+          infinite: false,
+          returnUrl: router.asPath,
+        },
+      });
+    };
 
     return (
       <Modal opened={context.opened} onClose={context.close} withCloseButton={false} size={800}>
@@ -161,7 +143,10 @@ export default createRoutedContext({
                 />
                 <Rating value={review.rating} fractions={2} readOnly />
               </Group>
-              <CloseButton onClick={context.close} />
+              <Group spacing={4} noWrap>
+                <ReviewDiscussionMenu review={review} user={currentUser} replaceNavigation />
+                <CloseButton onClick={context.close} />
+              </Group>
             </Group>
             <Grid gutter="xl">
               <Grid.Col span={12}>
@@ -197,7 +182,7 @@ export default createRoutedContext({
                                   width: parsedWidth,
                                 }}
                               >
-                                <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                                <ImageGuard.ToggleConnect />
                                 <ImageGuard.Unsafe>
                                   <AspectRatio
                                     ratio={(image.width ?? 1) / (image.height ?? 1)}
@@ -214,9 +199,10 @@ export default createRoutedContext({
                                   <ImagePreview
                                     image={image}
                                     aspectRatio={0}
-                                    edgeImageProps={{ height: screenHeight }}
+                                    edgeImageProps={{ height: screenHeight }} // TODO Optimization: look at using width 400, since we already have that in cache
                                     radius="md"
                                     withMeta
+                                    onClick={() => handleNavigate(image.id)}
                                   />
                                 </ImageGuard.Safe>
                               </div>
@@ -226,18 +212,6 @@ export default createRoutedContext({
                       }}
                     />
                   </Carousel>
-
-                  {/* <SFW type="review" id={review.id} nsfw={review.nsfw}>
-                    <SFW.ToggleNsfw
-                      placeholder={
-                        <AspectRatio ratio={16 / 9} style={{ height: 400 }}>
-                          {firstImage && <MediaHash {...firstImage} style={{ borderRadius: 8 }} />}
-                        </AspectRatio>
-                      }
-                    />
-                    <SFW.Count count={review.images.length} />
-                    <SFW.Content>{carousel}</SFW.Content>
-                  </SFW> */}
                 </Grid.Col>
               ) : null}
               <Grid.Col span={12} py={0}>
@@ -250,7 +224,7 @@ export default createRoutedContext({
                 <CommentSection
                   comments={comments}
                   modelId={review.modelId}
-                  reviewId={review.id}
+                  review={review}
                   highlights={highlight ? [highlight] : undefined}
                 />
               </Grid.Col>

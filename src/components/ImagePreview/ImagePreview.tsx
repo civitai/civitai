@@ -26,6 +26,7 @@ type ImagePreviewProps = {
   withMeta?: boolean;
   onClick?: React.MouseEventHandler<HTMLImageElement>;
   radius?: MantineNumberSize;
+  cropFocus?: 'top' | 'bottom' | 'left' | 'right' | 'center';
 } & Omit<BoxProps, 'component'>;
 
 export function ImagePreview({
@@ -38,6 +39,7 @@ export function ImagePreview({
   onClick,
   className,
   radius = 0,
+  cropFocus,
   ...props
 }: ImagePreviewProps) {
   const { classes, cx } = useStyles({ radius });
@@ -90,7 +92,21 @@ export function ImagePreview({
 
   return (
     <Box className={cx(classes.root, className)} style={{ ...style }} {...props}>
-      {aspectRatio === 0 ? Image : <AspectRatio ratio={aspectRatio}>{Image}</AspectRatio>}
+      {aspectRatio === 0 ? (
+        Image
+      ) : (
+        <AspectRatio
+          ratio={aspectRatio}
+          sx={{
+            color: 'white',
+            ['& > img, & > video']: {
+              objectPosition: cropFocus ?? 'center',
+            },
+          }}
+        >
+          {Image}
+        </AspectRatio>
+      )}
       {Meta}
     </Box>
   );

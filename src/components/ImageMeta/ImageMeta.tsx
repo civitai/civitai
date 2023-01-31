@@ -30,6 +30,7 @@ const labelDictionary: Record<keyof ImageMetaProps, string> = {
   steps: 'Steps',
   sampler: 'Sampler',
   seed: 'Seed',
+  Model: 'Model',
 };
 
 export function ImageMeta({ meta }: Props) {
@@ -38,21 +39,24 @@ export function ImageMeta({ meta }: Props) {
   const metas = useMemo(() => {
     const long: MetaDisplay[] = [];
     const short: MetaDisplay[] = [];
+    const medium: MetaDisplay[] = [];
     for (const key of Object.keys(labelDictionary)) {
       const value = meta[key]?.toString();
       if (!value) continue;
-      (value.length > 15 || key === 'prompt' ? long : short).push({
-        label: labelDictionary[key],
-        value,
-      });
+      const label = labelDictionary[key];
+      if (value.length > 30 || key === 'prompt') long.push({ label, value });
+      else if (value.length > 14) medium.push({ label, value });
+      else short.push({ label, value });
     }
-    return { long, short };
+    return { long, medium, short };
   }, [meta]);
 
   const type = useMemo(() => {
+    const denoiseStrength = meta['Denoise strength'] ?? meta['Denoising strength'] != null;
+    const hiresFixed = meta['First pass strength'] ?? meta['Hires upscale'] != null;
     if (meta['Mask blur'] != null) return 'inpainting';
-    if (meta['Denoise strength'] != null && !meta['First pass strength']) return 'img2img';
-    if (meta['Denoise strength'] != null && meta['First pass strength']) return 'txt2img + hi-res';
+    if (denoiseStrength && !hiresFixed) return 'img2img';
+    if (denoiseStrength && hiresFixed) return 'txt2img + hi-res';
     return 'txt2img';
   }, [meta]);
 
@@ -73,9 +77,19 @@ export function ImageMeta({ meta }: Props) {
           </Code>
         </Stack>
       ))}
+      {metas.medium.map(({ label, value }) => (
+        <Group key={label} position="apart">
+          <Text size="sm" mr="xs" weight={500}>
+            {label}
+          </Text>
+          <Code sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+            {value}
+          </Code>
+        </Group>
+      ))}
       <SimpleGrid cols={2} verticalSpacing="xs">
         {metas.short.map(({ label, value }) => (
-          <Group key={label} spacing={0}>
+          <Group key={label} spacing="xs">
             <Text size="sm" mr="xs" weight={500}>
               {label}
             </Text>

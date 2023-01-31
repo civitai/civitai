@@ -26,7 +26,6 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -36,13 +35,16 @@ import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
+import { ModelType } from '@prisma/client';
+import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
+import { openRoutedContext } from '~/providers/RoutedContextProvider';
 
 const VERSION_IMAGES_LIMIT = 8;
 
-export function ModelVersions({ items, initialTab, nsfw }: Props) {
+export function ModelVersions({ items, initialTab, nsfw, type }: Props) {
   const mobile = useIsMobile();
 
   return (
@@ -64,7 +66,7 @@ export function ModelVersions({ items, initialTab, nsfw }: Props) {
         <Grid.Col xs={12} sm={9} md={10}>
           {items.map((version) => (
             <Tabs.Panel key={version.id} value={version.id.toString()}>
-              <TabContent version={version} nsfw={nsfw} />
+              <TabContent version={version} nsfw={nsfw} type={type} />
             </Tabs.Panel>
           ))}
         </Grid.Col>
@@ -75,16 +77,15 @@ export function ModelVersions({ items, initialTab, nsfw }: Props) {
 
 type Props = {
   items: NonNullable<ModelById>['modelVersions'];
+  type: ModelType;
   initialTab?: string | null;
   nsfw?: boolean;
 };
 
-function TabContent({ version, nsfw }: TabContentProps) {
+function TabContent({ version, nsfw, type }: TabContentProps) {
   const router = useRouter();
-  const modelId = Number(router.query.id);
   const mobile = useIsMobile();
   const currentUser = useCurrentUser();
-  const { openContext } = useRoutedContext();
   const hashes = getPrimaryFile(version.files)?.hashes;
 
   const versionDetails: DescriptionTableProps['items'] = [
@@ -92,7 +93,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
       label: 'Rating',
       value: (
         <Group spacing={4}>
-          <Rating value={version.rank?.ratingAllTime ?? 0} fractions={2} readOnly />
+          <Rating value={version.rank?.ratingAllTime ?? 0} fractions={4} readOnly />
           <Text size="sm">({version.rank?.ratingCountAllTime.toLocaleString() ?? 0})</Text>
         </Group>
       ),
@@ -186,6 +187,9 @@ function TabContent({ version, nsfw }: TabContentProps) {
             <RunButton modelVersionId={version.id} variant="light" />
           </Group>
 
+          <EarlyAccessAlert versionId={version.id} deadline={version.earlyAccessDeadline} />
+          <ModelFileAlert versionId={version.id} modelType={type} files={version.files} />
+
           <DescriptionTable items={versionDetails} labelWidth="30%" />
           {version.description && (
             <>
@@ -211,7 +215,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
           <ImageGuard
             images={versionImages}
             nsfw={nsfw}
-            connect={{ entityId: modelId, entityType: 'model' }}
+            connect={{ entityId: version.modelId, entityType: 'model' }}
             render={(image, index) =>
               index < imagesLimit ? (
                 <Box
@@ -229,7 +233,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
                       : {}),
                   }}
                 >
-                  <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                  <ImageGuard.ToggleConnect />
                   <ImageGuard.Unsafe>
                     <AspectRatio
                       ratio={1}
@@ -250,9 +254,21 @@ function TabContent({ version, nsfw }: TabContentProps) {
                       radius="md"
                       aspectRatio={1}
                       onClick={() =>
-                        openContext('modelVersionLightbox', {
-                          initialSlide: index,
+                        // router.push({
+                        //   pathname: `/gallery/${image.id}`,
+                        //   query: {
+                        //     modelId,
+                        //     modelVersionId: version.id,
+                        //     infinite: false,
+                        //     returnUrl: router.asPath,
+                        //   },
+                        // })
+                        openRoutedContext('galleryDetailModal', {
+                          galleryImageId: image.id,
+                          modelId: version.modelId,
                           modelVersionId: version.id,
+                          infinite: false,
+                          returnUrl: router.asPath,
                         })
                       }
                       withMeta
@@ -267,9 +283,21 @@ function TabContent({ version, nsfw }: TabContentProps) {
               variant="outline"
               sx={!mobile ? { height: '100%' } : undefined}
               onClick={() =>
-                openContext('modelVersionLightbox', {
-                  initialSlide: imagesLimit,
+                // router.push({
+                //   pathname: `/gallery/${versionImages[imagesLimit].id}`,
+                //   query: {
+                //     modelId,
+                //     modelVersionId: version.id,
+                //     infinite: false,
+                //     returnUrl: router.asPath,
+                //   },
+                // })
+                openRoutedContext('galleryDetailModal', {
+                  galleryImageId: versionImages[imagesLimit].id,
+                  modelId: version.modelId,
                   modelVersionId: version.id,
+                  infinite: false,
+                  returnUrl: router.asPath,
                 })
               }
             >
@@ -282,7 +310,7 @@ function TabContent({ version, nsfw }: TabContentProps) {
   );
 }
 
-type TabContentProps = { version: Props['items'][number]; nsfw?: boolean };
+type TabContentProps = { version: Props['items'][number]; nsfw?: boolean; type: ModelType };
 
 // const useStyles = createStyles((theme, { index, mobile }: { index: number; mobile: boolean }) => ({
 //   image: {

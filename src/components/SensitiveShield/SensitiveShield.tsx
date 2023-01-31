@@ -1,8 +1,10 @@
 import { Button, Container, Group, Paper, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconEyeOff, IconKey } from '@tabler/icons';
+import { useRouter } from 'next/router';
 
-export function SensitiveShield({ redirectTo }: Props) {
+export function SensitiveShield() {
+  const router = useRouter();
   return (
     <Container size="xs">
       <Paper p="xl" radius="md" withBorder>
@@ -15,7 +17,7 @@ export function SensitiveShield({ redirectTo }: Props) {
           <Group>
             <Button
               component={NextLink}
-              href={`/login?returnUrl=${redirectTo}`}
+              href={`/login?returnUrl=${router.asPath}`}
               leftIcon={<IconKey />}
             >
               Log in to view
@@ -26,5 +28,3 @@ export function SensitiveShield({ redirectTo }: Props) {
     </Container>
   );
 }
-
-type Props = { redirectTo: string };

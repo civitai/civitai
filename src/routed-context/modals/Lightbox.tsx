@@ -10,7 +10,6 @@ import {
   CloseButton,
   Paper,
   Stack,
-  Button,
   Center,
   Loader,
   AspectRatio,
@@ -22,7 +21,6 @@ import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
-import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageModel } from '~/server/selectors/image.selector';
 
@@ -92,7 +90,7 @@ export function Lightbox({
                 height="100%"
                 sx={{ flex: 1 }}
                 initialSlide={initialSlide}
-                withIndicators
+                withIndicators={images.length > 1}
                 loop
                 onSlideChange={(index) => setIndex(index)}
                 withKeyboardEvents={false}
@@ -129,7 +127,7 @@ export function Lightbox({
                           }}
                         >
                           <div style={{ position: 'relative' }}>
-                            <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                            <ImageGuard.ToggleConnect />
                             <ImageGuard.Unsafe>
                               <AspectRatio
                                 ratio={width / height}

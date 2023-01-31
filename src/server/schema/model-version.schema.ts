@@ -30,13 +30,14 @@ export const modelVersionUpsertSchema = z.object({
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
   }).nullish(),
-  steps: z.number().nullish(),
-  epochs: z.number().nullish(),
+  steps: z.number().min(0).nullish(),
+  epochs: z.number().min(0).max(100000).nullish(),
   images: z
     .array(imageSchema)
     .min(1, 'At least one example image must be uploaded')
     .max(20, 'You can only upload up to 20 images'),
   trainedWords: z.array(z.string()),
   files: z.array(modelFileSchema),
+  earlyAccessTimeFrame: z.number().min(0).max(5).optional(),
   // recipe: z.array(recipeSchema).optional(),
 });

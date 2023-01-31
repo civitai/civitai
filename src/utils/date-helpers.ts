@@ -13,3 +13,21 @@ export function daysFromNow(
 
   return dayjs(value).fromNow(withoutSuffix);
 }
+
+export function increaseDate(value: Date, duration: number, unit: dayjs.ManipulateType) {
+  return dayjs(value).add(duration, unit).toDate();
+}
+
+export function isFutureDate(value: Date) {
+  return dayjs().isBefore(value);
+}
+
+export function maxDate(...dates: Date[]) {
+  const parsedDates = dates.map(dayjs);
+  return dayjs.max(parsedDates).toDate();
+}
+
+export function isBetweenToday(value: Date) {
+  const today = dayjs();
+  return dayjs(value).isBetween(today.startOf('day'), today.clone().endOf('day'), null, '[]');
+}

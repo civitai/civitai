@@ -21,7 +21,6 @@ import {
 import { ModelStatus } from '@prisma/client';
 import { useWindowSize } from '@react-hook/window-size';
 import {
-  IconBan,
   IconCloudOff,
   IconDotsVertical,
   IconDownload,
@@ -29,6 +28,7 @@ import {
   IconHeart,
   IconMessageCircle2,
   IconStar,
+  IconTagOff,
 } from '@tabler/icons';
 import dayjs from 'dayjs';
 import {
@@ -46,15 +46,17 @@ import { useInView } from 'react-intersection-observer';
 import { z } from 'zod';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { AmbientModelCard } from '~/components/InfiniteModels/AmbientModelCard';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getRandom } from '~/utils/array-helpers';
@@ -75,6 +77,7 @@ const filterSchema = z.object({
   tagname: z.string().optional(),
   tag: z.string().optional(),
   favorites: z.preprocess((val) => val === true || val === 'true', z.boolean().optional()),
+  hidden: z.preprocess((val) => val === true || val === 'true', z.boolean().optional()),
 });
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
@@ -92,10 +95,34 @@ export function InfiniteModels({
 
   const { ref, inView } = useInView();
 
-  const { data: blockedTags } = trpc.user.getTags.useQuery({ type: 'Hide' });
+  const { data: blockedTags } = trpc.user.getTags.useQuery(
+    { type: 'Hide' },
+    { enabled: !!currentUser }
+  );
   const excludedTagIds = blockedTags?.map((tag) => tag.id);
+
+  // Hidden Models
+  const { data: { Hide } = { Hide: [] }, isFetched: isHiddenFetched } =
+    trpc.user.getEngagedModels.useQuery(undefined, {
+      enabled: !!currentUser,
+      cacheTime: Infinity,
+      staleTime: Infinity,
+    });
+
+  // State is kept separate to prevent unnecessary re-fetch
+  // when the user toggles a model's hidden state updating the list above
+  const [excludedIds, setExcludedIds] = useState<number[]>();
+  useEffect(() => {
+    if (isHiddenFetched && !excludedIds) setExcludedIds(Hide);
+  }, [isHiddenFetched]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const { data, isLoading, fetchNextPage, hasNextPage } = trpc.model.getAll.useInfiniteQuery(
-    { ...filters, ...queryParams, excludedTagIds },
+    {
+      ...filters,
+      ...queryParams,
+      excludedTagIds,
+      excludedIds: queryParams.hidden ? undefined : excludedIds,
+    },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
@@ -189,6 +216,7 @@ type MasonryListProps = {
 // https://github.com/jaredLunde/masonic
 export function MasonryList({ columnWidth, data, filters }: MasonryListProps) {
   const router = useRouter();
+  const features = useFeatureFlags();
   const stringified = JSON.stringify(filters);
   const modelId = Number(([] as string[]).concat(router.query.model ?? [])[0]);
 
@@ -223,7 +251,7 @@ export function MasonryList({ columnWidth, data, filters }: MasonryListProps) {
     containerRef,
     items: data,
     overscanBy: 10,
-    render: MasonryItem,
+    render: features.ambientCard ? AmbientModelCard : MasonryItem,
   });
 }
 
@@ -265,20 +293,22 @@ const MasonryItem = ({
 
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
-  const { openContext } = useRoutedContext();
 
-  const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery(undefined, {
+  const {
+    data: { Favorite: favoriteModels = [], Hide: hiddenModels = [] } = { Favorite: [], Hide: [] },
+  } = trpc.user.getEngagedModels.useQuery(undefined, {
     enabled: !!currentUser,
     cacheTime: Infinity,
     staleTime: Infinity,
   });
-  const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
+  const isFavorite = favoriteModels.find((modelId) => modelId === id);
   const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
     enabled: !!currentUser,
     cacheTime: Infinity,
     staleTime: Infinity,
   });
-  const isHidden = hidden.find(({ id }) => id === user.id);
+  const isHidden =
+    hidden.find(({ id }) => id === user.id) || hiddenModels.find((modelId) => modelId === id);
 
   const onTwoLines = true;
   const height = useMemo(() => {
@@ -372,7 +402,7 @@ const MasonryItem = ({
         {modelText}
         {modelBadges}
       </Group>
-      <Group position="apart">
+      <Group position="apart" spacing={0}>
         {modelRating}
         <Group spacing={4} align="center" ml="auto">
           {modelLikes}
@@ -402,7 +432,7 @@ const MasonryItem = ({
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
-          openContext('report', { type: ReportEntity.Model, entityId: id });
+          openContext('report', { entityType: ReportEntity.Model, entityId: id });
         }}
       >
         Report
@@ -413,11 +443,11 @@ const MasonryItem = ({
   const blockTagsOption = (
     <Menu.Item
       key="block-tags"
-      icon={<IconBan size={14} stroke={1.5} />}
+      icon={<IconTagOff size={14} stroke={1.5} />}
       onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
         e.stopPropagation();
-        openContext('blockTags', { modelId: id });
+        openContext('blockModelTags', { modelId: id });
       }}
     >
       {`Hide content with these tags`}
@@ -426,10 +456,11 @@ const MasonryItem = ({
   let contextMenuItems: React.ReactNode[] = [];
   if (currentUser?.id !== user.id)
     contextMenuItems = contextMenuItems.concat([
+      <HideModelButton key="hide-model" as="menu-item" modelId={id} />,
       <HideUserButton key="hide-button" as="menu-item" userId={user.id} />,
       reportOption,
     ]);
-  if (currentUser) contextMenuItems.splice(1, 0, blockTagsOption);
+  if (currentUser) contextMenuItems.splice(2, 0, blockTagsOption);
 
   const isNew = data.createdAt > aDayAgo;
   const isUpdated = !isNew && data.lastVersionAt && data.lastVersionAt > aDayAgo;
@@ -499,7 +530,7 @@ const MasonryItem = ({
                           </Menu.Dropdown>
                         </Menu>
                       )}
-                      <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                      <ImageGuard.ToggleConnect />
                       <ImageGuard.Unsafe>
                         <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                           <MediaHash {...image} />

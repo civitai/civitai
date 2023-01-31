@@ -1,42 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
-import { ImageAnalysisInput } from '~/server/schema/image.schema';
-import produce from 'immer';
 import { FileWithPath } from '@mantine/dropzone';
+import { useListState } from '@mantine/hooks';
+import produce from 'immer';
+import { useEffect, useRef, useState } from 'react';
+import { v4 as uuidv4 } from 'uuid';
+
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { useNsfwWorkerContext } from '~/providers/NsfwWorkerProvider';
 import { loadImage, blurHashImage } from '~/utils/blurhash';
 import { auditMetaData, getMetadata } from '~/utils/image-metadata';
-import { v4 as uuidv4 } from 'uuid';
-import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import { useListState } from '@mantine/hooks';
-
-type MessageTypes =
-  | { type: 'status'; status: string }
-  | { type: 'error'; error: unknown; uuid?: string }
-  | {
-      type: 'result';
-      data: {
-        uuid: string;
-        analysis: ImageAnalysisInput;
-        nsfw: boolean;
-        file: FileWithPath;
-        meta: AsyncReturnType<typeof getMetadata>;
-      };
-    };
 
 type ImageUpload = CustomFile;
-// & {
-//   uuid?: string;
-//   analysis?: ImageAnalysisInput;
-//   status?: 'processing' | 'uploading' | 'complete' | 'blocked' | 'error';
-// };
 
 type QueueItem = { uuid: string; file: FileWithPath };
 
 export const useImageUpload = ({ max = 10, value }: { max?: number; value: CustomFile[] }) => {
-  const workerRef = useRef<SharedWorker>();
-  const noSharedWorker = typeof window === 'undefined' || !('SharedWorker' in window);
-  const supportsWebWorker = !noSharedWorker;
+  const { scanImages, canUseScanner } = useNsfwWorkerContext();
 
-  const [canUpload, setCanUpload] = useState(!supportsWebWorker);
+  // const [canUpload, setCanUpload] = useState(!supportsWebWorker);
   const [files, filesHandler] = useListState<ImageUpload>(value);
   const { uploadToCF } = useCFImageUpload();
 
@@ -55,44 +35,22 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
           file,
           meta,
           uuid: uuidv4(),
-          status: !supportsWebWorker ? ('uploading' as const) : ('processing' as const),
-          nsfw: !supportsWebWorker ? false : undefined,
+          status: 'processing' as const,
+          nsfw: undefined,
           ...hashResult,
         };
       })
     );
     filesHandler.setState((files) => [...files, ...toProcess]);
-    if (supportsWebWorker) {
-      workerRef.current?.port.postMessage(
-        toProcess.map(({ uuid, file, meta }) => ({ uuid, file, meta }))
-      );
-    } else {
-      pending.current = pending.current.concat(toProcess.map(({ uuid, file }) => ({ uuid, file })));
-      setStats((stats) => ({
-        ...stats,
-        numPending: stats.numPending + toProcess.length,
-      }));
-    }
-  };
-
-  // #region [nsfw.worker]
-  useEffect(() => {
-    if (supportsWebWorker) {
-      workerRef.current = new SharedWorker(
-        new URL('/src/workers/nsfw.worker.ts', import.meta.url),
-        {
-          name: 'tom_bot',
-        }
-      );
-      workerRef.current.port.onmessage = async function ({ data: result }: { data: MessageTypes }) {
-        if (result.type === 'status') {
-          setCanUpload(result.status === 'ready');
-        } else if (result.type === 'error') {
-          console.error(result.error);
-          if (result.uuid) {
+    scanImages(
+      toProcess.map(({ uuid, file, meta }) => ({ uuid, file, meta })),
+      ({ data: result }) => {
+        if (result.type === 'error') {
+          console.error(result.data.error);
+          if (result.data.error) {
             filesHandler.setState(
               produce((state) => {
-                const index = state.findIndex((x) => x.uuid === result.uuid);
+                const index = state.findIndex((x) => x.uuid === result.data.uuid);
                 state[index].status = 'error';
               })
             );
@@ -101,14 +59,6 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
           const auditResult =
             result.data.nsfw && result.data.meta ? auditMetaData(result.data.meta) : undefined;
           const status = auditResult && !auditResult?.success ? 'blocked' : 'uploading';
-          // const { porn, hentai, sexy } = result.data.analysis;
-          // console.log({
-          //   name: result.data.file.name,
-          //   analysis: result.data.analysis,
-          //   score: porn + hentai + sexy * 0.5,
-          //   meta: result.data.meta,
-          //   status,
-          // });
           filesHandler.setState(
             produce((state) => {
               const index = state.findIndex((x) => x.uuid === result.data.uuid);
@@ -134,11 +84,9 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
             });
           }
         }
-      };
-    } else {
-    }
-  }, []); //eslint-disable-line
-  // #endregion
+      }
+    );
+  };
 
   // #region [upload queue]
   // https://github.com/sandinmyjoints/use-async-queue
@@ -225,7 +173,8 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
     filesHandler,
     removeImage,
     upload: startProcessing,
-    canUpload,
+    canUpload: true,
+    canUseScanner,
     // isCompleted,
     // isUploading,
     // isProcessing,

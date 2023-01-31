@@ -33,6 +33,7 @@ import {
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
 import {
+  IconExclamationCircle,
   IconPencil,
   IconPhoto,
   IconRating18Plus,
@@ -46,6 +47,7 @@ import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 
 import { useImageUpload } from '~/hooks/useImageUpload';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -79,7 +81,7 @@ export function ImageUpload({
     filesHandler,
     removeImage,
     upload,
-    canUpload,
+    canUseScanner,
     // isCompleted,
     // isUploading,
     // isProcessing,
@@ -100,7 +102,7 @@ export function ImageUpload({
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
     await upload(droppedFiles);
   };
-  const dropzoneDisabled = files.length >= max || !canUpload;
+  const dropzoneDisabled = files.length >= max;
 
   return (
     <Input.Wrapper
@@ -144,23 +146,23 @@ export function ImageUpload({
               <IconPhoto size={50} stroke={1.5} />
             </Dropzone.Idle>
 
-            {!canUpload ? (
-              <Group spacing="xs">
-                <Text>Preparing Tom bot</Text>
-                <Loader variant="dots" />
-              </Group>
-            ) : (
-              <div>
-                <Text size="xl" inline>
-                  Drag images here or click to select files
-                </Text>
-                <Text size="sm" color="dimmed" inline mt={7}>
-                  {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
-                </Text>
-              </div>
-            )}
+            <div>
+              <Text size="xl" inline>
+                Drag images here or click to select files
+              </Text>
+              <Text size="sm" color="dimmed" inline mt={7}>
+                {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
+              </Text>
+            </div>
           </Group>
         </Dropzone>
+        {!canUseScanner && files.length > 0 ? (
+          <AlertWithIcon color="red" iconColor="red" icon={<IconExclamationCircle />}>
+            The AI system that automatically identifies adult content cannot be run on your device.
+            Please review the content of your images and ensure that any adult content is
+            appropriately flagged.
+          </AlertWithIcon>
+        ) : null}
 
         {isClient && (
           <DndContext
@@ -399,6 +401,7 @@ function ImageMetaPopover({
                 'DPM++ 2M Karras',
                 'DPM++ SDE Karras',
                 'DDIM',
+                'PLMS',
               ]}
               value={sampler}
               onChange={(value) => setSampler(value ?? undefined)}

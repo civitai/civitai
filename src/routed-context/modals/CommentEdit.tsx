@@ -1,8 +1,10 @@
 import { Button, Group, Modal, Stack, LoadingOverlay } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { useRouter } from 'next/router';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { z } from 'zod';
 
+import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { Form, InputRTE, useForm } from '~/libs/form';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { commentUpsertInput } from '~/server/schema/comment.schema';
@@ -15,7 +17,12 @@ export default createRoutedContext({
   }),
   Element: ({ context, props: { commentId } }) => {
     const router = useRouter();
+    const [value, , removeValue] = useLocalStorage<string | undefined>({
+      key: 'commentContent',
+      defaultValue: undefined,
+    });
     const modelId = Number(router.query.id);
+    const [initialContent, setInitialContent] = useState(value);
 
     const queryUtils = trpc.useContext();
     const { data, isLoading, isFetching } = trpc.comment.getById.useQuery(
@@ -25,16 +32,14 @@ export default createRoutedContext({
 
     const loadingComment = (isLoading || isFetching) && !!commentId;
 
-    useEffect(() => {
-      if (data && !loadingComment) form.reset(data);
-    }, [data, loadingComment]) //eslint-disable-line
-
     const form = useForm({
       schema: commentUpsertInput,
-      defaultValues: { modelId },
+      defaultValues: { modelId, content: initialContent ?? '' },
       shouldUnregister: false,
-      shouldFocusError: true,
     });
+
+    const { isDirty, isSubmitted } = form.formState;
+    useCatchNavigation({ unsavedChanges: isDirty && !isSubmitted });
 
     const saveCommentMutation = trpc.comment.upsert.useMutation({
       async onSuccess() {
@@ -50,26 +55,50 @@ export default createRoutedContext({
         });
       },
     });
+    const handleSaveComment = (values: z.infer<typeof commentUpsertInput>) => {
+      values.content = values.content.trim();
+      if (values.content) saveCommentMutation.mutate(values);
+      else context.close();
+    };
 
     const handleClose = () => {
-      form.reset();
+      form.reset({ modelId, content: undefined });
       context.close();
     };
+
+    useEffect(() => {
+      if (data && !loadingComment) form.reset(data);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [data, loadingComment]);
+
+    useEffect(() => {
+      if (!initialContent && value) {
+        setInitialContent(value);
+        form.reset({ modelId, content: value });
+        removeValue();
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [initialContent, removeValue, value]);
+
+    const mutating = saveCommentMutation.isLoading;
 
     return (
       <Modal
         opened={context.opened}
-        onClose={context.close}
+        onClose={!mutating ? context.close : () => ({})}
         title={commentId ? 'Editing comment' : 'Add a comment'}
+        closeOnClickOutside={!mutating}
+        closeOnEscape={!mutating}
       >
         <LoadingOverlay visible={loadingComment} />
-        <Form form={form} onSubmit={(data) => saveCommentMutation.mutate(data)}>
+        <Form form={form} onSubmit={handleSaveComment}>
           <Stack spacing="md">
             <InputRTE
               name="content"
               placeholder="Type your thoughts..."
-              includeControls={['formatting', 'link']}
+              includeControls={['formatting', 'link', 'mentions']}
               editorSize="xl"
+              onSuperEnter={() => form.handleSubmit(handleSaveComment)()}
             />
             <Group position="apart">
               <Button variant="default" onClick={handleClose}>

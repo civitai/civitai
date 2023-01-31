@@ -1,5 +1,5 @@
 import { throwNotFoundError } from '~/server/utils/errorHandling';
-import { Prisma, TagEngagementType } from '@prisma/client';
+import { ModelEngagementType, Prisma, TagEngagementType } from '@prisma/client';
 
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -9,6 +9,7 @@ import {
   GetByUsernameSchema,
   ToggleBlockedTagSchema,
 } from '~/server/schema/user.schema';
+import { invalidateSession } from '~/server/utils/session-helpers';
 
 // const xprisma = prisma.$extends({
 //   result: {
@@ -18,7 +19,7 @@ import {
 
 export const getUserCreator = async ({ username }: { username: string }) => {
   return prisma.user.findFirst({
-    where: { username },
+    where: { username, deletedAt: null },
     select: {
       id: true,
       image: true,
@@ -53,11 +54,13 @@ export const getUsers = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>(
   query,
   email,
   select,
+  ids,
 }: GetAllUsersInput & { select: TSelect }) => {
   return prisma.user.findMany({
     take: limit,
     select,
     where: {
+      id: ids && ids.length > 0 ? { in: ids } : undefined,
       username: query
         ? {
             contains: query,
@@ -65,6 +68,7 @@ export const getUsers = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>(
           }
         : undefined,
       email: email,
+      deletedAt: null,
     },
   });
 };
@@ -93,21 +97,28 @@ export const updateUserById = ({ id, data }: { id: number; data: Prisma.UserUpda
   return prisma.user.update({ where: { id }, data });
 };
 
-export const getUserFavoriteModels = ({ id }: { id: number }) => {
+export const getUserEngagedModels = ({ id }: { id: number }) => {
   return prisma.user.findUnique({
     where: { id },
-    select: { favoriteModels: { select: { modelId: true } } },
+    select: { engagedModels: { select: { modelId: true, type: true } } },
   });
 };
 
-export const getUserFavoriteModelByModelId = ({
+export const getUserEngagedModelVersions = ({ id }: { id: number }) => {
+  return prisma.user.findUnique({
+    where: { id },
+    select: { engagedModelVersions: { select: { modelVersionId: true, type: true } } },
+  });
+};
+
+export const getUserEngagedModelByModelId = ({
   userId,
   modelId,
 }: {
   userId: number;
   modelId: number;
 }) => {
-  return prisma.favoriteModel.findUnique({ where: { userId_modelId: { userId, modelId } } });
+  return prisma.modelEngagement.findUnique({ where: { userId_modelId: { userId, modelId } } });
 };
 
 export const getUserTags = ({ userId, type }: { userId: number; type?: TagEngagementType }) => {
@@ -140,6 +151,7 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
       : undefined,
     models: { some: {} },
     id: excludeIds.length ? { notIn: excludeIds } : undefined,
+    deletedAt: null,
   };
   const items = await prisma.user.findMany({
     take,
@@ -167,6 +179,49 @@ export const getUserUnreadNotificationsCount = ({ id }: { id: number }) => {
     },
   });
 };
+
+export const toggleModelEngagement = async ({
+  userId,
+  modelId,
+  type,
+}: {
+  userId: number;
+  modelId: number;
+  type: ModelEngagementType;
+}) => {
+  const engagement = await prisma.modelEngagement.findUnique({
+    where: { userId_modelId: { userId, modelId } },
+    select: { type: true },
+  });
+
+  if (engagement) {
+    if (engagement.type === type)
+      await prisma.modelEngagement.delete({
+        where: { userId_modelId: { userId, modelId } },
+      });
+    else if (engagement.type !== type)
+      await prisma.modelEngagement.update({
+        where: { userId_modelId: { userId, modelId } },
+        data: { type, createdAt: new Date() },
+      });
+
+    return;
+  }
+
+  await prisma.modelEngagement.create({ data: { type, modelId, userId } });
+  return;
+};
+
+export const toggleModelFavorite = async ({
+  userId,
+  modelId,
+}: {
+  userId: number;
+  modelId: number;
+}) => toggleModelEngagement({ userId, modelId, type: 'Favorite' });
+
+export const toggleModelHide = async ({ userId, modelId }: { userId: number; modelId: number }) =>
+  toggleModelEngagement({ userId, modelId, type: 'Hide' });
 
 export const toggleFollowUser = async ({
   userId,
@@ -234,10 +289,22 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
     select: { id: true },
   });
   if (!user) throw throwNotFoundError('Could not find user');
-  if (removeModels) {
-    await prisma.model.deleteMany({ where: { userId: user.id } });
-  }
-  return await prisma.user.delete({ where: { id: user.id } });
+
+  const modelData: Prisma.ModelUpdateManyArgs['data'] = removeModels
+    ? { deletedAt: new Date(), status: 'Deleted' }
+    : { userId: -1 };
+
+  const result = await prisma.$transaction([
+    prisma.model.updateMany({ where: { userId: user.id }, data: modelData }),
+    prisma.account.deleteMany({ where: { userId: user.id } }),
+    prisma.session.deleteMany({ where: { userId: user.id } }),
+    prisma.user.update({
+      where: { id: user.id },
+      data: { deletedAt: new Date(), email: null, username: null },
+    }),
+  ]);
+  await invalidateSession(id);
+  return result;
 };
 
 export const toggleBlockedTag = async ({

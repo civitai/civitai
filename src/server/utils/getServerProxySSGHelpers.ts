@@ -8,7 +8,7 @@ export const getServerProxySSGHelpers = async (ctx: GetServerSidePropsContext) =
   const session = await getServerAuthSession(ctx);
   const ssg = createProxySSGHelpers({
     router: appRouter,
-    ctx: { user: session?.user },
+    ctx: { user: session?.user, acceptableOrigin: true },
     transformer: superjson,
   });
   return ssg;

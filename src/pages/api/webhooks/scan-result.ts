@@ -10,11 +10,14 @@ import { z } from 'zod';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
 import { prisma } from '~/server/db/client';
+import { ScannerTasks } from '~/server/jobs/scan-files';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  const { modelVersionId, type, format } = querySchema.parse(req.query);
+
+  const { modelVersionId, type, format, ...query } = querySchema.parse(req.query);
+  const tasks = query.tasks ?? ['Import', 'Scan', 'Hash'];
   const scanResult: ScanResult = req.body;
 
   const where: Prisma.ModelFileFindUniqueArgs['where'] = {
@@ -23,77 +26,92 @@ export default WebhookEndpoint(async (req, res) => {
   const { url, id: fileId } = (await prisma.modelFile.findUnique({ where })) ?? {};
   if (!url || !fileId) return res.status(404).json({ error: 'File not found' });
 
-  const { hasDanger, pickleScanMessage } = examinePickleScanMessage(scanResult);
-  if (hasDanger) scanResult.picklescanExitCode = ScanExitCode.Danger;
+  const data: Prisma.ModelFileUpdateInput = {};
 
-  const exists = scanResult.fileExists === 1;
+  // Update scan result
+  if (tasks.includes('Scan')) {
+    data.scannedAt = new Date();
+    data.rawScanResult = scanResult;
+    data.virusScanResult = resultCodeMap[scanResult.clamscanExitCode];
+    data.virusScanMessage =
+      scanResult.clamscanExitCode != ScanExitCode.Success ? scanResult.clamscanOutput : null;
+    data.pickleScanResult = resultCodeMap[scanResult.picklescanExitCode];
 
-  const data: Prisma.ModelFileUpdateInput = {
-    exists,
-    scannedAt: new Date(),
-    rawScanResult: scanResult,
-    virusScanResult: resultCodeMap[scanResult.clamscanExitCode],
-    virusScanMessage:
-      scanResult.clamscanExitCode != ScanExitCode.Success ? scanResult.clamscanOutput : null,
-    pickleScanResult: resultCodeMap[scanResult.picklescanExitCode],
-    pickleScanMessage,
-  };
-
-  const bucket = env.S3_UPLOAD_BUCKET;
-  const scannerImportedFile = !url.includes(bucket) && scanResult.url.includes(bucket);
-  if (exists && scannerImportedFile) data.url = scanResult.url;
-
-  // Update file
-  await prisma.modelFile.update({ where, data });
-
-  // Update hashes
-  if (scanResult.hashes) {
-    await prisma.modelHash.deleteMany({ where: { fileId } });
-    await prisma.modelHash.createMany({
-      data: Object.entries(scanResult.hashes).map(([type, hash]) => ({
-        fileId,
-        type: type as ModelHashType,
-        hash,
-      })),
-    });
+    const { hasDanger, pickleScanMessage } = examinePickleScanMessage(scanResult);
+    data.pickleScanMessage = pickleScanMessage;
+    if (hasDanger) scanResult.picklescanExitCode = ScanExitCode.Danger;
   }
 
-  // Unpublish model if file isn't available
-  if (!exists) {
-    await prisma.modelVersion.update({
-      where: { id: modelVersionId },
-      data: { status: ModelStatus.Draft },
-    });
+  // Update url if we imported/moved the file
+  if (tasks.includes('Import')) {
+    data.exists = scanResult.fileExists === 1;
+    const bucket = env.S3_SETTLED_BUCKET;
+    const scannerImportedFile = !url.includes(bucket) && scanResult.url.includes(bucket);
+    if (data.exists && scannerImportedFile) data.url = scanResult.url;
+    if (!data.exists) await unpublish(modelVersionId);
+  }
 
-    const { modelId } =
-      (await prisma.modelVersion.findUnique({
-        where: { id: modelVersionId },
-        select: { modelId: true },
-      })) ?? {};
-    if (modelId) {
-      const modelVersionCount = await prisma.model.findUnique({
-        where: { id: modelId },
-        select: {
-          _count: {
-            select: {
-              modelVersions: {
-                where: { status: ModelStatus.Published },
-              },
-            },
-          },
-        },
-      });
+  if (tasks.includes('Convert')) {
+    // TODO justin: handle conversion result
+  }
 
-      if (modelVersionCount?._count.modelVersions === 0)
-        await prisma.model.update({
-          where: { id: modelId },
-          data: { status: ModelStatus.Unpublished },
-        });
-    }
+  // Update if we made changes...
+  if (Object.keys(data).length > 0) await prisma.modelFile.update({ where, data });
+
+  // Update hashes
+  if (tasks.includes('Hash') && scanResult.hashes) {
+    await prisma.$transaction([
+      prisma.modelHash.deleteMany({ where: { fileId } }),
+      prisma.modelHash.createMany({
+        data: Object.entries(scanResult.hashes)
+          .filter(([type]) => hashTypeMap[type.toLowerCase()])
+          .map(([type, hash]) => ({
+            fileId,
+            type: hashTypeMap[type.toLowerCase()] as ModelHashType,
+            hash,
+          })),
+      }),
+    ]);
   }
 
   res.status(200).json({ ok: true });
 });
+
+const hashTypeMap: Record<string, string> = {};
+for (const t of Object.keys(ModelHashType)) hashTypeMap[t.toLowerCase()] = t;
+
+async function unpublish(modelVersionId: number) {
+  await prisma.modelVersion.update({
+    where: { id: modelVersionId },
+    data: { status: ModelStatus.Draft },
+  });
+
+  const { modelId } =
+    (await prisma.modelVersion.findUnique({
+      where: { id: modelVersionId },
+      select: { modelId: true },
+    })) ?? {};
+  if (modelId) {
+    const modelVersionCount = await prisma.model.findUnique({
+      where: { id: modelId },
+      select: {
+        _count: {
+          select: {
+            modelVersions: {
+              where: { status: ModelStatus.Published },
+            },
+          },
+        },
+      },
+    });
+
+    if (modelVersionCount?._count.modelVersions === 0)
+      await prisma.model.update({
+        where: { id: modelId },
+        data: { status: ModelStatus.Unpublished },
+      });
+  }
+}
 
 enum ScanExitCode {
   Pending = -1,
@@ -125,6 +143,7 @@ const querySchema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
   type: z.enum(constants.modelFileTypes),
   format: z.nativeEnum(ModelFileFormat),
+  tasks: z.array(z.enum(ScannerTasks)).optional(),
 });
 
 function processImport(importStr: string) {

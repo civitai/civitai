@@ -1,8 +1,9 @@
 import { Badge, Modal, Group, CloseButton, Alert, Center, Loader, Stack } from '@mantine/core';
 import { z } from 'zod';
 
-import CommentSection from '~/components/CommentSection/CommentSection';
+import { CommentSection } from '~/components/CommentSection/CommentSection';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { CommentDiscussionMenu } from '~/components/Model/ModelDiscussion/CommentDiscussionMenu';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -86,7 +87,7 @@ export default createRoutedContext({
           <Alert>Comment could not be found</Alert>
         ) : (
           <Stack>
-            <Group position="apart" align="flex-start">
+            <Group position="apart" align="flex-start" noWrap>
               <UserAvatar
                 user={comment.user}
                 subText={<DaysFromNow date={comment.createdAt} />}
@@ -103,10 +104,13 @@ export default createRoutedContext({
                 withUsername
                 linkToProfile
               />
-              <CloseButton onClick={context.close} />
+              <Group spacing={4} noWrap>
+                <CommentDiscussionMenu comment={comment} user={currentUser} />
+                <CloseButton onClick={context.close} />
+              </Group>
             </Group>
             <Stack spacing="xl">
-              <RenderHtml html={comment.content} />
+              <RenderHtml html={comment.content} withMentions />
               <ReactionPicker
                 reactions={reactions}
                 onSelect={(reaction) => toggleReactionMutation.mutate({ id: commentId, reaction })}
@@ -114,7 +118,7 @@ export default createRoutedContext({
               <CommentSection
                 comments={comments}
                 modelId={comment.modelId}
-                parentId={comment.id}
+                parent={comment}
                 highlights={highlight ? [highlight] : undefined}
               />
             </Stack>

@@ -13,6 +13,7 @@ import { env } from '~/env/server.mjs';
 import { prisma } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
 import { sendVerificationRequest } from '~/server/auth/verificationEmail';
+import { refreshToken } from '~/server/utils/session-helpers';
 
 const setUserName = async (email: string) => {
   try {
@@ -52,20 +53,18 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
       if (req.url === '/api/auth/session?update') {
         const user = await prisma.user.findUnique({ where: { id: Number(token.sub) } });
         token.user = user;
+        token.signedAt = Date.now();
       } else {
         // have to do this to be able to connect to other providers
         token.sub = Number(token.sub) as any; //eslint-disable-line
-        if (user) {
-          token.user = user;
-        }
+        if (user) token.user = user;
       }
       return token;
     },
     session: async ({ session, token }) => {
       const localSession = { ...session };
-      if (token.user) {
-        localSession.user = token.user as Session['user'];
-      }
+      token = await refreshToken(token);
+      if (token.user) localSession.user = token.user as Session['user'];
       return localSession;
     },
   },

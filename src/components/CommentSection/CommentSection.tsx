@@ -12,34 +12,38 @@ import {
 } from '@mantine/core';
 import { closeAllModals } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-
 import { useRouter } from 'next/router';
-import { useState } from 'react';
-import { CommentSectionItem } from '~/components/CommentSection/CommentSectionItem';
+import { useRef, useState } from 'react';
+import { z } from 'zod';
 
+import { CommentSectionItem } from '~/components/CommentSection/CommentSectionItem';
+import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputRTE, useForm } from '~/libs/form';
-
 import { commentUpsertInput } from '~/server/schema/comment.schema';
-import { CommentGetCommentsById, ReviewGetCommentsById } from '~/types/router';
-
+import {
+  CommentGetById,
+  CommentGetCommentsById,
+  ReviewGetById,
+  ReviewGetCommentsById,
+} from '~/types/router';
+import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export default function CommentSection({
-  comments,
-  modelId,
-  reviewId,
-  parentId,
-  highlights,
-}: Props) {
+export function CommentSection({ comments, modelId, review, parent, highlights }: Props) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const theme = useMantineTheme();
   const queryUtils = trpc.useContext();
   const { classes } = useStyles();
   highlights = highlights?.filter((x) => x);
+
+  const editorRef = useRef<EditorCommandsRef | null>(null);
+
+  const reviewId = review?.id;
+  const parentId = parent?.id;
   const form = useForm({
     schema: commentUpsertInput,
     shouldUnregister: false,
@@ -89,7 +93,20 @@ export default function CommentSection({
     },
   });
 
+  const mainComment = review ?? parent;
   const commentCount = comments.length;
+  const suggestedMentions = removeDuplicates(
+    [...comments, mainComment]
+      .filter((comment) => comment && comment.user.id !== currentUser?.id)
+      .map((comment) => ({
+        id: comment?.user.id as number,
+        label: comment?.user.username as string,
+      })),
+    'id'
+  ).slice(0, 5);
+
+  const handleSubmitComment = (data: z.infer<typeof commentUpsertInput>) =>
+    saveCommentMutation.mutate({ ...data });
 
   return (
     <Stack spacing="xl">
@@ -100,11 +117,7 @@ export default function CommentSection({
       </Group>
       <Group align="flex-start">
         <UserAvatar user={currentUser} avatarProps={{ size: 'md' }} />
-        <Form
-          form={form}
-          onSubmit={(data) => saveCommentMutation.mutate({ ...data })}
-          style={{ flex: '1 1 0' }}
-        >
+        <Form form={form} onSubmit={handleSubmitComment} style={{ flex: '1 1 0' }}>
           <Stack spacing="xs">
             <Box sx={{ position: 'relative' }}>
               {!currentUser ? (
@@ -125,12 +138,17 @@ export default function CommentSection({
                   </Stack>
                 </Overlay>
               ) : null}
+
               <InputRTE
                 name="content"
                 placeholder="Type your comment..."
-                includeControls={['formatting', 'link']}
+                includeControls={['formatting', 'link', 'mentions']}
                 disabled={saveCommentMutation.isLoading}
                 onFocus={() => setShowCommentActions(true)}
+                defaultSuggestions={suggestedMentions}
+                autoFocus={showCommentActions}
+                innerRef={editorRef}
+                onSuperEnter={() => form.handleSubmit(handleSubmitComment)()}
                 hideToolbar
               />
             </Box>
@@ -139,8 +157,8 @@ export default function CommentSection({
                 <Button
                   variant="default"
                   onClick={() => {
-                    form.reset();
                     setShowCommentActions(false);
+                    form.reset();
                   }}
                 >
                   Cancel
@@ -162,7 +180,16 @@ export default function CommentSection({
               key={comment.id}
               className={isHighlighted ? classes.highlightedComment : undefined}
             >
-              <CommentSectionItem comment={comment} modelId={modelId} />
+              <CommentSectionItem
+                comment={comment}
+                modelId={modelId}
+                onReplyClick={(comment) => {
+                  setShowCommentActions(true);
+                  editorRef.current?.insertContentAtCursor(
+                    `<span data-type="mention" data-id="mention:${comment.user.id}" data-label="${comment.user.username}" contenteditable="false">@${comment.user.username}</span>&nbsp;`
+                  );
+                }}
+              />
             </List.Item>
           );
         })}
@@ -174,8 +201,8 @@ export default function CommentSection({
 type Props = {
   comments: ReviewGetCommentsById | CommentGetCommentsById;
   modelId: number;
-  reviewId?: number;
-  parentId?: number;
+  review?: ReviewGetById;
+  parent?: CommentGetById;
   highlights?: number[];
 };
 

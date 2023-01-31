@@ -8,10 +8,7 @@ import {
   createStyles,
   Grid,
   Group,
-  Loader,
   Menu,
-  MultiSelect,
-  Select,
   Stack,
   Text,
   Title,
@@ -24,30 +21,28 @@ import {
   AspectRatio,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
-import { ModelStatus, ModelType } from '@prisma/client';
+import { ModelStatus } from '@prisma/client';
 import {
-  IconAlertCircle,
-  IconArrowsSort,
   IconBan,
   IconDotsVertical,
   IconDownload,
   IconEdit,
   IconExclamationMark,
-  IconFilter,
   IconFlag,
   IconHeart,
   IconLicense,
   IconMessage,
   IconMessageCircle2,
+  IconRecycle,
   IconStar,
+  IconTagOff,
   IconTrash,
 } from '@tabler/icons';
 import startCase from 'lodash/startCase';
-import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
+import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
-import { useEffect, useRef, useState } from 'react';
+import Router from 'next/router';
+import { useEffect, useRef } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -61,15 +56,12 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
-import { ModelForm } from '~/components/Model/ModelForm/ModelForm';
 import { ModelDiscussion } from '~/components/Model/ModelDiscussion/ModelDiscussion';
 import { ModelVersions } from '~/components/Model/ModelVersions/ModelVersions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { ReviewFilter, ReviewSort } from '~/server/common/enums';
-import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
@@ -80,7 +72,6 @@ import { isNumber } from '~/utils/type-guards';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { scrollToTop } from '~/utils/scroll-utils';
 import { RunButton } from '~/components/RunStrategy/RunButton';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -93,8 +84,15 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
+import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
+import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { openRoutedContext } from '~/providers/RoutedContextProvider';
+import { openContext } from '~/providers/CustomModalsProvider';
 
 //TODO - Break model query into multiple queries
 /*
@@ -106,28 +104,23 @@ import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
   - model-version reviews (for users who only want to see reviews for specific versions)
 */
 
-export const getServerSideProps: GetServerSideProps<{
-  id: number;
-  slug: string | string[] | null;
-}> = async (context) => {
-  const params = (context.params ?? {}) as { id: string; slug: string[] };
-  const id = Number(params.id);
-  if (!isNumber(id))
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  resolver: async ({ ctx, ssg }) => {
+    const params = (ctx.params ?? {}) as { id: string; slug: string[] };
+    const id = Number(params.id);
+    if (!isNumber(id)) return { notFound: true };
+
+    await ssg?.model.getById.prefetch({ id });
+
     return {
-      notFound: true,
+      props: {
+        id,
+        slug: params.slug?.[0] ?? '',
+      },
     };
-
-  const ssg = await getServerProxySSGHelpers(context);
-  await ssg.model.getById.prefetch({ id });
-
-  return {
-    props: {
-      trpcState: ssg.dehydrate(),
-      id,
-      slug: params.slug?.[0] ?? '',
-    },
-  };
-};
+  },
+});
 
 const useStyles = createStyles((theme) => ({
   actions: {
@@ -149,43 +142,38 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export default function ModelDetail(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
+export default function ModelDetail({
+  id,
+  slug,
+}: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
-  const router = useRouter();
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
   const mobile = useIsMobile();
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();
-  const { openContext } = useRoutedContext();
-
-  const { id, slug } = props;
-  const { edit } = router.query;
 
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
-  const [reviewFilters, setReviewFilters] = useState<{
-    filterBy: ReviewFilter[];
-    sort: ReviewSort;
-  }>({
-    filterBy: [],
-    sort: ReviewSort.Newest,
-  });
 
   const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({ id });
-  const { data: favoriteModels = [] } = trpc.user.getFavoriteModels.useQuery(undefined, {
-    enabled: !!currentUser,
-    cacheTime: Infinity,
-    staleTime: Infinity,
-  });
+  const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
+    trpc.user.getEngagedModels.useQuery(undefined, {
+      enabled: !!currentUser,
+      cacheTime: Infinity,
+      staleTime: Infinity,
+    });
 
   const deleteMutation = trpc.model.delete.useMutation({
-    onSuccess() {
+    async onSuccess(_, { permanently }) {
+      await queryUtils.model.getAll.invalidate();
+      if (!permanently) await queryUtils.model.getById.invalidate({ id });
+      if (!isModerator || permanently) await Router.replace('/');
+
       showSuccessNotification({
         title: 'Your model has been deleted',
         message: 'Successfully deleted the model',
       });
       closeAllModals();
-      router.replace('/'); // Redirect to the models or user page once available
     },
     onError(error) {
       showErrorNotification({
@@ -203,26 +191,40 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       showErrorNotification({ error: new Error(error.message) });
     },
   });
-  const toggleFavoriteModelMutation = trpc.user.toggleFavorite.useMutation({
+  const restoreModelMutation = trpc.model.restore.useMutation({
+    async onSuccess() {
+      await queryUtils.model.getById.invalidate({ id });
+      await queryUtils.model.getAll.invalidate();
+    },
+    onError(error) {
+      showErrorNotification({ error: new Error(error.message) });
+    },
+  });
+  const toggleFavoriteModelMutation = trpc.user.toggleFavoriteModel.useMutation({
     async onMutate({ modelId }) {
-      await queryUtils.user.getFavoriteModels.cancel();
+      await queryUtils.user.getEngagedModels.cancel();
 
-      const previousFavorites = queryUtils.user.getFavoriteModels.getData() ?? [];
+      const previousEngaged = queryUtils.user.getEngagedModels.getData() ?? {
+        Favorite: [],
+        Hide: [],
+      };
       const previousModel = queryUtils.model.getById.getData({ id: modelId });
-      const shouldRemove = previousFavorites.find((favorite) => favorite.modelId === modelId);
+      const shouldRemove = previousEngaged.Favorite?.find((id) => id === modelId);
       // Update the favorite count
       queryUtils.model.getById.setData({ id: modelId }, (model) => {
         if (model?.rank) model.rank.favoriteCountAllTime += shouldRemove ? -1 : 1;
         return model;
       });
       // Remove from favorites list
-      queryUtils.user.getFavoriteModels.setData(undefined, (old = []) =>
-        shouldRemove
-          ? old.filter((favorite) => favorite.modelId !== modelId)
-          : [...old, { modelId }]
+      queryUtils.user.getEngagedModels.setData(
+        undefined,
+        ({ Favorite = [], ...old } = { Favorite: [], Hide: [] }) => {
+          if (shouldRemove) return { Favorite: Favorite.filter((id) => id !== modelId), ...old };
+          return { Favorite: [...Favorite, modelId], ...old };
+        }
       );
 
-      return { previousFavorites, previousModel };
+      return { previousEngaged, previousModel };
     },
     async onSuccess() {
       await queryUtils.model.getAll.invalidate({ favorites: true });
@@ -231,7 +233,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       });
     },
     onError(_error, _variables, context) {
-      queryUtils.user.getFavoriteModels.setData(undefined, context?.previousFavorites);
+      queryUtils.user.getEngagedModels.setData(undefined, context?.previousEngaged);
       if (context?.previousModel?.id)
         queryUtils.model.getById.setData(
           { id: context?.previousModel?.id },
@@ -242,13 +244,13 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
 
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
-    router.beforePopState(({ as, url }) => {
+    Router.beforePopState(({ as, url }) => {
       if (as === '/' || as.startsWith('/?') || as.startsWith('/user/') || as.startsWith('/tag/')) {
         const [route, queryString] = as.split('?');
         const [, otherQueryString] = url.split('?');
         const queryParams = QS.parse(queryString);
         const otherParams = QS.parse(otherQueryString);
-        router.replace(
+        Router.replace(
           { pathname: route, query: { ...queryParams, ...otherParams, model: id } },
           as,
           {
@@ -262,26 +264,19 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       return true;
     });
 
-    return () => router.beforePopState(() => true);
-  }, [router, id]); // Add any state variables to dependencies array if needed.
+    return () => Router.beforePopState(() => true);
+  }, [id]); // Add any state variables to dependencies array if needed.
 
-  if (loadingModel)
-    return (
-      <Container size="xl">
-        <Center>
-          <Loader size="xl" />
-        </Center>
-      </Container>
-    );
-
+  if (loadingModel) return <PageLoader />;
   if (!model) return <NotFound />;
 
   const isModerator = currentUser?.isModerator ?? false;
   const isOwner = model.user.id === currentUser?.id || isModerator;
-  const showNsfwRequested = router.query.showNsfw !== 'true';
+  // const showNsfwRequested = router.query.showNsfw !== 'true';
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
-  const nsfw = userNotBlurringNsfw && showNsfwRequested && model.nsfw === true;
-  const isFavorite = favoriteModels.find((favorite) => favorite.modelId === id);
+  const nsfw = userNotBlurringNsfw && model.nsfw === true;
+  const isFavorite = favoriteModels.find((modelId) => modelId === id);
+  const deleted = !!model.deletedAt && model.status === 'Deleted';
 
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model.modelVersions[0];
@@ -291,18 +286,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   });
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
-
-  let hasNegativeEmbed = false;
-  let hasConfig = false;
-  let hasVAE = false;
-  if (latestVersion) {
-    for (const file of latestVersion.files) {
-      if (model.type === ModelType.TextualInversion && file.type === 'Negative')
-        hasNegativeEmbed = true;
-      else if (model.type === ModelType.Checkpoint && file.type === 'Config') hasConfig = true;
-      else if (model.type === ModelType.Checkpoint && file.type === 'VAE') hasVAE = true;
-    }
-  }
 
   const meta = (
     <Meta
@@ -316,52 +299,40 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     />
   );
 
-  if (!!edit && model && isOwner) return <ModelForm model={model} />;
   if (model.nsfw && !currentUser)
     return (
       <>
         {meta}
-        <SensitiveShield redirectTo={router.asPath} />;
+        <SensitiveShield />
       </>
     );
 
-  const handleDeleteModel = () => {
+  const handleDeleteModel = (options?: { permanently: boolean }) => {
+    const { permanently = false } = options || {};
+
     openConfirmModal({
       title: 'Delete Model',
-      children: (
-        <Text size="sm">
-          Are you sure you want to delete this model? This action is destructive and you will have
-          to contact support to restore your data.
-        </Text>
-      ),
+      children: permanently
+        ? 'Are you sure you want to permanently delete this model? This action is destructive and cannot be reverted.'
+        : 'Are you sure you want to delete this model? This action is destructive and you will have to contact support to restore your data.',
       centered: true,
       labels: { confirm: 'Delete Model', cancel: "No, don't delete it" },
       confirmProps: { color: 'red', loading: deleteMutation.isLoading },
       closeOnConfirm: false,
       onConfirm: () => {
         if (model) {
-          deleteMutation.mutate({ id: model.id });
+          deleteMutation.mutate({ id: model.id, permanently });
         }
       },
     });
   };
 
-  const handleReviewFilterChange = (values: ReviewFilter[]) => {
-    setReviewFilters((current) => ({
-      ...current,
-      filterBy: values,
-    }));
-  };
-
-  const handleReviewSortChange = (value: ReviewSort) => {
-    setReviewFilters((current) => ({
-      ...current,
-      sort: value,
-    }));
-  };
-
   const handleUnpublishModel = () => {
     unpublishModelMutation.mutate({ id });
+  };
+
+  const handleRestoreModel = () => {
+    restoreModelMutation.mutate({ id });
   };
 
   const handleToggleFavorite = () => {
@@ -372,12 +343,16 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     {
       label: 'Type',
       value: (
-        <Group spacing="xs">
-          <Badge radius="sm">{splitUppercase(model.type)}</Badge>
-          {model?.status !== ModelStatus.Published && (
+        <Group spacing={0} noWrap position="apart">
+          <Badge radius="sm" px={5}>
+            {splitUppercase(model.type)} {model.checkpointType}
+          </Badge>
+          {model?.status !== ModelStatus.Published ? (
             <Badge color="yellow" radius="sm">
               {model.status}
             </Badge>
+          ) : (
+            <HowToUseModel type={model.type} />
           )}
         </Group>
       ),
@@ -497,7 +472,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 radius="sm"
                 color="gray"
                 size="lg"
-                icon={<Rating value={model.rank?.ratingAllTime ?? 0} readOnly />}
+                icon={<Rating value={model.rank?.ratingAllTime ?? 0} fractions={4} readOnly />}
                 sx={{ cursor: 'pointer' }}
                 onClick={() => {
                   if (!discussionSectionRef.current) return;
@@ -527,20 +502,40 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     Unpublish
                   </Menu.Item>
                 )}
-                {currentUser && isOwner && (
+                {currentUser && isModerator && deleted && (
+                  <Menu.Item
+                    icon={<IconRecycle size={14} stroke={1.5} />}
+                    color="green"
+                    onClick={handleRestoreModel}
+                    disabled={restoreModelMutation.isLoading}
+                  >
+                    Restore
+                  </Menu.Item>
+                )}
+                {currentUser && isModerator && (
+                  <Menu.Item
+                    color={theme.colors.red[6]}
+                    icon={<IconTrash size={14} stroke={1.5} />}
+                    onClick={() => handleDeleteModel({ permanently: true })}
+                  >
+                    Permanently Delete Model
+                  </Menu.Item>
+                )}
+                {currentUser && isOwner && !deleted && (
                   <>
                     <Menu.Item
                       color={theme.colors.red[6]}
                       icon={<IconTrash size={14} stroke={1.5} />}
-                      onClick={handleDeleteModel}
+                      onClick={() => handleDeleteModel()}
                     >
                       Delete Model
                     </Menu.Item>
                     <Menu.Item
-                      component={NextLink}
-                      href={`/models/${id}/${slug}?edit=true`}
+                      // component={NextLink}
+                      // href={`/models/${id}/${slug}?edit=true`}
                       icon={<IconEdit size={14} stroke={1.5} />}
-                      shallow
+                      onClick={() => openRoutedContext('modelEdit', { modelId: model.id })}
+                      // shallow
                     >
                       Edit Model
                     </Menu.Item>
@@ -551,7 +546,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     <Menu.Item
                       icon={<IconFlag size={14} stroke={1.5} />}
                       onClick={() =>
-                        openContext('report', { type: ReportEntity.Model, entityId: model.id })
+                        openContext('report', {
+                          entityType: ReportEntity.Model,
+                          entityId: model.id,
+                        })
                       }
                     >
                       Report
@@ -561,9 +559,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 {currentUser && (
                   <>
                     <HideUserButton as="menu-item" userId={model.user.id} />
+                    <HideModelButton as="menu-item" modelId={model.id} />
                     <Menu.Item
-                      icon={<IconBan size={14} stroke={1.5} />}
-                      onClick={() => openContext('blockTags', { modelId: model.id })}
+                      icon={<IconTagOff size={14} stroke={1.5} />}
+                      onClick={() => openContext('blockModelTags', { modelId: model.id })}
                     >
                       Hide content with these tags
                     </Menu.Item>
@@ -572,14 +571,15 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               </Menu.Dropdown>
             </Menu>
           </Group>
-          {model.status === ModelStatus.Unpublished && (
+          {(model.status === ModelStatus.Unpublished || deleted) && (
             <Alert color="red">
               <Group spacing="xs" noWrap align="flex-start">
                 <ThemeIcon color="red">
                   <IconExclamationMark />
                 </ThemeIcon>
                 <Text size="md">
-                  This model has been unpublished and is not visible to the community.
+                  This model has been {deleted ? 'deleted' : 'unpublished'} and is not visible to
+                  the community.
                 </Text>
               </Group>
             </Alert>
@@ -601,117 +601,82 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         <Grid gutter="xl">
           <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
             <Stack>
-              {latestVersion && (
-                <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
-                  <Stack sx={{ flex: 1 }} spacing={4}>
-                    <MultiActionButton
-                      component="a"
-                      href={createModelFileDownloadUrl({
-                        versionId: latestVersion.id,
-                        primary: true,
-                      })}
-                      leftIcon={<IconDownload size={16} />}
-                      disabled={!primaryFile}
-                      menuItems={
-                        latestVersion?.files.length > 1
-                          ? latestVersion?.files.map((file, index) => (
-                              <Menu.Item
-                                key={index}
-                                component="a"
-                                py={4}
-                                icon={<VerifiedText file={file} iconOnly />}
-                                href={createModelFileDownloadUrl({
-                                  versionId: latestVersion.id,
-                                  type: file.type,
-                                  format: file.format,
-                                })}
-                                download
-                              >
-                                {`${startCase(file.type)}${
-                                  ['Model', 'Pruned Model'].includes(file.type)
-                                    ? ' ' + file.format
-                                    : ''
-                                } (${formatKBytes(file.sizeKB)})`}
-                              </Menu.Item>
-                            ))
-                          : []
-                      }
-                      menuTooltip="Other Downloads"
-                      download
-                    >
-                      <Text align="center">
-                        {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+              <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
+                <Stack sx={{ flex: 1 }} spacing={4}>
+                  <MultiActionButton
+                    component="a"
+                    href={createModelFileDownloadUrl({
+                      versionId: latestVersion.id,
+                      primary: true,
+                    })}
+                    leftIcon={<IconDownload size={16} />}
+                    disabled={!primaryFile}
+                    menuItems={
+                      latestVersion?.files.length > 1
+                        ? latestVersion?.files.map((file, index) => (
+                            <Menu.Item
+                              key={index}
+                              component="a"
+                              py={4}
+                              icon={<VerifiedText file={file} iconOnly />}
+                              href={createModelFileDownloadUrl({
+                                versionId: latestVersion.id,
+                                type: file.type,
+                                format: file.format,
+                              })}
+                              download
+                            >
+                              {`${startCase(file.type)}${
+                                ['Model', 'Pruned Model'].includes(file.type)
+                                  ? ' ' + file.format
+                                  : ''
+                              } (${formatKBytes(file.sizeKB)})`}
+                            </Menu.Item>
+                          ))
+                        : []
+                    }
+                    menuTooltip="Other Downloads"
+                    download
+                  >
+                    <Text align="center">
+                      {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+                    </Text>
+                  </MultiActionButton>
+                  {primaryFile && (
+                    <Group position="apart" noWrap spacing={0}>
+                      <VerifiedText file={primaryFile} />
+                      <Text size="xs" color="dimmed">
+                        {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+                        {primaryFile.format}
                       </Text>
-                    </MultiActionButton>
-                    {primaryFile && (
-                      <Group position="apart" noWrap spacing={0}>
-                        <VerifiedText file={primaryFile} />
-                        <Text size="xs" color="dimmed">
-                          {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                          {primaryFile.format}
-                        </Text>
-                      </Group>
-                    )}
-                  </Stack>
+                    </Group>
+                  )}
+                </Stack>
 
-                  <RunButton modelVersionId={latestVersion.id} />
-                  <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-                    <div>
-                      <LoginRedirect reason="favorite-model">
-                        <Button
-                          onClick={() => handleToggleFavorite()}
-                          color={isFavorite ? 'red' : 'gray'}
-                          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                        >
-                          <IconHeart color="#fff" />
-                        </Button>
-                      </LoginRedirect>
-                    </div>
-                  </Tooltip>
-                </Group>
-              )}
-              {hasNegativeEmbed && (
-                <AlertWithIcon icon={<IconAlertCircle />}>
-                  This Textual Inversion includes a{' '}
-                  <Anchor
-                    href={createModelFileDownloadUrl({
-                      versionId: latestVersion.id,
-                      type: 'Negative',
-                    })}
-                  >
-                    Negative embed
-                  </Anchor>
-                  , install the negative and use it in the negative prompt for full effect.
-                </AlertWithIcon>
-              )}
-              {hasConfig && (
-                <AlertWithIcon icon={<IconAlertCircle />}>
-                  This checkpoint includes a{' '}
-                  <Anchor
-                    href={createModelFileDownloadUrl({
-                      versionId: latestVersion.id,
-                      type: 'Config',
-                    })}
-                  >
-                    config file
-                  </Anchor>
-                  , download and place it along side the checkpoint.
-                </AlertWithIcon>
-              )}
-              {hasVAE && (
-                <AlertWithIcon icon={<IconAlertCircle />}>
-                  This checkpoint includes a{' '}
-                  <Anchor
-                    href={createModelFileDownloadUrl({
-                      versionId: latestVersion.id,
-                      type: 'VAE',
-                    })}
-                  >
-                    VAE
-                  </Anchor>
-                  , download and place it along side the checkpoint.
-                </AlertWithIcon>
-              )}
+                <RunButton modelVersionId={latestVersion.id} />
+                <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
+                  <div>
+                    <LoginRedirect reason="favorite-model">
+                      <Button
+                        onClick={() => handleToggleFavorite()}
+                        color={isFavorite ? 'red' : 'gray'}
+                        sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                      >
+                        <IconHeart color="#fff" />
+                      </Button>
+                    </LoginRedirect>
+                  </div>
+                </Tooltip>
+              </Group>
+              <EarlyAccessAlert
+                versionId={latestVersion.id}
+                deadline={latestVersion.earlyAccessDeadline}
+              />
+              <ModelFileAlert
+                versionId={latestVersion.id}
+                modelType={model.type}
+                files={latestVersion.files}
+              />
               <DescriptionTable items={modelDetails} labelWidth="30%" />
               {model?.type === 'Checkpoint' && (
                 <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>
@@ -789,6 +754,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
             <Stack>
               {latestVersion.images.length > 0 && (
                 <Carousel
+                  key={model.id}
                   slideSize="50%"
                   breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
                   slideGap="xl"
@@ -805,7 +771,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       <Carousel.Slide>
                         <Center style={{ height: '100%', width: '100%' }}>
                           <div style={{ width: '100%', position: 'relative' }}>
-                            <ImageGuard.ToggleConnect>{ShowHide}</ImageGuard.ToggleConnect>
+                            <ImageGuard.ToggleConnect />
                             <ImageGuard.Unsafe>
                               <AspectRatio
                                 ratio={(image.width ?? 1) / (image.height ?? 1)}
@@ -824,9 +790,21 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                                 edgeImageProps={{ width: 400 }}
                                 radius="md"
                                 onClick={() =>
-                                  openContext('modelVersionLightbox', {
+                                  // Router.push({
+                                  //   pathname: `/gallery/${image.id}`,
+                                  //   query: {
+                                  //     modelId: model.id,
+                                  //     modelVersionId: latestVersion.id,
+                                  //     infinite: false,
+                                  //     returnUrl: Router.asPath,
+                                  //   },
+                                  // })
+                                  openRoutedContext('galleryDetailModal', {
+                                    galleryImageId: image.id,
+                                    modelId: model.id,
                                     modelVersionId: latestVersion.id,
-                                    initialSlide: index,
+                                    infinite: false,
+                                    returnUrl: Router.asPath,
                                   })
                                 }
                                 style={{ width: '100%' }}
@@ -842,7 +820,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
               )}
               {model.description ? (
                 <ContentClamp maxHeight={300}>
-                  <RenderHtml html={model.description} />
+                  <RenderHtml html={model.description} withMentions />
                 </ContentClamp>
               ) : null}
             </Stack>
@@ -853,6 +831,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                 Versions
               </Title>
               <ModelVersions
+                type={model.type}
                 items={model.modelVersions}
                 initialTab={latestVersion?.id.toString()}
                 nsfw={model.nsfw}
@@ -871,7 +850,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       variant="outline"
                       fullWidth={mobile}
                       size="xs"
-                      onClick={() => openContext('reviewEdit', {})}
+                      onClick={() => openRoutedContext('reviewEdit', {})}
                     >
                       Add Review
                     </Button>
@@ -881,43 +860,15 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       leftIcon={<IconMessage size={16} />}
                       variant="outline"
                       fullWidth={mobile}
-                      onClick={() => openContext('commentEdit', {})}
+                      onClick={() => openRoutedContext('commentEdit', {})}
                       size="xs"
                     >
                       Add Comment
                     </Button>
                   </LoginRedirect>
                 </Group>
-                <Group spacing="xs" noWrap grow>
-                  {/* <Select
-                    defaultValue={ReviewSort.Newest}
-                    icon={<IconArrowsSort size={14} />}
-                    data={Object.values(ReviewSort)
-                      // Only exclude MostDisliked until there's a clear way to sort by it
-                      .filter((sort) => ![ReviewSort.MostDisliked].includes(sort))
-                      .map((sort) => ({
-                        label: startCase(sort),
-                        value: sort,
-                      }))}
-                    onChange={handleReviewSortChange}
-                    size="xs"
-                  /> */}
-                  {/* <MultiSelect
-                    placeholder="Filters"
-                    icon={<IconFilter size={14} />}
-                    data={Object.values(ReviewFilter).map((sort) => ({
-                      label: startCase(sort),
-                      value: sort,
-                    }))}
-                    onChange={handleReviewFilterChange}
-                    size="xs"
-                    zIndex={500}
-                    clearButtonLabel="Clear review filters"
-                    clearable
-                  /> */}
-                </Group>
               </Group>
-              <ModelDiscussion modelId={model.id} filters={reviewFilters} />
+              <ModelDiscussion modelId={model.id} />
             </Stack>
           </Grid.Col>
         </Grid>

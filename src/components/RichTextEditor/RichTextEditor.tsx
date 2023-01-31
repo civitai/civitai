@@ -1,15 +1,17 @@
-import { Input, InputWrapperProps, MantineSize } from '@mantine/core';
+import { createStyles, Input, InputWrapperProps, MantineSize } from '@mantine/core';
 import { Link, RichTextEditor as RTE, RichTextEditorProps } from '@mantine/tiptap';
 import Image from '@tiptap/extension-image';
+import Mention from '@tiptap/extension-mention';
 import Placeholder from '@tiptap/extension-placeholder';
 import Underline from '@tiptap/extension-underline';
 import Youtube from '@tiptap/extension-youtube';
-import { BubbleMenu, Extensions, useEditor } from '@tiptap/react';
+import { BubbleMenu, Editor, Extension, Extensions, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { useEffect } from 'react';
+import { useEffect, useImperativeHandle, useRef } from 'react';
 
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
+import { getSuggestions } from './suggestion';
 
 const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
   sm: '30px',
@@ -17,6 +19,12 @@ const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
   lg: '70px',
   xl: '90px',
 };
+
+const useStyles = createStyles((theme) => ({
+  mention: {
+    color: theme.colors.blue[4],
+  },
+}));
 
 export function RichTextEditor({
   id,
@@ -33,14 +41,18 @@ export function RichTextEditor({
   editorSize = 'sm',
   reset = 0,
   autoFocus,
+  defaultSuggestions,
+  innerRef,
+  onSuperEnter,
   ...props
 }: Props) {
+  const { classes } = useStyles();
   const addHeading = includeControls.includes('heading');
   const addFormatting = includeControls.includes('formatting');
   const addList = includeControls.includes('list');
   const addLink = includeControls.includes('link');
   const addMedia = includeControls.includes('media');
-  // const [value, setValue] = useState(initialValue);
+  const addMentions = includeControls.includes('mentions');
 
   const extensions: Extensions = [
     Placeholder.configure({ placeholder }),
@@ -55,6 +67,19 @@ export function RichTextEditor({
       blockquote: !addFormatting ? false : undefined,
       codeBlock: !addFormatting ? false : undefined,
     }),
+    ...(onSuperEnter
+      ? [
+          Extension.create({
+            name: 'onSubmitShortcut',
+            addKeyboardShortcuts: () => ({
+              'Mod-Enter': () => {
+                onSuperEnter();
+                return true; // Dunno why they want a boolean here
+              },
+            }),
+          }),
+        ]
+      : []),
     ...(addFormatting ? [Underline] : []),
     ...(addLink ? [Link] : []),
     // Casting width as any to be able to use `100%`
@@ -62,6 +87,19 @@ export function RichTextEditor({
     // strings for its value
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ...(addMedia ? [Image, Youtube.configure({ width: '100%' as any })] : []),
+    ...(addMentions
+      ? [
+          Mention.configure({
+            suggestion: getSuggestions({ defaultSuggestions }),
+            HTMLAttributes: {
+              class: classes.mention,
+            },
+            renderLabel({ options, node }) {
+              return `${options.suggestion.char}${node.attrs.label ?? node.attrs.id}`;
+            },
+          }),
+        ]
+      : []),
   ];
 
   const editor = useEditor({
@@ -70,6 +108,8 @@ export function RichTextEditor({
     onUpdate: onChange ? ({ editor }) => onChange(editor.getHTML()) : undefined,
     editable: !disabled,
   });
+
+  const editorRef = useRef<Editor>();
 
   // To clear content after a form submission
   useEffect(() => {
@@ -83,8 +123,22 @@ export function RichTextEditor({
   }, [reset]); //eslint-disable-line
 
   useEffect(() => {
-    if (editor && autoFocus) editor.commands.focus('end');
+    if (editor && autoFocus) editor.commands.focus('end', { scrollIntoView: true });
   }, [editor, autoFocus]);
+
+  useEffect(() => {
+    if (editor && !editorRef.current) editorRef.current = editor;
+  }, [editor]);
+
+  // Used to call editor commands outside the component via a ref
+  useImperativeHandle(innerRef, () => ({
+    insertContentAtCursor: (value) => {
+      if (editorRef.current && innerRef) {
+        const currentPosition = editorRef.current.state.selection.$anchor.pos;
+        editorRef.current.commands.insertContentAt(currentPosition, value);
+      }
+    },
+  }));
 
   return (
     <Input.Wrapper
@@ -181,8 +235,9 @@ export function RichTextEditor({
   );
 }
 
-type ControlType = 'heading' | 'formatting' | 'list' | 'link' | 'media';
+export type EditorCommandsRef = { insertContentAtCursor: (value: string) => void };
 
+type ControlType = 'heading' | 'formatting' | 'list' | 'link' | 'media' | 'mentions';
 type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;
@@ -193,4 +248,7 @@ type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
     editorSize?: 'sm' | 'md' | 'lg' | 'xl';
     reset?: number;
     autoFocus?: boolean;
+    defaultSuggestions?: Array<{ id: number; label: string }>;
+    innerRef?: React.ForwardedRef<EditorCommandsRef>;
+    onSuperEnter?: () => void;
   };

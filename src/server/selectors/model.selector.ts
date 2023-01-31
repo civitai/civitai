@@ -96,7 +96,7 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
   },
 });
 
-export const modelWithDetailsSelect = (includeNSFW = true, prioritizeSafeImages = false) =>
+export const modelWithDetailsSelect = (includeNSFW = true) =>
   Prisma.validator<Prisma.ModelSelect>()({
     id: true,
     name: true,
@@ -105,12 +105,15 @@ export const modelWithDetailsSelect = (includeNSFW = true, prioritizeSafeImages 
     nsfw: true,
     type: true,
     updatedAt: true,
+    deletedAt: true,
     status: true,
+    checkpointType: true,
     allowNoCredit: true,
     allowCommercialUse: true,
     allowDerivatives: true,
     allowDifferentLicense: true,
     licenses: true,
+    publishedAt: true,
     reportStats: {
       select: {
         ownershipProcessing: true,
@@ -119,17 +122,17 @@ export const modelWithDetailsSelect = (includeNSFW = true, prioritizeSafeImages 
     user: {
       select: {
         id: true,
-        name: true,
-        email: true,
         image: true,
         username: true,
         rank: { select: { leaderboardRank: true } },
       },
     },
+    // TODO - why is this not referencing `getModelVersionDetailsSelect`? If they are out of sync, we should sync it up
     modelVersions: {
       orderBy: { index: 'asc' },
       select: {
         id: true,
+        modelId: true,
         name: true,
         description: true,
         steps: true,
@@ -139,10 +142,8 @@ export const modelWithDetailsSelect = (includeNSFW = true, prioritizeSafeImages 
         trainedWords: true,
         inaccurate: true,
         baseModel: true,
+        earlyAccessTimeFrame: true,
         images: {
-          // orderBy: prioritizeSafeImages
-          //   ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
-          //   : [{ index: 'asc' }],
           orderBy: { index: 'asc' },
           select: {
             index: true,

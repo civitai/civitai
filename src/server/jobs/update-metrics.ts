@@ -1,5 +1,8 @@
 import { createJob } from './job';
 import { prisma } from '~/server/db/client';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('update-metrics', 'blue');
 
 const METRIC_LAST_UPDATED_KEY = 'last-metrics-update';
 const RANK_LAST_UPDATED_KEY = 'last-rank-update';
@@ -35,6 +38,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           WHERE (a."createdAt" > '${lastUpdate}')
           AND (a.activity IN ('ModelDownload'))
 
+          UNION
+
+          SELECT muq.id AS model_id, mv.id AS model_version_id
+          FROM "MetricUpdateQueue" muq
+          JOIN "ModelVersion" mv ON mv."modelId" = muq.id
+          WHERE type = 'Model'
         ),
         -- Get all reviews that have been created/updated since then
         recent_reviews AS
@@ -50,8 +59,8 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         (
           SELECT
             "modelId" AS model_id
-          FROM "FavoriteModel"
-          WHERE ("createdAt" > '${lastUpdate}')
+          FROM "ModelEngagement"
+          WHERE ("createdAt" > '${lastUpdate}') AND type = 'Favorite'
         ),
         -- Get all comments that have been created since then
         recent_comments AS
@@ -231,7 +240,8 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
               SUM(CASE WHEN f."createdAt" >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_favorite_count,
               SUM(CASE WHEN f."createdAt" >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_favorite_count,
               SUM(CASE WHEN f."createdAt" >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_favorite_count
-            FROM "FavoriteModel" f
+            FROM "ModelEngagement" f
+            WHERE type = 'Favorite'
             GROUP BY f."modelId"
           ) fs ON m.model_id = fs.model_id
           LEFT JOIN (
@@ -252,6 +262,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         ON CONFLICT ("${tableId}", timeframe) DO UPDATE
           SET "downloadCount" = EXCLUDED."downloadCount", "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating, "favoriteCount" = EXCLUDED."favoriteCount", "commentCount" = EXCLUDED."commentCount";
         `);
+    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Model'`);
   };
 
   const updateUserMetrics = async () => {
@@ -299,6 +310,13 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           "userId"
         FROM "Answer" ar
         WHERE "createdAt" > '${lastUpdate}'
+
+        UNION
+
+        SELECT
+          "id"
+        FROM "MetricUpdateQueue"
+        WHERE type = 'User'
       ),
       -- Get all affected users
       affected_users AS
@@ -479,6 +497,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("userId", timeframe) DO UPDATE
         SET "followerCount" = EXCLUDED."followerCount", "followingCount" = EXCLUDED."followingCount", "hiddenCount" = EXCLUDED."hiddenCount", "uploadCount" = EXCLUDED."uploadCount", "reviewCount" = EXCLUDED."reviewCount", "answerCount" = EXCLUDED."answerCount", "answerAcceptCount" = EXCLUDED."answerAcceptCount";
     `);
+    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'User'`);
   };
 
   const updateQuestionMetrics = async () => {
@@ -504,6 +523,13 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         FROM "QuestionComment" a
         JOIN "CommentV2" c ON a."commentId" = c.id
         WHERE (c."createdAt" > '${lastUpdate}')
+
+        UNION
+
+        SELECT
+          "id"
+        FROM "MetricUpdateQueue"
+        WHERE type = 'Question'
       ),
       -- Get all affected users
       affected AS
@@ -602,6 +628,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("questionId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "answerCount" = EXCLUDED."answerCount";
     `);
+    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Question'`);
   };
 
   const updateAnswerMetrics = async () => {
@@ -627,6 +654,13 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           "answerId" AS id
         FROM "AnswerVote"
         WHERE "createdAt" > '${lastUpdate}'
+
+        UNION
+
+        SELECT
+          "id"
+        FROM "MetricUpdateQueue"
+        WHERE type = 'Answer'
       ),
       -- Get all affected users
       affected AS
@@ -747,6 +781,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("answerId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "checkCount" = EXCLUDED."checkCount", "crossCount" = EXCLUDED."crossCount";
     `);
+    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Answer'`);
   };
 
   const updateTagMetrics = async () => {
@@ -766,6 +801,13 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           "tagId" AS id
         FROM "TagEngagement"
         WHERE ("createdAt" > '${lastUpdate}')
+
+        UNION
+
+        SELECT
+          "id"
+        FROM "MetricUpdateQueue"
+        WHERE type = 'Tag'
       ),
       -- Get all affected
       affected AS
@@ -858,6 +900,177 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("tagId", timeframe) DO UPDATE
         SET "followerCount" = EXCLUDED."followerCount", "modelCount" = EXCLUDED."modelCount", "hiddenCount" = EXCLUDED."hiddenCount";
     `);
+    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Tag'`);
+  };
+
+  const updateImageMetrics = async () => {
+    await prisma.$executeRawUnsafe(`
+      WITH recent_engagements AS
+      (
+        SELECT
+          "imageId" AS id
+        FROM "ImageReaction"
+        WHERE "createdAt" > '${lastUpdate}'
+
+        UNION
+
+        SELECT
+          a."imageId" AS id
+        FROM "ImageComment" a
+        JOIN "CommentV2" c ON a."commentId" = c.id
+        WHERE (c."createdAt" > '${lastUpdate}')
+
+        UNION
+
+        SELECT
+          "id"
+        FROM "MetricUpdateQueue"
+        WHERE type = 'Image'
+      ),
+      -- Get all affected users
+      affected AS
+      (
+          SELECT DISTINCT
+              r.id
+          FROM recent_engagements r
+          WHERE r.id IS NOT NULL
+      )
+
+      -- upsert metrics for all affected users
+      -- perform a one-pass table scan producing all metrics for all affected users
+      INSERT INTO "ImageMetric" ("imageId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount", "commentCount")
+      SELECT
+        m.id,
+        tf.timeframe,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN like_count
+          WHEN tf.timeframe = 'Year' THEN year_like_count
+          WHEN tf.timeframe = 'Month' THEN month_like_count
+          WHEN tf.timeframe = 'Week' THEN week_like_count
+          WHEN tf.timeframe = 'Day' THEN day_like_count
+        END AS like_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN dislike_count
+          WHEN tf.timeframe = 'Year' THEN year_dislike_count
+          WHEN tf.timeframe = 'Month' THEN month_dislike_count
+          WHEN tf.timeframe = 'Week' THEN week_dislike_count
+          WHEN tf.timeframe = 'Day' THEN day_dislike_count
+        END AS dislike_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN heart_count
+          WHEN tf.timeframe = 'Year' THEN year_heart_count
+          WHEN tf.timeframe = 'Month' THEN month_heart_count
+          WHEN tf.timeframe = 'Week' THEN week_heart_count
+          WHEN tf.timeframe = 'Day' THEN day_heart_count
+        END AS heart_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN laugh_count
+          WHEN tf.timeframe = 'Year' THEN year_laugh_count
+          WHEN tf.timeframe = 'Month' THEN month_laugh_count
+          WHEN tf.timeframe = 'Week' THEN week_laugh_count
+          WHEN tf.timeframe = 'Day' THEN day_laugh_count
+        END AS laugh_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN cry_count
+          WHEN tf.timeframe = 'Year' THEN year_cry_count
+          WHEN tf.timeframe = 'Month' THEN month_cry_count
+          WHEN tf.timeframe = 'Week' THEN week_cry_count
+          WHEN tf.timeframe = 'Day' THEN day_cry_count
+        END AS cry_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN comment_count
+          WHEN tf.timeframe = 'Year' THEN year_comment_count
+          WHEN tf.timeframe = 'Month' THEN month_comment_count
+          WHEN tf.timeframe = 'Week' THEN week_comment_count
+          WHEN tf.timeframe = 'Day' THEN day_comment_count
+        END AS comment_count
+      FROM
+      (
+        SELECT
+          q.id,
+          COALESCE(r.heart_count, 0) AS heart_count,
+          COALESCE(r.year_heart_count, 0) AS year_heart_count,
+          COALESCE(r.month_heart_count, 0) AS month_heart_count,
+          COALESCE(r.week_heart_count, 0) AS week_heart_count,
+          COALESCE(r.day_heart_count, 0) AS day_heart_count,
+          COALESCE(r.laugh_count, 0) AS laugh_count,
+          COALESCE(r.year_laugh_count, 0) AS year_laugh_count,
+          COALESCE(r.month_laugh_count, 0) AS month_laugh_count,
+          COALESCE(r.week_laugh_count, 0) AS week_laugh_count,
+          COALESCE(r.day_laugh_count, 0) AS day_laugh_count,
+          COALESCE(r.cry_count, 0) AS cry_count,
+          COALESCE(r.year_cry_count, 0) AS year_cry_count,
+          COALESCE(r.month_cry_count, 0) AS month_cry_count,
+          COALESCE(r.week_cry_count, 0) AS week_cry_count,
+          COALESCE(r.day_cry_count, 0) AS day_cry_count,
+          COALESCE(r.dislike_count, 0) AS dislike_count,
+          COALESCE(r.year_dislike_count, 0) AS year_dislike_count,
+          COALESCE(r.month_dislike_count, 0) AS month_dislike_count,
+          COALESCE(r.week_dislike_count, 0) AS week_dislike_count,
+          COALESCE(r.day_dislike_count, 0) AS day_dislike_count,
+          COALESCE(r.like_count, 0) AS like_count,
+          COALESCE(r.year_like_count, 0) AS year_like_count,
+          COALESCE(r.month_like_count, 0) AS month_like_count,
+          COALESCE(r.week_like_count, 0) AS week_like_count,
+          COALESCE(r.day_like_count, 0) AS day_like_count,
+          COALESCE(c.comment_count, 0) AS comment_count,
+          COALESCE(c.year_comment_count, 0) AS year_comment_count,
+          COALESCE(c.month_comment_count, 0) AS month_comment_count,
+          COALESCE(c.week_comment_count, 0) AS week_comment_count,
+          COALESCE(c.day_comment_count, 0) AS day_comment_count
+        FROM affected q
+        LEFT JOIN (
+          SELECT
+            ic."imageId" AS id,
+            COUNT(*) AS comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_comment_count
+          FROM "ImageComment" ic
+          JOIN "CommentV2" v ON ic."commentId" = v.id
+          GROUP BY ic."imageId"
+        ) c ON q.id = c.id
+        LEFT JOIN (
+          SELECT
+            ir."imageId" AS id,
+            SUM(IIF(ir.reaction = 'Heart', 1, 0)) AS heart_count,
+            SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_heart_count,
+            SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_heart_count,
+            SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_heart_count,
+            SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_heart_count,
+            SUM(IIF(ir.reaction = 'Like', 1, 0)) AS like_count,
+            SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_like_count,
+            SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_like_count,
+            SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_like_count,
+            SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_like_count,
+            SUM(IIF(ir.reaction = 'Dislike', 1, 0)) AS dislike_count,
+            SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_dislike_count,
+            SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_dislike_count,
+            SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_dislike_count,
+            SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_dislike_count,
+            SUM(IIF(ir.reaction = 'Cry', 1, 0)) AS cry_count,
+            SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_cry_count,
+            SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_cry_count,
+            SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_cry_count,
+            SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_cry_count,
+            SUM(IIF(ir.reaction = 'Laugh', 1, 0)) AS laugh_count,
+            SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_laugh_count,
+            SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_laugh_count,
+            SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_laugh_count,
+            SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_laugh_count
+          FROM "ImageReaction" ir
+          GROUP BY ir."imageId"
+        ) r ON q.id = r.id
+      ) m
+      CROSS JOIN (
+        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+      ) tf
+      ON CONFLICT ("imageId", timeframe) DO UPDATE
+        SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount";
+    `);
+
+    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Image'`);
   };
 
   const refreshModelRank = async () =>
@@ -866,6 +1079,9 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
   const refreshUserRank = async () =>
     await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "UserRank"');
 
+  const refreshImageRank = async () =>
+    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ImageRank"');
+
   const clearDayMetrics = async () =>
     await Promise.all(
       [
@@ -873,12 +1089,16 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         `UPDATE "ModelVersionMetric" SET "downloadCount" = 0, "ratingCount" = 0, rating = 0, "favoriteCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
         `UPDATE "QuestionMetric" SET "answerCount" = 0, "commentCount" = 0, "heartCount" = 0 WHERE timeframe = 'Day';`,
         `UPDATE "AnswerMetric" SET "heartCount" = 0, "checkCount" = 0, "crossCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
+        `UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
       ].map((x) => prisma.$executeRawUnsafe(x))
     );
 
   // If this is the first metric update of the day, reset the day metrics
   // -------------------------------------------------------------------
-  if (lastUpdateDate.getDate() !== new Date().getDate()) await clearDayMetrics();
+  if (lastUpdateDate.getDate() !== new Date().getDate()) {
+    await clearDayMetrics();
+    log('Cleared day metrics');
+  }
 
   // Update all affected metrics
   // --------------------------------------------
@@ -888,7 +1108,9 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
   await updateQuestionMetrics();
   await updateUserMetrics();
   await updateTagMetrics();
+  await updateImageMetrics();
   await refreshModelRank();
+  log('Updated metrics');
 
   // Update the last update time
   // --------------------------------------------
@@ -902,8 +1124,9 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
   // --------------------------------------------
   const shouldUpdateRanks = lastRankDate.getTime() + RANK_UPDATE_DELAY <= new Date().getTime();
   if (shouldUpdateRanks) {
+    await refreshImageRank();
     await refreshUserRank();
-    console.log('Updated ranks');
+    log('Updated ranks');
     await prisma?.keyValue.upsert({
       where: { key: RANK_LAST_UPDATED_KEY },
       create: { key: RANK_LAST_UPDATED_KEY, value: new Date().getTime() },
@@ -911,3 +1134,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
     });
   }
 });
+
+type MetricUpdateType = 'Model' | 'ModelVersion' | 'Answer' | 'Question' | 'User' | 'Tag' | 'Image';
+export const queueMetricUpdate = async (type: MetricUpdateType, id: number) => {
+  try {
+    await prisma.metricUpdateQueue.createMany({ data: { type, id } });
+  } catch (e) {
+    // Ignore duplicate errors
+  }
+};

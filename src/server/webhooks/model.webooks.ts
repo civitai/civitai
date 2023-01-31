@@ -16,6 +16,7 @@ export const modelWebhooks = createWebhookProcessor({
             publishedAt: {
               gt: lastSent,
             },
+            deletedAt: null,
           },
           select: getAllModelsWithVersionsSelect,
         })

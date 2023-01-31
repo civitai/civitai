@@ -6,16 +6,20 @@ import React from 'react';
 import { AccountsCard } from '~/components/Account/AccountsCard';
 import { ApiKeysCard } from '~/components/Account/ApiKeysCard';
 import { CreatorCard } from '~/components/Account/CreatorCard';
+import { DeleteCard } from '~/components/Account/DeleteCard';
 import { NotificationsCard } from '~/components/Account/NotificationsCard';
 import { ProfileCard } from '~/components/Account/ProfileCard';
 import { SettingsCard } from '~/components/Account/SettingsCard';
 import { TagsCard } from '~/components/Account/TagsCard';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/server.mjs';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 
 export default function Account({ providers, isDev = false }: Props) {
+  const { apiKeys } = useFeatureFlags();
+
   return (
     <>
       <Meta title="Manage your Account - Civitai" />
@@ -35,7 +39,8 @@ export default function Account({ providers, isDev = false }: Props) {
           <TagsCard />
           <NotificationsCard />
           <AccountsCard providers={providers} />
-          {isDev && <ApiKeysCard />}
+          {apiKeys && <ApiKeysCard />}
+          <DeleteCard />
         </Stack>
       </Container>
     </>

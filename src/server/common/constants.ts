@@ -1,4 +1,4 @@
-import { QuestionSort } from './enums';
+import { ImageSort, QuestionSort } from './enums';
 import { MetricTimeframe } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 
@@ -9,6 +9,11 @@ export const constants = {
   },
   questionFilterDefaults: {
     sort: QuestionSort.MostLiked,
+    period: MetricTimeframe.AllTime,
+    limit: 50,
+  },
+  imageFilterDefaults: {
+    sort: ImageSort.MostComments,
     period: MetricTimeframe.AllTime,
     limit: 50,
   },

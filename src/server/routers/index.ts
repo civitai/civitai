@@ -19,9 +19,11 @@ import { commentv2Router } from './commentv2.router';
 import { reactionRouter } from './reaction.router';
 import { downloadRouter } from './download.router';
 import { stripeRouter } from './stripe.router';
+import { announcementRouter } from '~/server/routers/announcement.router';
 
 export const appRouter = router({
   account: accountRouter,
+  announcement: announcementRouter,
   apiKey: apiKeyRouter,
   auth: authRouter,
   comment: commentRouter,

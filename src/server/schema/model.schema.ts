@@ -1,15 +1,22 @@
-import { ModelType, ModelStatus, MetricTimeframe, CommercialUse } from '@prisma/client';
+import {
+  ModelType,
+  ModelStatus,
+  MetricTimeframe,
+  CommercialUse,
+  CheckpointType,
+} from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
 import { ModelSort } from '~/server/common/enums';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
 
 export const getAllModelsSchema = z.object({
-  limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).optional(),
+  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
   page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
   cursor: z.preprocess((val) => Number(val), z.number()).optional(),
   query: z.string().optional(),
@@ -25,6 +32,12 @@ export const getAllModelsSchema = z.object({
     .optional()
     .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
     .optional(),
+  status: z
+    .union([z.nativeEnum(ModelStatus), z.nativeEnum(ModelStatus).array()])
+    .optional()
+    .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
+    .optional(),
+  checkpointType: z.nativeEnum(CheckpointType).optional(),
   baseModels: z
     .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
     .optional()
@@ -43,6 +56,11 @@ export const getAllModelsSchema = z.object({
     (val) => val === true || val === 'true',
     z.boolean().optional().default(false)
   ),
+  hidden: z.preprocess(
+    (val) => val === true || val === 'true',
+    z.boolean().optional().default(false)
+  ),
+  excludedIds: z.array(z.number()).optional(),
   excludedTagIds: z.array(z.number()).optional(),
 });
 
@@ -62,6 +80,7 @@ export const modelSchema = licensingSchema.extend({
   description: getSanitizedStringSchema().nullish(),
   type: z.nativeEnum(ModelType),
   status: z.nativeEnum(ModelStatus),
+  checkpointType: z.nativeEnum(CheckpointType).nullish(),
   tagsOnModels: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   poi: z.boolean().optional(),
@@ -77,3 +96,6 @@ export const mergePermissionInput = licensingSchema.extend({
   modelId: z.number(),
   permissionDate: z.date().default(new Date()),
 });
+
+export const deleteModelSchema = getByIdSchema.extend({ permanently: z.boolean().optional() });
+export type DeleteModelSchema = z.infer<typeof deleteModelSchema>;

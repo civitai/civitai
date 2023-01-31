@@ -1,15 +1,18 @@
-import { MetricTimeframe, ModelType } from '@prisma/client';
+import { useSetState } from '@mantine/hooks';
+import { CheckpointType, MetricTimeframe, ModelStatus, ModelType } from '@prisma/client';
 import React, { createContext, useContext } from 'react';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
-import { ModelSort, QuestionSort, QuestionStatus } from '~/server/common/enums';
+import { ImageSort, ModelSort, QuestionSort, QuestionStatus } from '~/server/common/enums';
 
 export const modelFilterSchema = z.object({
   sort: z.nativeEnum(ModelSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
   types: z.nativeEnum(ModelType).array().optional(),
+  checkpointType: z.nativeEnum(CheckpointType).optional(),
   baseModels: z.enum(constants.baseModels).array().optional(),
   hideNSFW: z.boolean().optional(),
+  status: z.nativeEnum(ModelStatus).array().optional(),
 });
 
 export const questionsFilterSchema = z.object({
@@ -18,19 +21,29 @@ export const questionsFilterSchema = z.object({
   status: z.nativeEnum(QuestionStatus).optional(),
 });
 
+export const galleryFilterSchema = z.object({
+  sort: z.nativeEnum(ImageSort).optional(),
+  period: z.nativeEnum(MetricTimeframe).optional(),
+  hideNSFW: z.boolean().optional(),
+});
+
 const CookiesCtx = createContext<CookiesContext>({} as CookiesContext);
 export const useCookies = () => useContext(CookiesCtx);
 export const CookiesProvider = ({
   children,
-  value,
+  value: initialValue,
 }: {
   children: React.ReactNode;
   value: CookiesContext;
-}) => <CookiesCtx.Provider value={value}>{children}</CookiesCtx.Provider>;
+}) => {
+  const [value] = useSetState(initialValue);
+  return <CookiesCtx.Provider value={value}>{children}</CookiesCtx.Provider>;
+};
 
 const cookiesSchema = z.object({
   models: modelFilterSchema,
   questions: questionsFilterSchema,
+  gallery: galleryFilterSchema,
 });
 export type CookiesContext = z.input<typeof cookiesSchema>;
 
@@ -46,11 +59,17 @@ export function parseCookies(
       types: cookies?.['f_types'],
       baseModels: cookies?.['f_baseModels'],
       hideNSFW: cookies?.['f_hideNSFW'],
+      status: cookies?.['f_status'],
     },
     questions: {
       sort: cookies?.['q_sort'],
       period: cookies?.['q_period'],
       status: cookies?.['q_status'],
+    },
+    gallery: {
+      sort: cookies?.['g_sort'],
+      period: cookies?.['g_period'],
+      hideNSFW: cookies?.['g_hideNSFW'],
     },
   });
 }
@@ -66,6 +85,7 @@ const zodParse = z
           types: z.string(),
           baseModels: z.string(),
           hideNSFW: z.string(),
+          status: z.string(),
         })
         .partial(),
       questions: z
@@ -75,18 +95,27 @@ const zodParse = z
           status: z.string(),
         })
         .partial(),
+      gallery: z
+        .object({
+          sort: z.string(),
+          period: z.string(),
+          hideNSFW: z.string(),
+        })
+        .partial(),
     })
   )
   .implement(
-    ({ models, questions }) =>
+    ({ models, questions, gallery }) =>
       ({
         models: {
           ...models,
           types: !!models.types ? JSON.parse(decodeURIComponent(models.types)) : [],
           baseModels: !!models.baseModels ? JSON.parse(decodeURIComponent(models.baseModels)) : [],
           hideNSFW: models?.hideNSFW === 'true',
+          status: !!models.status ? JSON.parse(decodeURIComponent(models.status)) : [],
         },
         questions,
+        gallery: { ...gallery, hideNSFW: gallery.hideNSFW === 'true' },
       } as CookiesContext)
   );
 

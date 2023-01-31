@@ -1,5 +1,5 @@
 import create from 'zustand';
-import { ModelType, MetricTimeframe } from '@prisma/client';
+import { ModelType, MetricTimeframe, CheckpointType, ModelStatus } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { splitUppercase } from '~/utils/string-helpers';
@@ -15,17 +15,14 @@ import {
   Divider,
   SegmentedControl,
   Button,
+  Chip,
 } from '@mantine/core';
-import { IconChevronDown, IconFilter, IconFilterOff, IconX } from '@tabler/icons';
+import { IconChevronDown, IconFilter, IconFilterOff } from '@tabler/icons';
 import { z } from 'zod';
-import { BaseModel, constants } from '~/server/common/constants';
-import dayjs from 'dayjs';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 
-const setCookie = (key: string, data: any) => // eslint-disable-line
-  sc(key, data, {
-    expires: dayjs().add(1, 'year').toDate(),
-  });
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { BaseModel, constants } from '~/server/common/constants';
+import { setCookie } from '~/utils/cookies-helpers';
 
 type FilterProps = z.input<typeof modelFilterSchema>;
 
@@ -34,10 +31,12 @@ export const useFilters = create<{
   setSort: (sort?: ModelSort) => void;
   setPeriod: (period?: MetricTimeframe) => void;
   setTypes: (types?: ModelType[]) => void;
+  setCheckpointType: (checkpointType?: CheckpointType) => void;
   setBaseModels: (baseModels?: BaseModel[]) => void;
   setHideNSFW: (includeNSFW?: boolean) => void;
+  setStatus: (status?: ModelStatus[]) => void;
 }>()(
-  immer((set, get) => ({//eslint-disable-line
+  immer((set) => ({
     filters: {},
     setSort: (sort) => {
       set((state) => {
@@ -57,6 +56,12 @@ export const useFilters = create<{
         !!types?.length ? setCookie('f_types', types) : deleteCookie('f_types');
       });
     },
+    setCheckpointType: (type) => {
+      set((state) => {
+        state.filters.checkpointType = type;
+        !!type ? setCookie('f_ckptType', type) : deleteCookie('f_ckptType');
+      });
+    },
     setBaseModels: (baseModels) => {
       set((state) => {
         state.filters.baseModels = baseModels;
@@ -69,6 +74,12 @@ export const useFilters = create<{
         hideNSFW ? setCookie('f_hideNSFW', hideNSFW) : deleteCookie('f_hideNSFW');
       });
     },
+    setStatus: (status) => {
+      set((state) => {
+        state.filters.status = status;
+        !!status?.length ? setCookie('f_status', status) : deleteCookie('f_status');
+      });
+    },
   }))
 );
 
@@ -79,10 +90,11 @@ export const useInfiniteModelsFilters = () => {
     baseModels,
     types,
     hideNSFW,
+    status,
   } = useCookies().models;
 
   const filters = useFilters((state) => state.filters);
-  return { limit: 100, sort, period, types, baseModels, hideNSFW, ...filters };
+  return { limit: 100, sort, period, types, baseModels, hideNSFW, status, ...filters };
 };
 
 const sortOptions = Object.values(ModelSort);
@@ -121,22 +133,38 @@ export function InfiniteModelsPeriod() {
   );
 }
 
+const availableStatus = Object.values(ModelStatus).filter((status) =>
+  ['Draft', 'Deleted'].includes(status)
+);
+
 export function InfiniteModelsFilter() {
   const cookies = useCookies().models;
   const user = useCurrentUser();
   const setTypes = useFilters((state) => state.setTypes);
   const types = useFilters((state) => state.filters.types ?? cookies.types ?? []);
+  const setStatus = useFilters((state) => state.setStatus);
+  const status = useFilters((state) => state.filters.status ?? cookies.status ?? []);
   const setBaseModels = useFilters((state) => state.setBaseModels);
   const baseModels = useFilters((state) => state.filters.baseModels ?? cookies.baseModels ?? []);
   const hideNSFW = useFilters((state) => state.filters.hideNSFW ?? cookies.hideNSFW ?? false);
   const setHideNSFW = useFilters((state) => state.setHideNSFW);
+  const setCheckpointType = useFilters((state) => state.setCheckpointType);
+  const checkpointType = useFilters(
+    (state) => state.filters.checkpointType ?? cookies.checkpointType ?? 'all'
+  );
   const showNSFWToggle = !user || user.showNsfw;
+  const showCheckpointType = !types?.length || types.includes('Checkpoint');
 
-  const filterLength = types.length + baseModels.length + (showNSFWToggle && hideNSFW ? 1 : 0);
+  const filterLength =
+    types.length +
+    baseModels.length +
+    (showNSFWToggle && hideNSFW ? 1 : 0) +
+    (showCheckpointType && checkpointType !== 'all' ? 1 : 0);
   const handleClear = () => {
     setTypes([]);
     setBaseModels([]);
     setHideNSFW(false);
+    setCheckpointType(undefined);
   };
 
   return (
@@ -185,6 +213,23 @@ export function InfiniteModelsFilter() {
               />
             </>
           )}
+          {user?.isModerator && (
+            <>
+              <Divider label="Model status" labelProps={{ weight: 'bold' }} />
+              <Chip.Group
+                spacing={4}
+                value={status}
+                onChange={(status: ModelStatus[]) => setStatus(status)}
+                multiple
+              >
+                {availableStatus.map((status) => (
+                  <Chip key={status} value={status} size="xs">
+                    {status}
+                  </Chip>
+                ))}
+              </Chip.Group>
+            </>
+          )}
           <Divider label="Model types" labelProps={{ weight: 'bold' }} />
           <Checkbox.Group
             value={types}
@@ -197,6 +242,34 @@ export function InfiniteModelsFilter() {
               <Checkbox key={index} value={type} label={splitUppercase(type)} />
             ))}
           </Checkbox.Group>
+          {showCheckpointType ? (
+            <>
+              <Divider label="Checkpoint type" labelProps={{ weight: 'bold' }} />
+              <SegmentedControl
+                my={5}
+                value={checkpointType}
+                size="xs"
+                color="blue"
+                styles={(theme) => ({
+                  root: {
+                    border: `1px solid ${
+                      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+                    }`,
+                    background: 'none',
+                  },
+                })}
+                data={[{ label: 'All', value: 'all' }].concat(
+                  Object.values(CheckpointType).map((type) => ({
+                    label: splitUppercase(type),
+                    value: type,
+                  }))
+                )}
+                onChange={(value: CheckpointType | 'all') => {
+                  setCheckpointType(value !== 'all' ? value : undefined);
+                }}
+              />
+            </>
+          ) : null}
           <Divider label="Base model" labelProps={{ weight: 'bold' }} />
           <Checkbox.Group
             value={baseModels}

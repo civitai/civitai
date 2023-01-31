@@ -25,7 +25,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { openContext } from '~/providers/CustomModalsProvider';
 import { InfiniteCommentResults } from '~/server/controllers/commentv2.controller';
 import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -162,7 +162,6 @@ Comments.ListItem = function CommentDetail({
   ...groupProps
 }: { comment: InfiniteCommentResults['comments'][0] } & GroupProps) {
   const { entityId, entityType } = useCommentsContext();
-  const { openContext } = useRoutedContext();
   const currentUser = useCurrentUser();
   const [editing, setEditing] = useState(false);
   const isOwner = currentUser?.id === comment.user.id;
@@ -210,7 +209,7 @@ Comments.ListItem = function CommentDetail({
                     icon={<IconFlag size={14} stroke={1.5} />}
                     onClick={() =>
                       openContext('report', {
-                        type: ReportEntity.Comment,
+                        entityType: ReportEntity.Comment,
                         entityId: comment.id,
                       })
                     }

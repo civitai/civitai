@@ -60,13 +60,25 @@ export const createReport = async ({
             where: { imagesOnReviews: { reviewId: id } },
             data: { nsfw: true },
           });
+
+          const review = await tx.review.findUnique({
+            where: { id },
+            select: { model: { select: { poi: true } } },
+          });
+          if (review?.model?.poi && report.create) {
+            report.create.reason = ReportReason.TOSViolation;
+            await prisma.reviewReport.create({
+              data: {
+                review: { connect: { id } },
+                report,
+              },
+            });
+          }
         } else if (data.reason === ReportReason.TOSViolation) {
           await tx.review.update({ where: { id }, data: { tosViolation: true } });
         }
         break;
       case ReportEntity.Comment:
-        console.log('_____CREATE COMMENT REPORT____');
-        console.log({ id, report });
         await prisma.commentReport.create({
           data: {
             comment: { connect: { id } },
@@ -75,6 +87,17 @@ export const createReport = async ({
         });
         if (toUpdate) {
           await tx.comment.update({ where: { id }, data: toUpdate });
+        }
+        break;
+      case ReportEntity.Image:
+        await tx.imageReport.create({
+          data: {
+            image: { connect: { id } },
+            report,
+          },
+        });
+        if (toUpdate) {
+          await tx.image.update({ where: { id }, data: toUpdate });
         }
         break;
       default:

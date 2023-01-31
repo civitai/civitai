@@ -12,9 +12,9 @@ import {
   useMantineTheme,
   Card,
 } from '@mantine/core';
-import { IconCrown, IconDownload, IconHeart, IconStar, IconUpload, IconUsers } from '@tabler/icons';
-import { useRouter } from 'next/router';
-import { GetServerSideProps } from 'next/types';
+import { IconDownload, IconHeart, IconStar, IconUpload, IconUsers } from '@tabler/icons';
+import { GetServerSidePropsContext, InferGetServerSidePropsType } from 'next/types';
+
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeImage, getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
@@ -27,28 +27,31 @@ import {
 } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { Meta } from '~/components/Meta/Meta';
-import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
+import { Username } from '~/components/User/Username';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
-export const getServerSideProps: GetServerSideProps = async (ctx) => {
-  const ssg = await getServerProxySSGHelpers(ctx);
-  const username = postgresSlugify(ctx.query.username as string);
-  if (username) await ssg.user.getCreator.prefetch({ username });
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  resolver: async ({ ssg, ctx }) => {
+    const username = postgresSlugify(ctx.query.username as string);
+    if (username) await ssg?.user.getCreator.prefetch({ username });
 
-  return {
-    props: {
-      trpcState: ssg.dehydrate(),
-    },
-  };
-};
+    return {
+      props: {
+        username,
+      },
+    };
+  },
+});
 
-export default function UserPage() {
-  const router = useRouter();
+export default function UserPage({
+  username,
+}: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
-  const username = postgresSlugify(router.query.username as string);
   const { classes } = useStyles();
 
   const { data: user } = trpc.user.getCreator.useQuery({ username });
@@ -98,7 +101,9 @@ export default function UserPage() {
                   )}
                   <Stack spacing="xs">
                     <Group position="apart">
-                      <Title order={2}>{user.username}</Title>
+                      <Title order={2}>
+                        <Username {...user} inherit />
+                      </Title>
                       <FollowUserButton userId={user.id} size="md" compact />
                     </Group>
                     <Group spacing="xs">

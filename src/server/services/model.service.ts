@@ -1,4 +1,4 @@
-import { MetricTimeframe, ModelStatus, Prisma, TagTarget } from '@prisma/client';
+import { MetricTimeframe, ModelStatus, ModelType, Prisma, TagTarget } from '@prisma/client';
 import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
 
@@ -9,8 +9,9 @@ import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
 import { prepareFile } from '~/utils/file-helpers';
 import { env } from '~/env/server.mjs';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
+import { TRPCError } from '@trpc/server';
 
-export const getModel = async <TSelect extends Prisma.ModelSelect>({
+export const getModel = <TSelect extends Prisma.ModelSelect>({
   input: { id },
   user,
   select,
@@ -19,7 +20,7 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   select: TSelect;
 }) => {
-  return await prisma.model.findFirst({
+  return prisma.model.findFirst({
     where: {
       id,
       OR: !user?.isModerator
@@ -46,8 +47,12 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     period = MetricTimeframe.AllTime,
     rating,
     favorites,
+    hidden,
     hideNSFW,
     excludedTagIds,
+    excludedIds,
+    checkpointType,
+    status,
   },
   select,
   user: sessionUser,
@@ -61,7 +66,17 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   if (!sessionUser?.isModerator) {
-    AND.push({ OR: [{ status: ModelStatus.Published }, { user: { id: sessionUser?.id } }] });
+    AND.push({
+      OR: [
+        { status: ModelStatus.Published },
+        ...(sessionUser
+          ? [{ AND: [{ user: { id: sessionUser?.id } }, { status: ModelStatus.Draft }] }]
+          : []),
+      ],
+    });
+  }
+  if (sessionUser?.isModerator) {
+    AND.push({ status: status && status.length > 0 ? { in: status } : ModelStatus.Published });
   }
   if (query) {
     AND.push({
@@ -88,6 +103,12 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       tagsOnModels: { every: { tagId: { notIn: excludedTagIds } } },
     });
   }
+  if (excludedIds) {
+    AND.push({ id: { notIn: excludedIds } });
+  }
+  if (checkpointType && types?.length && types.includes('Checkpoint')) {
+    AND.push({ checkpointType });
+  }
 
   const where: Prisma.ModelWhereInput = {
     tagsOnModels:
@@ -102,7 +123,11 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
           AND: [{ ratingAllTime: { gte: rating } }, { ratingAllTime: { lt: rating + 1 } }],
         }
       : undefined,
-    favoriteModels: favorites ? { some: { userId: sessionUser?.id } } : undefined,
+    engagements: favorites
+      ? { some: { userId: sessionUser?.id, type: 'Favorite' } }
+      : hidden
+      ? { some: { userId: sessionUser?.id, type: 'Hide' } }
+      : undefined,
     AND: AND.length ? AND : undefined,
     modelVersions: baseModels?.length ? { some: { baseModel: { in: baseModels } } } : undefined,
   };
@@ -152,7 +177,43 @@ export const updateModelById = ({ id, data }: { id: number; data: Prisma.ModelUp
 };
 
 export const deleteModelById = ({ id }: GetByIdInput) => {
+  return prisma.model.update({
+    where: { id },
+    data: { deletedAt: new Date(), status: 'Deleted' },
+  });
+};
+
+export const restoreModelById = ({ id }: GetByIdInput) => {
+  return prisma.model.update({ where: { id }, data: { deletedAt: null, status: 'Draft' } });
+};
+
+export const permaDeleteModelById = ({ id }: GetByIdInput) => {
   return prisma.model.delete({ where: { id } });
+};
+
+const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
+  return versions.map(({ files, ...version }) => {
+    // Keep tab whether there's a file format-type conflict.
+    // We needed to manually check for this because Prisma doesn't do
+    // error handling all too well
+    const fileConflicts: Record<string, boolean> = {};
+
+    return {
+      ...version,
+      files: files.map((file) => {
+        const preparedFile = prepareFile(file);
+
+        if (fileConflicts[`${preparedFile.type}-${preparedFile.format}`])
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: `Only 1 ${preparedFile.format} ${preparedFile.type} file can be attached to a version, please review your uploads and try again`,
+          });
+        else fileConflicts[`${preparedFile.type}-${preparedFile.format}`] = true;
+
+        return preparedFile;
+      }),
+    };
+  });
 };
 
 export const createModel = async ({
@@ -171,27 +232,26 @@ export const createModel = async ({
   // Upsert ModelFiles: separate function
   // 👆 Ideally the whole thing will only be this many lines
   //    All of the logic would be in the separate functions
-  const allImagesNSFW = modelVersions
+
+  const parsedModelVersions = prepareModelVersions(modelVersions);
+  const allImagesNSFW = parsedModelVersions
     .flatMap((version) => version.images)
     .every((image) => image.nsfw);
 
   return prisma.model.create({
     data: {
       ...data,
-      //TODO - if all images are nsfw and !data.nsfw, then data.nsfw needs to be true
-      // nsfw:
-      //   modelVersions.flatMap((version) => version.images).every((image) => image.nsfw) ??
-      //   data.nsfw,
+      checkpointType: data.type === ModelType.Checkpoint ? data.checkpointType : null,
       publishedAt: data.status === ModelStatus.Published ? new Date() : null,
       lastVersionAt: new Date(),
-      nsfw: data.nsfw || allImagesNSFW,
+      nsfw: data.nsfw || (allImagesNSFW && data.status === ModelStatus.Published),
       userId,
       modelVersions: {
-        create: modelVersions.map(({ images, files, ...version }, versionIndex) => ({
+        create: parsedModelVersions.map(({ images, files, ...version }, versionIndex) => ({
           ...version,
           index: versionIndex,
           status: data.status,
-          files: files ? { create: files.map(prepareFile) } : undefined,
+          files: files.length > 0 ? { create: files } : undefined,
           images: {
             create: images.map((image, index) => ({
               index,
@@ -230,9 +290,10 @@ export const updateModel = async ({
   userId,
   ...data
 }: ModelInput & { id: number; userId: number }) => {
+  const parsedModelVersions = prepareModelVersions(modelVersions);
   const currentModel = await prisma.model.findUnique({
     where: { id },
-    select: { status: true },
+    select: { status: true, publishedAt: true },
   });
   if (!currentModel) return currentModel;
 
@@ -278,12 +339,12 @@ export const updateModel = async ({
 
   // Determine which version to create/update
   type PayloadVersion = typeof modelVersions[number] & { index: number };
-  const { versionsToCreate, versionsToUpdate } = modelVersions.reduce(
+  const { versionsToCreate, versionsToUpdate } = parsedModelVersions.reduce(
     (acc, current, index) => {
       if (!current.id) acc.versionsToCreate.push({ ...current, index });
       else {
         const matched = existingVersions.findIndex((version) => version.id === current.id);
-        const different = !isEqual(existingVersions[matched], modelVersions[matched]);
+        const different = !isEqual(existingVersions[matched], parsedModelVersions[matched]);
         if (different) acc.versionsToUpdate.push({ ...current, index });
       }
 
@@ -292,10 +353,10 @@ export const updateModel = async ({
     { versionsToCreate: [] as PayloadVersion[], versionsToUpdate: [] as PayloadVersion[] }
   );
 
-  const versionIds = modelVersions.map((version) => version.id).filter(Boolean) as number[];
-  const hasNewVersions = modelVersions.some((x) => !x.id);
+  const versionIds = parsedModelVersions.map((version) => version.id).filter(Boolean) as number[];
+  const hasNewVersions = parsedModelVersions.some((x) => !x.id);
 
-  const allImagesNSFW = modelVersions
+  const allImagesNSFW = parsedModelVersions
     .flatMap((version) => version.images)
     .every((image) => image.nsfw);
 
@@ -303,18 +364,19 @@ export const updateModel = async ({
     where: { id },
     data: {
       ...data,
-      nsfw: data.nsfw || allImagesNSFW,
+      checkpointType: data.type === ModelType.Checkpoint ? data.checkpointType : null,
+      nsfw: data.nsfw || (allImagesNSFW && data.status === ModelStatus.Published),
       status: data.status,
       publishedAt:
-        data.status === ModelStatus.Published && currentModel?.status !== ModelStatus.Published
+        data.status === ModelStatus.Published && currentModel.status !== ModelStatus.Published
           ? new Date()
-          : null,
+          : currentModel.publishedAt,
       lastVersionAt: hasNewVersions ? new Date() : undefined,
       modelVersions: {
         deleteMany: versionIds.length > 0 ? { id: { notIn: versionIds } } : undefined,
         create: versionsToCreate.map(({ images, files, ...version }) => ({
           ...version,
-          files: { create: files.map(prepareFile) },
+          files: { create: files },
           images: {
             create: images.map(({ id, meta, ...image }, index) => ({
               index,
@@ -388,7 +450,7 @@ export const updateModel = async ({
               status: data.status,
               files: {
                 deleteMany: fileIds.length > 0 ? { id: { notIn: fileIds } } : undefined,
-                create: filesToCreate.map(prepareFile),
+                create: filesToCreate,
                 update: filesToUpdate.map(({ id, ...fileData }) => ({
                   where: { id: id ?? -1 },
                   data: { ...fileData },

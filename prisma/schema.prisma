@@ -34,12 +34,21 @@ model Account {
   @@unique([provider, providerAccountId])
 }
 
+// We aren't using DB sessions, but next-auth likes this... I guess.
 model Session {
   id           Int      @id @default(autoincrement())
   sessionToken String   @unique
   userId       Int
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SessionInvalidation {
+  userId        Int
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invalidatedAt DateTime @default(now())
+
+  @@id([userId, invalidatedAt])
 }
 
 model User {
@@ -71,10 +80,7 @@ model User {
   saves                SavedModel[]
   imports              Import[]
   keys                 ApiKey[]
-  favoriteModels       FavoriteModel[]
   links                UserLink[]
-  stats                UserStat?
-  rank                 UserRank?
   comments             Comment[]
   commentReactions     CommentReaction[]
   notifications        Notification[]
@@ -83,6 +89,8 @@ model User {
   interests            ModelInterest[]
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
   engagedUsers         UserEngagement[]           @relation("engagedUsers")
+  engagedModels        ModelEngagement[]
+  engagedModelVersions ModelVersionEngagement[]
   metrics              UserMetric[]
   reports              Report[]
   questions            Question[]
@@ -92,8 +100,14 @@ model User {
   answerReactions      AnswerReaction[]
   commentV2Reactions   CommentV2Reaction[]
   answerVotes          AnswerVote[]
-  downloads            DownloadHistory[]
   tagsEngaged          TagEngagement[]
+
+  imageReactions      ImageReaction[]
+  sessionInvalidation SessionInvalidation[]
+  stats               UserStat?
+  rank                UserRank?
+  downloads           DownloadHistory[]
+  imageConnections    ImageConnection[]
 }
 
 enum UserEngagementType {
@@ -103,9 +117,9 @@ enum UserEngagementType {
 
 model UserEngagement {
   userId       Int
-  user         User               @relation("engagingUsers", fields: [userId], references: [id])
+  user         User               @relation("engagingUsers", fields: [userId], references: [id], onDelete: Cascade)
   targetUserId Int
-  targetUser   User               @relation("engagedUsers", fields: [targetUserId], references: [id])
+  targetUser   User               @relation("engagedUsers", fields: [targetUserId], references: [id], onDelete: Cascade)
   type         UserEngagementType
   createdAt    DateTime           @default(now())
 
@@ -188,6 +202,7 @@ enum ModelStatus {
   Published
   Unpublished
   GatherInterest
+  Deleted
 }
 
 enum CommercialUse {
@@ -197,24 +212,31 @@ enum CommercialUse {
   Sell
 }
 
+enum CheckpointType {
+  Trained
+  Merge
+}
+
 model Model {
-  id            Int         @id @default(autoincrement())
-  name          String
-  description   String?
-  type          ModelType
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  lastVersionAt DateTime?
-  nsfw          Boolean     @default(false)
-  tosViolation  Boolean     @default(false)
-  poi           Boolean     @default(false)
-  userId        Int
-  user          User        @relation(fields: [userId], references: [id])
-  status        ModelStatus @default(Draft)
-  publishedAt   DateTime?
-  fromImport    Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
-  fromImportId  Int?        @unique
-  meta          Json        @default("{}")
+  id             Int             @id @default(autoincrement())
+  name           String
+  description    String?
+  type           ModelType
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  lastVersionAt  DateTime?
+  nsfw           Boolean         @default(false)
+  tosViolation   Boolean         @default(false)
+  poi            Boolean         @default(false)
+  userId         Int
+  user           User            @relation(fields: [userId], references: [id])
+  status         ModelStatus     @default(Draft)
+  publishedAt    DateTime?
+  fromImport     Import?         @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImportId   Int?            @unique
+  meta           Json            @default("{}")
+  deletedAt      DateTime?
+  checkpointType CheckpointType?
 
   // Licensing
   allowNoCredit         Boolean       @default(true)
@@ -222,19 +244,20 @@ model Model {
   allowDerivatives      Boolean       @default(true)
   allowDifferentLicense Boolean       @default(true)
 
-  modelVersions  ModelVersion[]
-  reviews        Review[]
-  tagsOnModels   TagsOnModels[]
-  metrics        ModelMetric[]
-  saves          SavedModel[]
-  rank           ModelRank?
-  reportStats    ModelReportStat?
-  reports        ModelReport[]
-  favoriteModels FavoriteModel[]
-  comments       Comment[]
-  interests      ModelInterest[]
-  downloads      DownloadHistory[]
-  licenses       License[]
+  modelVersions    ModelVersion[]
+  reviews          Review[]
+  tagsOnModels     TagsOnModels[]
+  metrics          ModelMetric[]
+  saves            SavedModel[]
+  reports          ModelReport[]
+  engagements      ModelEngagement[]
+  comments         Comment[]
+  interests        ModelInterest[]
+  licenses         License[]
+  rank             ModelRank?
+  reportStats      ModelReportStat?
+  downloads        DownloadHistory[]
+  imageConnections ImageConnection[]
 }
 
 model License {
@@ -254,48 +277,74 @@ model ModelInterest {
   @@id([userId, modelId])
 }
 
-model FavoriteModel {
+enum ModelEngagementType {
+  Favorite
+  Hide
+}
+
+model ModelEngagement {
   userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   modelId   Int
-  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  model     Model               @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  type      ModelEngagementType
+  createdAt DateTime            @default(now())
 
   @@id([userId, modelId])
 }
 
 model ModelVersion {
-  id           Int         @id @default(autoincrement())
-  index        Int?
-  name         String
-  description  String?
-  modelId      Int
-  model        Model       @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  trainedWords String[]
-  steps        Int?
-  epochs       Int?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  status       ModelStatus @default(Draft)
-  fromImport   Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
-  fromImportId Int?
-  inaccurate   Boolean     @default(false)
-  baseModel    String?
-  meta         Json        @default("{}")
+  id                   Int         @id @default(autoincrement())
+  index                Int?
+  name                 String
+  description          String?
+  modelId              Int
+  model                Model       @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  trainedWords         String[]
+  steps                Int?
+  epochs               Int?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  status               ModelStatus @default(Draft)
+  fromImport           Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImportId         Int?
+  inaccurate           Boolean     @default(false)
+  baseModel            String?
+  meta                 Json        @default("{}")
+  earlyAccessTimeFrame Int         @default(0)
 
-  reviews       Review[]
-  images        ImagesOnModels[]
-  metrics       ModelVersionMetric[]
-  rank          ModelVersionRank?
-  files         ModelFile[]
-  runStrategies RunStrategy[]
-  downloads     DownloadHistory[]
+  reviews          Review[]
+  images           ImagesOnModels[]
+  metrics          ModelVersionMetric[]
+  files            ModelFile[]
+  runStrategies    RunStrategy[]
+  engagements      ModelVersionEngagement[]
+  rank             ModelVersionRank?
+  downloads        DownloadHistory[]
+  imageConnections ImageConnection[]
+}
+
+enum ModelVersionEngagementType {
+  Notify
+}
+
+model ModelVersionEngagement {
+  userId         Int
+  user           User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelVersionId Int
+  modelVersion   ModelVersion               @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  type           ModelVersionEngagementType
+  createdAt      DateTime                   @default(now())
+
+  @@id([userId, modelVersionId])
 }
 
 enum ModelHashType {
   AutoV1
+  AutoV2
   SHA256
-  CRC
+  CRC32
+  BLAKE3
 }
 
 model ModelHash {
@@ -381,6 +430,7 @@ model ModelVersionMetric {
 enum UserActivityType {
   ModelDownload
   ModelRun
+  OtherDownload
   TrainingDataDownload
   HashReport
 }
@@ -413,7 +463,7 @@ enum ReportStatus {
 model Report {
   id        Int            @id @default(autoincrement())
   userId    Int
-  user      User           @relation(fields: [userId], references: [id])
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   reason    ReportReason
   createdAt DateTime       @default(now())
   details   Json?
@@ -421,6 +471,7 @@ model Report {
   model     ModelReport?
   review    ReviewReport?
   comment   CommentReport?
+  image     ImageReport?
 }
 
 model ModelReport {
@@ -450,11 +501,18 @@ model CommentReport {
   @@id([reportId, commentId])
 }
 
+model ImageReport {
+  imageId  Int
+  image    Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  reportId Int    @unique
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+}
+
 model Review {
   id             Int           @id @default(autoincrement())
   model          Model         @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId        Int
-  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
   modelVersionId Int?
   user           User          @relation(fields: [userId], references: [id])
   userId         Int
@@ -466,10 +524,11 @@ model Review {
   tosViolation   Boolean       @default(false)
   exclude        Boolean       @default(false)
 
-  reactions       ReviewReaction[]
-  imagesOnReviews ImagesOnReviews[]
-  reports         ReviewReport[]
-  comments        Comment[]
+  reactions        ReviewReaction[]
+  imagesOnReviews  ImagesOnReviews[]
+  reports          ReviewReport[]
+  comments         Comment[]
+  imageConnections ImageConnection[]
 }
 
 enum ReviewReactions {
@@ -497,7 +556,7 @@ model Image {
   id           Int      @id @default(autoincrement())
   name         String?
   url          String
-  user         User     @relation(fields: [userId], references: [id])
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId       Int
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -511,6 +570,28 @@ model Image {
 
   imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?
+  reports         ImageReport[]
+  reactions       ImageReaction[]
+  comments        ImageComment[]
+  tags            TagsOnImage[]
+  metrics         ImageMetric[]
+  connections     ImageConnection?
+  stats           ImageStat?
+  rank            ImageRank?
+}
+
+model ImageMetric {
+  image        Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  imageId      Int
+  timeframe    MetricTimeframe
+  likeCount    Int             @default(0)
+  dislikeCount Int             @default(0)
+  laughCount   Int             @default(0)
+  cryCount     Int             @default(0)
+  heartCount   Int             @default(0)
+  commentCount Int             @default(0)
+
+  @@id([imageId, timeframe])
 }
 
 enum ImageOnModelType {
@@ -541,6 +622,7 @@ model ImagesOnReviews {
 enum TagTarget {
   Model
   Question
+  Image
 }
 
 model Tag {
@@ -553,13 +635,43 @@ model Tag {
   unlisted  Boolean   @default(false)
 
   tagsOnModels   TagsOnModels[]
-  TagsOnQuestion TagsOnQuestions[]
+  tagsOnQuestion TagsOnQuestions[]
+  tagsOnImage    TagsOnImage[]
   usersEngaged   TagEngagement[]
   metrics        TagMetric[]
   stats          TagStat?
   rank           TagRank?
 
   @@unique([name, target])
+}
+
+model TagsOnModels {
+  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelId   Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId     Int
+  createdAt DateTime @default(now())
+
+  @@id([modelId, tagId])
+}
+
+model TagsOnQuestions {
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  questionId Int
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId      Int
+
+  @@id([tagId, questionId])
+}
+
+model TagsOnImage {
+  imageId   Int
+  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([tagId, imageId])
 }
 
 model TagMetric {
@@ -571,16 +683,6 @@ model TagMetric {
   followerCount Int             @default(0)
 
   @@id([tagId, timeframe])
-}
-
-model TagsOnModels {
-  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  modelId   Int
-  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  tagId     Int
-  createdAt DateTime @default(now())
-
-  @@id([modelId, tagId])
 }
 
 model SavedModel {
@@ -618,6 +720,7 @@ model Partner {
   startupTime      Int? //Seconds
   onDemand         Boolean
   onDemandStrategy String? // URL Template
+  onDemandTypes    ModelType[]         @default([])
   stepsPerSecond   Int
   pricingModel     PartnerPricingModel
   price            String
@@ -769,19 +872,27 @@ model Answer {
   comments  AnswerComment[]
   metrics   AnswerMetric[]
   answerFor Question?        @relation("SelectedAnswer")
-  rank      AnswerRank?
   votes     AnswerVote[]
+  rank      AnswerRank?
 }
 
 model AnswerVote {
-  answer    Answer   @relation(fields: [answerId], references: [id])
+  answer    Answer   @relation(fields: [answerId], references: [id], onDelete: Cascade)
   answerId  Int
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    Int
   vote      Boolean?
   createdAt DateTime @default(now())
 
   @@id([answerId, userId])
+}
+
+model MetricUpdateQueue {
+  type      String
+  id        Int
+  createdAt DateTime @default(now())
+
+  @@id([type, id])
 }
 
 model AnswerMetric {
@@ -812,6 +923,7 @@ model CommentV2 {
   question  QuestionComment?
   answer    AnswerComment?
   reactions CommentV2Reaction[]
+  image     ImageComment?
 }
 
 model QuestionComment {
@@ -832,13 +944,13 @@ model AnswerComment {
   @@id([answerId, commentId])
 }
 
-model TagsOnQuestions {
-  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
-  questionId Int
-  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  tagId      Int
+model ImageComment {
+  imageId   Int
+  image     Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  commentId Int       @unique
+  comment   CommentV2 @relation(fields: [commentId], references: [id], onDelete: Cascade)
 
-  @@id([tagId, questionId])
+  @@id([imageId, commentId])
 }
 
 model QuestionReaction {
@@ -880,6 +992,19 @@ model CommentV2Reaction {
   @@unique([commentId, userId, reaction])
 }
 
+model ImageReaction {
+  id        Int             @id @default(autoincrement())
+  imageId   Int
+  image     Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([imageId, userId, reaction])
+}
+
 enum TagEngagementType {
   Hide
   Follow
@@ -887,13 +1012,25 @@ enum TagEngagementType {
 
 model TagEngagement {
   userId    Int
-  user      User              @relation(fields: [userId], references: [id])
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   tagId     Int
-  tag       Tag               @relation(fields: [tagId], references: [id])
+  tag       Tag               @relation(fields: [tagId], references: [id], onDelete: Cascade)
   type      TagEngagementType
   createdAt DateTime          @default(now())
 
   @@id([userId, tagId])
+}
+
+model Announcement {
+  id        Int       @id @default(autoincrement())
+  title     String
+  content   String
+  emoji     String?
+  color     String    @default("blue")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  startsAt  DateTime?
+  endsAt    DateTime?
 }
 
 /// @view
@@ -1248,4 +1385,91 @@ model DownloadHistory {
   modelId        Int
   model          Model        @relation(fields: [modelId], references: [id], onDelete: NoAction)
   createdAt      DateTime
+}
+
+/// @view
+model ImageConnection {
+  imageId        Int           @id
+  image          Image         @relation(fields: [imageId], references: [id], onDelete: NoAction)
+  userId         Int
+  user           User          @relation(fields: [userId], references: [id], onDelete: NoAction)
+  modelId        Int?
+  model          Model?        @relation(fields: [modelId], references: [id], onDelete: NoAction)
+  modelVersionId Int?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
+  reviewId       Int?
+  review         Review?       @relation(fields: [reviewId], references: [id], onDelete: NoAction)
+  index          Int?
+}
+
+/// @view
+model ImageStat {
+  imageId             Int   @id
+  image               Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
+  cryCountDay         Int   @default(0)
+  cryCountWeek        Int   @default(0)
+  cryCountMonth       Int   @default(0)
+  cryCountYear        Int   @default(0)
+  cryCountAllTime     Int   @default(0)
+  dislikeCountDay     Int   @default(0)
+  dislikeCountWeek    Int   @default(0)
+  dislikeCountMonth   Int   @default(0)
+  dislikeCountYear    Int   @default(0)
+  dislikeCountAllTime Int   @default(0)
+  heartCountDay       Int   @default(0)
+  heartCountWeek      Int   @default(0)
+  heartCountMonth     Int   @default(0)
+  heartCountYear      Int   @default(0)
+  heartCountAllTime   Int   @default(0)
+  laughCountDay       Int   @default(0)
+  laughCountWeek      Int   @default(0)
+  laughCountMonth     Int   @default(0)
+  laughCountYear      Int   @default(0)
+  laughCountAllTime   Int   @default(0)
+  likeCountDay        Int   @default(0)
+  likeCountWeek       Int   @default(0)
+  likeCountMonth      Int   @default(0)
+  likeCountYear       Int   @default(0)
+  likeCountAllTime    Int   @default(0)
+  commentCountDay     Int   @default(0)
+  commentCountWeek    Int   @default(0)
+  commentCountMonth   Int   @default(0)
+  commentCountYear    Int   @default(0)
+  commentCountAllTime Int   @default(0)
+}
+
+/// @view
+model ImageRank {
+  imageId                 Int   @id
+  image                   Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
+  cryCountDayRank         Int   @default(0)
+  cryCountWeekRank        Int   @default(0)
+  cryCountMonthRank       Int   @default(0)
+  cryCountYearRank        Int   @default(0)
+  cryCountAllTimeRank     Int   @default(0)
+  dislikeCountDayRank     Int   @default(0)
+  dislikeCountWeekRank    Int   @default(0)
+  dislikeCountMonthRank   Int   @default(0)
+  dislikeCountYearRank    Int   @default(0)
+  dislikeCountAllTimeRank Int   @default(0)
+  heartCountDayRank       Int   @default(0)
+  heartCountWeekRank      Int   @default(0)
+  heartCountMonthRank     Int   @default(0)
+  heartCountYearRank      Int   @default(0)
+  heartCountAllTimeRank   Int   @default(0)
+  laughCountDayRank       Int   @default(0)
+  laughCountWeekRank      Int   @default(0)
+  laughCountMonthRank     Int   @default(0)
+  laughCountYearRank      Int   @default(0)
+  laughCountAllTimeRank   Int   @default(0)
+  likeCountDayRank        Int   @default(0)
+  likeCountWeekRank       Int   @default(0)
+  likeCountMonthRank      Int   @default(0)
+  likeCountYearRank       Int   @default(0)
+  likeCountAllTimeRank    Int   @default(0)
+  commentCountDayRank     Int   @default(0)
+  commentCountWeekRank    Int   @default(0)
+  commentCountMonthRank   Int   @default(0)
+  commentCountYearRank    Int   @default(0)
+  commentCountAllTimeRank Int   @default(0)
 }

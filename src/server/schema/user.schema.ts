@@ -8,7 +8,9 @@ export const getUserByUsernameSchema = z.object({
 export type GetUserByUsernameSchema = z.infer<typeof getUserByUsernameSchema>;
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 
-export const getAllUsersInput = getAllQuerySchema.extend({ email: z.string() }).partial();
+export const getAllUsersInput = getAllQuerySchema
+  .extend({ email: z.string(), ids: z.array(z.number()) })
+  .partial();
 export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
 
 export const userUpsertSchema = z.object({
@@ -24,8 +26,8 @@ export const userUpsertSchema = z.object({
 });
 export type UserUpsertInput = z.input<typeof userUpsertSchema>;
 
-export const toggleFavoriteModelInput = z.object({ modelId: z.number() });
-export type ToggleFavoriteModelInput = z.infer<typeof toggleFavoriteModelInput>;
+export const toggleModelEngagementInput = z.object({ modelId: z.number() });
+export type ToggleModelEngagementInput = z.infer<typeof toggleModelEngagementInput>;
 
 export const toggleFollowUserSchema = z.object({ targetUserId: z.number() });
 export type ToggleFollowUserSchema = z.infer<typeof toggleFollowUserSchema>;
@@ -45,6 +47,6 @@ export type GetByUsernameSchema = z.infer<typeof getByUsernameSchema>;
 export type DeleteUserInput = z.infer<typeof deleteUserSchema>;
 export const deleteUserSchema = z.object({
   id: z.number(),
-  username: z.string(),
+  username: z.string().optional(),
   removeModels: z.boolean().optional(),
 });

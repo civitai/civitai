@@ -1,8 +1,16 @@
+import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  getGalleryImagesInfiniteHandler,
+  getGalleryImageDetailHandler,
   getModelVersionImagesHandler,
   getReviewImagesHandler,
+  getGalleryImagesHandler,
 } from './../controllers/image.controller';
-import { getModelVersionImageSchema, getReviewImagesSchema } from './../schema/image.schema';
+import {
+  getModelVersionImageSchema,
+  getReviewImagesSchema,
+  getGalleryImageSchema,
+} from './../schema/image.schema';
 import { publicProcedure, router } from '~/server/trpc';
 
 export const imageRouter = router({
@@ -10,4 +18,9 @@ export const imageRouter = router({
     .input(getModelVersionImageSchema)
     .query(getModelVersionImagesHandler),
   getReviewImages: publicProcedure.input(getReviewImagesSchema).query(getReviewImagesHandler),
+  getGalleryImagesInfinite: publicProcedure
+    .input(getGalleryImageSchema)
+    .query(getGalleryImagesInfiniteHandler),
+  getGalleryImages: publicProcedure.input(getGalleryImageSchema).query(getGalleryImagesHandler),
+  getGalleryImageDetail: publicProcedure.input(getByIdSchema).query(getGalleryImageDetailHandler),
 });

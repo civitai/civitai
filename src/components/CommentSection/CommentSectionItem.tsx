@@ -1,27 +1,31 @@
 import { Anchor, Badge, Group, Stack, Text, Button, Menu, ActionIcon } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconDotsVertical, IconTrash, IconEdit, IconFlag } from '@tabler/icons';
+import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconArrowBackUp } from '@tabler/icons';
 import Link from 'next/link';
 import { useState } from 'react';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
+import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { CommentGetCommentsById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export function CommentSectionItem({ comment, modelId }: Props) {
+export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
-  const { openContext } = useRoutedContext();
+  // TODO Briant: This is a hack to support direct linking to a comment...
+  // I wanted to just use a hash, but that broke things on refresh...
+  const directLink = new URL(window.location.href);
+  directLink.searchParams.set('highlight', comment.id.toString());
 
   const [editComment, setEditComment] = useState<Props['comment'] | null>(null);
 
@@ -158,17 +162,21 @@ export function CommentSectionItem({ comment, modelId }: Props) {
         <Stack spacing="xs" sx={{ flex: '1 1 0' }}>
           <Stack spacing={0}>
             <Group spacing={8} align="center">
-              <Link href={`/user/${comment.user.username}`} passHref>
-                <Anchor variant="text" size="sm" weight="bold">
-                  {comment.user.username}
-                </Anchor>
-              </Link>
+              {!comment.user.deletedAt ? (
+                <Link href={`/user/${comment.user.username}`} passHref>
+                  <Anchor variant="text" size="sm" weight="bold">
+                    <Username {...comment.user} />
+                  </Anchor>
+                </Link>
+              ) : (
+                <Username {...comment.user} />
+              )}
               {comment.user.id === model?.user.id ? (
                 <Badge color="violet" size="xs">
                   OP
                 </Badge>
               ) : null}
-              <Text color="dimmed" size="xs">
+              <Text color="dimmed" size="xs" component="a" href={directLink.toString()}>
                 <DaysFromNow date={comment.createdAt} />
               </Text>
             </Group>
@@ -176,12 +184,13 @@ export function CommentSectionItem({ comment, modelId }: Props) {
               <RenderHtml
                 html={comment.content}
                 sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+                withMentions
               />
             ) : (
               <RichTextEditor
                 value={editComment.content}
                 disabled={saveCommentMutation.isLoading}
-                includeControls={['formatting', 'link']}
+                includeControls={['formatting', 'link', 'mentions']}
                 onChange={(value) =>
                   setEditComment((state) => (state ? { ...state, content: value } : state))
                 }
@@ -190,10 +199,26 @@ export function CommentSectionItem({ comment, modelId }: Props) {
             )}
           </Stack>
           {!isEditing ? (
-            <ReactionPicker
-              reactions={reactions}
-              onSelect={(reaction) => toggleReactionMutation.mutate({ id: comment.id, reaction })}
-            />
+            <Group spacing={4}>
+              <ReactionPicker
+                reactions={reactions}
+                onSelect={(reaction) => toggleReactionMutation.mutate({ id: comment.id, reaction })}
+              />
+              {!isOwner && (
+                <Button
+                  variant="subtle"
+                  size="xs"
+                  radius="xl"
+                  onClick={() => onReplyClick(comment)}
+                  compact
+                >
+                  <Group spacing={4}>
+                    <IconArrowBackUp size={14} />
+                    Reply
+                  </Group>
+                </Button>
+              )}
+            </Group>
           ) : (
             <Group position="right">
               <Button variant="default" size="xs" onClick={() => setEditComment(null)}>
@@ -240,7 +265,7 @@ export function CommentSectionItem({ comment, modelId }: Props) {
                 icon={<IconFlag size={14} stroke={1.5} />}
                 onClick={() =>
                   openContext('report', {
-                    type: ReportEntity.Comment,
+                    entityType: ReportEntity.Comment,
                     entityId: comment.id,
                   })
                 }
@@ -258,4 +283,5 @@ export function CommentSectionItem({ comment, modelId }: Props) {
 type Props = {
   comment: CommentGetCommentsById[number];
   modelId: number;
+  onReplyClick: (comment: CommentGetCommentsById[number]) => void;
 };

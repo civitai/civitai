@@ -24,8 +24,10 @@ export const commentUpsertInput = z.object({
   reviewId: z.number().nullish(),
   parentId: z.number().nullish(),
   content: getSanitizedStringSchema({
-    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br'],
-  }),
+    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span'],
+  }).refine((data) => {
+    return data && data.length > 0 && data !== '<p></p>';
+  }, 'Cannot be empty'),
 });
 
 export type GetCommentReactionsSchema = z.infer<typeof getCommentReactionsSchema>;

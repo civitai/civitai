@@ -39,6 +39,7 @@ export const serverSchema = z.object({
   S3_UPLOAD_REGION: z.string(),
   S3_UPLOAD_ENDPOINT: z.string().url(),
   S3_UPLOAD_BUCKET: z.string(),
+  S3_SETTLED_BUCKET: z.string(),
   CF_ACCOUNT_ID: z.string(),
   CF_IMAGES_TOKEN: z.string(),
   JOB_TOKEN: z.string(),
@@ -48,6 +49,10 @@ export const serverSchema = z.object({
   UNAUTHENTICATED_DOWNLOAD: z.preprocess((val) => val === true || val === 'true', z.boolean()),
   UNAUTHENTICATE_LIST_NSFW: z.preprocess((val) => val === true || val === 'true', z.boolean()),
   STRIPE_SECRET_KEY: z.string(),
+  LOGGING: z.preprocess((value) => {
+    const str = String(value);
+    return str.split(',');
+  }, z.array(z.string())),
 });
 
 /**
