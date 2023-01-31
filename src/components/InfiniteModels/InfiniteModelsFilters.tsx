@@ -19,14 +19,10 @@ import {
 } from '@mantine/core';
 import { IconChevronDown, IconFilter, IconFilterOff } from '@tabler/icons';
 import { z } from 'zod';
-import { BaseModel, constants } from '~/server/common/constants';
-import dayjs from 'dayjs';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 
-const setCookie = (key: string, data: any) => // eslint-disable-line
-  sc(key, data, {
-    expires: dayjs().add(1, 'year').toDate(),
-  });
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { BaseModel, constants } from '~/server/common/constants';
+import { setCookie } from '~/utils/cookies-helpers';
 
 type FilterProps = z.input<typeof modelFilterSchema>;
 

@@ -127,10 +127,12 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
         rank: { select: { leaderboardRank: true } },
       },
     },
+    // TODO - why is this not referencing `getModelVersionDetailsSelect`? If they are out of sync, we should sync it up
     modelVersions: {
       orderBy: { index: 'asc' },
       select: {
         id: true,
+        modelId: true,
         name: true,
         description: true,
         steps: true,

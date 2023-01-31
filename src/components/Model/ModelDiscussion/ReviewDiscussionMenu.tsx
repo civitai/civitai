@@ -12,7 +12,8 @@ import {
 import { SessionUser } from 'next-auth';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { closeRoutedContext, openRoutedContext } from '~/providers/RoutedContextProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ReviewGetAllItem } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
@@ -25,7 +26,6 @@ export function ReviewDiscussionMenu({
   replaceNavigation = false,
   ...props
 }: Props) {
-  const { openContext, closeContext } = useRoutedContext();
   const queryUtils = trpc.useContext();
 
   const isMod = user?.isModerator ?? false;
@@ -35,7 +35,7 @@ export function ReviewDiscussionMenu({
     async onSuccess() {
       await queryUtils.review.getAll.invalidate();
       closeAllModals();
-      closeContext();
+      closeRoutedContext();
     },
     onError(error) {
       showErrorNotification({
@@ -101,7 +101,7 @@ export function ReviewDiscussionMenu({
     async onSuccess() {
       await queryUtils.review.getAll.invalidate();
       await queryUtils.comment.getAll.invalidate();
-      closeContext();
+      closeRoutedContext();
     },
     onError(error) {
       showErrorNotification({
@@ -151,7 +151,11 @@ export function ReviewDiscussionMenu({
             <Menu.Item
               icon={<IconEdit size={14} stroke={1.5} />}
               onClick={() =>
-                openContext('reviewEdit', { reviewId: review.id }, { replace: replaceNavigation })
+                openRoutedContext(
+                  'reviewEdit',
+                  { reviewId: review.id },
+                  { replace: replaceNavigation }
+                )
               }
             >
               Edit review
@@ -187,11 +191,7 @@ export function ReviewDiscussionMenu({
             <Menu.Item
               icon={<IconFlag size={14} stroke={1.5} />}
               onClick={() =>
-                openContext(
-                  'report',
-                  { type: ReportEntity.Review, entityId: review.id },
-                  { replace: replaceNavigation }
-                )
+                openContext('report', { entityType: ReportEntity.Review, entityId: review.id })
               }
             >
               Report

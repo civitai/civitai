@@ -82,10 +82,10 @@ export const upsertCommentHandler = async ({
 
 export const deleteUserCommentHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
-    const deleted = await deleteCommentById({ ...input });
-    if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);
+    await deleteCommentById({ ...input });
+    // if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);
 
-    return deleted;
+    // return deleted;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);

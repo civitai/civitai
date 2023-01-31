@@ -3,6 +3,7 @@ import {
   Avatar,
   AvatarProps,
   BadgeProps,
+  createStyles,
   Group,
   MantineNumberSize,
   MantineSize,
@@ -39,6 +40,8 @@ export function UserAvatar({
   textSize,
   subTextSize,
 }: Props) {
+  const { classes, cx } = useStyles();
+
   if (!user) return null;
 
   textSize ??= mapAvatarTextSize[size].textSize;
@@ -77,7 +80,7 @@ export function UserAvatar({
   // TODO: typefix
   return linkToProfile && !user.deletedAt ? (
     <Link href={`/user/${user.username}`} passHref>
-      <Anchor variant="text" onClick={(e: any) => e.stopPropagation()}>
+      <Anchor variant="text" className={classes.link} onClick={(e: any) => e.stopPropagation()}>
         {avatar}
       </Anchor>
     </Link>
@@ -100,3 +103,11 @@ type Props = {
   textSize?: MantineSize;
   subTextSize?: MantineSize;
 };
+
+const useStyles = createStyles((theme) => ({
+  link: {
+    '&:hover': {
+      textDecoration: 'underline',
+    },
+  },
+}));

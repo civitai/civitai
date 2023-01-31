@@ -26,7 +26,6 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -36,12 +35,12 @@ import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { ShowHide } from '~/components/ShowHide/ShowHide';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { ModelType } from '@prisma/client';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
+import { openRoutedContext } from '~/providers/RoutedContextProvider';
 
 const VERSION_IMAGES_LIMIT = 8;
 
@@ -85,10 +84,8 @@ type Props = {
 
 function TabContent({ version, nsfw, type }: TabContentProps) {
   const router = useRouter();
-  const modelId = Number(router.query.id);
   const mobile = useIsMobile();
   const currentUser = useCurrentUser();
-  const { openContext } = useRoutedContext();
   const hashes = getPrimaryFile(version.files)?.hashes;
 
   const versionDetails: DescriptionTableProps['items'] = [
@@ -218,7 +215,7 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
           <ImageGuard
             images={versionImages}
             nsfw={nsfw}
-            connect={{ entityId: modelId, entityType: 'model' }}
+            connect={{ entityId: version.modelId, entityType: 'model' }}
             render={(image, index) =>
               index < imagesLimit ? (
                 <Box
@@ -257,9 +254,21 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
                       radius="md"
                       aspectRatio={1}
                       onClick={() =>
-                        openContext('modelVersionLightbox', {
-                          initialSlide: index,
+                        // router.push({
+                        //   pathname: `/gallery/${image.id}`,
+                        //   query: {
+                        //     modelId,
+                        //     modelVersionId: version.id,
+                        //     infinite: false,
+                        //     returnUrl: router.asPath,
+                        //   },
+                        // })
+                        openRoutedContext('galleryDetailModal', {
+                          galleryImageId: image.id,
+                          modelId: version.modelId,
                           modelVersionId: version.id,
+                          infinite: false,
+                          returnUrl: router.asPath,
                         })
                       }
                       withMeta
@@ -274,9 +283,21 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
               variant="outline"
               sx={!mobile ? { height: '100%' } : undefined}
               onClick={() =>
-                openContext('modelVersionLightbox', {
-                  initialSlide: imagesLimit,
+                // router.push({
+                //   pathname: `/gallery/${versionImages[imagesLimit].id}`,
+                //   query: {
+                //     modelId,
+                //     modelVersionId: version.id,
+                //     infinite: false,
+                //     returnUrl: router.asPath,
+                //   },
+                // })
+                openRoutedContext('galleryDetailModal', {
+                  galleryImageId: versionImages[imagesLimit].id,
+                  modelId: version.modelId,
                   modelVersionId: version.id,
+                  infinite: false,
+                  returnUrl: router.asPath,
                 })
               }
             >

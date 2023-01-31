@@ -8,7 +8,6 @@ import {
   createStyles,
   Grid,
   Group,
-  Loader,
   Menu,
   Stack,
   Text,
@@ -22,7 +21,6 @@ import {
   AspectRatio,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
 import {
   IconBan,
@@ -41,10 +39,10 @@ import {
   IconTrash,
 } from '@tabler/icons';
 import startCase from 'lodash/startCase';
-import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
+import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
-import Router, { useRouter } from 'next/router';
-import { useEffect, useRef, useState } from 'react';
+import Router from 'next/router';
+import { useEffect, useRef } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -58,15 +56,12 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
-import { ModelForm } from '~/components/Model/ModelForm/ModelForm';
 import { ModelDiscussion } from '~/components/Model/ModelDiscussion/ModelDiscussion';
 import { ModelVersions } from '~/components/Model/ModelVersions/ModelVersions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { ReviewFilter, ReviewSort } from '~/server/common/enums';
-import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
@@ -77,7 +72,6 @@ import { isNumber } from '~/utils/type-guards';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { scrollToTop } from '~/utils/scroll-utils';
 import { RunButton } from '~/components/RunStrategy/RunButton';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -93,10 +87,12 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
-import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { openRoutedContext } from '~/providers/RoutedContextProvider';
+import { openContext } from '~/providers/CustomModalsProvider';
 
 //TODO - Break model query into multiple queries
 /*
@@ -146,27 +142,18 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export default function ModelDetail(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
+export default function ModelDetail({
+  id,
+  slug,
+}: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
-  const router = useRouter();
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
   const mobile = useIsMobile();
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();
-  const { openContext } = useRoutedContext();
-
-  const { id, slug } = props;
-  const { edit } = router.query;
 
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
-  const [reviewFilters, setReviewFilters] = useState<{
-    filterBy: ReviewFilter[];
-    sort: ReviewSort;
-  }>({
-    filterBy: [],
-    sort: ReviewSort.Newest,
-  });
 
   const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({ id });
   const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
@@ -280,13 +267,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     return () => Router.beforePopState(() => true);
   }, [id]); // Add any state variables to dependencies array if needed.
 
-  if (loadingModel)
-    return (
-      <AbsoluteCenter>
-        <Loader size="xl" />
-      </AbsoluteCenter>
-    );
-
+  if (loadingModel) return <PageLoader />;
   if (!model) return <NotFound />;
 
   const isModerator = currentUser?.isModerator ?? false;
@@ -318,8 +299,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
     />
   );
 
-  if ((!!edit && isOwner && !deleted) || (!!edit && isModerator && deleted))
-    return <ModelForm model={model} />;
   if (model.nsfw && !currentUser)
     return (
       <>
@@ -346,20 +325,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
         }
       },
     });
-  };
-
-  const handleReviewFilterChange = (values: ReviewFilter[]) => {
-    setReviewFilters((current) => ({
-      ...current,
-      filterBy: values,
-    }));
-  };
-
-  const handleReviewSortChange = (value: ReviewSort) => {
-    setReviewFilters((current) => ({
-      ...current,
-      sort: value,
-    }));
   };
 
   const handleUnpublishModel = () => {
@@ -566,10 +531,11 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       Delete Model
                     </Menu.Item>
                     <Menu.Item
-                      component={NextLink}
-                      href={`/models/${id}/${slug}?edit=true`}
+                      // component={NextLink}
+                      // href={`/models/${id}/${slug}?edit=true`}
                       icon={<IconEdit size={14} stroke={1.5} />}
-                      shallow
+                      onClick={() => openRoutedContext('modelEdit', { modelId: model.id })}
+                      // shallow
                     >
                       Edit Model
                     </Menu.Item>
@@ -580,7 +546,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     <Menu.Item
                       icon={<IconFlag size={14} stroke={1.5} />}
                       onClick={() =>
-                        openContext('report', { type: ReportEntity.Model, entityId: model.id })
+                        openContext('report', {
+                          entityType: ReportEntity.Model,
+                          entityId: model.id,
+                        })
                       }
                     >
                       Report
@@ -593,7 +562,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     <HideModelButton as="menu-item" modelId={model.id} />
                     <Menu.Item
                       icon={<IconTagOff size={14} stroke={1.5} />}
-                      onClick={() => openContext('blockTags', { modelId: model.id })}
+                      onClick={() => openContext('blockModelTags', { modelId: model.id })}
                     >
                       Hide content with these tags
                     </Menu.Item>
@@ -821,9 +790,21 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                                 edgeImageProps={{ width: 400 }}
                                 radius="md"
                                 onClick={() =>
-                                  openContext('modelVersionLightbox', {
+                                  // Router.push({
+                                  //   pathname: `/gallery/${image.id}`,
+                                  //   query: {
+                                  //     modelId: model.id,
+                                  //     modelVersionId: latestVersion.id,
+                                  //     infinite: false,
+                                  //     returnUrl: Router.asPath,
+                                  //   },
+                                  // })
+                                  openRoutedContext('galleryDetailModal', {
+                                    galleryImageId: image.id,
+                                    modelId: model.id,
                                     modelVersionId: latestVersion.id,
-                                    initialSlide: index,
+                                    infinite: false,
+                                    returnUrl: Router.asPath,
                                   })
                                 }
                                 style={{ width: '100%' }}
@@ -869,7 +850,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       variant="outline"
                       fullWidth={mobile}
                       size="xs"
-                      onClick={() => openContext('reviewEdit', {})}
+                      onClick={() => openRoutedContext('reviewEdit', {})}
                     >
                       Add Review
                     </Button>
@@ -879,43 +860,15 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       leftIcon={<IconMessage size={16} />}
                       variant="outline"
                       fullWidth={mobile}
-                      onClick={() => openContext('commentEdit', {})}
+                      onClick={() => openRoutedContext('commentEdit', {})}
                       size="xs"
                     >
                       Add Comment
                     </Button>
                   </LoginRedirect>
                 </Group>
-                <Group spacing="xs" noWrap grow>
-                  {/* <Select
-                    defaultValue={ReviewSort.Newest}
-                    icon={<IconArrowsSort size={14} />}
-                    data={Object.values(ReviewSort)
-                      // Only exclude MostDisliked until there's a clear way to sort by it
-                      .filter((sort) => ![ReviewSort.MostDisliked].includes(sort))
-                      .map((sort) => ({
-                        label: startCase(sort),
-                        value: sort,
-                      }))}
-                    onChange={handleReviewSortChange}
-                    size="xs"
-                  /> */}
-                  {/* <MultiSelect
-                    placeholder="Filters"
-                    icon={<IconFilter size={14} />}
-                    data={Object.values(ReviewFilter).map((sort) => ({
-                      label: startCase(sort),
-                      value: sort,
-                    }))}
-                    onChange={handleReviewFilterChange}
-                    size="xs"
-                    zIndex={500}
-                    clearButtonLabel="Clear review filters"
-                    clearable
-                  /> */}
-                </Group>
               </Group>
-              <ModelDiscussion modelId={model.id} filters={reviewFilters} />
+              <ModelDiscussion modelId={model.id} />
             </Stack>
           </Grid.Col>
         </Grid>

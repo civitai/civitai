@@ -26,25 +26,37 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';
+import { useRouter } from 'next/router';
+import { openModal } from '@mantine/modals';
 
 const reports = [
   {
     reason: ReportReason.NSFW,
     label: 'NSFW',
     Element: NsfwForm,
-    availableFor: [ReportEntity.Model, ReportEntity.Review],
+    availableFor: [ReportEntity.Model, ReportEntity.Review, ReportEntity.Image],
   },
   {
     reason: ReportReason.TOSViolation,
     label: 'TOS Violation',
     Element: TosViolationForm,
-    availableFor: [ReportEntity.Model, ReportEntity.Review, ReportEntity.Comment],
+    availableFor: [
+      ReportEntity.Model,
+      ReportEntity.Review,
+      ReportEntity.Comment,
+      ReportEntity.Image,
+    ],
   },
   {
     reason: ReportReason.AdminAttention,
     label: 'Needs Moderator Review',
     Element: AdminAttentionForm,
-    availableFor: [ReportEntity.Model, ReportEntity.Review, ReportEntity.Comment],
+    availableFor: [
+      ReportEntity.Model,
+      ReportEntity.Review,
+      ReportEntity.Comment,
+      ReportEntity.Image,
+    ],
   },
   {
     reason: ReportReason.Claim,
@@ -70,6 +82,12 @@ export default createRoutedContext({
     entityId: z.number(),
   }),
   Element: ({ context, props: { type, entityId } }) => {
+    // #region [temp for gallery image reports]
+    const router = useRouter();
+    const modelId = router.query.modelId ? Number(router.query.modelId) : undefined;
+    const reviewId = router.query.reviewId ? Number(router.query.reviewId) : undefined;
+    // #endregion
+
     //TODO - redirect if no user is authenticated
     const [reason, setReason] = useState<ReportReason>();
     const [uploading, setUploading] = useState(false);
@@ -128,6 +146,48 @@ export default createRoutedContext({
               await queryUtils.comment.getById.invalidate({ id: variables.id });
               await queryUtils.comment.getAll.invalidate();
               await queryUtils.comment.getCommentsById.invalidate();
+              break;
+            case ReportEntity.Image:
+              if (variables.reason === ReportReason.NSFW)
+                await queryUtils.image.getGalleryImageDetail.invalidate();
+              await queryUtils.image.getGalleryImagesInfinite.invalidate();
+              await queryUtils.image.getGalleryImages.invalidate();
+              // review invalidate
+              if (reviewId) {
+                await queryUtils.review.getDetail.setData(
+                  { id: reviewId },
+                  produce((old) => {
+                    if (old) {
+                      if (variables.reason === ReportReason.NSFW) {
+                        const index = old.images.findIndex((x) => x.id === variables.id);
+                        if (index > -1) old.images[index].nsfw = true;
+                      }
+                    }
+                  })
+                );
+              }
+              await queryUtils.review.getAll.invalidate();
+              // model invalidate
+              if (modelId) {
+                queryUtils.model.getById.setData(
+                  { id: modelId },
+                  produce((old) => {
+                    if (old) {
+                      if (variables.reason === ReportReason.NSFW) {
+                        const [modelVersionIndex, imageIndex] = old.modelVersions.reduce<
+                          [number, number]
+                        >((acc, value, modelVersionIndex) => {
+                          const imageIndex = value.images.findIndex((x) => x.id === variables.id);
+                          return imageIndex > -1 ? [modelVersionIndex, imageIndex] : acc;
+                        }, [] as any);
+                        if (modelVersionIndex > -1 && imageIndex > -1)
+                          old.modelVersions[modelVersionIndex].images[imageIndex].nsfw = true;
+                      }
+                    }
+                  })
+                );
+                await queryUtils.model.getAll.invalidate();
+              }
               break;
             default:
               break;

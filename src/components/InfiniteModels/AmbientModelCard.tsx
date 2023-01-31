@@ -41,7 +41,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { openContext } from '~/providers/CustomModalsProvider';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getRandom } from '~/utils/array-helpers';
@@ -64,7 +64,7 @@ const mantineColors: DefaultMantineColor[] = [
   'yellow',
 ];
 
-const useStyles = createStyles((theme, _params, getRef) => {
+const useStyles = createStyles((theme) => {
   const base = theme.colors[getRandom(mantineColors)];
   const background = theme.colorScheme === 'dark' ? theme.colors.dark[6] : '#fff';
 
@@ -75,8 +75,6 @@ const useStyles = createStyles((theme, _params, getRef) => {
     },
 
     content: {
-      ref: getRef('content'),
-
       background: theme.fn.gradient({
         from: 'rgba(37,38,43,0.8)',
         to: 'rgba(37,38,43,0)',
@@ -163,7 +161,6 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
 
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
-  const { openContext } = useRoutedContext();
 
   const {
     data: { Favorite: favoriteModels = [], Hide: hiddenModels = [] } = { Favorite: [], Hide: [] },
@@ -225,7 +222,6 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
           }
         />
       }
-      // variant={theme.colorScheme === 'dark' && rank.ratingCount > 0 ? 'filled' : 'light'}
     >
       <Text size="xs" color={rank.ratingCount > 0 ? undefined : 'dimmed'}>
         {abbreviateNumber(rank.ratingCount)}
@@ -234,11 +230,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
   );
 
   const modelDownloads = (
-    <IconBadge
-      className={classes.statBadge}
-      icon={<IconDownload size={14} />}
-      // variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-    >
+    <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
       <Text size={12}>{abbreviateNumber(rank.downloadCount)}</Text>
     </IconBadge>
   );
@@ -254,18 +246,13 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
         />
       }
       color={isFavorite ? 'red' : 'gray'}
-      // variant={theme.colorScheme === 'dark' && !isFavorite ? 'filled' : 'light'}
     >
       <Text size="xs">{abbreviateNumber(rank.favoriteCount)}</Text>
     </IconBadge>
   );
 
   const modelComments = !!rank.commentCount && (
-    <IconBadge
-      className={classes.statBadge}
-      icon={<IconMessageCircle2 size={14} />}
-      // variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-    >
+    <IconBadge className={classes.statBadge} icon={<IconMessageCircle2 size={14} />}>
       <Text size="xs">{abbreviateNumber(rank.commentCount)}</Text>
     </IconBadge>
   );
@@ -277,7 +264,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
-          openContext('report', { type: ReportEntity.Model, entityId: id });
+          openContext('report', { entityType: ReportEntity.Model, entityId: id });
         }}
       >
         Report
@@ -292,7 +279,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
       onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
         e.stopPropagation();
-        openContext('blockTags', { modelId: id });
+        openContext('blockModelTags', { modelId: id });
       }}
     >
       {`Hide content with these tags`}

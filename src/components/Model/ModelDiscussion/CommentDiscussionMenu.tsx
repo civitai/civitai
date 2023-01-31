@@ -4,7 +4,8 @@ import { IconDotsVertical, IconTrash, IconEdit, IconFlag } from '@tabler/icons';
 import { SessionUser } from 'next-auth';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { closeRoutedContext, openRoutedContext } from '~/providers/RoutedContextProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CommentGetAllItem } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
@@ -17,7 +18,6 @@ export function CommentDiscussionMenu({
   replaceNavigation = false,
   ...props
 }: Props) {
-  const { openContext, closeContext } = useRoutedContext();
   const queryUtils = trpc.useContext();
 
   const isMod = user?.isModerator ?? false;
@@ -27,7 +27,7 @@ export function CommentDiscussionMenu({
     async onSuccess() {
       await queryUtils.comment.getAll.invalidate();
       closeAllModals();
-      closeContext();
+      closeRoutedContext();
     },
     onError(error) {
       showErrorNotification({
@@ -75,7 +75,7 @@ export function CommentDiscussionMenu({
             <Menu.Item
               icon={<IconEdit size={14} stroke={1.5} />}
               onClick={() =>
-                openContext(
+                openRoutedContext(
                   'commentEdit',
                   { commentId: comment.id },
                   { replace: replaceNavigation }
@@ -91,11 +91,7 @@ export function CommentDiscussionMenu({
             <Menu.Item
               icon={<IconFlag size={14} stroke={1.5} />}
               onClick={() =>
-                openContext(
-                  'report',
-                  { type: ReportEntity.Comment, entityId: comment.id },
-                  { replace: replaceNavigation }
-                )
+                openContext('report', { entityType: ReportEntity.Comment, entityId: comment.id })
               }
             >
               Report

@@ -12,7 +12,7 @@ import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { CommentGetCommentsById } from '~/types/router';
@@ -22,7 +22,6 @@ import { trpc } from '~/utils/trpc';
 export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
-  const { openContext } = useRoutedContext();
   // TODO Briant: This is a hack to support direct linking to a comment...
   // I wanted to just use a hash, but that broke things on refresh...
   const directLink = new URL(window.location.href);
@@ -266,7 +265,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
                 icon={<IconFlag size={14} stroke={1.5} />}
                 onClick={() =>
                   openContext('report', {
-                    type: ReportEntity.Comment,
+                    entityType: ReportEntity.Comment,
                     entityId: comment.id,
                   })
                 }

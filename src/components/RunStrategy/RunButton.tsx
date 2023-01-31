@@ -1,10 +1,8 @@
 import { Button, ButtonProps, Tooltip } from '@mantine/core';
 import { IconPlayerPlay } from '@tabler/icons';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { openContext } from '~/providers/CustomModalsProvider';
 
 export function RunButton({ modelVersionId, ...props }: { modelVersionId: number } & ButtonProps) {
-  const { openContext } = useRoutedContext();
-
   return (
     <Tooltip label="Run Model" withArrow position="top">
       <Button

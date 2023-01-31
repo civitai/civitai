@@ -89,6 +89,17 @@ export const createReport = async ({
           await tx.comment.update({ where: { id }, data: toUpdate });
         }
         break;
+      case ReportEntity.Image:
+        await tx.imageReport.create({
+          data: {
+            image: { connect: { id } },
+            report,
+          },
+        });
+        if (toUpdate) {
+          await tx.image.update({ where: { id }, data: toUpdate });
+        }
+        break;
       default:
         throw new Error('unhandled report type');
     }

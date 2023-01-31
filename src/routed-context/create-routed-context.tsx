@@ -1,14 +1,11 @@
-import { useRouter } from 'next/router';
-import { useEffect } from 'react';
 import { z } from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
-import { QS } from '~/utils/qs';
 import useIsClient from '~/hooks/useIsClient';
+import { closeRoutedContext } from '~/providers/RoutedContextProvider';
 
 export type RoutedContext = {
   opened: boolean;
-  close: () => Promise<void>;
+  close: () => void;
 };
 
 export type RoutedContextProps<TSchema extends z.AnyZodObject> = {
@@ -30,44 +27,18 @@ export function createRoutedContext<TSchema extends z.AnyZodObject>({
 }) {
   function RoutedContext(props: z.infer<TSchema>) {
     const isClient = useIsClient();
-    const router = useRouter();
     const user = useCurrentUser();
-    // const [opened, setOpened] = useState(false);
     const result = schema?.safeParse(props) ?? { success: true, data: {} };
-    const { closeContext } = useRoutedContext();
-
-    // useEffect(() => {
-    //   setOpened(true);
-    // }, [router]);
-
-    // console.log('fire');
-
-    // this effect is necessary for catching browser back button actions outside of our control
-    // for some reason this effect won't work in routed-context.provider.tsx
-    useEffect(() => {
-      router.beforePopState(({ as }) => {
-        if (as !== router.asPath) {
-          const [pathname, query] = as.split('?');
-          // spread out props I don't want to pass to my router replace
-          const { modal, ...rest } = router.query;
-          router.replace({ pathname, query: { ...rest, ...(QS.parse(query) as any) } }, as, { //eslint-disable-line
-            shallow: true,
-          });
-          return false;
-        }
-        return true;
-      });
-
-      return () => router.beforePopState(() => true);
-    }, [router, router.query]);
 
     if (!result.success) return null;
     if (!user && authGuard) {
-      if (isClient) closeContext();
+      if (isClient) closeRoutedContext();
       return null;
     }
 
-    return <BaseComponent context={{ opened: true, close: closeContext }} props={result?.data} />;
+    return (
+      <BaseComponent context={{ opened: true, close: closeRoutedContext }} props={result?.data} />
+    );
   }
 
   return RoutedContext;
