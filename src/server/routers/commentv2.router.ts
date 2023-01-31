@@ -10,7 +10,13 @@ import {
   getCommentsV2Schema,
   upsertCommentv2Schema,
 } from './../schema/commentv2.schema';
-import { middleware, router, publicProcedure, protectedProcedure } from '~/server/trpc';
+import {
+  middleware,
+  router,
+  publicProcedure,
+  protectedProcedure,
+  guardedProcedure,
+} from '~/server/trpc';
 import { prisma } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 
@@ -41,7 +47,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 export const commentv2Router = router({
   getInfinite: publicProcedure.input(getCommentsV2Schema).query(getInfiniteCommentsV2Handler),
   getCount: publicProcedure.input(commentConnectorSchema).query(getCommentCountV2Handler),
-  upsert: protectedProcedure
+  upsert: guardedProcedure
     .input(upsertCommentv2Schema)
     .use(isOwnerOrModerator)
     .mutation(upsertCommentV2Handler),

@@ -11,6 +11,7 @@ interface ExtendedUser {
   email?: string;
   preferredModelFormat?: ModelFileFormat;
   preferredPrunedModel?: boolean;
+  muted?: boolean;
 }
 
 declare module 'next-auth' {

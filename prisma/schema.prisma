@@ -67,6 +67,7 @@ model User {
   deletedAt            DateTime?
   preferredModelFormat ModelFileFormat? @default(SafeTensor)
   preferredPrunedModel Boolean?         @default(false)
+  muted                Boolean?         @default(false)
 
   accounts             Account[]
   sessions             Session[]

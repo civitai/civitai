@@ -9,11 +9,20 @@ import {
   ActionIcon,
   AspectRatio,
   Rating,
-  useMantineTheme,
   Card,
+  Menu,
 } from '@mantine/core';
-import { IconDownload, IconHeart, IconStar, IconUpload, IconUsers } from '@tabler/icons';
-import { GetServerSidePropsContext, InferGetServerSidePropsType } from 'next/types';
+import {
+  IconDotsVertical,
+  IconDownload,
+  IconHeart,
+  IconMicrophone,
+  IconMicrophoneOff,
+  IconStar,
+  IconUpload,
+  IconUsers,
+} from '@tabler/icons';
+import { InferGetServerSidePropsType } from 'next/types';
 
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeImage, getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
@@ -33,6 +42,8 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { showErrorNotification } from '~/utils/notifications';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -51,13 +62,42 @@ export const getServerSideProps = createServerSideProps({
 export default function UserPage({
   username,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const theme = useMantineTheme();
-  const { classes } = useStyles();
+  const currentUser = useCurrentUser();
+  const { classes, theme } = useStyles();
+  const queryUtils = trpc.useContext();
 
   const { data: user } = trpc.user.getCreator.useQuery({ username });
 
   const { models: uploads } = user?._count ?? { models: 0 };
   const stats = user?.stats;
+  const isMod = currentUser && currentUser.isModerator;
+
+  const toggleMuteMutation = trpc.user.toggleMute.useMutation({
+    async onMutate() {
+      await queryUtils.user.getCreator.cancel({ username });
+
+      const prevUser = queryUtils.user.getCreator.getData({ username });
+      queryUtils.user.getCreator.setData({ username }, () =>
+        prevUser
+          ? {
+              ...prevUser,
+              muted: !prevUser.muted,
+            }
+          : undefined
+      );
+
+      return { prevUser };
+    },
+    onError(_error, _vars, context) {
+      queryUtils.user.getCreator.setData({ username }, context?.prevUser);
+      showErrorNotification({
+        error: new Error('Unable to mute user, please try again.'),
+      });
+    },
+  });
+  const handleToggleMute = () => {
+    if (user) toggleMuteMutation.mutate({ id: user.id });
+  };
 
   return (
     <>
@@ -104,7 +144,33 @@ export default function UserPage({
                       <Title order={2}>
                         <Username {...user} inherit />
                       </Title>
-                      <FollowUserButton userId={user.id} size="md" compact />
+                      <Group spacing={4} noWrap>
+                        <FollowUserButton userId={user.id} size="md" compact />
+
+                        {isMod && (
+                          <Menu>
+                            <Menu.Target>
+                              <ActionIcon>
+                                <IconDotsVertical />
+                              </ActionIcon>
+                            </Menu.Target>
+                            <Menu.Dropdown>
+                              <Menu.Item
+                                icon={
+                                  user.muted ? (
+                                    <IconMicrophone size={14} stroke={1.5} />
+                                  ) : (
+                                    <IconMicrophoneOff size={14} stroke={1.5} />
+                                  )
+                                }
+                                onClick={handleToggleMute}
+                              >
+                                {user.muted ? 'Unmute' : 'Mute'}
+                              </Menu.Item>
+                            </Menu.Dropdown>
+                          </Menu>
+                        )}
+                      </Group>
                     </Group>
                     <Group spacing="xs">
                       <RankBadge rank={user.rank?.leaderboardRank} size="lg" />

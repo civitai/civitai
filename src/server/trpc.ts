@@ -35,7 +35,30 @@ const isAuthed = t.middleware(({ ctx: { user, acceptableOrigin }, next }) => {
   return next({ ctx: { user, acceptableOrigin } });
 });
 
+const isMuted = middleware(async ({ ctx, next }) => {
+  const { user } = ctx;
+  if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  if (user.muted)
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'You cannot perform this action cause your account has been muted',
+    });
+
+  return next({
+    ctx: {
+      ...ctx,
+      user,
+    },
+  });
+});
+
 /**
  * Protected procedure
  **/
 export const protectedProcedure = publicProcedure.use(isAuthed);
+
+/**
+ * Guarded procedure to prevent users from making actions
+ * based on muted/banned properties
+ */
+export const guardedProcedure = publicProcedure.use(isMuted);

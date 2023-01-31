@@ -42,19 +42,20 @@ export function UserAvatar({
   const { classes } = useStyles();
 
   if (!user) return null;
+  const userDeleted = !!user.deletedAt;
 
   textSize ??= mapAvatarTextSize[size].textSize;
   subTextSize ??= mapAvatarTextSize[size].subTextSize;
   const avatar = (
     <Group align="center" spacing={spacing} noWrap>
       <Avatar
-        src={user.image ? getEdgeUrl(user.image, { width: 96 }) : undefined}
-        alt={user.username ? `${user.username}'s Avatar` : undefined}
+        src={user.image && !userDeleted ? getEdgeUrl(user.image, { width: 96 }) : undefined}
+        alt={user.username && !userDeleted ? `${user.username}'s Avatar` : undefined}
         radius="xl"
         size={size}
         {...avatarProps}
       >
-        {user.username ? getInitials(user.username) : null}
+        {user.username && !userDeleted ? getInitials(user.username) : null}
       </Avatar>
       {withUsername || subText ? (
         <Stack spacing={0}>
@@ -76,7 +77,7 @@ export function UserAvatar({
     </Group>
   );
 
-  return linkToProfile && !user.deletedAt ? (
+  return linkToProfile && !userDeleted ? (
     <Link href={`/user/${user.username}`} passHref>
       <Anchor
         variant="text"

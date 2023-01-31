@@ -403,33 +403,36 @@ export default function ModelDetail({
     },
     {
       label: 'Uploaded By',
-      value: model.user && (
-        <Group align="center" position="apart">
-          <Link href={`/user/${model.user.username}`} passHref>
-            <Anchor>
-              <Group spacing={4} noWrap sx={{ flex: 1, overflow: 'hidden' }}>
-                <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
-                <Text
-                  size="sm"
-                  variant="link"
-                  sx={{
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  {model.user.username}
-                </Text>
-              </Group>
-            </Anchor>
-          </Link>
-          <Group spacing={4} noWrap>
-            <RankBadge size="md" textSize="xs" rank={model.user.rank?.leaderboardRank} />
-            <FollowUserButton userId={model.user.id} size="xs" compact />
+      value:
+        model.user && !model.user.deletedAt ? (
+          <Group align="center" position="apart">
+            <Link href={`/user/${model.user.username}`} passHref>
+              <Anchor>
+                <Group spacing={4} noWrap sx={{ flex: 1, overflow: 'hidden' }}>
+                  <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
+                  <Text
+                    size="sm"
+                    variant="link"
+                    sx={{
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {model.user.username}
+                  </Text>
+                </Group>
+              </Anchor>
+            </Link>
+            <Group spacing={4} noWrap>
+              <RankBadge size="md" textSize="xs" rank={model.user.rank?.leaderboardRank} />
+              <FollowUserButton userId={model.user.id} size="xs" compact />
+            </Group>
           </Group>
-        </Group>
-      ),
+        ) : (
+          '[deleted]'
+        ),
     },
   ];
   const published = model.status === ModelStatus.Published;
