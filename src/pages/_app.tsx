@@ -72,7 +72,6 @@ function MyApp(props: CustomAppProps) {
     [Component.getLayout]
   );
 
-  useEffect(() => console.log('layout changed'), [toggleColorScheme]);
   const content = env.NEXT_PUBLIC_MAINTENANCE_MODE ? (
     <MaintenanceMode />
   ) : (
