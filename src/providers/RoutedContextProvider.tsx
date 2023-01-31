@@ -1,9 +1,10 @@
-import React, { ComponentType } from 'react';
+import React, { ComponentType, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Router, { NextRouter, useRouter } from 'next/router';
 import Link from 'next/link';
 import { QS } from '~/utils/qs';
 import { getHasClientHistory } from '~/store/ClientHistoryStore';
+import { useDidUpdate, useWindowEvent } from '@mantine/hooks';
 
 const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
 const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLightbox'));
@@ -115,6 +116,16 @@ export function closeRoutedContext() {
 export function RoutedContextProvider2() {
   const router = useRouter();
   const modal = router.query.modal;
+
+  // const [visible, setVisible] = useState(!!router.query.modal);
+
+  // const handlePopstate = (e: PopStateEvent) => setVisible(e.state.url.includes('modal='));
+  // useWindowEvent('popstate', handlePopstate);
+
+  // useDidUpdate(() => {
+  //   setVisible(!!router.query.modal);
+  // }, [router]);
+
   if (!modal) return null;
 
   const query = QS.parse(QS.stringify(router.query));
