@@ -13,6 +13,7 @@ const featureFlags = createTypedDictionary({
   memberBadges: ['dev'],
   apiKeys: ['dev'],
   ambientCard: ['public'],
+  gallery: ['mod'],
 });
 
 const isDev = process.env.NODE_ENV === 'development';
