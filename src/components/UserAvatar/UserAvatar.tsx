@@ -39,7 +39,7 @@ export function UserAvatar({
   textSize,
   subTextSize,
 }: Props) {
-  const { classes, cx } = useStyles();
+  const { classes } = useStyles();
 
   if (!user) return null;
 
@@ -78,7 +78,11 @@ export function UserAvatar({
 
   return linkToProfile && !user.deletedAt ? (
     <Link href={`/user/${user.username}`} passHref>
-<Anchor variant="text" className={classes.link} onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}>
+      <Anchor
+        variant="text"
+        className={classes.link}
+        onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
+      >
         {avatar}
       </Anchor>
     </Link>
@@ -102,7 +106,7 @@ type Props = {
   subTextSize?: MantineSize;
 };
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   link: {
     '&:hover': {
       textDecoration: 'underline',
