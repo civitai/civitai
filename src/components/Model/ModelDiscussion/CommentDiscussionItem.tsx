@@ -9,14 +9,13 @@ import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { CommentGetAllItem } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function CommentDiscussionItem({ comment }: Props) {
-  const { openContext } = useRoutedContext();
   const currentUser = useCurrentUser();
 
   const { data: reactions = [] } = trpc.comment.getReactions.useQuery(
@@ -117,7 +116,7 @@ export function CommentDiscussionItem({ comment }: Props) {
             size="xs"
             radius="xl"
             variant="subtle"
-            onClick={() => openContext('commentThread', { commentId: comment.id })}
+            onClick={() => openRoutedContext('commentThread', { commentId: comment.id })}
             compact
           >
             <Group spacing={2} noWrap>

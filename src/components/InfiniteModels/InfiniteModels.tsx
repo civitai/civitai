@@ -55,8 +55,8 @@ import { AmbientModelCard } from '~/components/InfiniteModels/AmbientModelCard';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getRandom } from '~/utils/array-helpers';
@@ -100,14 +100,22 @@ export function InfiniteModels({
     { enabled: !!currentUser }
   );
   const excludedTagIds = blockedTags?.map((tag) => tag.id);
-  const { data: { Hide: excludedIds = [] } = { Hide: [] } } = trpc.user.getEngagedModels.useQuery(
-    undefined,
-    {
+
+  // Hidden Models
+  const { data: { Hide } = { Hide: [] }, isFetched: isHiddenFetched } =
+    trpc.user.getEngagedModels.useQuery(undefined, {
       enabled: !!currentUser,
       cacheTime: Infinity,
       staleTime: Infinity,
-    }
-  );
+    });
+
+  // State is kept separate to prevent unnecessary re-fetch
+  // when the user toggles a model's hidden state updating the list above
+  const [excludedIds, setExcludedIds] = useState<number[]>();
+  useEffect(() => {
+    if (isHiddenFetched && !excludedIds) setExcludedIds(Hide);
+  }, [isHiddenFetched]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const { data, isLoading, fetchNextPage, hasNextPage } = trpc.model.getAll.useInfiniteQuery(
     {
       ...filters,
@@ -285,7 +293,6 @@ const MasonryItem = ({
 
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
-  const { openContext } = useRoutedContext();
 
   const {
     data: { Favorite: favoriteModels = [], Hide: hiddenModels = [] } = { Favorite: [], Hide: [] },
@@ -425,7 +432,7 @@ const MasonryItem = ({
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
-          openContext('report', { type: ReportEntity.Model, entityId: id });
+          openContext('report', { entityType: ReportEntity.Model, entityId: id });
         }}
       >
         Report
@@ -440,7 +447,7 @@ const MasonryItem = ({
       onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
         e.stopPropagation();
-        openContext('blockTags', { modelId: id });
+        openContext('blockModelTags', { modelId: id });
       }}
     >
       {`Hide content with these tags`}

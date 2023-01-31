@@ -14,7 +14,7 @@ import App from 'next/app';
 import Head from 'next/head';
 import type { Session } from 'next-auth';
 import { getSession, SessionProvider } from 'next-auth/react';
-import { ReactElement, ReactNode, useState } from 'react';
+import { ReactElement, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { trpc } from '~/utils/trpc';
@@ -29,6 +29,8 @@ import { NsfwWorkerProvider } from '~/providers/NsfwWorkerProvider';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { FeatureFlags } from '~/server/services/feature-flags.service';
+import { ClientHistoryStore } from '~/store/ClientHistoryStore';
+import { RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -54,33 +56,44 @@ function MyApp(props: CustomAppProps) {
     pageProps: { session, colorScheme: initialColorScheme, cookies, flags, ...pageProps },
   } = props;
   const [colorScheme, setColorScheme] = useState<ColorScheme>(initialColorScheme);
-  const toggleColorScheme = (value?: ColorScheme) => {
-    const nextColorScheme = value || (colorScheme === 'dark' ? 'light' : 'dark');
-    setColorScheme(nextColorScheme);
-    setCookie('mantine-color-scheme', nextColorScheme, {
-      expires: dayjs().add(1, 'year').toDate(),
-    });
-  };
+  const toggleColorScheme = useCallback(
+    (value?: ColorScheme) => {
+      const nextColorScheme = value || (colorScheme === 'dark' ? 'light' : 'dark');
+      setColorScheme(nextColorScheme);
+      setCookie('mantine-color-scheme', nextColorScheme, {
+        expires: dayjs().add(1, 'year').toDate(),
+      });
+    },
+    [colorScheme]
+  );
 
-  const getLayout = Component.getLayout ?? ((page) => <AppLayout>{page}</AppLayout>);
+  const getLayout = useMemo(
+    () => Component.getLayout ?? ((page: any) => <AppLayout>{page}</AppLayout>),
+    [Component.getLayout]
+  );
+
   const content = env.NEXT_PUBLIC_MAINTENANCE_MODE ? (
     <MaintenanceMode />
   ) : (
-    <SessionProvider session={session}>
-      <CookiesProvider value={cookies}>
-        <FeatureFlagsProvider flags={flags}>
-          <NsfwWorkerProvider>
-            <CustomModalsProvider>
-              <NotificationsProvider>
-                <RoutedContextProvider>
+    <>
+      <ClientHistoryStore />
+      <SessionProvider session={session}>
+        <CookiesProvider value={cookies}>
+          <FeatureFlagsProvider flags={flags}>
+            <NsfwWorkerProvider>
+              <CustomModalsProvider>
+                <NotificationsProvider>
+                  {/* <RoutedContextProvider> */}
                   <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                </RoutedContextProvider>
-              </NotificationsProvider>
-            </CustomModalsProvider>
-          </NsfwWorkerProvider>
-        </FeatureFlagsProvider>
-      </CookiesProvider>
-    </SessionProvider>
+                  <RoutedContextProvider2 />
+                  {/* </RoutedContextProvider> */}
+                </NotificationsProvider>
+              </CustomModalsProvider>
+            </NsfwWorkerProvider>
+          </FeatureFlagsProvider>
+        </CookiesProvider>
+      </SessionProvider>
+    </>
   );
 
   return (

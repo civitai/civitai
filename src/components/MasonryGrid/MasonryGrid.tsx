@@ -60,6 +60,6 @@ type Props<T> = Omit<
   maxColumnCount?: number;
   columnWidth?: number;
   columnGutter?: number;
-  filters: Record<string, unknown>;
+  filters?: Record<string, unknown>;
   previousFetching?: boolean;
 };

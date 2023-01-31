@@ -27,6 +27,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { trpc } from '~/utils/trpc';
+import { useRouter } from 'next/router';
 import { ReviewDiscussionMenu } from '~/components/Model/ModelDiscussion/ReviewDiscussionMenu';
 
 const TRANSITION_DURATION = 200;
@@ -37,6 +38,7 @@ export default createRoutedContext({
     highlight: z.number().optional(),
   }),
   Element: ({ context, props: { reviewId, highlight } }) => {
+    const router = useRouter();
     const queryUtils = trpc.useContext();
     const currentUser = useCurrentUser();
 
@@ -101,6 +103,17 @@ export default createRoutedContext({
     const hasMultipleImages = hasImages && review.images.length > 1;
 
     useAnimationOffsetEffect(emblaRef.current, TRANSITION_DURATION);
+
+    const handleNavigate = (imageId: number) => {
+      router.push({
+        pathname: `/gallery/${imageId}`,
+        query: {
+          reviewId,
+          infinite: false,
+          returnUrl: router.asPath,
+        },
+      });
+    };
 
     return (
       <Modal opened={context.opened} onClose={context.close} withCloseButton={false} size={800}>
@@ -186,9 +199,10 @@ export default createRoutedContext({
                                   <ImagePreview
                                     image={image}
                                     aspectRatio={0}
-                                    edgeImageProps={{ height: screenHeight }}
+                                    edgeImageProps={{ height: screenHeight }} // TODO Optimization: look at using width 400, since we already have that in cache
                                     radius="md"
                                     withMeta
+                                    onClick={() => handleNavigate(image.id)}
                                   />
                                 </ImageGuard.Safe>
                               </div>

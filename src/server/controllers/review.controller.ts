@@ -98,10 +98,10 @@ export const upsertReviewHandler = async ({
 
 export const deleteUserReviewHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
-    const deleted = await deleteReviewById({ ...input });
-    if (!deleted) throw throwNotFoundError(`No review with id ${input.id}`);
+    await deleteReviewById({ ...input });
+    // if (!deleted) throw throwNotFoundError(`No review with id ${input.id}`);
 
-    return deleted;
+    // return deleted;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);

@@ -24,15 +24,16 @@ import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { ReviewGetAllItem } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import Router from 'next/router';
 import { ReviewDiscussionMenu } from '~/components/Model/ModelDiscussion/ReviewDiscussionMenu';
+import { openRoutedContext } from '~/providers/RoutedContextProvider';
 
 export function ReviewDiscussionItem({ review, width }: Props) {
-  const { openContext } = useRoutedContext();
+  // const { openContext } = useRoutedContext();
   const currentUser = useCurrentUser();
   const { ref, inView } = useInView();
   const [visible, setVisible] = useState(false);
@@ -169,7 +170,7 @@ export function ReviewDiscussionItem({ review, width }: Props) {
             size="xs"
             radius="xl"
             variant="subtle"
-            onClick={() => openContext('reviewThread', { reviewId: review.id })}
+            onClick={() => openRoutedContext('reviewThread', { reviewId: review.id })}
             compact
           >
             <Group spacing={2} noWrap>
@@ -196,21 +197,27 @@ function ReviewCarousel({
   height: number;
   visible: boolean;
 }) {
-  const { openContext } = useRoutedContext();
   const [renderIndexes, setRenderIndexes] = useState([0]);
-
-  useEffect(() => {
-    // if (!!review.images && !review.images.some((x) => renderImages.includes(x.id))) {
-    //   setRenderImages([review.images[0].id]);
-    // }
-    if (review.id === 5615) console.log('reviewChanged');
-  }, [review]);
-
-  // if (review.id === 5615) {
-  //   console.log({ review, renderImages });
-  // }
+  // const router = useRouter();
 
   const hasMultipleImages = review.images.length > 1;
+
+  const handleNavigate = (imageId: number) => {
+    openRoutedContext('galleryDetailModal', {
+      galleryImageId: imageId,
+      reviewId: review.id,
+      infinite: false,
+      returnUrl: Router.asPath,
+    });
+    // router.push({
+    //   pathname: `/gallery/${imageId}`,
+    //   query: {
+    //     reviewId: review.id,
+    //     infinite: false,
+    //     returnUrl: router.asPath,
+    //   },
+    // });
+  };
 
   if (!inView && review.images.length > 0)
     return (
@@ -238,13 +245,8 @@ function ReviewCarousel({
                   image={image}
                   edgeImageProps={{ width: 400 }}
                   aspectRatio={1}
+                  onClick={() => handleNavigate(image.id)}
                   cropFocus="top"
-                  onClick={() =>
-                    openContext('reviewLightbox', {
-                      initialSlide: index,
-                      reviewId: review.id,
-                    })
-                  }
                   withMeta
                 />
               )}
@@ -300,13 +302,8 @@ function ReviewCarousel({
                     image={image}
                     edgeImageProps={{ width: 400 }}
                     aspectRatio={1}
+                    onClick={() => handleNavigate(image.id)}
                     cropFocus="top"
-                    onClick={() =>
-                      openContext('reviewLightbox', {
-                        initialSlide: index,
-                        reviewId: review.id,
-                      })
-                    }
                     withMeta
                   />
                 )}
