@@ -117,15 +117,6 @@ export function RoutedContextProvider2() {
   const router = useRouter();
   const modal = router.query.modal;
 
-  // const [visible, setVisible] = useState(!!router.query.modal);
-
-  // const handlePopstate = (e: PopStateEvent) => setVisible(e.state.url.includes('modal='));
-  // useWindowEvent('popstate', handlePopstate);
-
-  // useDidUpdate(() => {
-  //   setVisible(!!router.query.modal);
-  // }, [router]);
-
   if (!modal) return null;
 
   const query = QS.parse(QS.stringify(router.query));
