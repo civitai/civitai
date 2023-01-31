@@ -97,7 +97,6 @@ export function openRoutedContext<TName extends keyof typeof registry>(
 ) {
   const resolve = registry[modal].resolve;
   const [url, as, options] = resolve(props as any) as Parameters<NextRouter['push']>;
-  console.log({ Router });
   Router.push(url, as, { ...options, ...optionsOverride });
 }
 

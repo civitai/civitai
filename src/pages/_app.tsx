@@ -85,8 +85,8 @@ function MyApp(props: CustomAppProps) {
               <CustomModalsProvider>
                 <NotificationsProvider>
                   {/* <RoutedContextProvider> */}
-                  <RoutedContextProvider2 />
                   <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                  <RoutedContextProvider2 />
                   {/* </RoutedContextProvider> */}
                 </NotificationsProvider>
               </CustomModalsProvider>
