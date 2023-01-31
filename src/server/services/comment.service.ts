@@ -1,7 +1,7 @@
 import { Prisma, ReviewReactions } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
-import { env } from '~/env/server.mjs';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -16,7 +16,6 @@ import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 export const getComments = <TSelect extends Prisma.CommentSelect>({
   input: { limit = DEFAULT_PAGE_SIZE, page, cursor, modelId, userId, filterBy, sort },
-  user,
   select,
 }: {
   input: GetAllCommentsSchema;
@@ -87,8 +86,16 @@ export const getUserReactionByCommentId = ({
 export const createOrUpdateComment = ({
   ownerId,
   ...input
-}: CommentUpsertInput & { ownerId: number }) => {
-  const { id, ...commentInput } = input;
+}: CommentUpsertInput & { ownerId: number; locked: boolean }) => {
+  const { id, locked, ...commentInput } = input;
+
+  // If we are editing, but the comment is locked
+  // prevent from updating
+  if (id && locked)
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This comment is locked and cannot be updated',
+    });
 
   return prisma.comment.upsert({
     where: { id: id ?? -1 },

@@ -105,7 +105,7 @@ export default createRoutedContext({
                 linkToProfile
               />
               <Group spacing={4} noWrap>
-                <CommentDiscussionMenu comment={comment} user={currentUser} />
+                <CommentDiscussionMenu comment={comment} user={currentUser} replaceNavigation />
                 <CloseButton onClick={context.close} />
               </Group>
             </Group>

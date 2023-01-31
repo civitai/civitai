@@ -508,6 +508,7 @@ model Review {
   nsfw           Boolean       @default(false)
   tosViolation   Boolean       @default(false)
   exclude        Boolean       @default(false)
+  locked         Boolean       @default(false)
 
   reactions       ReviewReaction[]
   imagesOnReviews ImagesOnReviews[]
@@ -710,6 +711,7 @@ model Comment {
   modelId      Int
   review       Review?  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   reviewId     Int?
+  locked       Boolean? @default(false)
 
   comments  Comment[]         @relation("ParentComments")
   reactions CommentReaction[]
@@ -852,6 +854,7 @@ model CommentV2 {
   userId       Int
   user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   comments     CommentV2[] @relation("ParentComments")
+  locked       Boolean?    @default(false)
 
   question  QuestionComment?
   answer    AnswerComment?

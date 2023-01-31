@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 
 import { prisma } from '~/server/db/client';
 import {
+  convertToCommentHandler,
   deleteUserReviewHandler,
   getReviewCommentsHandler,
   getReviewCommentsCountHandler,
@@ -11,7 +12,7 @@ import {
   toggleReactionHandler,
   upsertReviewHandler,
   toggleExcludeHandler,
-  convertToCommentHandler,
+  toggleLockHandler,
 } from '~/server/controllers/review.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -47,6 +48,23 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
   });
 });
 
+const isLocked = middleware(async ({ ctx, next, input }) => {
+  if (!ctx?.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+
+  const { id } = input as { id: number };
+  const isModerator = ctx.user.isModerator;
+  const review = await prisma.review.findFirst({ where: { id } });
+  const locked = isModerator ? false : review?.locked ?? false;
+
+  return next({
+    ctx: {
+      ...ctx,
+      user: ctx.user,
+      locked,
+    },
+  });
+});
+
 export const reviewRouter = router({
   getAll: publicProcedure.input(getAllReviewSchema).query(getReviewsInfiniteHandler),
   getReactions: publicProcedure.input(getReviewReactionsSchema).query(getReviewReactionsHandler),
@@ -56,6 +74,7 @@ export const reviewRouter = router({
   upsert: protectedProcedure
     .input(reviewUpsertSchema)
     .use(isOwnerOrModerator)
+    .use(isLocked)
     .mutation(upsertReviewHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
@@ -67,4 +86,8 @@ export const reviewRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(convertToCommentHandler),
+  toggleLock: protectedProcedure
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .mutation(toggleLockHandler),
 });

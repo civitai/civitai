@@ -35,7 +35,7 @@ export const getAllReviewSchema = z
 export type GetReviewReactionsInput = z.infer<typeof getReviewReactionsSchema>;
 export const getReviewReactionsSchema = z.object({ reviewId: z.number() });
 
-export type ToggleReacionInput = z.infer<typeof toggleReactionInput>;
+export type ToggleReactionInput = z.infer<typeof toggleReactionInput>;
 export const toggleReactionInput = z.object({
   id: z.number(),
   reaction: z.nativeEnum(ReviewReactions),
