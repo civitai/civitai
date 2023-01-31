@@ -181,13 +181,7 @@ export function ReviewDiscussionMenu({
             {(!review.locked || isMod) && (
               <Menu.Item
                 icon={<IconEdit size={14} stroke={1.5} />}
-                onClick={() =>
-                  openRoutedContext(
-                    'reviewEdit',
-                    { reviewId: review.id },
-                    { replace: replaceNavigation }
-                  )
-                }
+                onClick={() => openRoutedContext('reviewEdit', { reviewId: review.id })}
               >
                 Edit review
               </Menu.Item>
