@@ -50,6 +50,11 @@ export function filenamize(value: string, length = 20) {
   return camelCase(truncate(value, { length, separator: '_', omission: '' }));
 }
 
+export function replaceInsensitive(value: string, search: string, replace: string) {
+  const escaped = search.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+  return value.replace(new RegExp(escaped, 'gi'), replace);
+}
+
 /**
  * @see https://stackoverflow.com/a/12900504
  */

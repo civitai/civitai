@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { env } from '~/env/server.mjs';
 import { prisma } from '~/server/db/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { filenamize } from '~/utils/string-helpers';
+import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import { getGetUrl } from '~/utils/s3-utils';
 import requestIp from 'request-ip';
 import { constants, ModelFileType } from '~/server/common/constants';
@@ -106,7 +106,7 @@ export function getDownloadFilename({
 }) {
   let fileName = file.name;
   const modelName = filenamize(model.name);
-  let versionName = filenamize(modelVersion.name).replace(modelName, '');
+  let versionName = filenamize(replaceInsensitive(modelVersion.name, modelName, ''));
 
   const ext = file.name.split('.').pop();
   if (!constants.modelFileTypes.includes(file.type as ModelFileType)) return file.name;
