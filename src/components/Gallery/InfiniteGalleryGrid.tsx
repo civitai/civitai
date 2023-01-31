@@ -21,6 +21,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { openRoutedContext, RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { ImageGetAllInfinite } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
@@ -124,7 +125,7 @@ function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
   }, [itemWidth, image.width, image.height]);
 
   return (
-    <Link href={`/gallery/${image.id}`} passHref>
+    <RoutedContextLink modal="galleryDetailModal" galleryImageId={image.id}>
       <Card
         ref={ref}
         className={classes.card}
@@ -210,7 +211,7 @@ function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
           </>
         )}
       </Card>
-    </Link>
+    </RoutedContextLink>
   );
 }
 

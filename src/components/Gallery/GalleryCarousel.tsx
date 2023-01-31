@@ -1,5 +1,5 @@
 import { GetGalleryImagesReturnType } from '~/server/controllers/image.controller';
-import { useRouter } from 'next/router';
+import Router, { useRouter } from 'next/router';
 import { createStyles, UnstyledButton, Center } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons';
 import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
@@ -20,7 +20,7 @@ type GalleryCarouselProps = {
   - when our current image is not found in the images array, we can navigate away from it, but we can't use the arrows to navigate back to it.
 */
 export function GalleryCarousel({ current, images, className, connect }: GalleryCarouselProps) {
-  const router = useRouter();
+  // const router = useRouter();
   const { classes, cx } = useStyles();
   const index = images.findIndex((x) => x.id === current.id);
   const prevIndex = index - 1;
@@ -34,12 +34,17 @@ export function GalleryCarousel({ current, images, className, connect }: Gallery
   // #region [navigation]
   const canNavigate = index > -1 ? images.length > 1 : images.length > 0; // see notes
   const handleNavigate = (id: number) => {
-    const { galleryImageId, ...query } = router.query;
-    const [, queryString] = router.asPath.split('?');
-    router.replace(
+    const { galleryImageId, ...query } = Router.query;
+    const [, queryString] = Router.asPath.split('?');
+    Router.replace(
       { query: { ...query, galleryImageId: id } },
-      { pathname: `/gallery/${id}`, query: { ...QS.parse(queryString) } as any },
-      { shallow: true }
+      {
+        pathname: `/gallery/${id}`,
+        query: QS.parse(queryString) as any,
+      },
+      {
+        shallow: true,
+      }
     );
   };
 

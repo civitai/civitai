@@ -65,7 +65,6 @@ import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
-import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
@@ -76,7 +75,6 @@ import { isNumber } from '~/utils/type-guards';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { scrollToTop } from '~/utils/scroll-utils';
 import { RunButton } from '~/components/RunStrategy/RunButton';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -93,10 +91,11 @@ import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { AbsoluteCenter } from '~/components/AbsoluteCenter/AbsoluteCenter';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { openRoutedContext } from '~/providers/RoutedContextProvider';
+import { openContext } from '~/providers/CustomModalsProvider';
 
 //TODO - Break model query into multiple queries
 /*
@@ -113,7 +112,6 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ctx, ssg }) => {
     const params = (ctx.params ?? {}) as { id: string; slug: string[] };
     const id = Number(params.id);
-    console.log({ ctx });
     if (!isNumber(id)) return { notFound: true };
 
     await ssg?.model.getById.prefetch({ id });
@@ -147,7 +145,11 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export default function ModelDetail(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
+export default function ModelDetail({
+  id,
+  slug,
+  ...params
+}: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
   // const router = useRouter();
   const currentUser = useCurrentUser();
@@ -155,19 +157,9 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
   const mobile = useIsMobile();
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();
-  const { openContext } = useRoutedContext();
-
-  const { id, slug } = props;
   // const { edit } = router.query;
 
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
-  const [reviewFilters, setReviewFilters] = useState<{
-    filterBy: ReviewFilter[];
-    sort: ReviewSort;
-  }>({
-    filterBy: [],
-    sort: ReviewSort.Newest,
-  });
 
   const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({ id });
   const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
@@ -343,20 +335,6 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
       },
     });
   };
-
-  // const handleReviewFilterChange = (values: ReviewFilter[]) => {
-  //   setReviewFilters((current) => ({
-  //     ...current,
-  //     filterBy: values,
-  //   }));
-  // };
-
-  // const handleReviewSortChange = (value: ReviewSort) => {
-  //   setReviewFilters((current) => ({
-  //     ...current,
-  //     sort: value,
-  //   }));
-  // };
 
   const handleUnpublishModel = () => {
     unpublishModelMutation.mutate({ id });
@@ -562,10 +540,11 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       Delete Model
                     </Menu.Item>
                     <Menu.Item
-                      component={NextLink}
-                      href={`/models/${id}/${slug}?edit=true`}
+                      // component={NextLink}
+                      // href={`/models/${id}/${slug}?edit=true`}
                       icon={<IconEdit size={14} stroke={1.5} />}
-                      shallow
+                      onClick={() => openRoutedContext('modelEdit', { modelId: model.id })}
+                      // shallow
                     >
                       Edit Model
                     </Menu.Item>
@@ -576,7 +555,10 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     <Menu.Item
                       icon={<IconFlag size={14} stroke={1.5} />}
                       onClick={() =>
-                        openContext('report', { type: ReportEntity.Model, entityId: model.id })
+                        openContext('report', {
+                          entityType: ReportEntity.Model,
+                          entityId: model.id,
+                        })
                       }
                     >
                       Report
@@ -589,7 +571,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                     <HideModelButton as="menu-item" modelId={model.id} />
                     <Menu.Item
                       icon={<IconTagOff size={14} stroke={1.5} />}
-                      onClick={() => openContext('blockTags', { modelId: model.id })}
+                      onClick={() => openContext('blockModelTags', { modelId: model.id })}
                     >
                       Hide content with these tags
                     </Menu.Item>
@@ -817,14 +799,21 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                                 edgeImageProps={{ width: 400 }}
                                 radius="md"
                                 onClick={() =>
-                                  Router.push({
-                                    pathname: `/gallery/${image.id}`,
-                                    query: {
-                                      modelId: model.id,
-                                      modelVersionId: latestVersion.id,
-                                      infinite: false,
-                                      returnUrl: Router.asPath,
-                                    },
+                                  // Router.push({
+                                  //   pathname: `/gallery/${image.id}`,
+                                  //   query: {
+                                  //     modelId: model.id,
+                                  //     modelVersionId: latestVersion.id,
+                                  //     infinite: false,
+                                  //     returnUrl: Router.asPath,
+                                  //   },
+                                  // })
+                                  openRoutedContext('galleryDetailModal', {
+                                    galleryImageId: image.id,
+                                    modelId: model.id,
+                                    modelVersionId: latestVersion.id,
+                                    infinite: false,
+                                    returnUrl: Router.asPath,
                                   })
                                 }
                                 style={{ width: '100%' }}
@@ -870,7 +859,7 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       variant="outline"
                       fullWidth={mobile}
                       size="xs"
-                      onClick={() => openContext('reviewEdit', {})}
+                      onClick={() => openRoutedContext('reviewEdit', {})}
                     >
                       Add Review
                     </Button>
@@ -880,43 +869,15 @@ export default function ModelDetail(props: InferGetServerSidePropsType<typeof ge
                       leftIcon={<IconMessage size={16} />}
                       variant="outline"
                       fullWidth={mobile}
-                      onClick={() => openContext('commentEdit', {})}
+                      onClick={() => openRoutedContext('commentEdit', {})}
                       size="xs"
                     >
                       Add Comment
                     </Button>
                   </LoginRedirect>
                 </Group>
-                <Group spacing="xs" noWrap grow>
-                  {/* <Select
-                    defaultValue={ReviewSort.Newest}
-                    icon={<IconArrowsSort size={14} />}
-                    data={Object.values(ReviewSort)
-                      // Only exclude MostDisliked until there's a clear way to sort by it
-                      .filter((sort) => ![ReviewSort.MostDisliked].includes(sort))
-                      .map((sort) => ({
-                        label: startCase(sort),
-                        value: sort,
-                      }))}
-                    onChange={handleReviewSortChange}
-                    size="xs"
-                  /> */}
-                  {/* <MultiSelect
-                    placeholder="Filters"
-                    icon={<IconFilter size={14} />}
-                    data={Object.values(ReviewFilter).map((sort) => ({
-                      label: startCase(sort),
-                      value: sort,
-                    }))}
-                    onChange={handleReviewFilterChange}
-                    size="xs"
-                    zIndex={500}
-                    clearButtonLabel="Clear review filters"
-                    clearable
-                  /> */}
-                </Group>
               </Group>
-              <ModelDiscussion modelId={model.id} filters={reviewFilters} />
+              <ModelDiscussion modelId={model.id} />
             </Stack>
           </Grid.Col>
         </Grid>

@@ -14,16 +14,16 @@ import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { ReviewGetAllItem } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { useRouter } from 'next/router';
+import Router from 'next/router';
 import { ReviewDiscussionMenu } from '~/components/Model/ModelDiscussion/ReviewDiscussionMenu';
+import { openRoutedContext } from '~/providers/RoutedContextProvider';
 
 export function ReviewDiscussionItem({ review, width }: Props) {
-  const { openContext } = useRoutedContext();
+  // const { openContext } = useRoutedContext();
   const currentUser = useCurrentUser();
   const { ref, inView } = useInView();
   const [visible, setVisible] = useState(false);
@@ -154,7 +154,7 @@ export function ReviewDiscussionItem({ review, width }: Props) {
           size="xs"
           radius="xl"
           variant="subtle"
-          onClick={() => openContext('reviewThread', { reviewId: review.id })}
+          onClick={() => openRoutedContext('reviewThread', { reviewId: review.id })}
           compact
         >
           <Group spacing={2} noWrap>
@@ -181,19 +181,25 @@ function ReviewCarousel({
   visible: boolean;
 }) {
   const [renderIndexes, setRenderIndexes] = useState([0]);
-  const router = useRouter();
+  // const router = useRouter();
 
   const hasMultipleImages = review.images.length > 1;
 
   const handleNavigate = (imageId: number) => {
-    router.push({
-      pathname: `/gallery/${imageId}`,
-      query: {
-        reviewId: review.id,
-        infinite: false,
-        returnUrl: router.asPath,
-      },
+    openRoutedContext('galleryDetailModal', {
+      galleryImageId: imageId,
+      reviewId: review.id,
+      infinite: false,
+      returnUrl: Router.asPath,
     });
+    // router.push({
+    //   pathname: `/gallery/${imageId}`,
+    //   query: {
+    //     reviewId: review.id,
+    //     infinite: false,
+    //     returnUrl: router.asPath,
+    //   },
+    // });
   };
 
   if (!inView && review.images.length > 0)

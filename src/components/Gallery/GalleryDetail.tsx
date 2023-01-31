@@ -1,9 +1,6 @@
-import { GetServerSideProps } from 'next/types';
 import { useRouter } from 'next/router';
 import { useGalleryFilters } from '~/components/Gallery/GalleryFilters';
 import { trpc } from '~/utils/trpc';
-import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
-import { isNumber } from '~/utils/type-guards';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
@@ -36,7 +33,7 @@ import { ReportImageButton } from '~/components/Gallery/ReportImageButton';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
 
-export default function GalleryImageDetail() {
+export function GalleryDetail() {
   const router = useRouter();
   const id = Number(router.query.galleryImageId);
   const filters = useGalleryFilters();
@@ -76,6 +73,12 @@ export default function GalleryImageDetail() {
   const image = galleryImages.find((x) => x.id === id) ?? prefetchImage;
   // #endregion
 
+  const shareUrl = useMemo(() => {
+    const [pathname, queryString] = router.asPath.split('?');
+    const { active, ...query } = QS.parse(queryString);
+    return Object.keys(query).length > 0 ? `${pathname}?${QS.stringify(query)}` : pathname;
+  }, [router]);
+
   // #region [back button functionality]
   const handleBackClick = () => {
     if (hasHistory) router.back();
@@ -83,10 +86,11 @@ export default function GalleryImageDetail() {
   };
 
   const handleCloseContext = () => {
-    const { active, ...query } = router.query;
-    if (active === 'true') {
+    const [, queryString] = router.asPath.split('?');
+    const { active, ...query } = QS.parse(queryString) as any;
+    if (active) {
       if (hasHistory) router.back();
-      else router.replace({ query }, undefined, { shallow: true });
+      else router.replace({ query: router.query }, { query }, { shallow: true });
     } else {
       handleBackClick();
     }
@@ -94,15 +98,16 @@ export default function GalleryImageDetail() {
   useHotkeys([['Escape', handleBackClick]]);
   // #endregion
 
-  const shareUrl = useMemo(() => {
-    const [pathname, queryString] = router.asPath.split('?');
-    const { active, ...query } = QS.parse(queryString);
-    return Object.keys(query).length > 0 ? `${pathname}?${QS.stringify(query)}` : pathname;
-  }, [router]);
-
   const handleToggleInfo = () => {
-    const active = router.query.active === 'true';
-    router.push({ query: { ...router.query, active: !active } }, undefined, { shallow: true });
+    const [, queryString] = router.asPath.split('?');
+    const { active, ...query } = QS.parse(queryString) as any;
+
+    router.push(
+      { query: { ...router.query, active: !active } },
+      { query: { ...query, active: !active } },
+      // { pathname: router.asPath, query: { ...router.query, active: !active } },
+      { shallow: true }
+    );
   };
 
   if (!image && isLoading) return <PageLoader />;
@@ -110,125 +115,104 @@ export default function GalleryImageDetail() {
   if (image?.nsfw && !currentUser?.showNsfw) return <SensitiveShield />;
 
   return (
-    // TODO.gallery - <Meta />
-    <Paper className={classes.root}>
-      <CloseButton
-        style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
-        size="lg"
-        variant="default"
-        onClick={handleBackClick}
-        className={classes.mobileOnly}
-      />
-      <GalleryCarousel
-        className={classes.carousel}
-        current={image}
-        images={galleryImages}
-        connect={
-          userId
-            ? { entityType: 'user', entityId: userId }
-            : reviewId
-            ? { entityType: 'review', entityId: reviewId }
-            : // : modelVersionId
-            // ? { entityType: 'modelVersion', entityId: modelVersionId }
-            modelId
-            ? { entityType: 'model', entityId: modelId }
-            : undefined
-        }
-      />
-      <ActionIcon
-        size="lg"
-        className={cx(classes.info, classes.mobileOnly)}
-        onClick={handleToggleInfo}
-        variant="default"
-      >
-        <IconInfoCircle />
-      </ActionIcon>
-      <Card
-        className={cx(classes.sidebar, {
-          [classes.active]: active,
-        })}
-      >
-        <Card.Section withBorder>
-          <Group p="sm" noWrap>
-            <Group position="apart" style={{ flex: 1 }}>
-              <UserAvatar
-                user={image.user}
-                subText={<DaysFromNow date={image.createdAt} />}
-                subTextForce
-                withUsername
-                linkToProfile
-              />
-              <Group spacing={4}>
-                <ShareButton url={shareUrl} title={`Image by ${image.user.username}`}>
-                  <ActionIcon size="lg">
-                    <IconShare />
-                  </ActionIcon>
-                </ShareButton>
-                {/* TODO.gallery - reporting */}
-                <ReportImageButton imageId={image.id}>
-                  <ActionIcon size="lg">
-                    <IconFlag />
-                  </ActionIcon>
-                </ReportImageButton>
-                {/* <ActionIcon size="lg">
+    <MantineProvider theme={{ colorScheme: 'dark' }}>
+      <Paper className={classes.root}>
+        <CloseButton
+          style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
+          size="lg"
+          variant="default"
+          onClick={handleBackClick}
+          className={classes.mobileOnly}
+        />
+        <GalleryCarousel
+          className={classes.carousel}
+          current={image}
+          images={galleryImages}
+          connect={
+            userId
+              ? { entityType: 'user', entityId: userId }
+              : reviewId
+              ? { entityType: 'review', entityId: reviewId }
+              : // : modelVersionId
+              // ? { entityType: 'modelVersion', entityId: modelVersionId }
+              modelId
+              ? { entityType: 'model', entityId: modelId }
+              : undefined
+          }
+        />
+        <ActionIcon
+          size="lg"
+          className={cx(classes.info, classes.mobileOnly)}
+          onClick={handleToggleInfo}
+          variant="default"
+        >
+          <IconInfoCircle />
+        </ActionIcon>
+        <Card
+          className={cx(classes.sidebar, {
+            [classes.active]: active,
+          })}
+        >
+          <Card.Section withBorder>
+            <Group p="sm" noWrap>
+              <Group position="apart" style={{ flex: 1 }}>
+                <UserAvatar
+                  user={image.user}
+                  subText={<DaysFromNow date={image.createdAt} />}
+                  subTextForce
+                  withUsername
+                  linkToProfile
+                />
+                <Group spacing={4}>
+                  <ShareButton url={shareUrl} title={`Image by ${image.user.username}`}>
+                    <ActionIcon size="lg">
+                      <IconShare />
+                    </ActionIcon>
+                  </ShareButton>
+                  {/* TODO.gallery - reporting */}
+                  <ReportImageButton imageId={image.id}>
+                    <ActionIcon size="lg">
+                      <IconFlag />
+                    </ActionIcon>
+                  </ReportImageButton>
+                  {/* <ActionIcon size="lg">
                   <IconDotsVertical />
                 </ActionIcon> */}
+                </Group>
               </Group>
+              <CloseButton size="lg" variant="default" onClick={handleCloseContext} />
             </Group>
-            <CloseButton size="lg" variant="default" onClick={handleCloseContext} />
-          </Group>
-        </Card.Section>
-        <Card.Section component={ScrollArea} style={{ flex: 1 }}>
-          <Stack spacing="md" pt="md">
-            <Box px="md">
-              <Reactions
-                entityId={image.id}
-                entityType="image"
-                reactions={image.reactions}
-                metrics={image.metrics}
-              />
-            </Box>
-            {/* TODO.gallery - REACTIONS */}
-            {/* TODO.gallery - COMMENTS */}
-            {/* TODO.gallery - TAGS */}
-            {/* TODO.gallery - RESOURCES */}
-            {/* TODO.gallery - META */}
-            {image.meta && (
-              <>
-                <Divider label="Generation Data" labelPosition="center" mb={-15} />
-                <Box px="md">
-                  <ImageMeta meta={image.meta as ImageMetaProps} />
-                </Box>
-              </>
-            )}
-          </Stack>
-        </Card.Section>
-      </Card>
-    </Paper>
+          </Card.Section>
+          <Card.Section component={ScrollArea} style={{ flex: 1 }}>
+            <Stack spacing="md" pt="md">
+              <Box px="md">
+                <Reactions
+                  entityId={image.id}
+                  entityType="image"
+                  reactions={image.reactions}
+                  metrics={image.metrics}
+                />
+              </Box>
+              {/* TODO.gallery - REACTIONS */}
+              {/* TODO.gallery - COMMENTS */}
+              {/* TODO.gallery - TAGS */}
+              {/* TODO.gallery - RESOURCES */}
+              {/* TODO.gallery - META */}
+              {image.meta && (
+                <>
+                  <Divider label="Generation Data" labelPosition="center" mb={-15} />
+                  <Box px="md">
+                    <ImageMeta meta={image.meta as ImageMetaProps} />
+                  </Box>
+                </>
+              )}
+            </Stack>
+          </Card.Section>
+        </Card>
+      </Paper>
+    </MantineProvider>
   );
 }
-
-GalleryImageDetail.getLayout = (page: any) => (
-  <MantineProvider theme={{ colorScheme: 'dark' }}>{page}</MantineProvider>
-);
-
-export const getServerSideProps: GetServerSideProps = async (context) => {
-  const isClient = context.req.url?.startsWith('/_next/data');
-  const params = (context.params ?? {}) as { galleryImageId: string };
-  const id = Number(params.galleryImageId);
-  if (!isNumber(id)) return { notFound: true };
-
-  const ssg = await getServerProxySSGHelpers(context);
-  if (!isClient) {
-    await ssg.image.getGalleryImageDetail.prefetch({ id });
-  }
-
-  return {
-    props: {
-      trpcState: ssg.dehydrate(),
-    },
-  };
-};
 
 const useStyles = createStyles((theme, _props, getRef) => {
   const isMobile = `@media (max-width: ${theme.breakpoints.md - 1}px)`;

@@ -2,11 +2,11 @@ import { useWindowEvent } from '@mantine/hooks';
 import { useEffect } from 'react';
 import create from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { useMemo } from 'react';
 
 // partial support navigation api - https://caniuse.com/?search=window.navigation
 const isClient = typeof window !== 'undefined';
 const hasNavigation = isClient && !!window.navigation;
+const sessionKey = 'hist_keys';
 
 type ClientNavigationStore = {
   index: number;
@@ -52,6 +52,10 @@ export function ClientHistoryStore() {
   const setKey = useClientHistoryStore((state) => state.setKey);
 
   useEffect(() => {
+    sessionStorage.setItem(sessionKey, keys.join(','));
+  }, [keys]);
+
+  useEffect(() => {
     if (!keys.length) {
       setDefault(history.state.key);
     }
@@ -74,12 +78,19 @@ export function ClientHistoryStore() {
   return null;
 }
 
-export function useClientHistoryIndex() {
+export function useHasClientHistory() {
   const index = useClientHistoryStore((state) => state.index ?? 0);
-  return useMemo(() => {
-    return hasNavigation ? navigation.currentEntry.index : index;
-  }, [index]);
+  return index > 0;
 }
+
+export const getHasClientHistory = () => {
+  if (!hasNavigation) {
+    const keys = sessionStorage.getItem(sessionKey)?.split(',') ?? [];
+    const current = history.state.key;
+    const index = keys.indexOf(current);
+    return index > 0;
+  } else return navigation.currentEntry.index > 0;
+};
 
 // export function BackButton({ children }: { children: React.ReactElement }) {
 //   const router = useRouter();

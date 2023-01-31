@@ -1,7 +1,6 @@
 import {
   Button,
   Group,
-  Modal,
   Radio,
   Stack,
   Text,
@@ -15,19 +14,17 @@ import { showNotification, hideNotification } from '@mantine/notifications';
 import { ReportReason } from '@prisma/client';
 import { IconArrowLeft } from '@tabler/icons';
 import { useMemo, useState } from 'react';
-import { z } from 'zod';
 import { AdminAttentionForm } from '~/components/Report/AdminAttentionForm';
 import { ClaimForm } from '~/components/Report/ClaimForm';
 import { NsfwForm } from '~/components/Report/NsfwForm';
 import { OwnershipForm } from '~/components/Report/OwnershipForm';
 import { TosViolationForm } from '~/components/Report/TosViolationForm';
-import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
+import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';
 import { useRouter } from 'next/router';
-import { openModal } from '@mantine/modals';
 
 const reports = [
   {
@@ -75,13 +72,10 @@ const reports = [
 const invalidateReasons = [ReportReason.NSFW, ReportReason.Ownership];
 const SEND_REPORT_ID = 'sending-report';
 
-export default createRoutedContext({
-  authGuard: true,
-  schema: z.object({
-    type: z.nativeEnum(ReportEntity),
-    entityId: z.number(),
-  }),
-  Element: ({ context, props: { type, entityId } }) => {
+const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; entityId: number }>({
+  name: 'report',
+  withCloseButton: false,
+  Element: ({ context, props: { entityType, entityId } }) => {
     // #region [temp for gallery image reports]
     const router = useRouter();
     const modelId = router.query.modelId ? Number(router.query.modelId) : undefined;
@@ -96,14 +90,14 @@ export default createRoutedContext({
       [reason]
     );
     const title = useMemo(
-      () => reports.find((x) => x.reason === reason)?.label ?? `Report ${type}`,
-      [reason, type]
+      () => reports.find((x) => x.reason === reason)?.label ?? `Report ${entityType}`,
+      [reason, entityType]
     );
 
     const queryUtils = trpc.useContext();
     const { data, isInitialLoading } = trpc.model.getModelReportDetails.useQuery(
       { id: entityId },
-      { enabled: type === ReportEntity.Model }
+      { enabled: entityType === ReportEntity.Model }
     );
     const { mutate, isLoading: isLoading } = trpc.report.create.useMutation({
       onMutate() {
@@ -122,7 +116,7 @@ export default createRoutedContext({
         });
         context.close();
         if (invalidateReasons.some((reason) => reason === variables.reason)) {
-          switch (type) {
+          switch (entityType) {
             case ReportEntity.Model:
               queryUtils.model.getById.setData(
                 { id: variables.id },
@@ -210,71 +204,71 @@ export default createRoutedContext({
       const details: any = Object.fromEntries(Object.entries(data).filter(([_, v]) => v != null));
       if (!reason) return;
       mutate({
-        type,
+        type: entityType,
         reason,
         id: entityId,
         details,
       });
     };
-
     return (
-      <Modal opened={context.opened} onClose={context.close} withCloseButton={false}>
-        <Stack>
-          <Group position="apart" noWrap>
-            <Group spacing={4}>
-              {!!reason && (
-                <ActionIcon onClick={() => setReason(undefined)}>
-                  <IconArrowLeft size={16} />
-                </ActionIcon>
-              )}
-              <Text>{title}</Text>
-            </Group>
-            <CloseButton onClick={context.close} />
+      <Stack>
+        <Group position="apart" noWrap>
+          <Group spacing={4}>
+            {!!reason && (
+              <ActionIcon onClick={() => setReason(undefined)}>
+                <IconArrowLeft size={16} />
+              </ActionIcon>
+            )}
+            <Text>{title}</Text>
           </Group>
-          {isInitialLoading ? (
-            <Center p="xl">
-              <Loader />
-            </Center>
-          ) : (
-            !reason && (
-              <Radio.Group
-                orientation="vertical"
-                value={reason}
-                onChange={(reason) => setReason(reason as ReportReason)}
-                // label="Report reason"
-                pb="xs"
-              >
-                {reports
-                  .filter(({ availableFor }) => availableFor.includes(type))
-                  .filter((item) => {
-                    if (type === ReportEntity.Model) {
-                      if (item.reason === ReportReason.Claim) return data?.userId !== -1;
-                      if (item.reason === ReportReason.Ownership) {
-                        return !data?.reportStats?.ownershipPending;
-                      }
+          <CloseButton onClick={context.close} />
+        </Group>
+        {isInitialLoading ? (
+          <Center p="xl">
+            <Loader />
+          </Center>
+        ) : (
+          !reason && (
+            <Radio.Group
+              orientation="vertical"
+              value={reason}
+              onChange={(reason) => setReason(reason as ReportReason)}
+              // label="Report reason"
+              pb="xs"
+            >
+              {reports
+                .filter(({ availableFor }) => availableFor.includes(entityType))
+                .filter((item) => {
+                  if (entityType === ReportEntity.Model) {
+                    if (item.reason === ReportReason.Claim) return data?.userId !== -1;
+                    if (item.reason === ReportReason.Ownership) {
+                      return !data?.reportStats?.ownershipPending;
                     }
-                    return true;
-                  }) // TEMP FIX
-                  .map(({ reason, label }, index) => (
-                    <Radio key={index} value={reason} label={label} />
-                  ))}
-              </Radio.Group>
-            )
-          )}
-          {ReportForm && (
-            <ReportForm onSubmit={handleSubmit} setUploading={setUploading}>
-              <Group grow>
-                <Button variant="default" onClick={context.close}>
-                  Cancel
-                </Button>
-                <Button type="submit" loading={isLoading} disabled={uploading}>
-                  Submit
-                </Button>
-              </Group>
-            </ReportForm>
-          )}
-        </Stack>
-      </Modal>
+                  }
+                  return true;
+                }) // TEMP FIX
+                .map(({ reason, label }, index) => (
+                  <Radio key={index} value={reason} label={label} />
+                ))}
+            </Radio.Group>
+          )
+        )}
+        {ReportForm && (
+          <ReportForm onSubmit={handleSubmit} setUploading={setUploading}>
+            <Group grow>
+              <Button variant="default" onClick={context.close}>
+                Cancel
+              </Button>
+              <Button type="submit" loading={isLoading} disabled={uploading}>
+                Submit
+              </Button>
+            </Group>
+          </ReportForm>
+        )}
+      </Stack>
     );
   },
 });
+
+export const openReportModal = openModal;
+export default Modal;

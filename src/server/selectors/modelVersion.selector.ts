@@ -4,6 +4,7 @@ import { imageSelectWithoutId } from '~/server/selectors/image.selector';
 
 export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersionSelect>()({
   id: true,
+  modelId: true,
   name: true,
   createdAt: true,
   updatedAt: true,
@@ -45,7 +46,6 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
 
 export const getModelVersionApiSelect = Prisma.validator<Prisma.ModelVersionSelect>()({
   ...getModelVersionDetailsSelect,
-  modelId: true,
   model: {
     select: { name: true, type: true, nsfw: true, poi: true },
   },

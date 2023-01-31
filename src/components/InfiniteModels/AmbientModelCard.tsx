@@ -41,7 +41,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
+import { openContext } from '~/providers/CustomModalsProvider';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getRandom } from '~/utils/array-helpers';
@@ -161,7 +161,6 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
 
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
-  const { openContext } = useRoutedContext();
 
   const {
     data: { Favorite: favoriteModels = [], Hide: hiddenModels = [] } = { Favorite: [], Hide: [] },
@@ -265,7 +264,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
-          openContext('report', { type: ReportEntity.Model, entityId: id });
+          openContext('report', { entityType: ReportEntity.Model, entityId: id });
         }}
       >
         Report
@@ -280,7 +279,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
       onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
         e.stopPropagation();
-        openContext('blockTags', { modelId: id });
+        openContext('blockModelTags', { modelId: id });
       }}
     >
       {`Hide content with these tags`}

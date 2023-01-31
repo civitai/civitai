@@ -1,16 +1,16 @@
 import { Button, Center, Grid, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
+import React from 'react';
 import { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
 
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/CommentDiscussionItem';
 import { ReviewDiscussionItem } from '~/components/Model/ModelDiscussion/ReviewDiscussionItem';
-import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { CommentGetAllItem, ReviewGetAllItem } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
-export function ModelDiscussion({ modelId, filters }: Props) {
+export function ModelDiscussion({ modelId }: Props) {
   const {
     data: reviewsData,
     isLoading: loadingReviews,
@@ -19,7 +19,7 @@ export function ModelDiscussion({ modelId, filters }: Props) {
     hasNextPage: hasMoreReviews,
     isRefetching: refetchingReviews,
   } = trpc.review.getAll.useInfiniteQuery(
-    { modelId, limit: 12, ...filters },
+    { modelId, limit: 12 },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       keepPreviousData: false,
@@ -33,7 +33,7 @@ export function ModelDiscussion({ modelId, filters }: Props) {
     hasNextPage: hasMoreComments,
     isRefetching: refetchingComments,
   } = trpc.comment.getAll.useInfiniteQuery(
-    { modelId, limit: 12, ...filters },
+    { modelId, limit: 12 },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       keepPreviousData: false,
@@ -66,12 +66,7 @@ export function ModelDiscussion({ modelId, filters }: Props) {
       <Grid.Col span={12} sx={{ position: 'relative' }}>
         <LoadingOverlay visible={loading} />
         {hasItems ? (
-          <MasonryGrid
-            items={items}
-            render={DiscussionItem}
-            filters={filters}
-            previousFetching={previousFetching}
-          />
+          <MasonryGrid items={items} render={DiscussionItem} previousFetching={previousFetching} />
         ) : (
           <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Stack>
@@ -123,9 +118,11 @@ export function ModelDiscussion({ modelId, filters }: Props) {
   );
 }
 
+export const ModelDiscussion2 = React.memo(ModelDiscussion);
+
 type Props = {
   modelId: number;
-  filters: { filterBy: ReviewFilter[]; sort: ReviewSort };
+  // filters: { filterBy: ReviewFilter[]; sort: ReviewSort };
 };
 
 function DiscussionItem({ data, width }: ItemProps) {

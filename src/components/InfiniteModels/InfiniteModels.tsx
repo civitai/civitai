@@ -55,8 +55,8 @@ import { AmbientModelCard } from '~/components/InfiniteModels/AmbientModelCard';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getRandom } from '~/utils/array-helpers';
@@ -285,7 +285,6 @@ const MasonryItem = ({
 
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
-  const { openContext } = useRoutedContext();
 
   const {
     data: { Favorite: favoriteModels = [], Hide: hiddenModels = [] } = { Favorite: [], Hide: [] },
@@ -425,7 +424,7 @@ const MasonryItem = ({
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
-          openContext('report', { type: ReportEntity.Model, entityId: id });
+          openContext('report', { entityType: ReportEntity.Model, entityId: id });
         }}
       >
         Report
@@ -440,7 +439,7 @@ const MasonryItem = ({
       onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
         e.stopPropagation();
-        openContext('blockTags', { modelId: id });
+        openContext('blockModelTags', { modelId: id });
       }}
     >
       {`Hide content with these tags`}

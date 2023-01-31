@@ -7,8 +7,8 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { Form, InputImageUpload, InputRating, InputRTE, InputSelect, useForm } from '~/libs/form';
+import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
-import { useRoutedContext } from '~/routed-context/routed-context.provider';
 import { ReviewUpsertInput, reviewUpsertSchema } from '~/server/schema/review.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -21,7 +21,6 @@ export default createRoutedContext({
   Element: ({ context, props: { reviewId } }) => {
     const router = useRouter();
     const queryUtils = trpc.useContext();
-    const { openContext } = useRoutedContext();
     const modelId = Number(router.query.id);
 
     const [isUploading, setIsUploading] = useState(false);
@@ -80,7 +79,7 @@ export default createRoutedContext({
     const goToCommentModal = () => {
       localStorage.setItem('commentContent', form.getValues().text ?? '');
       setCatchNavigation(false);
-      openContext('commentEdit', {}, { replace: true });
+      openRoutedContext('commentEdit', {}, { replace: true });
     };
 
     useEffect(() => {
