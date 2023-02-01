@@ -65,12 +65,12 @@ export const getGalleryImages = async <
       // TODO.gallery - excludedTagIds (hidden tags)
     },
     select: imageGallerySelect({ user }),
-    // orderBy: orderBy ?? [
-    //   ...(sort === ImageSort.MostComments
-    //     ? [{ ranks: { [`commentCount${period}Rank`]: 'asc' } }]
-    //     : []),
-    //   { createdAt: 'desc' },
-    // ],
+    orderBy: orderBy ?? [
+      // ...(sort === ImageSort.MostComments
+      //   ? [{ ranks: { [`commentCount${period}Rank`]: 'asc' } }]
+      //   : []),
+      { createdAt: 'desc' },
+    ],
   });
 
   return items.map(({ stats, ...image }) => ({
