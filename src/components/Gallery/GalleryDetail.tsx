@@ -1,10 +1,10 @@
-import { useRouter } from 'next/router';
+import Router, { useRouter } from 'next/router';
 import { useGalleryFilters } from '~/components/Gallery/GalleryFilters';
 import { trpc } from '~/utils/trpc';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { GalleryCarousel } from '~/components/Gallery/GalleryCarousel';
 import {
   createStyles,
@@ -39,6 +39,7 @@ export function GalleryDetail() {
   const filters = useGalleryFilters();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
+  const closingRef = useRef(false);
   // const { back: goBack } = useNavigateBack();
   const returnUrl = router.query.returnUrl as string;
   const active = router.query.active === 'true';
@@ -80,22 +81,36 @@ export function GalleryDetail() {
   }, [router]);
 
   // #region [back button functionality]
-  const handleBackClick = () => {
-    if (hasHistory) router.back();
-    else router.push(returnUrl ?? '/gallery', undefined, { shallow: true });
-  };
-
   const handleCloseContext = () => {
+    if (closingRef.current) return;
     const [, queryString] = router.asPath.split('?');
     const { active, ...query } = QS.parse(queryString) as any;
     if (active) {
       if (hasHistory) router.back();
       else router.replace({ query: router.query }, { query }, { shallow: true });
     } else {
-      handleBackClick();
+      if (hasHistory) router.back();
+      else router.push(returnUrl ?? '/gallery', undefined, { shallow: true });
     }
   };
   useHotkeys([['Escape', handleCloseContext]]);
+
+  const handleClosingStart = () => {
+    closingRef.current = true;
+  };
+  const handleClosingEnd = () => {
+    closingRef.current = false;
+  };
+
+  useEffect(() => {
+    Router.events.on('routeChangeStart', handleClosingStart);
+    Router.events.on('routeChangeComplete', handleClosingEnd);
+
+    return () => {
+      Router.events.off('routeChangeStart', handleClosingStart);
+      Router.events.off('routeChangeComplete', handleClosingEnd);
+    };
+  }, []);
   // #endregion
 
   const handleToggleInfo = () => {
@@ -121,7 +136,7 @@ export function GalleryDetail() {
           style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
           size="lg"
           variant="default"
-          onClick={handleBackClick}
+          onClick={handleCloseContext}
           className={classes.mobileOnly}
         />
         <GalleryCarousel
