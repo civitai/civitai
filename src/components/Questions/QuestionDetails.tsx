@@ -41,6 +41,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
 
   const isModerator = user?.isModerator ?? false;
   const isOwner = user?.id === question?.user.id;
+  const isMuted = user?.muted ?? false;
 
   const { classes } = useStyles();
 
@@ -68,14 +69,16 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
                         Delete Question
                       </Menu.Item>
                     </DeleteQuestion>
-                    <Menu.Item
-                      component={NextLink}
-                      href={`/questions/${question.id}/${questionTitle}?edit=true`}
-                      icon={<IconEdit size={14} stroke={1.5} />}
-                      shallow
-                    >
-                      Edit question
-                    </Menu.Item>
+                    {(!isMuted || isModerator) && (
+                      <Menu.Item
+                        component={NextLink}
+                        href={`/questions/${question.id}/${questionTitle}?edit=true`}
+                        icon={<IconEdit size={14} stroke={1.5} />}
+                        shallow
+                      >
+                        Edit question
+                      </Menu.Item>
+                    )}
                   </>
                 )}
               </Menu.Dropdown>

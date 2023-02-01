@@ -108,7 +108,7 @@ export default function QuestionPage(
           {answers?.map((answer) => (
             <AnswerDetail key={answer.id} answer={answer} question={question} />
           ))}
-          {!answers?.some((x) => x.user.id === user?.id) && (
+          {!answers?.some((x) => x.user.id === user?.id) && !user?.muted && (
             <Stack>
               <Title order={3}>Your anwser</Title>
               <AnswerForm questionId={id} />
