@@ -14,6 +14,7 @@ import { prisma } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
 import { sendVerificationRequest } from '~/server/auth/verificationEmail';
 import { refreshToken } from '~/server/utils/session-helpers';
+import { User } from '@prisma/client';
 
 const setUserName = async (email: string) => {
   try {
@@ -59,6 +60,11 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
         token.sub = Number(token.sub) as any; //eslint-disable-line
         if (user) token.user = user;
       }
+
+      const { createdAt, deletedAt, ...restUser } = token.user as User;
+      console.log('bannedAt', token);
+      token.user = { ...restUser };
+
       return token;
     },
     session: async ({ session, token }) => {

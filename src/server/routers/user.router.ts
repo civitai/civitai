@@ -13,6 +13,7 @@ import {
   batchBlockTagsHandler,
   getUserEngagedModelsHandler,
   getUserEngagedModelVersionsHandler,
+  toggleBanHandler,
   toggleHideModelHandler,
   toggleMuteHandler,
 } from '~/server/controllers/user.controller';
@@ -68,4 +69,5 @@ export const userRouter = router({
     .mutation(toggleBlockedTagHandler),
   batchBlockTags: protectedProcedure.input(batchBlockTagsSchema).mutation(batchBlockTagsHandler),
   toggleMute: protectedProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
+  toggleBan: protectedProcedure.input(getByIdSchema).mutation(toggleBanHandler),
 });

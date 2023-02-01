@@ -38,7 +38,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerAuthSession(context);
-  if (!session?.user?.isModerator) {
+  if (!session?.user?.isModerator || session.user?.bannedAt) {
     return {
       redirect: {
         destination: '/',

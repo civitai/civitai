@@ -5,7 +5,7 @@ import { getUploadUrl } from '~/utils/cf-images-utils';
 export default async function imageUpload(req: NextApiRequest, res: NextApiResponse) {
   const session = await getServerAuthSession({ req, res });
   const userId = session?.user?.id;
-  if (!userId) {
+  if (!userId || session.user?.bannedAt) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }

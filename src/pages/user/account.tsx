@@ -55,7 +55,7 @@ type Props = {
 export const getServerSideProps: GetServerSideProps<Props> = async (context) => {
   const session = await getServerAuthSession(context);
 
-  if (!session?.user)
+  if (!session?.user || session.user.bannedAt)
     return {
       redirect: {
         destination: '/',

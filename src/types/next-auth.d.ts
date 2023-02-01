@@ -12,6 +12,7 @@ interface ExtendedUser {
   preferredModelFormat?: ModelFileFormat;
   preferredPrunedModel?: boolean;
   muted?: boolean;
+  bannedAt?: Date;
 }
 
 declare module 'next-auth' {

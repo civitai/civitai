@@ -1,5 +1,4 @@
-import { Alert, createStyles, Container, Group, Stack, Text, Title } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
+import { Container, Group, Stack, Title } from '@mantine/core';
 import { GetServerSideProps } from 'next';
 import { useRouter } from 'next/router';
 import { Announcements } from '~/components/Announcements/Announcements';

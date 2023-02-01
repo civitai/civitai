@@ -13,6 +13,8 @@ import {
   Menu,
 } from '@mantine/core';
 import {
+  IconArrowBackUp,
+  IconBan,
   IconDotsVertical,
   IconDownload,
   IconHeart,
@@ -44,6 +46,7 @@ import { trpc } from '~/utils/trpc';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
+import { openConfirmModal } from '@mantine/modals';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -97,6 +100,42 @@ export default function UserPage({
   });
   const handleToggleMute = () => {
     if (user) toggleMuteMutation.mutate({ id: user.id });
+  };
+  const toggleBanMutation = trpc.user.toggleBan.useMutation({
+    async onMutate() {
+      await queryUtils.user.getCreator.cancel({ username });
+
+      const prevUser = queryUtils.user.getCreator.getData({ username });
+      queryUtils.user.getCreator.setData({ username }, () =>
+        prevUser
+          ? {
+              ...prevUser,
+              bannedAt: prevUser.bannedAt ? null : new Date(),
+            }
+          : undefined
+      );
+
+      return { prevUser };
+    },
+    onError(_error, _vars, context) {
+      queryUtils.user.getCreator.setData({ username }, context?.prevUser);
+      showErrorNotification({
+        error: new Error('Unable to ban user, please try again.'),
+      });
+    },
+  });
+  const handleToggleBan = () => {
+    if (user) {
+      if (user.bannedAt) toggleBanMutation.mutate({ id: user.id });
+      else
+        openConfirmModal({
+          title: 'Ban User',
+          children: `Are you sure you want to ban this user? Once a user is banned, they won't be able to access the app again.`,
+          labels: { confirm: 'Yes, ban the user', cancel: 'Cancel' },
+          confirmProps: { color: 'red' },
+          onConfirm: () => toggleBanMutation.mutate({ id: user.id }),
+        });
+    }
   };
 
   return (
@@ -156,6 +195,19 @@ export default function UserPage({
                             </Menu.Target>
                             <Menu.Dropdown>
                               <Menu.Item
+                                color={user.bannedAt ? 'green' : 'red'}
+                                icon={
+                                  !user.bannedAt ? (
+                                    <IconBan size={14} stroke={1.5} />
+                                  ) : (
+                                    <IconArrowBackUp size={14} stroke={1.5} />
+                                  )
+                                }
+                                onClick={handleToggleBan}
+                              >
+                                {user.bannedAt ? 'Restore user' : 'Ban user'}
+                              </Menu.Item>
+                              <Menu.Item
                                 icon={
                                   user.muted ? (
                                     <IconMicrophone size={14} stroke={1.5} />
@@ -165,7 +217,7 @@ export default function UserPage({
                                 }
                                 onClick={handleToggleMute}
                               >
-                                {user.muted ? 'Unmute' : 'Mute'}
+                                {user.muted ? 'Unmute user' : 'Mute user'}
                               </Menu.Item>
                             </Menu.Dropdown>
                           </Menu>

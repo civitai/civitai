@@ -533,3 +533,25 @@ export const toggleMuteHandler = async ({
 
   return updatedUser;
 };
+
+export const toggleBanHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  if (!ctx.user.isModerator) throw throwAuthorizationError();
+
+  const { id } = input;
+  const user = await getUserById({ id, select: { bannedAt: true } });
+  if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+  const updatedUser = await updateUserById({
+    id,
+    data: { bannedAt: user.bannedAt ? null : new Date() },
+  });
+  await invalidateSession(id);
+
+  return updatedUser;
+};
