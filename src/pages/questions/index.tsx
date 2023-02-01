@@ -8,6 +8,7 @@ import { Questions } from '~/components/Questions/Questions.Provider';
 import { constants } from '~/server/common/constants';
 import { parseCookies } from '~/providers/CookiesProvider';
 import { openContextModal } from '@mantine/modals';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const page = context.query.page ? Number(context.query.page) : 1;
@@ -42,6 +43,9 @@ const openModal = () =>
   });
 
 export default function QuestionsList() {
+  const currentUser = useCurrentUser();
+  const isMuted = currentUser?.muted ?? false;
+
   return (
     <>
       <Meta title="Questions | Civitai" />
@@ -54,11 +58,11 @@ export default function QuestionsList() {
                 Beta
               </Badge>
             </Title>
-            <Group>
+            {!isMuted && (
               <Link href="/questions/create" passHref>
                 <Button component="a">Ask question</Button>
               </Link>
-            </Group>
+            )}
           </Group>
           <Alert>
             <Text>

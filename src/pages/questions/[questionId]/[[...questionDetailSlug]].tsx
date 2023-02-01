@@ -1,4 +1,4 @@
-import { Container, createStyles, Group, Stack, Title, useMantineTheme } from '@mantine/core';
+import { Container, createStyles, Group, Stack, Title } from '@mantine/core';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -68,13 +68,12 @@ export const getServerSideProps: GetServerSideProps<{
 export default function QuestionPage(
   props: InferGetServerSidePropsType<typeof getServerSideProps>
 ) {
-  const { id, title } = props;
+  const { id } = props;
   const router = useRouter();
   const user = useCurrentUser();
   const editing = router.query.edit;
   const { classes } = useStyles();
 
-  const theme = useMantineTheme();
   const { data: question, isLoading: questionsLoading } = trpc.question.getById.useQuery({ id });
   const { data: answers, isLoading: answersLoading } = trpc.answer.getAll.useQuery({
     questionId: id,

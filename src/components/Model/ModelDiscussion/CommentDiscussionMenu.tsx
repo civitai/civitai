@@ -29,6 +29,7 @@ export function CommentDiscussionMenu({
 
   const isMod = user?.isModerator ?? false;
   const isOwner = comment.user.id === user?.id;
+  const isMuted = user?.muted ?? false;
 
   const deleteMutation = trpc.comment.delete.useMutation({
     async onSuccess() {
@@ -106,7 +107,7 @@ export function CommentDiscussionMenu({
             >
               Delete comment
             </Menu.Item>
-            {(!comment.locked || isMod) && (
+            {(!(comment.locked && isMuted) || isMod) && (
               <Menu.Item
                 icon={<IconEdit size={14} stroke={1.5} />}
                 onClick={() => openRoutedContext('commentEdit', { commentId: comment.id })}

@@ -148,7 +148,7 @@ export default function UserPage({
                         <FollowUserButton userId={user.id} size="md" compact />
 
                         {isMod && (
-                          <Menu>
+                          <Menu position="left" withinPortal>
                             <Menu.Target>
                               <ActionIcon>
                                 <IconDotsVertical />

@@ -36,6 +36,7 @@ import {
   IconShoppingCart,
   IconTrash,
   IconExclamationCircle,
+  IconLock,
 } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -76,6 +77,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { uniq } from 'lodash';
 import { useLocalStorage } from '@mantine/hooks';
+import Link from 'next/link';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 /**NOTES**
   - If a model depicts an actual person, it cannot have nsfw content
@@ -125,6 +128,7 @@ export function ModelForm({ model }: Props) {
   const queryUtils = trpc.useContext();
   const features = useFeatureFlags();
   const mobile = useIsMobile();
+  const user = useCurrentUser();
   const editing = !!model;
 
   const { data: { items: tags } = { items: [] }, isLoading: loadingTags } =
@@ -377,6 +381,24 @@ export function ModelForm({ model }: Props) {
         break;
     }
   };
+
+  if (user?.muted)
+    return (
+      <Container size="xl" p="xl">
+        <Stack align="center">
+          <ThemeIcon size="xl" color="yellow">
+            <IconLock />
+          </ThemeIcon>
+          <Title order={1}>Restricted Area</Title>
+          <Text size="xl">
+            You are not able to create/edit a model because your account has been muted
+          </Text>
+          <Link href="/" passHref>
+            <Button component="a">Go back home</Button>
+          </Link>
+        </Stack>
+      </Container>
+    );
 
   return (
     <Container>

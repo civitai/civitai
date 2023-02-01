@@ -8,11 +8,9 @@ import {
   Divider,
   Menu,
   Title,
-  Box,
   createStyles,
 } from '@mantine/core';
 import { ReviewReactions } from '@prisma/client';
-import { Comments } from '~/components/Comments/Comments.Provider';
 import { FavoriteBadge } from '~/components/Questions/FavoriteBadge';
 import { ReactionBadge } from '~/components/Questions/ReactionBadge';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -86,14 +84,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
         </Group>
         <Group spacing={4}>
           {question.tags.map((tag) => (
-            <Badge
-              key={tag.id}
-              color="blue"
-              component="a"
-              size="sm"
-              radius="sm"
-              // sx={{ cursor: 'pointer' }}
-            >
+            <Badge key={tag.id} color="blue" component="a" size="sm" radius="sm">
               {tag.name}
             </Badge>
           ))}

@@ -37,6 +37,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { invalidateSession } from '~/server/utils/session-helpers';
 
 export const getAllUsersHandler = ({ input }: { input: GetAllUsersInput }) => {
   try {
@@ -528,6 +529,7 @@ export const toggleMuteHandler = async ({
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
   const updatedUser = await updateUserById({ id, data: { muted: !user.muted } });
+  await invalidateSession(id);
 
   return updatedUser;
 };

@@ -144,7 +144,6 @@ const useStyles = createStyles((theme) => ({
 
 export default function ModelDetail({
   id,
-  slug,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
@@ -436,6 +435,7 @@ export default function ModelDetail({
     },
   ];
   const published = model.status === ModelStatus.Published;
+  const isMuted = currentUser?.muted ?? false;
 
   return (
     <>
@@ -770,7 +770,7 @@ export default function ModelDetail({
                     images={latestVersion.images}
                     nsfw={model.nsfw}
                     connect={{ entityId: model.id, entityType: 'model' }}
-                    render={(image, index) => (
+                    render={(image) => (
                       <Carousel.Slide>
                         <Center style={{ height: '100%', width: '100%' }}>
                           <div style={{ width: '100%', position: 'relative' }}>
@@ -847,28 +847,32 @@ export default function ModelDetail({
                 <Group spacing="xs">
                   <Title order={3}>Discussion</Title>
 
-                  <LoginRedirect reason="create-review">
-                    <Button
-                      leftIcon={<IconStar size={16} />}
-                      variant="outline"
-                      fullWidth={mobile}
-                      size="xs"
-                      onClick={() => openRoutedContext('reviewEdit', {})}
-                    >
-                      Add Review
-                    </Button>
-                  </LoginRedirect>
-                  <LoginRedirect reason="create-comment">
-                    <Button
-                      leftIcon={<IconMessage size={16} />}
-                      variant="outline"
-                      fullWidth={mobile}
-                      onClick={() => openRoutedContext('commentEdit', {})}
-                      size="xs"
-                    >
-                      Add Comment
-                    </Button>
-                  </LoginRedirect>
+                  {!isMuted ? (
+                    <>
+                      <LoginRedirect reason="create-review">
+                        <Button
+                          leftIcon={<IconStar size={16} />}
+                          variant="outline"
+                          fullWidth={mobile}
+                          size="xs"
+                          onClick={() => openRoutedContext('reviewEdit', {})}
+                        >
+                          Add Review
+                        </Button>
+                      </LoginRedirect>
+                      <LoginRedirect reason="create-comment">
+                        <Button
+                          leftIcon={<IconMessage size={16} />}
+                          variant="outline"
+                          fullWidth={mobile}
+                          onClick={() => openRoutedContext('commentEdit', {})}
+                          size="xs"
+                        >
+                          Add Comment
+                        </Button>
+                      </LoginRedirect>
+                    </>
+                  ) : null}
                 </Group>
               </Group>
               <ModelDiscussion modelId={model.id} />

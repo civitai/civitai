@@ -30,7 +30,7 @@ import {
   IconUserCircle,
   IconUsers,
 } from '@tabler/icons';
-import { signOut, useSession } from 'next-auth/react';
+import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
@@ -41,6 +41,7 @@ import { Logo } from '~/components/Logo/Logo';
 import { NotificationBell } from '~/components/Notifications/NotificationBell';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const HEADER_HEIGHT = 70;
 
@@ -148,7 +149,7 @@ const useStyles = createStyles((theme) => ({
 }));
 
 export function AppHeader({ links }: Props) {
-  const { data: session } = useSession();
+  const currentUser = useCurrentUser();
   const { classes, cx, theme } = useStyles();
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const router = useRouter();
@@ -156,6 +157,8 @@ export function AppHeader({ links }: Props) {
   const [burgerOpened, { open: openBurger, close: closeBurger }] = useDisclosure(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
   const ref = useClickOutside(() => closeBurger());
+
+  const isMuted = currentUser?.muted ?? false;
 
   const menuItems =
     links?.map((link) => (
@@ -175,28 +178,32 @@ export function AppHeader({ links }: Props) {
       </Link>
     )) ?? [];
   const extendedMenuItems = [
-    <LoginRedirect key="upload-menu-item" reason="upload-model" returnUrl="/models/create">
-      <Link href="/models/create" passHref>
-        <Anchor
-          className={cx(classes.link, {
-            [classes.linkActive]: router.asPath.includes('/models/create'),
-          })}
-          variant="text"
-          onClick={() => closeBurger()}
-        >
-          <Group align="center" spacing="xs">
-            <IconUpload stroke={1.5} />
-            Upload a model
-          </Group>
-        </Anchor>
-      </Link>
-    </LoginRedirect>,
-    session?.user
+    ...(!isMuted
       ? [
-          <Link key="your-models-menu-item" href={`/user/${session.user.username}`} passHref>
+          <LoginRedirect key="upload-menu-item" reason="upload-model" returnUrl="/models/create">
+            <Link href="/models/create" passHref>
+              <Anchor
+                className={cx(classes.link, {
+                  [classes.linkActive]: router.asPath.includes('/models/create'),
+                })}
+                variant="text"
+                onClick={() => closeBurger()}
+              >
+                <Group align="center" spacing="xs">
+                  <IconUpload stroke={1.5} />
+                  Upload a model
+                </Group>
+              </Anchor>
+            </Link>
+          </LoginRedirect>,
+        ]
+      : []),
+    ...(currentUser
+      ? [
+          <Link key="your-models-menu-item" href={`/user/${currentUser.username}`} passHref>
             <Anchor
               className={cx(classes.link, {
-                [classes.linkActive]: router.asPath.includes(`/user/${session.user.username}`),
+                [classes.linkActive]: router.asPath.includes(`/user/${currentUser.username}`),
               })}
               variant="text"
               onClick={() => closeBurger()}
@@ -240,7 +247,7 @@ export function AppHeader({ links }: Props) {
           </Link>,
           <Link
             key="your-following-menu-item"
-            href={`/user/${session.user.username}/following`}
+            href={`/user/${currentUser.username}/following`}
             passHref
           >
             <Anchor
@@ -286,7 +293,7 @@ export function AppHeader({ links }: Props) {
               </Group>
             </Anchor>
           </Link>,
-        ],
+        ]),
     ...menuItems,
 
     <Link key="leaderboard-menu-item" href="/leaderboard" passHref>
@@ -318,9 +325,9 @@ export function AppHeader({ links }: Props) {
         onClick={(e) => e.stopPropagation()}
       />
     </UnstyledButton>,
-    ...(session?.user
+    ...(currentUser
       ? [
-          ...(session?.user?.showNsfw
+          ...(currentUser?.showNsfw
             ? [
                 <BlurToggle key="nsfw-switcher">
                   {({ icon, toggle }) => (
@@ -330,7 +337,7 @@ export function AppHeader({ links }: Props) {
                         Toggle NSFW blur
                       </Group>
                       <Switch
-                        checked={!session?.user?.blurNsfw}
+                        checked={!currentUser?.blurNsfw}
                         sx={{ display: 'flex', alignItems: 'center' }}
                         onClick={(e) => e.stopPropagation()}
                       />
@@ -339,7 +346,7 @@ export function AppHeader({ links }: Props) {
                 </BlurToggle>,
               ]
             : []),
-          <Link key="your-models-menu-item" href="/user/account" passHref>
+          <Link key="account-settings-menu-item" href="/user/account" passHref>
             <Anchor
               className={cx(classes.link, {
                 [classes.linkActive]: router.asPath.includes('/user/account'),
@@ -373,19 +380,21 @@ export function AppHeader({ links }: Props) {
                 <Logo />
               </Anchor>
             </Link>
-            <LoginRedirect reason="upload-model" returnUrl="/models/create">
-              <Button
-                className={classes.links}
-                component={NextLink}
-                href="/models/create"
-                variant="filled"
-                size="xs"
-                pl={5}
-              >
-                <IconPlus size={16} />
-                Upload a model
-              </Button>
-            </LoginRedirect>
+            {!isMuted && (
+              <LoginRedirect reason="upload-model" returnUrl="/models/create">
+                <Button
+                  className={classes.links}
+                  component={NextLink}
+                  href="/models/create"
+                  variant="filled"
+                  size="xs"
+                  pl={5}
+                >
+                  <IconPlus size={16} />
+                  Upload a model
+                </Button>
+              </LoginRedirect>
+            )}
           </Group>
         </Grid.Col>
         <Grid.Col span={6} md={5}>
@@ -394,7 +403,7 @@ export function AppHeader({ links }: Props) {
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
           <Group spacing="sm">{menuItems}</Group>
           <Group spacing="xs" align="center">
-            {!session ? (
+            {!currentUser ? (
               <Button
                 component={NextLink}
                 href={`/login?returnUrl=${router.asPath}`}
@@ -404,8 +413,8 @@ export function AppHeader({ links }: Props) {
               </Button>
             ) : null}
 
-            {session?.user?.showNsfw && <BlurToggle />}
-            {session?.user && <NotificationBell />}
+            {currentUser?.showNsfw && <BlurToggle />}
+            {currentUser && <NotificationBell />}
             <Menu
               width={260}
               opened={userMenuOpened}
@@ -418,16 +427,16 @@ export function AppHeader({ links }: Props) {
                   className={cx(classes.user, { [classes.userActive]: userMenuOpened })}
                   onClick={() => setUserMenuOpened(true)}
                 >
-                  <UserAvatar user={session?.user} avatarProps={{ size: 'md' }} />
+                  <UserAvatar user={currentUser} avatarProps={{ size: 'md' }} />
                 </UnstyledButton>
               </Menu.Target>
               <Menu.Dropdown>
-                {session?.user ? (
+                {currentUser ? (
                   <>
                     <Menu.Item
                       icon={<IconFile size={14} color={theme.colors.blue[6]} stroke={1.5} />}
                       component={NextLink}
-                      href={`/user/${session.user.username}`}
+                      href={`/user/${currentUser.username}`}
                     >
                       Your models
                     </Menu.Item>
@@ -451,7 +460,7 @@ export function AppHeader({ links }: Props) {
                     <Menu.Item
                       icon={<IconUsers size={14} stroke={1.5} />}
                       component={NextLink}
-                      href={`/user/${session.user.username}/following`}
+                      href={`/user/${currentUser.username}/following`}
                     >
                       Creators you follow
                     </Menu.Item>
@@ -491,7 +500,7 @@ export function AppHeader({ links }: Props) {
                   </Group>
                 </Menu.Item>
 
-                {session?.user ? (
+                {currentUser ? (
                   <>
                     <Menu.Item
                       icon={<IconSettings size={14} stroke={1.5} />}
@@ -514,7 +523,7 @@ export function AppHeader({ links }: Props) {
         </Grid.Col>
         <Grid.Col span="auto" className={classes.burger}>
           <Group>
-            {session?.user && <NotificationBell />}
+            {currentUser && <NotificationBell />}
             <Burger
               opened={burgerOpened}
               onClick={burgerOpened ? closeBurger : openBurger}
