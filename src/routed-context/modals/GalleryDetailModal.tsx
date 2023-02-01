@@ -21,6 +21,7 @@ export default createRoutedContext({
         withCloseButton={false}
         fullScreen
         padding={0}
+        style={{ maxHeight: '100vh', maxWidth: '100vw' }}
       >
         <GalleryDetail />
       </Modal>

@@ -141,11 +141,6 @@ export function ModelForm({ model }: Props) {
   const isComplete = Object.values(complete).every((bool) => bool);
   const isUploading = Object.values(uploading).some((bool) => bool);
 
-  const [showAlert, setShowAlert] = useLocalStorage<boolean | undefined>({
-    key: 'showFormAlert',
-    defaultValue: undefined,
-  });
-
   const defaultModelFile = {
     name: '',
     url: '',
@@ -387,26 +382,6 @@ export function ModelForm({ model }: Props) {
           </ActionIcon>
           <Title order={3}>{model ? 'Editing model' : 'Upload model'}</Title>
         </Group>
-        {(showAlert == null || showAlert === true) && (
-          <Alert
-            color="yellow"
-            title="NOTE"
-            icon={<IconExclamationCircle />}
-            onClose={() => setShowAlert(false)}
-            closeButtonLabel="Close alert"
-            withCloseButton
-          >
-            Models cannot be{' '}
-            <Text weight="bold" span>
-              trained
-            </Text>{' '}
-            or{' '}
-            <Text weight="bold" span>
-              used for generation
-            </Text>{' '}
-            here.
-          </Alert>
-        )}
       </Stack>
       <Form
         form={form}

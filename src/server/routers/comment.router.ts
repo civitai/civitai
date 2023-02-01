@@ -9,6 +9,7 @@ import {
   getCommentsInfiniteHandler,
   toggleReactionHandler,
   upsertCommentHandler,
+  toggleLockHandler,
 } from '~/server/controllers/comment.controller';
 import { prisma } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
@@ -45,6 +46,23 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
   });
 });
 
+const isLocked = middleware(async ({ ctx, next, input }) => {
+  if (!ctx?.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+
+  const { id } = input as { id: number };
+  const isModerator = ctx.user.isModerator;
+  const comment = await prisma.comment.findFirst({ where: { id } });
+  const locked = isModerator ? false : comment?.locked ?? false;
+
+  return next({
+    ctx: {
+      ...ctx,
+      user: ctx.user,
+      locked,
+    },
+  });
+});
+
 export const commentRouter = router({
   getAll: publicProcedure.input(getAllCommentsSchema).query(getCommentsInfiniteHandler),
   getById: publicProcedure.input(getByIdSchema).query(getCommentHandler),
@@ -54,10 +72,15 @@ export const commentRouter = router({
   upsert: protectedProcedure
     .input(commentUpsertInput)
     .use(isOwnerOrModerator)
+    .use(isLocked)
     .mutation(upsertCommentHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteUserCommentHandler),
   toggleReaction: protectedProcedure.input(toggleReactionInput).mutation(toggleReactionHandler),
+  toggleLock: protectedProcedure
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .mutation(toggleLockHandler),
 });

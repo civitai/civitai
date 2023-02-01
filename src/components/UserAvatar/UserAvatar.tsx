@@ -12,7 +12,6 @@ import {
 } from '@mantine/core';
 import { User } from '@prisma/client';
 import Link from 'next/link';
-import { MouseEventHandler } from 'react';
 
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { Username } from '~/components/User/Username';
@@ -40,7 +39,7 @@ export function UserAvatar({
   textSize,
   subTextSize,
 }: Props) {
-  const { classes, cx } = useStyles();
+  const { classes } = useStyles();
 
   if (!user) return null;
 
@@ -77,10 +76,13 @@ export function UserAvatar({
     </Group>
   );
 
-  // TODO: typefix
   return linkToProfile && !user.deletedAt ? (
     <Link href={`/user/${user.username}`} passHref>
-      <Anchor variant="text" className={classes.link} onClick={(e: any) => e.stopPropagation()}>
+      <Anchor
+        variant="text"
+        className={classes.link}
+        onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
+      >
         {avatar}
       </Anchor>
     </Link>
@@ -104,7 +106,7 @@ type Props = {
   subTextSize?: MantineSize;
 };
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   link: {
     '&:hover': {
       textDecoration: 'underline',

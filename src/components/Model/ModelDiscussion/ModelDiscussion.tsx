@@ -1,12 +1,12 @@
 import { Button, Center, Grid, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
-import React from 'react';
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
 
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/CommentDiscussionItem';
 import { ReviewDiscussionItem } from '~/components/Model/ModelDiscussion/ReviewDiscussionItem';
+import { ReviewSort } from '~/server/common/enums';
 import { CommentGetAllItem, ReviewGetAllItem } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
@@ -19,7 +19,7 @@ export function ModelDiscussion({ modelId }: Props) {
     hasNextPage: hasMoreReviews,
     isRefetching: refetchingReviews,
   } = trpc.review.getAll.useInfiniteQuery(
-    { modelId, limit: 12 },
+    { modelId, limit: 12, sort: ReviewSort.Newest },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       keepPreviousData: false,
@@ -33,7 +33,7 @@ export function ModelDiscussion({ modelId }: Props) {
     hasNextPage: hasMoreComments,
     isRefetching: refetchingComments,
   } = trpc.comment.getAll.useInfiniteQuery(
-    { modelId, limit: 12 },
+    { modelId, limit: 12, sort: ReviewSort.Newest },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       keepPreviousData: false,
