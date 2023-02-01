@@ -67,8 +67,9 @@ model User {
   deletedAt            DateTime?
   preferredModelFormat ModelFileFormat? @default(SafeTensor)
   preferredPrunedModel Boolean?         @default(false)
-  stripeCustomer       String?
-  subscription         String?
+  customerId           String?
+  subscriptionId       String?
+  subscription         Subscription?
 
   accounts             Account[]
   sessions             Session[]
@@ -108,6 +109,22 @@ model User {
   rank                UserRank?
   downloads           DownloadHistory[]
   imageConnections    ImageConnection[]
+}
+
+model Subscription {
+  id                 String    @id
+  userId             Int       @unique
+  user               User      @relation(fields: [userId], references: [id])
+  metadata           Json
+  status             String
+  priceId            String
+  cancelAtPeriodEnd  Boolean
+  cancelAt           DateTime?
+  canceledAt         DateTime?
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  createdAt          DateTime
+  endedAt            DateTime?
 }
 
 enum UserEngagementType {

@@ -28,9 +28,9 @@ export default function Pricing({ plans }: InferGetStaticPropsType<typeof getSta
   };
 
   // TODO - add button functionality
-  const showSubscribeButton = !!user && !user.subscription;
+  const showSubscribeButton = !!user && !user.subscriptionId;
   const showSignIn = !user;
-  const showManageSubscription = !!user && !!user.subscription;
+  const showManageSubscription = !!user && !!user.subscriptionId;
 
   return (
     <Container>
@@ -53,7 +53,7 @@ export default function Pricing({ plans }: InferGetStaticPropsType<typeof getSta
                   <Button component="a">Sign in</Button>
                 </Link>
               )}
-              {showManageSubscription && plan.priceId === user.subscription && (
+              {showManageSubscription && plan.priceId === user.subscriptionId && (
                 <Button>Manage Subscription</Button>
               )}
             </Stack>

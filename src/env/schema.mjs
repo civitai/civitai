@@ -49,6 +49,7 @@ export const serverSchema = z.object({
   UNAUTHENTICATED_DOWNLOAD: z.preprocess((val) => val === true || val === 'true', z.boolean()),
   UNAUTHENTICATE_LIST_NSFW: z.preprocess((val) => val === true || val === 'true', z.boolean()),
   STRIPE_SECRET_KEY: z.string(),
+  STRIPE_WEBHOOK_SECRET: z.string(),
   LOGGING: z.preprocess((value) => {
     const str = String(value);
     return str.split(',');

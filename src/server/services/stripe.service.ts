@@ -1,3 +1,5 @@
+import { invalidateSession } from '~/server/utils/session-helpers';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import * as Schema from '../schema/stripe.schema';
 import { prisma } from '~/server/db/client';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
@@ -34,15 +36,16 @@ export const getPlans = async () => {
 export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) => {
   const stripe = await getServerStripe();
 
-  const user = await prisma.user.findUnique({ where: { id }, select: { stripeCustomer: true } });
-  if (!user?.stripeCustomer) {
+  const user = await prisma.user.findUnique({ where: { id }, select: { customerId: true } });
+  if (!user?.customerId) {
     const customer = await stripe.customers.create({ email });
 
-    await prisma.user.update({ where: { id }, data: { stripeCustomer: customer.id } });
+    await prisma.user.update({ where: { id }, data: { customerId: customer.id } });
+    invalidateSession(id);
 
     return customer.id;
   } else {
-    return user.stripeCustomer;
+    return user.customerId;
   }
 };
 
@@ -74,7 +77,7 @@ export const createSubscribeSession = async ({
     payment_method_types: ['card'],
     line_items: lineItems,
     success_url: `${baseUrl}/payment/success`,
-    cancel_url: `${baseUrl}/payment/cancelled`,
+    cancel_url: `${baseUrl}/pricing`,
   });
 
   return { sessionId: session.id };
@@ -85,6 +88,60 @@ export const createPortalSession = async ({ customerId }: { customerId: string }
   const session = await stripe.billingPortal.sessions.create({
     customer: customerId,
     return_url: `${baseUrl}/pricing`,
+  });
+
+  return { url: session.url };
+};
+
+export const manageSubscriptionStatusChange = async (
+  subscriptionId: string,
+  customerId: string
+) => {
+  const stripe = await getServerStripe();
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+
+  const user = await prisma.user.findFirst({
+    where: { customerId: customerId },
+    select: { id: true, customerId: true, subscriptionId: true },
+  });
+
+  if (!user) throw throwNotFoundError(`User with customerId: ${customerId} not found`);
+
+  const data = {
+    id: subscription.id,
+    userId: user.id,
+    metadata: subscription.metadata,
+    status: subscription.status,
+    priceId: subscription.items.data[0].price.id,
+    cancelAtPeriodEnd: subscription.cancel_at_period_end,
+    cancelAt: subscription.cancel_at ? toDateTime(subscription.cancel_at) : null,
+    canceledAt: subscription.canceled_at ? toDateTime(subscription.canceled_at) : null,
+    currentPeriodStart: toDateTime(subscription.current_period_start),
+    currentPeriodEnd: toDateTime(subscription.current_period_end),
+    createdAt: toDateTime(subscription.created),
+    endedAt: subscription.ended_at ? toDateTime(subscription.ended_at) : null,
+  };
+
+  await prisma.$transaction([
+    prisma.subscription.upsert({ where: { id: data.id }, update: data, create: data }),
+    prisma.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
+  ]);
+
+  invalidateSession(user.id);
+};
+
+export const toDateTime = (secs: number) => {
+  const t = new Date('1970-01-01T00:30:00Z'); // Unix epoch start.
+  t.setSeconds(secs);
+  return t;
+};
+
+export const createManageSubscriptionSession = async ({ customerId }: { customerId: string }) => {
+  const stripe = await getServerStripe();
+
+  const session = await stripe.billingPortal.sessions.create({
+    customer: customerId,
+    return_url: `${baseUrl}/user/account`,
   });
 
   return { url: session.url };

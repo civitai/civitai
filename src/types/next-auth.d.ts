@@ -11,8 +11,8 @@ interface ExtendedUser {
   email?: string;
   preferredModelFormat?: ModelFileFormat;
   preferredPrunedModel?: boolean;
-  subscription?: string;
-  stripeCustomer?: string;
+  subscriptionId?: string; // TODO.stripe - consider removing this from session
+  customerId?: string; // TODO.stripe - consider removing this from session
 }
 
 declare module 'next-auth' {

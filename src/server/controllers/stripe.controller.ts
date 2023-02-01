@@ -1,5 +1,9 @@
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { createCustomer, createSubscribeSession } from './../services/stripe.service';
+import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  createCustomer,
+  createSubscribeSession,
+  createManageSubscriptionSession,
+} from './../services/stripe.service';
 import { Context } from '~/server/createContext';
 import * as Schema from '../schema/stripe.schema';
 
@@ -26,11 +30,20 @@ export const createSubscriptionSessionHandler = async ({
   input: Schema.CreateSubscribeSessionInput;
   ctx: DeepNonNullable<Context>;
 }) => {
-  const { id, email, stripeCustomer } = ctx.user;
+  const { id, email, customerId } = ctx.user;
   if (!email) throw throwAuthorizationError('email required');
   return await createSubscribeSession({
     priceId,
-    customerId: stripeCustomer,
+    customerId,
     user: { id, email },
   });
+};
+
+export const createManageSubscriptionSessionHandler = async ({
+  ctx,
+}: {
+  ctx: DeepNonNullable<Context>;
+}) => {
+  if (!ctx.user.customerId) throw throwNotFoundError('customerId not found');
+  return await createManageSubscriptionSession({ customerId: ctx.user.customerId });
 };
