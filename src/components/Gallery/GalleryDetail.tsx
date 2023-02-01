@@ -95,7 +95,7 @@ export function GalleryDetail() {
       handleBackClick();
     }
   };
-  useHotkeys([['Escape', handleBackClick]]);
+  useHotkeys([['Escape', handleCloseContext]]);
   // #endregion
 
   const handleToggleInfo = () => {
