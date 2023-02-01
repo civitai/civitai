@@ -6,7 +6,7 @@ import {
   GetAllReviewsInput,
   GetReviewReactionsInput,
   ReviewUpsertInput,
-  ToggleReacionInput,
+  ToggleReactionInput,
 } from '~/server/schema/review.schema';
 import { commentDetailSelect } from '~/server/selectors/comment.selector';
 import { getAllReviewsSelect, reviewDetailSelect } from '~/server/selectors/review.selector';
@@ -83,12 +83,12 @@ export const upsertReviewHandler = async ({
   ctx,
   input,
 }: {
-  ctx: DeepNonNullable<Context> & { ownerId: number };
+  ctx: DeepNonNullable<Context> & { ownerId: number; locked: boolean };
   input: ReviewUpsertInput;
 }) => {
   try {
-    const { ownerId } = ctx;
-    const review = await createOrUpdateReview({ ...input, ownerId });
+    const { ownerId, locked } = ctx;
+    const review = await createOrUpdateReview({ ...input, ownerId, locked });
 
     return review;
   } catch (error) {
@@ -113,7 +113,7 @@ export const toggleReactionHandler = async ({
   input,
 }: {
   ctx: DeepNonNullable<Context>;
-  input: ToggleReacionInput;
+  input: ToggleReactionInput;
 }) => {
   const { user } = ctx;
   const { id, reaction } = input;
@@ -249,6 +249,31 @@ export const convertToCommentHandler = async ({ input }: { input: GetByIdInput }
     const results = await convertReviewToComment(review as DeepNonNullable<typeof review>);
 
     return results;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const toggleLockHandler = async ({ input }: { input: GetByIdInput }) => {
+  const { id } = input;
+
+  try {
+    const review = await getReviewById({ id, select: { id: true, locked: true } });
+    if (!review) throw throwNotFoundError(`No comment with id ${id}`);
+
+    // Lock review and its children
+    const updatedReview = await updateReviewById({
+      id: review.id,
+      data: {
+        locked: !review.locked,
+        comments: {
+          updateMany: { where: { reviewId: review.id }, data: { locked: !review.locked } },
+        },
+      },
+    });
+
+    return updatedReview;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

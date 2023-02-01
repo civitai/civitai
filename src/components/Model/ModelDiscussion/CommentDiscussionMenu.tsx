@@ -1,6 +1,13 @@
 import { ActionIcon, MantineNumberSize, Menu, MenuProps, Text } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import { IconDotsVertical, IconTrash, IconEdit, IconFlag } from '@tabler/icons';
+import {
+  IconDotsVertical,
+  IconTrash,
+  IconEdit,
+  IconFlag,
+  IconLock,
+  IconLockOpen,
+} from '@tabler/icons';
 import { SessionUser } from 'next-auth';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -15,7 +22,7 @@ export function CommentDiscussionMenu({
   comment,
   user,
   size = 'xs',
-  replaceNavigation = false,
+  hideLockOption = false,
   ...props
 }: Props) {
   const queryUtils = trpc.useContext();
@@ -55,6 +62,33 @@ export function CommentDiscussionMenu({
     });
   };
 
+  const toggleLockMutation = trpc.comment.toggleLock.useMutation({
+    async onMutate({ id }) {
+      await queryUtils.comment.getById.cancel();
+
+      const prevComment = queryUtils.comment.getById.getData({ id });
+      if (prevComment)
+        queryUtils.comment.getById.setData({ id }, () => ({
+          ...prevComment,
+          locked: !prevComment.locked,
+        }));
+
+      return { prevComment };
+    },
+    async onSuccess() {
+      await queryUtils.comment.getCommentsById.invalidate({ id: comment.id });
+    },
+    onError(_error, vars, context) {
+      showErrorNotification({
+        error: new Error('Could not lock the thread, please try again'),
+      });
+      queryUtils.comment.getById.setData({ id: vars.id }, context?.prevComment);
+    },
+  });
+  const handleToggleLockThread = () => {
+    toggleLockMutation.mutate({ id: comment.id });
+  };
+
   return (
     <Menu position="bottom-end" withinPortal {...props}>
       <Menu.Target>
@@ -72,18 +106,28 @@ export function CommentDiscussionMenu({
             >
               Delete comment
             </Menu.Item>
-            <Menu.Item
-              icon={<IconEdit size={14} stroke={1.5} />}
-              onClick={() =>
-                openRoutedContext(
-                  'commentEdit',
-                  { commentId: comment.id },
-                  { replace: replaceNavigation }
-                )
-              }
-            >
-              Edit comment
-            </Menu.Item>
+            {(!comment.locked || isMod) && (
+              <Menu.Item
+                icon={<IconEdit size={14} stroke={1.5} />}
+                onClick={() => openRoutedContext('commentEdit', { commentId: comment.id })}
+              >
+                Edit comment
+              </Menu.Item>
+            )}
+            {isMod && !hideLockOption && (
+              <Menu.Item
+                icon={
+                  comment.locked ? (
+                    <IconLockOpen size={14} stroke={1.5} />
+                  ) : (
+                    <IconLock size={14} stroke={1.5} />
+                  )
+                }
+                onClick={handleToggleLockThread}
+              >
+                {comment.locked ? 'Unlock comment' : 'Lock comment'}
+              </Menu.Item>
+            )}
           </>
         )}
         {(!user || !isOwner) && (
@@ -104,8 +148,8 @@ export function CommentDiscussionMenu({
 }
 
 type Props = MenuProps & {
-  comment: Pick<CommentGetAllItem, 'id' | 'user'>;
+  comment: Pick<CommentGetAllItem, 'id' | 'user' | 'locked'>;
   user?: SessionUser | null;
   size?: MantineNumberSize;
-  replaceNavigation?: boolean;
+  hideLockOption?: boolean;
 };

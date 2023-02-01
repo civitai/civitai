@@ -204,7 +204,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
                 reactions={reactions}
                 onSelect={(reaction) => toggleReactionMutation.mutate({ id: comment.id, reaction })}
               />
-              {!isOwner && (
+              {currentUser && !isOwner && !comment.locked && (
                 <Button
                   variant="subtle"
                   size="xs"
@@ -251,12 +251,14 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
               >
                 Delete comment
               </Menu.Item>
-              <Menu.Item
-                icon={<IconEdit size={14} stroke={1.5} />}
-                onClick={() => setEditComment(comment)}
-              >
-                Edit comment
-              </Menu.Item>
+              {(!comment.locked || isMod) && (
+                <Menu.Item
+                  icon={<IconEdit size={14} stroke={1.5} />}
+                  onClick={() => setEditComment(comment)}
+                >
+                  Edit comment
+                </Menu.Item>
+              )}
             </>
           ) : null}
           {(!currentUser || !isOwner) && (

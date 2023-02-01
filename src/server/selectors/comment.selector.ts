@@ -11,6 +11,7 @@ export const commentDetailSelect = Prisma.validator<Prisma.CommentSelect>()({
   modelId: true,
   parentId: true,
   reviewId: true,
+  locked: true,
   user: {
     select: simpleUserSelect,
   },

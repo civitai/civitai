@@ -1,13 +1,15 @@
 import { ActionIcon, MantineNumberSize, Menu, MenuProps, Text } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
-  IconDotsVertical,
-  IconTrash,
-  IconEdit,
-  IconCalculatorOff,
-  IconSwitchHorizontal,
   IconCalculator,
+  IconCalculatorOff,
+  IconDotsVertical,
+  IconEdit,
   IconFlag,
+  IconLock,
+  IconLockOpen,
+  IconSwitchHorizontal,
+  IconTrash,
 } from '@tabler/icons';
 import { SessionUser } from 'next-auth';
 
@@ -23,7 +25,7 @@ export function ReviewDiscussionMenu({
   review,
   user,
   size = 'xs',
-  replaceNavigation = false,
+  hideLockOption = false,
   ...props
 }: Props) {
   const queryUtils = trpc.useContext();
@@ -131,6 +133,33 @@ export function ReviewDiscussionMenu({
     });
   };
 
+  const toggleLockMutation = trpc.review.toggleLock.useMutation({
+    async onMutate({ id }) {
+      await queryUtils.review.getDetail.cancel();
+
+      const prevComment = queryUtils.review.getDetail.getData({ id });
+      if (prevComment)
+        queryUtils.review.getDetail.setData({ id }, () => ({
+          ...prevComment,
+          locked: !prevComment.locked,
+        }));
+
+      return { prevComment };
+    },
+    async onSuccess() {
+      await queryUtils.review.getCommentsById.invalidate({ id: review.id });
+    },
+    onError(_error, vars, context) {
+      showErrorNotification({
+        error: new Error('Could not lock the thread, please try again'),
+      });
+      queryUtils.review.getDetail.setData({ id: vars.id }, context?.prevComment);
+    },
+  });
+  const handleToggleLockThread = () => {
+    toggleLockMutation.mutate({ id: review.id });
+  };
+
   return (
     <Menu position="bottom-end" withinPortal {...props}>
       <Menu.Target>
@@ -148,18 +177,28 @@ export function ReviewDiscussionMenu({
             >
               Delete review
             </Menu.Item>
-            <Menu.Item
-              icon={<IconEdit size={14} stroke={1.5} />}
-              onClick={() =>
-                openRoutedContext(
-                  'reviewEdit',
-                  { reviewId: review.id },
-                  { replace: replaceNavigation }
-                )
-              }
-            >
-              Edit review
-            </Menu.Item>
+            {(!review.locked || isMod) && (
+              <Menu.Item
+                icon={<IconEdit size={14} stroke={1.5} />}
+                onClick={() => openRoutedContext('reviewEdit', { reviewId: review.id })}
+              >
+                Edit review
+              </Menu.Item>
+            )}
+            {isMod && !hideLockOption && (
+              <Menu.Item
+                icon={
+                  review.locked ? (
+                    <IconLockOpen size={14} stroke={1.5} />
+                  ) : (
+                    <IconLock size={14} stroke={1.5} />
+                  )
+                }
+                onClick={handleToggleLockThread}
+              >
+                {review.locked ? 'Unlock review' : 'Lock review'}
+              </Menu.Item>
+            )}
             {!review.exclude && (
               <Menu.Item
                 icon={<IconCalculatorOff size={14} stroke={1.5} />}
@@ -204,8 +243,8 @@ export function ReviewDiscussionMenu({
 }
 
 type Props = MenuProps & {
-  review: Pick<ReviewGetAllItem, 'id' | 'exclude' | 'user'>;
+  review: Pick<ReviewGetAllItem, 'id' | 'exclude' | 'user' | 'locked'>;
   user?: SessionUser | null;
   size?: MantineNumberSize;
-  replaceNavigation?: boolean;
+  hideLockOption?: boolean;
 };
