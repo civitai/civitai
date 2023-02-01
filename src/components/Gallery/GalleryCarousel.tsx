@@ -14,12 +14,19 @@ type GalleryCarouselProps = {
   images: GetGalleryImagesReturnType;
   className?: string;
   connect?: ImageGuardConnect;
+  withIndicators?: boolean;
 };
 
 /**NOTES**
   - when our current image is not found in the images array, we can navigate away from it, but we can't use the arrows to navigate back to it.
 */
-export function GalleryCarousel({ current, images, className, connect }: GalleryCarouselProps) {
+export function GalleryCarousel({
+  current,
+  images,
+  className,
+  connect,
+  withIndicators,
+}: GalleryCarouselProps) {
   // const router = useRouter();
   const { classes, cx } = useStyles();
   const index = images.findIndex((x) => x.id === current.id);
@@ -66,6 +73,17 @@ export function GalleryCarousel({ current, images, className, connect }: Gallery
     ['ArrowRight', handleNext],
   ]);
   // #endregion
+
+  const indicators = images.map(({ id }) => (
+    <UnstyledButton
+      key={id}
+      data-active={current.id === id || undefined}
+      className={classes.indicator}
+      aria-hidden
+      tabIndex={-1}
+      onClick={() => handleNavigate(index)}
+    />
+  ));
 
   return (
     <div ref={setRef} className={cx(classes.root, className)}>
@@ -118,7 +136,7 @@ export function GalleryCarousel({ current, images, className, connect }: Gallery
           );
         }}
       />
-      {/* TODO.gallery - indicators */}
+      {withIndicators && <div className={classes.indicators}>{indicators}</div>}
     </div>
   );
 }
@@ -163,6 +181,33 @@ const useStyles = createStyles((theme, _props, getRef) => {
 
       '&:hover': {
         color: theme.colors.blue[3],
+      },
+    },
+    indicators: {
+      position: 'absolute',
+      bottom: theme.spacing.md,
+      top: undefined,
+      left: 0,
+      right: 0,
+      display: 'flex',
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 8,
+      pointerEvents: 'none',
+    },
+
+    indicator: {
+      pointerEvents: 'all',
+      width: 25,
+      height: 5,
+      borderRadius: 10000,
+      backgroundColor: theme.white,
+      boxShadow: theme.shadows.sm,
+      opacity: 0.6,
+      transition: `opacity 150ms ${theme.transitionTimingFunction}`,
+
+      '&[data-active]': {
+        opacity: 1,
       },
     },
   };

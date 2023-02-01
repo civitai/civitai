@@ -112,7 +112,7 @@ export function GalleryDetail() {
 
   if (!image && isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
-  if (image?.nsfw && !currentUser?.showNsfw) return <SensitiveShield />;
+  // if (image?.nsfw && !currentUser?.showNsfw) return <SensitiveShield />;
 
   return (
     <MantineProvider theme={{ colorScheme: 'dark' }}>
@@ -139,6 +139,7 @@ export function GalleryDetail() {
               ? { entityType: 'model', entityId: modelId }
               : undefined
           }
+          withIndicators={!infinite}
         />
         <ActionIcon
           size="lg"

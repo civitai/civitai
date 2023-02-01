@@ -112,13 +112,17 @@ export const getGalleryImagesHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
     const items = await getGalleryImages({
       ...input,
       user: ctx.user,
       orderBy: [{ connections: { index: 'asc' } }, { createdAt: 'desc' }],
     });
-    return prioritizeSafeImages
+
+    const isOwnerOrModerator =
+      items.every((x) => x.user.id === ctx.user?.id) || ctx.user?.isModerator;
+    const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
+
+    return prioritizeSafeImages && !isOwnerOrModerator
       ? items.sort((a, b) => (a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1))
       : items;
   } catch (error) {
