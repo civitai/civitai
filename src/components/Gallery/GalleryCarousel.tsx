@@ -81,7 +81,7 @@ export function GalleryCarousel({
       className={classes.indicator}
       aria-hidden
       tabIndex={-1}
-      onClick={() => handleNavigate(index)}
+      onClick={() => handleNavigate(id)}
     />
   ));
 
