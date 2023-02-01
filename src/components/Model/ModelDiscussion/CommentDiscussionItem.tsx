@@ -1,6 +1,6 @@
-import { Badge, Button, Card, Group, Text } from '@mantine/core';
+import { Badge, Button, Card, Group, Text, ThemeIcon } from '@mantine/core';
 import { ReviewReactions } from '@prisma/client';
-import { IconMessageCircle2 } from '@tabler/icons';
+import { IconLock, IconMessageCircle2 } from '@tabler/icons';
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -75,23 +75,21 @@ export function CommentDiscussionItem({ comment }: Props) {
   return (
     <Card radius="md" p="md" withBorder>
       <Group align="flex-start" position="apart" noWrap>
-        <Group spacing={4}>
-          <UserAvatar
-            user={comment.user}
-            subText={<DaysFromNow date={comment.createdAt} />}
-            subTextForce
-            badge={
-              comment.user.id === model?.user.id ? (
-                <Badge size="xs" color="violet">
-                  OP
-                </Badge>
-              ) : null
-            }
-            withUsername
-            linkToProfile
-          />
-        </Group>
-        <CommentDiscussionMenu comment={comment} user={currentUser} />
+        <UserAvatar
+          user={comment.user}
+          subText={<DaysFromNow date={comment.createdAt} />}
+          subTextForce
+          badge={
+            comment.user.id === model?.user.id ? (
+              <Badge size="xs" color="violet">
+                OP
+              </Badge>
+            ) : null
+          }
+          withUsername
+          linkToProfile
+        />
+        <CommentDiscussionMenu comment={comment} user={currentUser} hideLockOption />
       </Group>
 
       <ContentClamp maxHeight={100}>
@@ -108,18 +106,25 @@ export function CommentDiscussionItem({ comment }: Props) {
           onSelect={handleReactionClick}
           disabled={toggleReactionMutation.isLoading}
         />
-        <Button
-          size="xs"
-          radius="xl"
-          variant="subtle"
-          onClick={() => openRoutedContext('commentThread', { commentId: comment.id })}
-          compact
-        >
-          <Group spacing={2} noWrap>
-            <IconMessageCircle2 size={14} />
-            <Text>{abbreviateNumber(commentCount)}</Text>
-          </Group>
-        </Button>
+        <Group spacing={4} noWrap>
+          {comment.locked && (
+            <ThemeIcon color="yellow" size="xs">
+              <IconLock />
+            </ThemeIcon>
+          )}
+          <Button
+            size="xs"
+            radius="xl"
+            variant="subtle"
+            onClick={() => openRoutedContext('commentThread', { commentId: comment.id })}
+            compact
+          >
+            <Group spacing={2} noWrap>
+              <IconMessageCircle2 size={14} />
+              <Text>{abbreviateNumber(commentCount)}</Text>
+            </Group>
+          </Button>
+        </Group>
       </Group>
     </Card>
   );

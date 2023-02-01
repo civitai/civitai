@@ -1,7 +1,6 @@
 import { Button, Center, Grid, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
-import React from 'react';
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
 
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';

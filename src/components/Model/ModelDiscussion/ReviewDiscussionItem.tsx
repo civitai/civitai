@@ -1,7 +1,17 @@
 import { Carousel } from '@mantine/carousel';
-import { AspectRatio, Badge, Button, Card, Group, Rating, Stack, Text } from '@mantine/core';
+import {
+  AspectRatio,
+  Badge,
+  Button,
+  Card,
+  Group,
+  Rating,
+  Stack,
+  Text,
+  ThemeIcon,
+} from '@mantine/core';
 import { ReviewReactions } from '@prisma/client';
-import { IconMessageCircle2 } from '@tabler/icons';
+import { IconLock, IconMessageCircle2 } from '@tabler/icons';
 import { useEffect, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 
@@ -109,7 +119,7 @@ export function ReviewDiscussionItem({ review, width }: Props) {
             withUsername
             linkToProfile
           />
-          <ReviewDiscussionMenu review={review} user={currentUser} />
+          <ReviewDiscussionMenu review={review} user={currentUser} hideLockOption />
         </Group>
         <Group position="apart">
           <Rating
@@ -150,18 +160,25 @@ export function ReviewDiscussionItem({ review, width }: Props) {
           onSelect={handleReactionClick}
           disabled={toggleReactionMutation.isLoading}
         />
-        <Button
-          size="xs"
-          radius="xl"
-          variant="subtle"
-          onClick={() => openRoutedContext('reviewThread', { reviewId: review.id })}
-          compact
-        >
-          <Group spacing={2} noWrap>
-            <IconMessageCircle2 size={14} />
-            <Text>{abbreviateNumber(commentCount)}</Text>
-          </Group>
-        </Button>
+        <Group spacing={4} noWrap>
+          {review.locked && (
+            <ThemeIcon color="yellow" size="xs">
+              <IconLock />
+            </ThemeIcon>
+          )}
+          <Button
+            size="xs"
+            radius="xl"
+            variant="subtle"
+            onClick={() => openRoutedContext('reviewThread', { reviewId: review.id })}
+            compact
+          >
+            <Group spacing={2} noWrap>
+              <IconMessageCircle2 size={14} />
+              <Text>{abbreviateNumber(commentCount)}</Text>
+            </Group>
+          </Button>
+        </Group>
       </Group>
     </Card>
   );

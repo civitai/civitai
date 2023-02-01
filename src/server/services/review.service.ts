@@ -1,4 +1,5 @@
 import { Prisma, Review, ReviewReactions } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
 import { ReviewSort } from '~/server/common/enums';
@@ -90,8 +91,17 @@ export const getUserReactionByReviewId = ({
 export const createOrUpdateReview = async ({
   ownerId,
   ...input
-}: ReviewUpsertInput & { ownerId: number }) => {
-  const { images = [], id, ...reviewInput } = input;
+}: ReviewUpsertInput & { ownerId: number; locked: boolean }) => {
+  const { images = [], id, locked, ...reviewInput } = input;
+
+  // If we are editing, but the comment is locked
+  // prevent from updating
+  if (id && locked)
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This comment is locked and cannot be updated',
+    });
+
   const imagesWithIndex = images.map((image, index) => ({
     userId: ownerId,
     ...image,

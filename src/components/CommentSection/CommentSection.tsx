@@ -1,6 +1,8 @@
 import {
+  Alert,
   Box,
   Button,
+  Center,
   createStyles,
   Group,
   List,
@@ -12,6 +14,7 @@ import {
 } from '@mantine/core';
 import { closeAllModals } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
+import { IconLock } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 import { z } from 'zod';
@@ -115,62 +118,68 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
           commentCount === 1 ? 'Comment' : 'Comments'
         }`}</Title>
       </Group>
-      <Group align="flex-start">
-        <UserAvatar user={currentUser} avatarProps={{ size: 'md' }} />
-        <Form form={form} onSubmit={handleSubmitComment} style={{ flex: '1 1 0' }}>
-          <Stack spacing="xs">
-            <Box sx={{ position: 'relative' }}>
-              {!currentUser ? (
-                <Overlay color={theme.fn.rgba(theme.colors.gray[9], 0.6)} opacity={1} zIndex={5}>
-                  <Stack align="center" justify="center" spacing={2} sx={{ height: '100%' }}>
-                    <Text size="xs" color={theme.colors.gray[4]}>
-                      You must be logged in to add a comment
-                    </Text>
-                    <Button
-                      component={NextLink}
-                      href={`/login?returnUrl=${router.asPath}`}
-                      size="xs"
-                      onClick={() => closeAllModals()}
-                      compact
-                    >
-                      Log In
-                    </Button>
-                  </Stack>
-                </Overlay>
-              ) : null}
+      {!mainComment?.locked ? (
+        <Group align="flex-start">
+          <UserAvatar user={currentUser} avatarProps={{ size: 'md' }} />
+          <Form form={form} onSubmit={handleSubmitComment} style={{ flex: '1 1 0' }}>
+            <Stack spacing="xs">
+              <Box sx={{ position: 'relative' }}>
+                {!currentUser ? (
+                  <Overlay color={theme.fn.rgba(theme.colors.gray[9], 0.6)} opacity={1} zIndex={5}>
+                    <Stack align="center" justify="center" spacing={2} sx={{ height: '100%' }}>
+                      <Text size="xs" color={theme.colors.gray[4]}>
+                        You must be logged in to add a comment
+                      </Text>
+                      <Button
+                        component={NextLink}
+                        href={`/login?returnUrl=${router.asPath}`}
+                        size="xs"
+                        onClick={() => closeAllModals()}
+                        compact
+                      >
+                        Log In
+                      </Button>
+                    </Stack>
+                  </Overlay>
+                ) : null}
 
-              <InputRTE
-                name="content"
-                placeholder="Type your comment..."
-                includeControls={['formatting', 'link', 'mentions']}
-                disabled={saveCommentMutation.isLoading}
-                onFocus={() => setShowCommentActions(true)}
-                defaultSuggestions={suggestedMentions}
-                autoFocus={showCommentActions}
-                innerRef={editorRef}
-                onSuperEnter={() => form.handleSubmit(handleSubmitComment)()}
-                hideToolbar
-              />
-            </Box>
-            {showCommentActions ? (
-              <Group spacing="xs" position="right">
-                <Button
-                  variant="default"
-                  onClick={() => {
-                    setShowCommentActions(false);
-                    form.reset();
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" loading={saveCommentMutation.isLoading}>
-                  Comment
-                </Button>
-              </Group>
-            ) : null}
-          </Stack>
-        </Form>
-      </Group>
+                <InputRTE
+                  name="content"
+                  placeholder="Type your comment..."
+                  includeControls={['formatting', 'link', 'mentions']}
+                  disabled={saveCommentMutation.isLoading}
+                  onFocus={() => setShowCommentActions(true)}
+                  defaultSuggestions={suggestedMentions}
+                  autoFocus={showCommentActions}
+                  innerRef={editorRef}
+                  onSuperEnter={() => form.handleSubmit(handleSubmitComment)()}
+                  hideToolbar
+                />
+              </Box>
+              {showCommentActions ? (
+                <Group spacing="xs" position="right">
+                  <Button
+                    variant="default"
+                    onClick={() => {
+                      setShowCommentActions(false);
+                      form.reset();
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" loading={saveCommentMutation.isLoading}>
+                    Comment
+                  </Button>
+                </Group>
+              ) : null}
+            </Stack>
+          </Form>
+        </Group>
+      ) : (
+        <Alert color="yellow" icon={<IconLock />}>
+          <Center>This thread has been locked</Center>
+        </Alert>
+      )}
       <List listStyleType="none" spacing="lg" styles={{ itemWrapper: { width: '100%' } }}>
         {comments.map((comment) => {
           const isHighlighted = highlights?.includes(comment.id);

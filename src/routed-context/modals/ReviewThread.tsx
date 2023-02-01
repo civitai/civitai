@@ -144,7 +144,7 @@ export default createRoutedContext({
                 <Rating value={review.rating} fractions={2} readOnly />
               </Group>
               <Group spacing={4} noWrap>
-                <ReviewDiscussionMenu review={review} user={currentUser} replaceNavigation />
+                <ReviewDiscussionMenu review={review} user={currentUser} />
                 <CloseButton onClick={context.close} />
               </Group>
             </Group>

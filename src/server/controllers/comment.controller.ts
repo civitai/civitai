@@ -7,7 +7,7 @@ import {
   GetAllCommentsSchema,
   GetCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
-import { ToggleReacionInput } from '~/server/schema/review.schema';
+import { ToggleReactionInput } from '~/server/schema/review.schema';
 import { commentDetailSelect, getAllCommentsSelect } from '~/server/selectors/comment.selector';
 import {
   createOrUpdateComment,
@@ -67,12 +67,12 @@ export const upsertCommentHandler = async ({
   ctx,
   input,
 }: {
-  ctx: DeepNonNullable<Context> & { ownerId: number };
+  ctx: DeepNonNullable<Context> & { ownerId: number; locked: boolean };
   input: CommentUpsertInput;
 }) => {
   try {
-    const { ownerId } = ctx;
-    const comment = await createOrUpdateComment({ ...input, ownerId });
+    const { ownerId, locked } = ctx;
+    const comment = await createOrUpdateComment({ ...input, ownerId, locked });
 
     return comment;
   } catch (error) {
@@ -97,7 +97,7 @@ export const toggleReactionHandler = async ({
   input,
 }: {
   ctx: DeepNonNullable<Context>;
-  input: ToggleReacionInput;
+  input: ToggleReactionInput;
 }) => {
   const { user } = ctx;
   const { id, reaction } = input;
@@ -126,7 +126,7 @@ export const toggleReactionHandler = async ({
     return comment;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
-    else throwDbError(error);
+    else throw throwDbError(error);
   }
 };
 
@@ -181,5 +181,30 @@ export const getCommentCommentsCountHandler = async ({ input }: { input: GetById
     return comment._count.comments;
   } catch (error) {
     throw throwDbError(error);
+  }
+};
+
+export const toggleLockHandler = async ({ input }: { input: GetByIdInput }) => {
+  const { id } = input;
+
+  try {
+    const comment = await getCommentById({ id, select: { id: true, locked: true } });
+    if (!comment) throw throwNotFoundError(`No comment with id ${id}`);
+
+    // Lock comment and its children
+    const updatedComment = await updateCommentById({
+      id: comment.id,
+      data: {
+        locked: !comment.locked,
+        comments: {
+          updateMany: { where: { parentId: comment.id }, data: { locked: !comment.locked } },
+        },
+      },
+    });
+
+    return updatedComment;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };
