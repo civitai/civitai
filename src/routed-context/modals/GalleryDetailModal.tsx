@@ -17,7 +17,7 @@ export default createRoutedContext({
     return (
       <Modal
         opened={context.opened}
-        onClose={context.close}
+        onClose={() => undefined}
         withCloseButton={false}
         fullScreen
         padding={0}
