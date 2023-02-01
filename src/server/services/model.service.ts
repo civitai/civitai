@@ -449,7 +449,7 @@ export const updateModel = async ({
               ...version,
               status: data.status,
               files: {
-                deleteMany: fileIds.length > 0 ? { id: { notIn: fileIds } } : undefined,
+                deleteMany: { id: { notIn: fileIds } },
                 create: filesToCreate,
                 update: filesToUpdate.map(({ id, ...fileData }) => ({
                   where: { id: id ?? -1 },
