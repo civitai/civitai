@@ -25,7 +25,6 @@ export function ReviewDiscussionMenu({
   review,
   user,
   size = 'xs',
-  replaceNavigation = false,
   hideLockOption = false,
   ...props
 }: Props) {
@@ -247,6 +246,5 @@ type Props = MenuProps & {
   review: Pick<ReviewGetAllItem, 'id' | 'exclude' | 'user' | 'locked'>;
   user?: SessionUser | null;
   size?: MantineNumberSize;
-  replaceNavigation?: boolean;
   hideLockOption?: boolean;
 };

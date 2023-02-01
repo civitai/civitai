@@ -22,7 +22,6 @@ export function CommentDiscussionMenu({
   comment,
   user,
   size = 'xs',
-  replaceNavigation = false,
   hideLockOption = false,
   ...props
 }: Props) {
@@ -110,13 +109,7 @@ export function CommentDiscussionMenu({
             {(!comment.locked || isMod) && (
               <Menu.Item
                 icon={<IconEdit size={14} stroke={1.5} />}
-                onClick={() =>
-                  openRoutedContext(
-                    'commentEdit',
-                    { commentId: comment.id },
-                    { replace: replaceNavigation }
-                  )
-                }
+                onClick={() => openRoutedContext('commentEdit', { commentId: comment.id })}
               >
                 Edit comment
               </Menu.Item>
@@ -158,6 +151,5 @@ type Props = MenuProps & {
   comment: Pick<CommentGetAllItem, 'id' | 'user' | 'locked'>;
   user?: SessionUser | null;
   size?: MantineNumberSize;
-  replaceNavigation?: boolean;
   hideLockOption?: boolean;
 };
