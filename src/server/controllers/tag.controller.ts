@@ -30,6 +30,7 @@ export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => 
         name: true,
         tagsOnModels: withModels ? { select: { modelId: true } } : undefined,
       },
+      orderBy: { rank: { modelCountAllTimeRank: 'asc' } },
     });
 
     return getPagingData(results, take, page);
