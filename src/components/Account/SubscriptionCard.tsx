@@ -1,5 +1,6 @@
-import { Button, Card, Stack, Title, Center, Loader, Text } from '@mantine/core';
+import { Button, Card, Stack, Title, Center, Loader, Text, Group } from '@mantine/core';
 import Router from 'next/router';
+import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function SubscriptionCard() {
@@ -14,26 +15,41 @@ export function SubscriptionCard() {
     });
   };
 
+  // const renewsAt = <Text>{formatDate(data.currentPeriodEnd)}</Text>;
+  // const endsAt = <Text>{formatDate(data.cancelAt)}</Text>;
+  // const endedAt = <Text>{formatDate(data.endedAt)}</Text>;
+
   return (
     <Card withBorder>
+      {/* <Card.Section>
+        <Text>Your subscription</Text>
+      </Card.Section> */}
       <Stack>
-        <Title id="manage-subscription" order={2}>
+        {/* <Title id="manage-subscription" order={2}>
           Manage Subscription
-        </Title>
+        </Title> */}
         {isLoading ? (
           <Center p="xl">
             <Loader />
           </Center>
         ) : data ? (
           <>
-            <Title order={2}>{data.product.name}</Title>
-            <Text>
-              ${data.price.unitAmount / 100} / {data.price.interval}
-            </Text>
+            <Stack spacing={0}>
+              <Title order={2} align="center">
+                {data.product.name}
+              </Title>
+              <Text align="center">
+                ${data.price.unitAmount / 100} {data.price.currency.toUpperCase()} /{' '}
+                {data.price.interval}
+              </Text>
+            </Stack>
+            {data.product.description && <Text>{data.product.description}</Text>}
           </>
         ) : null}
 
-        <Button onClick={handleClick}>Manage Subscription</Button>
+        <Center>
+          <Button onClick={handleClick}>Manage Subscription</Button>
+        </Center>
       </Stack>
     </Card>
   );

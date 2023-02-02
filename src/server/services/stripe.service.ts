@@ -60,6 +60,7 @@ export const getUserSubscription = async ({ userId }: Schema.GetUserSubscription
         select: {
           id: true,
           name: true,
+          description: true,
         },
       },
       price: {

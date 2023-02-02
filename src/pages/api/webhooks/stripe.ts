@@ -39,6 +39,12 @@ const relevantEvents = new Set([
   'product.updated',
 ]);
 
+/*
+  TODO.stripe - listen to the following events
+    - "invoice.paid" - something to do with badges
+
+*/
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
     const stripe = await getServerStripe();

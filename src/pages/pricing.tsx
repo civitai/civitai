@@ -16,6 +16,7 @@ import Link from 'next/link';
 import { trpc } from '~/utils/trpc';
 import { getClientStripe } from '~/utils/get-client-stripe';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { SubscriptionCard } from '~/components/Account/SubscriptionCard';
 
 export default function Pricing() {
   const user = useCurrentUser();
@@ -43,15 +44,19 @@ export default function Pricing() {
   const showManageSubscription = !!user?.subscriptionId;
 
   return (
-    <Container>
-      <Stack>
-        <Title align="center">Support us</Title>
-        <Text align="center">
-          {`Civitai is the number one model repository and sharing service, its ad free and new
+    <>
+      <Container size="sm" mb="md">
+        <Stack>
+          <Title align="center">Support us</Title>
+          <Text align="center">
+            {`Civitai is the number one model repository and sharing service, its ad free and new
           features are being added weekly. We love what this resource has become and the diverse
           community we've grown! We don't believe in asking for something for nothing, so for now we
           have two ways for you to support us while nabbing some perks for yourself!`}
-        </Text>
+          </Text>
+        </Stack>
+      </Container>
+      <Container>
         {isLoading ? (
           <Center p="xl">
             <Loader />
@@ -66,10 +71,13 @@ export default function Pricing() {
           <div className={classes.grid}>
             {products.map((product) => (
               <Card key={product.id} className={classes.flexItem} withBorder>
-                <Stack>
-                  <Title order={2}>{product.name}</Title>
-                  <Text>
-                    ${product.price.unitAmount / 100} / {product.price.interval}
+                <Stack spacing={0}>
+                  <Title order={2} align="center">
+                    {product.name}
+                  </Title>
+                  <Text align="center">
+                    ${product.price.unitAmount / 100} {product.price.currency.toUpperCase()} /{' '}
+                    {product.price.interval}
                   </Text>
                   {showSubscribeButton && (
                     <Button
@@ -84,17 +92,13 @@ export default function Pricing() {
                       <Button component="a">Sign in</Button>
                     </Link>
                   )}
-                  {/* TODO.stripe - show different options if they have cancelled their subscription */}
-                  {/* {showManageSubscription && product.id === subscription?.product.id && (
-                    <Button>Manage Subscription</Button>
-                  )} */}
                 </Stack>
               </Card>
             ))}
           </div>
         )}
-      </Stack>
-    </Container>
+      </Container>
+    </>
   );
 }
 
@@ -125,3 +129,10 @@ export const getServerSideProps = createServerSideProps({
     await ssg?.stripe.getUserSubscription.prefetch();
   },
 });
+
+const planDetails = [
+  {
+    name: 'Supporter Tier',
+    benefits: [],
+  },
+];
