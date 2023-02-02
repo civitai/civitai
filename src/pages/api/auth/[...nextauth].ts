@@ -62,7 +62,6 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
       }
 
       const { createdAt, deletedAt, ...restUser } = token.user as User;
-      console.log('bannedAt', token);
       token.user = { ...restUser };
 
       return token;
