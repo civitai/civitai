@@ -9,28 +9,78 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 const baseUrl = getBaseUrl();
 
 export const getPlans = async () => {
-  const stripe = await getServerStripe();
+  const products = await prisma.product.findMany({
+    where: { active: true, prices: { some: { type: 'recurring', active: true } } },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      metadata: true,
+      defaultPriceId: true,
+      prices: {
+        select: {
+          id: true,
+          interval: true,
+          intervalCount: true,
+          type: true,
+          unitAmount: true,
+          currency: true,
+          metadata: true,
+        },
+      },
+    },
+  });
 
-  const { data: prices } = await stripe.prices.list({ active: true, type: 'recurring' });
-
-  const plans = await Promise.all(
-    prices.map(async (price) => {
-      const product =
-        typeof price.product === 'string'
-          ? await stripe.products.retrieve(price.product)
-          : (price.product as Stripe.Product);
-
+  // Only show the default price for a subscription product
+  return products
+    .map(({ prices, ...product }) => {
+      const price = prices.filter((x) => x.id === product.defaultPriceId)[0];
       return {
-        name: product.name,
-        price: price.unit_amount ?? 0,
-        priceId: price.id,
-        interval: price.recurring?.interval,
-        currency: price.currency,
+        ...product,
+        price: { ...price, unitAmount: price.unitAmount ?? 0 },
       };
     })
-  );
+    .sort((a, b) => a.price.unitAmount - b.price.unitAmount);
+};
 
-  return plans.sort((a, b) => a.price - b.price);
+export const getUserSubscription = async ({ userId }: Schema.GetUserSubscriptionInput) => {
+  const subscription = await prisma.customerSubscription.findUnique({
+    where: { userId },
+    select: {
+      id: true,
+      status: true,
+      cancelAtPeriodEnd: true,
+      cancelAt: true,
+      canceledAt: true,
+      currentPeriodStart: true,
+      currentPeriodEnd: true,
+      createdAt: true,
+      endedAt: true,
+      product: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+      price: {
+        select: {
+          id: true,
+          unitAmount: true,
+          interval: true,
+          intervalCount: true,
+          currency: true,
+        },
+      },
+    },
+  });
+
+  if (!subscription)
+    throw throwNotFoundError(`Could not find subscription for user with id: ${userId}`);
+
+  return {
+    ...subscription,
+    price: { ...subscription.price, unitAmount: subscription.price.unitAmount ?? 0 },
+  };
 };
 
 export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) => {
@@ -93,12 +143,25 @@ export const createPortalSession = async ({ customerId }: { customerId: string }
   return { url: session.url };
 };
 
+export const createManageSubscriptionSession = async ({ customerId }: { customerId: string }) => {
+  const stripe = await getServerStripe();
+
+  const session = await stripe.billingPortal.sessions.create({
+    customer: customerId,
+    return_url: `${baseUrl}/user/account`,
+  });
+
+  return { url: session.url };
+};
+
 export const manageSubscriptionStatusChange = async (
   subscriptionId: string,
   customerId: string
 ) => {
   const stripe = await getServerStripe();
-  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId, { expand: ['plan'] });
+  console.log('----MANAGE SUBSCRIPTION STATUS CHANGE----');
+  console.log({ subscription });
 
   const user = await prisma.user.findFirst({
     where: { customerId: customerId },
@@ -112,7 +175,9 @@ export const manageSubscriptionStatusChange = async (
     userId: user.id,
     metadata: subscription.metadata,
     status: subscription.status,
+    // as far as I can tell, there are never multiple items in this array
     priceId: subscription.items.data[0].price.id,
+    productId: subscription.items.data[0].price.product as string,
     cancelAtPeriodEnd: subscription.cancel_at_period_end,
     cancelAt: subscription.cancel_at ? toDateTime(subscription.cancel_at) : null,
     canceledAt: subscription.canceled_at ? toDateTime(subscription.canceled_at) : null,
@@ -123,7 +188,40 @@ export const manageSubscriptionStatusChange = async (
   };
 
   await prisma.$transaction([
-    prisma.subscription.upsert({ where: { id: data.id }, update: data, create: data }),
+    prisma.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
+    prisma.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
+  ]);
+
+  invalidateSession(user.id);
+};
+
+export const upsertSubscription = async (subscription: Stripe.Subscription, customerId: string) => {
+  const user = await prisma.user.findFirst({
+    where: { customerId: customerId },
+    select: { id: true, customerId: true, subscriptionId: true },
+  });
+
+  if (!user) throw throwNotFoundError(`User with customerId: ${customerId} not found`);
+
+  const data = {
+    id: subscription.id,
+    userId: user.id,
+    metadata: subscription.metadata,
+    status: subscription.status,
+    // as far as I can tell, there are never multiple items in this array
+    priceId: subscription.items.data[0].price.id,
+    productId: subscription.items.data[0].price.product as string,
+    cancelAtPeriodEnd: subscription.cancel_at_period_end,
+    cancelAt: subscription.cancel_at ? toDateTime(subscription.cancel_at) : null,
+    canceledAt: subscription.canceled_at ? toDateTime(subscription.canceled_at) : null,
+    currentPeriodStart: toDateTime(subscription.current_period_start),
+    currentPeriodEnd: toDateTime(subscription.current_period_end),
+    createdAt: toDateTime(subscription.created),
+    endedAt: subscription.ended_at ? toDateTime(subscription.ended_at) : null,
+  };
+
+  await prisma.$transaction([
+    prisma.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
     prisma.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
   ]);
 
@@ -136,13 +234,38 @@ export const toDateTime = (secs: number) => {
   return t;
 };
 
-export const createManageSubscriptionSession = async ({ customerId }: { customerId: string }) => {
-  const stripe = await getServerStripe();
-
-  const session = await stripe.billingPortal.sessions.create({
-    customer: customerId,
-    return_url: `${baseUrl}/user/account`,
+export const upsertProductRecord = async (product: Stripe.Product) => {
+  const productData = {
+    id: product.id,
+    active: product.active,
+    name: product.name,
+    description: product.description ?? null,
+    metadata: product.metadata,
+    defaultPriceId: product.default_price as string | null,
+  };
+  await prisma.product.upsert({
+    where: { id: product.id },
+    update: productData,
+    create: productData,
   });
+};
 
-  return { url: session.url };
+export const upsertPriceRecord = async (price: Stripe.Price) => {
+  const priceData = {
+    id: price.id,
+    productId: typeof price.product === 'string' ? price.product : '',
+    active: price.active,
+    currency: price.currency,
+    description: price.nickname ?? undefined,
+    type: price.type,
+    unitAmount: price.unit_amount,
+    interval: price.recurring?.interval,
+    intervalCount: price.recurring?.interval_count,
+    metadata: price.metadata,
+  };
+  await prisma.price.upsert({
+    where: { id: price.id },
+    update: priceData,
+    create: priceData,
+  });
 };

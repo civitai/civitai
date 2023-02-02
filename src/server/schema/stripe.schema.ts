@@ -5,3 +5,6 @@ export const createCustomerSchema = z.object({ id: z.number(), email: z.string()
 
 export type CreateSubscribeSessionInput = z.infer<typeof createSubscribeSessionSchema>;
 export const createSubscribeSessionSchema = z.object({ priceId: z.string() });
+
+export type GetUserSubscriptionInput = z.infer<typeof getUserSubscriptionSchema>;
+export const getUserSubscriptionSchema = z.object({ userId: z.number() });

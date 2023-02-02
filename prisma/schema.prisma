@@ -52,24 +52,24 @@ model SessionInvalidation {
 }
 
 model User {
-  id                   Int              @id @default(autoincrement())
+  id                   Int                   @id @default(autoincrement())
   name                 String?
-  username             String?          @unique @db.Citext
+  username             String?               @unique @db.Citext
   // displayName       String?          @db.Citext // [deleted]
-  email                String?          @unique
+  email                String?               @unique
   emailVerified        DateTime?
   image                String?
-  showNsfw             Boolean?         @default(false)
-  blurNsfw             Boolean?         @default(true)
-  isModerator          Boolean?         @default(false)
-  tos                  Boolean?         @default(false)
-  createdAt            DateTime         @default(now())
+  showNsfw             Boolean?              @default(false)
+  blurNsfw             Boolean?              @default(true)
+  isModerator          Boolean?              @default(false)
+  tos                  Boolean?              @default(false)
+  createdAt            DateTime              @default(now())
   deletedAt            DateTime?
-  preferredModelFormat ModelFileFormat? @default(SafeTensor)
-  preferredPrunedModel Boolean?         @default(false)
+  preferredModelFormat ModelFileFormat?      @default(SafeTensor)
+  preferredPrunedModel Boolean?              @default(false)
   customerId           String?
   subscriptionId       String?
-  subscription         Subscription?
+  subscription         CustomerSubscription?
 
   accounts             Account[]
   sessions             Session[]
@@ -111,13 +111,16 @@ model User {
   imageConnections    ImageConnection[]
 }
 
-model Subscription {
+model CustomerSubscription {
   id                 String    @id
   userId             Int       @unique
   user               User      @relation(fields: [userId], references: [id])
   metadata           Json
   status             String
   priceId            String
+  price              Price     @relation(fields: [priceId], references: [id])
+  productId          String
+  product            Product   @relation(fields: [productId], references: [id])
   cancelAtPeriodEnd  Boolean
   cancelAt           DateTime?
   canceledAt         DateTime?
@@ -125,6 +128,33 @@ model Subscription {
   currentPeriodEnd   DateTime
   createdAt          DateTime
   endedAt            DateTime?
+}
+
+model Product {
+  id             String  @id
+  active         Boolean
+  name           String
+  description    String?
+  metadata       Json
+  defaultPriceId String?
+
+  prices                Price[]
+  customerSubscriptions CustomerSubscription[]
+}
+
+model Price {
+  id                    String                 @id
+  productId             String
+  product               Product                @relation(fields: [productId], references: [id])
+  active                Boolean
+  currency              String
+  description           String?
+  type                  String
+  unitAmount            Int?
+  interval              String?
+  intervalCount         Int?
+  metadata              Json
+  customerSubscriptions CustomerSubscription[]
 }
 
 enum UserEngagementType {

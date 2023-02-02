@@ -3,12 +3,14 @@ import {
   getPlansHandler,
   createSubscriptionSessionHandler,
   createManageSubscriptionSessionHandler,
+  getUserSubscriptionHandler,
 } from './../controllers/stripe.controller';
 import { publicProcedure, router, protectedProcedure } from '~/server/trpc';
 import * as Schema from '../schema/stripe.schema';
 
 export const stripeRouter = router({
   getPlans: publicProcedure.query(getPlansHandler),
+  getUserSubscription: publicProcedure.query(getUserSubscriptionHandler),
   createCustomer: protectedProcedure
     .input(Schema.createCustomerSchema)
     .mutation(createCustomerHandler),

@@ -3,6 +3,7 @@ import {
   createCustomer,
   createSubscribeSession,
   createManageSubscriptionSession,
+  getUserSubscription,
 } from './../services/stripe.service';
 import { Context } from '~/server/createContext';
 import * as Schema from '../schema/stripe.schema';
@@ -11,6 +12,11 @@ import { getPlans } from '~/server/services/stripe.service';
 
 export const getPlansHandler = async () => {
   return await getPlans();
+};
+
+export const getUserSubscriptionHandler = async ({ ctx }: { ctx: Context }) => {
+  if (!ctx.user?.id) return undefined;
+  return await getUserSubscription({ userId: ctx.user.id });
 };
 
 export const createCustomerHandler = async ({

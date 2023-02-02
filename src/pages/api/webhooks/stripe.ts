@@ -1,4 +1,9 @@
-import { manageSubscriptionStatusChange } from '~/server/services/stripe.service';
+import {
+  manageSubscriptionStatusChange,
+  upsertPriceRecord,
+  upsertProductRecord,
+  upsertSubscription,
+} from '~/server/services/stripe.service';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { env } from '~/env/server.mjs';
@@ -22,81 +27,75 @@ async function buffer(readable: Readable) {
 }
 
 const relevantEvents = new Set([
-  // 'product.created',
-  // 'product.updated',
-  // 'price.created',
-  // 'price.updated',
   'checkout.session.completed',
   'customer.subscription.created',
-  'customer.subscription.updated',
   'customer.subscription.deleted',
+  'customer.subscription.updated',
+  'price.created',
+  'price.deleted',
+  'price.updated',
+  'product.created',
+  'product.deleted',
+  'product.updated',
 ]);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
     const stripe = await getServerStripe();
 
-    // console.log('----------------');
-    // console.log({ req });
-    // console.log('----------------');
+    const buf = await buffer(req);
+    const sig = req.headers['stripe-signature'];
+    const webhookSecret = env.STRIPE_WEBHOOK_SECRET;
+    let event: Stripe.Event;
 
     try {
-      const buf = await buffer(req);
-      const sig = req.headers['stripe-signature'];
-      const webhookSecret = env.STRIPE_WEBHOOK_SECRET;
-      let event: Stripe.Event;
-
-      try {
-        if (!sig || !webhookSecret) {
-          console.log('----------------');
-          console.log('!sig || !webhookSecret');
-          console.log('----------------');
-          return;
-        }
-        event = stripe.webhooks.constructEvent(buf, sig, webhookSecret);
-      } catch (error: any) {
-        console.log(`❌ Error message: ${error.message}`);
-        return res.status(400).send(`Webhook Error: ${error.message}`);
-      }
-
-      if (relevantEvents.has(event.type)) {
-        try {
-          switch (event.type) {
-            case 'customer.subscription.created':
-            case 'customer.subscription.updated':
-            case 'customer.subscription.deleted':
-              console.log('----------------');
-              console.log({ type: event.type });
-              console.log('----------------');
-              const subscription = event.data.object as Stripe.Subscription;
-              await manageSubscriptionStatusChange(
-                subscription.id,
-                subscription.customer as string
-              );
-              break;
-            case 'checkout.session.completed':
-              const checkoutSession = event.data.object as Stripe.Checkout.Session;
-              if (checkoutSession.mode === 'subscription') {
-                console.log('----------------');
-                console.log({ type: event.type });
-                console.log('----------------');
-                const subscriptionId = checkoutSession.subscription;
-                await manageSubscriptionStatusChange(
-                  subscriptionId as string,
-                  checkoutSession.customer as string
-                );
-              }
-              break;
-            default:
-              throw new Error('Unhandled relevant event!');
-          }
-        } catch (error: any) {
-          console.log(error);
-          return res.status(400).send('Webhook error: "Webhook handler failed. View logs."');
-        }
-      }
+      if (!sig || !webhookSecret) return; // only way this is false is if we forgot to include our secret or stripe decides to suddenly not include their signature
+      event = stripe.webhooks.constructEvent(buf, sig, webhookSecret);
     } catch (error: any) {
       console.log(`❌ Error message: ${error.message}`);
+      return res.status(400).send(`Webhook Error: ${error.message}`);
+    }
+
+    if (relevantEvents.has(event.type)) {
+      try {
+        switch (event.type) {
+          case 'product.created':
+          case 'product.updated':
+          case 'product.deleted':
+            await upsertProductRecord(event.data.object as Stripe.Product);
+            break;
+          case 'price.created':
+          case 'price.updated':
+          case 'price.deleted':
+            await upsertPriceRecord(event.data.object as Stripe.Price);
+            break;
+          case 'customer.subscription.created':
+          case 'customer.subscription.updated':
+          case 'customer.subscription.deleted':
+            const subscription = event.data.object as Stripe.Subscription;
+            // console.log('----SUBSCRIPTION EVENT----');
+            await upsertSubscription(subscription, subscription.customer as string);
+            break;
+          case 'checkout.session.completed':
+            const checkoutSession = event.data.object as Stripe.Checkout.Session;
+            // console.log('----CHECKOUT SESSION EVENT----');
+            // console.log({ checkoutSession });
+            if (checkoutSession.mode === 'subscription') {
+              // TODO - verify that I can do nothing...
+              // do nothing, we're already capturing this event with customer.subscription.created
+              // const subscriptionId = checkoutSession.subscription;
+              // await manageSubscriptionStatusChange(
+              //   subscriptionId as string,
+              //   checkoutSession.customer as string
+              // );
+            }
+            break;
+          default:
+            throw new Error('Unhandled relevant event!');
+        }
+      } catch (error: any) {
+        return res.status(400).send('Webhook error: "Webhook handler failed. View logs."');
+      }
     }
 
     res.json({ received: true });

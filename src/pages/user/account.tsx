@@ -1,5 +1,4 @@
 import { Container, Stack, Title, Text } from '@mantine/core';
-import { GetServerSideProps } from 'next';
 import { getProviders } from 'next-auth/react';
 import React from 'react';
 
@@ -13,13 +12,13 @@ import { SettingsCard } from '~/components/Account/SettingsCard';
 import { SubscriptionCard } from '~/components/Account/SubscriptionCard';
 import { TagsCard } from '~/components/Account/TagsCard';
 import { Meta } from '~/components/Meta/Meta';
-import { env } from '~/env/server.mjs';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
-export default function Account({ providers, isDev = false }: Props) {
+export default function Account({ providers }: Props) {
   const { apiKeys } = useFeatureFlags();
+  const currentUser = useCurrentUser();
 
   return (
     <>
@@ -40,7 +39,7 @@ export default function Account({ providers, isDev = false }: Props) {
           <TagsCard />
           <NotificationsCard />
           <AccountsCard providers={providers} />
-          <SubscriptionCard />
+          {currentUser?.subscriptionId && <SubscriptionCard />}
           {apiKeys && <ApiKeysCard />}
           <DeleteCard />
         </Stack>
@@ -51,29 +50,43 @@ export default function Account({ providers, isDev = false }: Props) {
 
 type Props = {
   providers: AsyncReturnType<typeof getProviders>;
-  isDev: boolean;
 };
 
-export const getServerSideProps: GetServerSideProps<Props> = async (context) => {
-  const session = await getServerAuthSession(context);
+// export const getServerSideProps: GetServerSideProps<Props> = async (context) => {
+//   const session = await getServerAuthSession(context);
 
-  if (!session?.user)
+//   if (!session?.user)
+//     return {
+//       redirect: {
+//         destination: '/',
+//         permanent: false,
+//       },
+//     };
+
+//   const providers = await getProviders();
+//   const ssg = await getServerProxySSGHelpers(context);
+//   await ssg.account.getAll.prefetch();
+
+//   return {
+//     props: {
+//       trpcState: ssg.dehydrate(),
+//       providers,
+//       isDev: env.NODE_ENV === 'development', // TODO: Remove this once API Keys feature is complete
+//     },
+//   };
+// };
+
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  resolver: async ({ ssg, session }) => {
+    const providers = await getProviders();
+    await ssg?.account.getAll.prefetch();
+    if (session?.user?.subscriptionId) await ssg?.stripe.getUserSubscription.prefetch();
+
     return {
-      redirect: {
-        destination: '/',
-        permanent: false,
+      props: {
+        providers,
       },
     };
-
-  const providers = await getProviders();
-  const ssg = await getServerProxySSGHelpers(context);
-  await ssg.account.getAll.prefetch();
-
-  return {
-    props: {
-      trpcState: ssg.dehydrate(),
-      providers,
-      isDev: env.NODE_ENV === 'development', // TODO: Remove this once API Keys feature is complete
-    },
-  };
-};
+  },
+});
