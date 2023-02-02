@@ -1,8 +1,12 @@
-import { Stack, Button, Alert, Card, Title } from '@mantine/core';
+import { Button, Alert, Card, Grid, Group, Paper, Stack, Text, Title, Input } from '@mantine/core';
+import { IconInfoCircle } from '@tabler/icons';
+import { SessionUser } from 'next-auth';
 import { z } from 'zod';
 
+import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Form, InputProfileImageUpload, InputText, useForm } from '~/libs/form';
+import { Form, InputProfileImageUpload, InputSelect, InputText, useForm } from '~/libs/form';
 import { reloadSession } from '~/utils/next-auth-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -49,13 +53,61 @@ export function ProfileCard() {
               {error.data?.code === 'CONFLICT' ? 'That username is already taken' : error.message}
             </Alert>
           )}
-          <InputText name="username" label="Username" required />
-          <InputProfileImageUpload name="image" label="Profile image" />
-          <Button type="submit" loading={isLoading} disabled={!form.formState.isDirty}>
-            Save
-          </Button>
+          <Grid>
+            {currentUser ? (
+              <Grid.Col span={12}>
+                <ProfilePreview user={currentUser} />
+              </Grid.Col>
+            ) : null}
+            <Grid.Col xs={12} md={8}>
+              <InputText name="username" label="Username" required />
+            </Grid.Col>
+            <Grid.Col xs={12} md={4}>
+              <InputSelect
+                name="nameplate"
+                label={
+                  <Group spacing={4} noWrap>
+                    <Input.Label>Nameplate Style</Input.Label>
+                    <IconBadge
+                      tooltip="Select the style for your username"
+                      icon={<IconInfoCircle size={14} />}
+                    />
+                  </Group>
+                }
+                data={['Supporter', 'Mod']}
+              />
+            </Grid.Col>
+            <Grid.Col span={12}>
+              <InputProfileImageUpload name="image" label="Profile image" />
+            </Grid.Col>
+            <Grid.Col span={12}>
+              <Button
+                type="submit"
+                loading={isLoading}
+                disabled={!form.formState.isDirty}
+                fullWidth
+              >
+                Save
+              </Button>
+            </Grid.Col>
+          </Grid>
         </Stack>
       </Form>
     </Card>
   );
 }
+
+function ProfilePreview({ user }: ProfilePreviewProps) {
+  return (
+    <Paper p="sm" withBorder>
+      <Stack spacing={4}>
+        <Text size="sm" weight={500} color="dimmed">
+          Preview
+        </Text>
+        <UserAvatar user={user} subText={`Last updated`} size="xl" withUsername />
+      </Stack>
+    </Paper>
+  );
+}
+
+type ProfilePreviewProps = { user: SessionUser };
