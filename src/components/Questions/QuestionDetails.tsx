@@ -8,11 +8,9 @@ import {
   Divider,
   Menu,
   Title,
-  Box,
   createStyles,
 } from '@mantine/core';
 import { ReviewReactions } from '@prisma/client';
-import { Comments } from '~/components/Comments/Comments.Provider';
 import { FavoriteBadge } from '~/components/Questions/FavoriteBadge';
 import { ReactionBadge } from '~/components/Questions/ReactionBadge';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -43,6 +41,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
 
   const isModerator = user?.isModerator ?? false;
   const isOwner = user?.id === question?.user.id;
+  const isMuted = user?.muted ?? false;
 
   const { classes } = useStyles();
 
@@ -70,14 +69,16 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
                         Delete Question
                       </Menu.Item>
                     </DeleteQuestion>
-                    <Menu.Item
-                      component={NextLink}
-                      href={`/questions/${question.id}/${questionTitle}?edit=true`}
-                      icon={<IconEdit size={14} stroke={1.5} />}
-                      shallow
-                    >
-                      Edit question
-                    </Menu.Item>
+                    {(!isMuted || isModerator) && (
+                      <Menu.Item
+                        component={NextLink}
+                        href={`/questions/${question.id}/${questionTitle}?edit=true`}
+                        icon={<IconEdit size={14} stroke={1.5} />}
+                        shallow
+                      >
+                        Edit question
+                      </Menu.Item>
+                    )}
                   </>
                 )}
               </Menu.Dropdown>
@@ -86,14 +87,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
         </Group>
         <Group spacing={4}>
           {question.tags.map((tag) => (
-            <Badge
-              key={tag.id}
-              color="blue"
-              component="a"
-              size="sm"
-              radius="sm"
-              // sx={{ cursor: 'pointer' }}
-            >
+            <Badge key={tag.id} color="blue" component="a" size="sm" radius="sm">
               {tag.name}
             </Badge>
           ))}

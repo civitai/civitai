@@ -162,7 +162,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       ...appProps,
     };
   } else {
-    const session = await getSession(appContext.ctx);
+    const session = typeof window === 'undefined' ? await getSession(appContext.ctx) : undefined;
     const flags = getFeatureFlags({ user: session?.user });
     return {
       pageProps: {

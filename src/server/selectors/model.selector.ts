@@ -124,6 +124,7 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
         id: true,
         image: true,
         username: true,
+        deletedAt: true,
         rank: { select: { leaderboardRank: true } },
       },
     },

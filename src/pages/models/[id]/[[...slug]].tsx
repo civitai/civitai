@@ -144,7 +144,6 @@ const useStyles = createStyles((theme) => ({
 
 export default function ModelDetail({
   id,
-  slug,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
@@ -403,36 +402,40 @@ export default function ModelDetail({
     },
     {
       label: 'Uploaded By',
-      value: model.user && (
-        <Group align="center" position="apart">
-          <Link href={`/user/${model.user.username}`} passHref>
-            <Anchor>
-              <Group spacing={4} noWrap sx={{ flex: 1, overflow: 'hidden' }}>
-                <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
-                <Text
-                  size="sm"
-                  variant="link"
-                  sx={{
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  {model.user.username}
-                </Text>
-              </Group>
-            </Anchor>
-          </Link>
-          <Group spacing={4} noWrap>
-            <RankBadge size="md" textSize="xs" rank={model.user.rank?.leaderboardRank} />
-            <FollowUserButton userId={model.user.id} size="xs" compact />
+      value:
+        model.user && !model.user.deletedAt ? (
+          <Group align="center" position="apart">
+            <Link href={`/user/${model.user.username}`} passHref>
+              <Anchor>
+                <Group spacing={4} noWrap sx={{ flex: 1, overflow: 'hidden' }}>
+                  <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
+                  <Text
+                    size="sm"
+                    variant="link"
+                    sx={{
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {model.user.username}
+                  </Text>
+                </Group>
+              </Anchor>
+            </Link>
+            <Group spacing={4} noWrap>
+              <RankBadge size="md" textSize="xs" rank={model.user.rank?.leaderboardRank} />
+              <FollowUserButton userId={model.user.id} size="xs" compact />
+            </Group>
           </Group>
-        </Group>
-      ),
+        ) : (
+          '[deleted]'
+        ),
     },
   ];
   const published = model.status === ModelStatus.Published;
+  const isMuted = currentUser?.muted ?? false;
 
   return (
     <>
@@ -767,7 +770,7 @@ export default function ModelDetail({
                     images={latestVersion.images}
                     nsfw={model.nsfw}
                     connect={{ entityId: model.id, entityType: 'model' }}
-                    render={(image, index) => (
+                    render={(image) => (
                       <Carousel.Slide>
                         <Center style={{ height: '100%', width: '100%' }}>
                           <div style={{ width: '100%', position: 'relative' }}>
@@ -844,28 +847,32 @@ export default function ModelDetail({
                 <Group spacing="xs">
                   <Title order={3}>Discussion</Title>
 
-                  <LoginRedirect reason="create-review">
-                    <Button
-                      leftIcon={<IconStar size={16} />}
-                      variant="outline"
-                      fullWidth={mobile}
-                      size="xs"
-                      onClick={() => openRoutedContext('reviewEdit', {})}
-                    >
-                      Add Review
-                    </Button>
-                  </LoginRedirect>
-                  <LoginRedirect reason="create-comment">
-                    <Button
-                      leftIcon={<IconMessage size={16} />}
-                      variant="outline"
-                      fullWidth={mobile}
-                      onClick={() => openRoutedContext('commentEdit', {})}
-                      size="xs"
-                    >
-                      Add Comment
-                    </Button>
-                  </LoginRedirect>
+                  {!isMuted ? (
+                    <>
+                      <LoginRedirect reason="create-review">
+                        <Button
+                          leftIcon={<IconStar size={16} />}
+                          variant="outline"
+                          fullWidth={mobile}
+                          size="xs"
+                          onClick={() => openRoutedContext('reviewEdit', {})}
+                        >
+                          Add Review
+                        </Button>
+                      </LoginRedirect>
+                      <LoginRedirect reason="create-comment">
+                        <Button
+                          leftIcon={<IconMessage size={16} />}
+                          variant="outline"
+                          fullWidth={mobile}
+                          onClick={() => openRoutedContext('commentEdit', {})}
+                          size="xs"
+                        >
+                          Add Comment
+                        </Button>
+                      </LoginRedirect>
+                    </>
+                  ) : null}
                 </Group>
               </Group>
               <ModelDiscussion modelId={model.id} />

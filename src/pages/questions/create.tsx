@@ -18,5 +18,10 @@ export const getServerSideProps: GetServerSideProps = async (ctx) => {
     };
   }
 
+  if (session.user?.bannedAt)
+    return {
+      redirect: { destination: '/', permanent: false },
+    };
+
   return { props: { session } };
 };

@@ -21,7 +21,13 @@ import {
   reviewUpsertSchema,
   toggleReactionInput,
 } from '~/server/schema/review.schema';
-import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  middleware,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
@@ -71,7 +77,7 @@ export const reviewRouter = router({
   getDetail: publicProcedure.input(getByIdSchema).query(getReviewDetailsHandler),
   getCommentsById: publicProcedure.input(getByIdSchema).query(getReviewCommentsHandler),
   getCommentsCount: publicProcedure.input(getByIdSchema).query(getReviewCommentsCountHandler),
-  upsert: protectedProcedure
+  upsert: guardedProcedure
     .input(reviewUpsertSchema)
     .use(isOwnerOrModerator)
     .use(isLocked)

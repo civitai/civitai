@@ -12,7 +12,7 @@ import {
   StackProps,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconDotsVertical, IconTrash, IconEdit, IconFlag } from '@tabler/icons';
+import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconLock } from '@tabler/icons';
 import { FetchNextPageOptions, InfiniteQueryObserverResult } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -195,12 +195,14 @@ Comments.ListItem = function CommentDetail({
                       Delete comment
                     </Menu.Item>
                   </DeleteComment>
-                  <Menu.Item
-                    icon={<IconEdit size={14} stroke={1.5} />}
-                    onClick={() => setEditing(true)}
-                  >
-                    Edit comment
-                  </Menu.Item>
+                  {(!currentUser?.muted || currentUser?.isModerator) && (
+                    <Menu.Item
+                      icon={<IconEdit size={14} stroke={1.5} />}
+                      onClick={() => setEditing(true)}
+                    >
+                      Edit comment
+                    </Menu.Item>
+                  )}
                 </>
               )}
               {(!currentUser || !isOwner) && (
@@ -263,12 +265,24 @@ Comments.AddComment = function AddComment({ label = 'Add a comment' }: { label?:
   const user = useCurrentUser();
   const router = useRouter();
   const { entityId, entityType, hasNextPage } = useCommentsContext();
-  const [initialHasNextPage] = useState(hasNextPage);
-  const [creating, setCreating] = useState(!initialHasNextPage);
 
   if (hasNextPage) return null;
+  if (!user)
+    return (
+      <Alert>
+        <Group align="center" position="center" spacing="xs">
+          <Text size="sm">
+            You must{' '}
+            <Text variant="link" component={NextLink} href={`/login?returnUrl=${router.asPath}`}>
+              sign in
+            </Text>{' '}
+            to add a comment
+          </Text>
+        </Group>
+      </Alert>
+    );
 
-  return user ? (
+  return !user.muted ? (
     <Group align="flex-start" noWrap>
       <UserAvatar user={user} size="md" />
       <CommentForm
@@ -279,31 +293,8 @@ Comments.AddComment = function AddComment({ label = 'Add a comment' }: { label?:
       />
     </Group>
   ) : (
-    // !creating ? (
-    //   <Text variant="link" onClick={() => setCreating(true)} sx={{ cursor: 'pointer' }}>
-    //     {label}
-    //   </Text>
-    // ) : (
-    //   <Group align="flex-start" noWrap>
-    //     <UserAvatar user={user} size="md" />
-    //     <CommentForm
-    //       entityId={entityId}
-    //       entityType={entityType}
-    //       onCancel={initialHasNextPage ? () => setCreating(false) : undefined}
-    //       autoFocus={initialHasNextPage}
-    //     />
-    //   </Group>
-    // )
-    <Alert>
-      <Group align="center" position="center" spacing="xs">
-        <Text size="sm">
-          You must{' '}
-          <Text variant="link" component={NextLink} href={`/login?returnUrl=${router.asPath}`}>
-            sign in
-          </Text>{' '}
-          to add a comment
-        </Text>
-      </Group>
+    <Alert color="yellow" icon={<IconLock />}>
+      <Center>You cannot add comments because you have been muted</Center>
     </Alert>
   );
 };

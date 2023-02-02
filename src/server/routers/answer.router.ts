@@ -8,7 +8,13 @@ import {
 import { getAnswersSchema, upsertAnswerSchema, answerVoteSchema } from './../schema/answer.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 
-import { middleware, router, publicProcedure, protectedProcedure } from '~/server/trpc';
+import {
+  middleware,
+  router,
+  publicProcedure,
+  protectedProcedure,
+  guardedProcedure,
+} from '~/server/trpc';
 import { prisma } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 
@@ -39,7 +45,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 export const answerRouter = router({
   getById: publicProcedure.input(getByIdSchema).query(getAnswerDetailHandler),
   getAll: publicProcedure.input(getAnswersSchema).query(getAnswersHandler),
-  upsert: protectedProcedure
+  upsert: guardedProcedure
     .input(upsertAnswerSchema)
     .use(isOwnerOrModerator)
     .mutation(upsertAnswerHandler),

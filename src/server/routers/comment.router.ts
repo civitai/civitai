@@ -19,7 +19,13 @@ import {
   getCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
 import { toggleReactionInput } from '~/server/schema/review.schema';
-import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  middleware,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
@@ -69,7 +75,7 @@ export const commentRouter = router({
   getReactions: publicProcedure.input(getCommentReactionsSchema).query(getCommentReactionsHandler),
   getCommentsById: publicProcedure.input(getByIdSchema).query(getCommentCommentsHandler),
   getCommentsCount: publicProcedure.input(getByIdSchema).query(getCommentCommentsCountHandler),
-  upsert: protectedProcedure
+  upsert: guardedProcedure
     .input(commentUpsertInput)
     .use(isOwnerOrModerator)
     .use(isLocked)

@@ -96,6 +96,7 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
     },
   });
 
+  const isMuted = currentUser?.muted ?? false;
   const mainComment = review ?? parent;
   const commentCount = comments.length;
   const suggestedMentions = removeDuplicates(
@@ -118,7 +119,7 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
           commentCount === 1 ? 'Comment' : 'Comments'
         }`}</Title>
       </Group>
-      {!mainComment?.locked ? (
+      {!mainComment?.locked && !isMuted ? (
         <Group align="flex-start">
           <UserAvatar user={currentUser} avatarProps={{ size: 'md' }} />
           <Form form={form} onSubmit={handleSubmitComment} style={{ flex: '1 1 0' }}>
@@ -177,7 +178,11 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
         </Group>
       ) : (
         <Alert color="yellow" icon={<IconLock />}>
-          <Center>This thread has been locked</Center>
+          <Center>
+            {isMuted
+              ? 'You cannot add comments because you have been muted'
+              : 'This thread has been locked'}
+          </Center>
         </Alert>
       )}
       <List listStyleType="none" spacing="lg" styles={{ itemWrapper: { width: '100%' } }}>

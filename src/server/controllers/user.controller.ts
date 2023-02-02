@@ -37,6 +37,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { invalidateSession } from '~/server/utils/session-helpers';
 
 export const getAllUsersHandler = ({ input }: { input: GetAllUsersInput }) => {
   try {
@@ -512,4 +513,45 @@ export const batchBlockTagsHandler = async ({
   } catch (error) {
     throw throwDbError(error);
   }
+};
+
+export const toggleMuteHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  if (!ctx.user.isModerator) throw throwAuthorizationError();
+
+  const { id } = input;
+  const user = await getUserById({ id, select: { muted: true } });
+  if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+  const updatedUser = await updateUserById({ id, data: { muted: !user.muted } });
+  await invalidateSession(id);
+
+  return updatedUser;
+};
+
+export const toggleBanHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  if (!ctx.user.isModerator) throw throwAuthorizationError();
+
+  const { id } = input;
+  const user = await getUserById({ id, select: { bannedAt: true } });
+  if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+  const updatedUser = await updateUserById({
+    id,
+    data: { bannedAt: user.bannedAt ? null : new Date() },
+  });
+  await invalidateSession(id);
+
+  return updatedUser;
 };

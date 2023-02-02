@@ -15,7 +15,6 @@ import {
   ThemeIcon,
   Title,
   Text,
-  useMantineTheme,
 } from '@mantine/core';
 import { IconCloudOff, IconFilter, IconHeart, IconMessageCircle } from '@tabler/icons';
 import { deleteCookie } from 'cookies-next';
@@ -164,9 +163,9 @@ function QuestionsFilter() {
 }
 
 function QuestionsList() {
-  const theme = useMantineTheme();
-  const { classes } = useStyles();
+  const { classes, theme } = useStyles();
   const filters = useQuestionFilters();
+
   const { data: questions, isLoading } = trpc.question.getPaged.useQuery(filters);
 
   return isLoading ? (

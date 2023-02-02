@@ -1,4 +1,15 @@
-import { Grid, Group, Stack, Paper, Button, Container, ActionIcon, Title } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  Container,
+  Grid,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  ThemeIcon,
+  Title,
+} from '@mantine/core';
 import { useForm, Form, InputText, InputMultiSelect, InputRTE } from '~/libs/form';
 import { QuestionDetailProps } from '~/server/controllers/question.controller';
 import { upsertQuestionSchema } from '~/server/schema/question.schema';
@@ -7,17 +18,20 @@ import { z } from 'zod';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { showNotification } from '@mantine/notifications';
-import { IconArrowLeft, IconCheck, IconX } from '@tabler/icons';
+import { IconArrowLeft, IconCheck, IconLock, IconX } from '@tabler/icons';
 import { slugit } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { TagTarget } from '@prisma/client';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import Link from 'next/link';
 
 const schema = upsertQuestionSchema.extend({ tags: z.string().array().nullish() });
 
 export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
   const router = useRouter();
   const queryUtils = trpc.useContext();
+  const user = useCurrentUser();
 
   const form = useForm({
     schema: schema,
@@ -75,6 +89,24 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
     };
     mutate(data);
   };
+
+  if (user?.muted)
+    return (
+      <Container size="xl" p="xl">
+        <Stack align="center">
+          <ThemeIcon size="xl" color="yellow">
+            <IconLock />
+          </ThemeIcon>
+          <Title order={1}>Restricted Area</Title>
+          <Text size="xl">
+            You are not able to create/edit a question because your account has been muted
+          </Text>
+          <Link href="/" passHref>
+            <Button component="a">Go back home</Button>
+          </Link>
+        </Stack>
+      </Container>
+    );
 
   return (
     <Container>
