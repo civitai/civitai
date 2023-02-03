@@ -15,7 +15,7 @@ import {
   ScrollArea,
   LoadingOverlay,
 } from '@mantine/core';
-import { IconBadgeOff, IconInfoCircle } from '@tabler/icons';
+import { IconInfoCircle, IconRosette } from '@tabler/icons';
 import { useEffect } from 'react';
 import { z } from 'zod';
 
@@ -115,10 +115,10 @@ export function ProfileCard() {
             </Alert>
           )}
           <Grid>
-            {cosmeticsEnabled && (
+            {cosmeticsEnabled && currentUser && (
               <Grid.Col span={12}>
                 <ProfilePreview
-                  user={formUser}
+                  user={{ ...formUser, createdAt: currentUser.createdAt }}
                   badge={selectedBadge}
                   nameplate={selectedNameplate}
                 />
@@ -149,7 +149,6 @@ export function ProfileCard() {
                     })) ?? []
                   }
                   disabled={loadingCosmetics}
-                  searchable
                   clearable
                 />
               </Grid.Col>
@@ -185,7 +184,7 @@ export function ProfileCard() {
                       <EdgeImage src={selectedBadge.data.url} width={96} />
                     ) : (
                       <ThemeIcon size={96} variant="outline" color="gray">
-                        <IconBadgeOff />
+                        <IconRosette size={48} stroke={1.5} />
                       </ThemeIcon>
                     )}
                     <Paper
@@ -283,14 +282,19 @@ function ProfilePreview({ user, badge, nameplate }: ProfilePreviewProps) {
     <Stack spacing={4}>
       <Input.Label>Preview</Input.Label>
       <Paper p="sm" withBorder>
-        <UserAvatar user={userWithCosmetics} size="xl" withUsername />
+        <UserAvatar
+          user={userWithCosmetics}
+          size="md"
+          subText={user.createdAt ? `Member since ${formatDate(user.createdAt)}` : ''}
+          withUsername
+        />
       </Paper>
     </Stack>
   );
 }
 
 type ProfilePreviewProps = {
-  user: z.infer<typeof schema>;
+  user: z.infer<typeof schema> & { createdAt?: Date };
   badge?: BadgeCosmetic;
   nameplate?: NamePlateCosmetic;
 };

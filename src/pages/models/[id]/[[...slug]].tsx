@@ -93,6 +93,7 @@ import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { Username } from '~/components/User/Username';
 
 //TODO - Break model query into multiple queries
 /*
@@ -409,18 +410,13 @@ export default function ModelDetail({
               <Anchor>
                 <Group spacing={4} noWrap sx={{ flex: 1, overflow: 'hidden' }}>
                   <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
-                  <Text
-                    size="sm"
-                    variant="link"
-                    sx={{
-                      cursor: 'pointer',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}
-                  >
-                    {model.user.username}
-                  </Text>
+                  <Username
+                    username={model.user.username}
+                    cosmetics={model.user.cosmetics.filter(
+                      ({ cosmetic }) => cosmetic.type === 'NamePlate'
+                    )}
+                    inherit
+                  />
                 </Group>
               </Anchor>
             </Link>

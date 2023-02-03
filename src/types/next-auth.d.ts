@@ -5,6 +5,7 @@ interface ExtendedUser {
   id: number;
   showNsfw: boolean;
   blurNsfw: boolean;
+  createdAt?: Date;
   username?: string;
   tos?: boolean;
   isModerator?: boolean;
