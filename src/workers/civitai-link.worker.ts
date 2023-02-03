@@ -118,7 +118,7 @@ socket.on('linkStatus', (active: boolean) => {
 });
 
 const completedStatuses: ResponseStatus[] = ['canceled', 'error', 'success'];
-const ignoredCommands: CommandTypes[] = [];
+const ignoredCommands: CommandTypes[] = ['resources:add:cancel'];
 socket.on('commandStatus', (payload: Response) => {
   if (ignoredCommands.includes(payload.type)) return;
   if (payload.type === 'resources:list') {
@@ -130,9 +130,11 @@ socket.on('commandStatus', (payload: Response) => {
   if (payload.type === 'activities:list') {
     value = payload.activities;
   } else {
+    let found = false;
     for (const activity of activities) {
       if (activity.id !== payload.id) value.push(activity);
       else {
+        found = true;
         value.push(payload);
 
         // emit completion if status changed to a completed status
@@ -141,6 +143,7 @@ socket.on('commandStatus', (payload: Response) => {
         if (activityCompleted) emitCompletion(payload);
       }
     }
+    if (!found) value.push(payload);
   }
 
   updateSharedValue({ type: 'activities', value });

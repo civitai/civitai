@@ -49,12 +49,12 @@ type CommandBase = {
   id: string;
 };
 
-export type CommandResourcesList = CommandBase & {
+export type CommandResourcesList = {
   type: 'resources:list';
   types?: string[];
 };
 
-export type CommandResourcesAdd = CommandBase & {
+export type CommandResourcesAdd = {
   type: 'resources:add';
   resources: {
     type: ResourceType;
@@ -65,7 +65,7 @@ export type CommandResourcesAdd = CommandBase & {
   }[];
 };
 
-export type CommandResourcesAddCancel = CommandBase & {
+export type CommandResourcesAddCancel = {
   type: 'resources:add:cancel';
   resources: {
     type: ResourceType;
@@ -73,7 +73,7 @@ export type CommandResourcesAddCancel = CommandBase & {
   }[];
 };
 
-export type CommandResourcesRemove = CommandBase & {
+export type CommandResourcesRemove = {
   type: 'resources:remove';
   resources: {
     type: ResourceType;
@@ -81,17 +81,18 @@ export type CommandResourcesRemove = CommandBase & {
   }[];
 };
 
-export type CommandActivitiesList = CommandBase & {
+export type CommandActivitiesList = {
   type: 'activities:list';
   quantity?: number;
 };
 
-export type Command =
+export type CommandRequest =
   | CommandResourcesList
   | CommandResourcesAdd
   | CommandResourcesRemove
   | CommandResourcesAddCancel
   | CommandActivitiesList;
+export type Command = CommandRequest & CommandBase;
 
 export type CommandTypes = Command['type'];
 

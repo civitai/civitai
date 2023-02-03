@@ -1,7 +1,12 @@
 /* eslint-disable @typescript-eslint/no-empty-function */
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { CivitaiLinkInstance, getLinkInstances } from '~/components/CivitaiLink/civitai-link-api';
-import { Command, ResponseResourcesList, Response } from '~/components/CivitaiLink/shared-types';
+import {
+  Command,
+  ResponseResourcesList,
+  Response,
+  CommandRequest,
+} from '~/components/CivitaiLink/shared-types';
 import SharedWorker from '@okikio/sharedworker';
 import { showNotification } from '@mantine/notifications';
 import { v4 as uuid } from 'uuid';
@@ -30,7 +35,7 @@ type CivitaiLinkState = {
   resources: ResponseResourcesList['resources'];
   fetchInstances: () => Promise<void>;
   selectInstance: (instance: CivitaiLinkInstance) => Promise<void>;
-  runCommand: (command: Omit<Command, 'id'>) => Promise<unknown>;
+  runCommand: (command: CommandRequest) => Promise<unknown>;
 };
 
 const CivitaiLinkCtx = createContext<CivitaiLinkState>({
@@ -49,7 +54,7 @@ type CivitaiLinkStore = {
   activities: Response[];
   setActivities: (activities: Response[]) => void;
 };
-const useCivitaiLinkStore = create<CivitaiLinkStore>()(
+export const useCivitaiLinkStore = create<CivitaiLinkStore>()(
   immer((set) => ({
     activities: [],
     setActivities: (activities: Response[]) =>
@@ -107,6 +112,7 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
     };
 
     const handleActivities = (activities: Response[]) => {
+      console.log(activities);
       setActivities(activities);
     };
 
@@ -146,7 +152,7 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
     worker.port.postMessage({ type: 'join', key: instance.key });
   };
 
-  const runCommand = async (command: Omit<Command, 'id'>, timeout = 0) => {
+  const runCommand = async (command: CommandRequest, timeout = 0) => {
     const worker = await getWorker();
     const payload = command as Command;
     payload.id = uuid();
