@@ -68,6 +68,7 @@ export function ProfileCard() {
 
       if (user)
         form.reset({
+          ...user,
           image: user.image ?? null,
           username: user.username ?? undefined,
           badgeId: badgeId ?? null,
@@ -159,12 +160,25 @@ export function ProfileCard() {
             {cosmeticsEnabled && (
               <Grid.Col span={12}>
                 <Stack spacing={5}>
-                  <Group spacing={4}>
-                    <Input.Label>Badge</Input.Label>
-                    <IconBadge
-                      tooltip="Select the badge you want to display next to your username"
-                      icon={<IconInfoCircle size={14} />}
-                    />
+                  <Group position="apart">
+                    <Group spacing={4}>
+                      <Input.Label>Badge</Input.Label>
+                      <IconBadge
+                        tooltip="Select the badge you want to display next to your username"
+                        icon={<IconInfoCircle size={14} />}
+                      />
+                    </Group>
+                    {selectedBadge && (
+                      <Button
+                        color="red"
+                        variant="subtle"
+                        size="xs"
+                        onClick={() => form.setValue('badgeId', null, { shouldDirty: true })}
+                        compact
+                      >
+                        Remove badge
+                      </Button>
+                    )}
                   </Group>
                   <Group spacing="xs" align="stretch" noWrap>
                     {selectedBadge?.data.url ? (
