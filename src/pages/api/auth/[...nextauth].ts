@@ -33,6 +33,10 @@ const setUserName = async (email: string) => {
   }
 };
 
+const useSecureCookies = env.NEXTAUTH_URL.startsWith('https://');
+const cookiePrefix = useSecureCookies ? '__Secure-' : '';
+const { hostname } = new URL(env.NEXTAUTH_URL);
+
 export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   adapter: PrismaAdapter(prisma),
   session: {
@@ -125,6 +129,18 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
       },
     }),
   ],
+  cookies: {
+    sessionToken: {
+      name: `${cookiePrefix}next-auth.session-token`,
+      options: {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        secure: useSecureCookies,
+        domain: hostname == 'localhost' ? hostname : '.' + hostname, // add a . in front so that subdomains are included
+      },
+    },
+  },
   pages: {
     signIn: '/login',
     error: '/login',

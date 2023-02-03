@@ -64,7 +64,7 @@ export default WebhookEndpoint(async (req, res) => {
       prisma.modelHash.deleteMany({ where: { fileId } }),
       prisma.modelHash.createMany({
         data: Object.entries(scanResult.hashes)
-          .filter(([type]) => hashTypeMap[type.toLowerCase()])
+          .filter(([type, val]) => hashTypeMap[type.toLowerCase()] && val)
           .map(([type, hash]) => ({
             fileId,
             type: hashTypeMap[type.toLowerCase()] as ModelHashType,
