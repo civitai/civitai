@@ -177,9 +177,10 @@ const encoders = {
 // #endregion
 
 // #region [audit]
+const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const blockedRegex = blocked.map((word) => ({
   word,
-  regex: new RegExp(`(^|\\s|\\(|\\))${word}(\\s|,|$|\\(|\\))`, 'm'),
+  regex: new RegExp(`(^|\\s|\\(|\\))${escapeRegex(word)}(\\s|,|$|\\(|\\))`, 'm'),
 }));
 export const auditMetaData = (meta: AsyncReturnType<typeof getMetadata>) => {
   const blockedFor = blockedRegex
