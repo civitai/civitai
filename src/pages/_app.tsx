@@ -2,7 +2,7 @@
 import { ColorScheme, ColorSchemeProvider, MantineProvider } from '@mantine/core';
 import { NotificationsProvider } from '@mantine/notifications';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
-import { getCookie, getCookies, setCookie } from 'cookies-next';
+import { getCookie, getCookies, setCookie, deleteCookie } from 'cookies-next';
 import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
 import isBetween from 'dayjs/plugin/isBetween';
@@ -51,6 +51,7 @@ type CustomAppProps = {
 }>;
 
 function MyApp(props: CustomAppProps) {
+  deleteCookie('__Secure-next-auth.session-token', { path: '/', domain: 'civitai.com' });
   const {
     Component,
     pageProps: { session, colorScheme: initialColorScheme, cookies, flags, ...pageProps },

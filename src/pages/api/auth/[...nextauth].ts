@@ -36,8 +36,7 @@ const setUserName = async (email: string) => {
 const useSecureCookies = env.NEXTAUTH_URL.startsWith('https://');
 const cookiePrefix = useSecureCookies ? '__Secure-' : '';
 const { hostname } = new URL(env.NEXTAUTH_URL);
-const oldAuthCookieKey = `${cookiePrefix}next-auth.session-token`;
-const cookieName = `${cookiePrefix}civitai-session`;
+const cookieName = `${cookiePrefix}next-auth.session-token`;
 
 export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   adapter: PrismaAdapter(prisma),
@@ -151,29 +150,7 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
 });
 
 const authOptions = async (req: NextApiRequest, res: NextApiResponse) => {
-  const cookies = getCookies({ req, res });
-  const oldAuthCookie = cookies[oldAuthCookieKey];
-  if (oldAuthCookie) {
-    const currentCookie = cookies[cookieName];
-    if (!currentCookie) {
-      setCookie(cookieName, oldAuthCookie, {
-        req,
-        res,
-        maxAge: 30 * 24 * 60 * 60,
-        path: '/',
-        domain: '.' + hostname,
-        sameSite: 'lax',
-      });
-    }
-    deleteCookie(oldAuthCookieKey, { req, res, path: '/', domain: hostname, sameSite: 'lax' });
-    deleteCookie(oldAuthCookieKey, {
-      req,
-      res,
-      path: '/',
-      domain: '.' + hostname,
-      sameSite: 'lax',
-    });
-  }
+  deleteCookie(cookieName, { req, res, path: '/', domain: hostname, sameSite: 'lax' });
   return NextAuth(req, res, createAuthOptions(req));
 };
 
