@@ -1,7 +1,6 @@
 import {
   Card,
   Container,
-  createStyles,
   Title,
   Text,
   Button,
@@ -9,40 +8,22 @@ import {
   Center,
   Loader,
   Alert,
+  Grid,
 } from '@mantine/core';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useRouter } from 'next/router';
-import Link from 'next/link';
 import { trpc } from '~/utils/trpc';
-import { getClientStripe } from '~/utils/get-client-stripe';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { cloneElement } from 'react';
-import { DonateButton } from '~/components/Stripe/DonateButton';
+import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import { PlanDetails } from '~/components/Stripe/PlanDetails';
+import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 
 export default function Pricing() {
-  const user = useCurrentUser();
-  const { classes } = useStyles();
-  const router = useRouter();
-
   const { data: products, isLoading: productsLoading } = trpc.stripe.getPlans.useQuery();
   const { data: subscription, isLoading: subscriptionLoading } =
     trpc.stripe.getUserSubscription.useQuery();
-  const { mutate, isLoading: sessionLoading } = trpc.stripe.createSubscriptionSession.useMutation({
-    async onSuccess({ sessionId }) {
-      const stripe = await getClientStripe();
-      await stripe.redirectToCheckout({ sessionId });
-    },
-  });
-
-  const processSubscription = async (priceId: string) => {
-    mutate({ priceId });
-  };
 
   // TODO - add button functionality
   const isLoading = productsLoading || subscriptionLoading;
-  const showSubscribeButton = !!user && !subscription;
-  const showSignIn = !user;
-  const showManageSubscription = !!user?.subscriptionId;
+  const showSubscribeButton = !subscription;
 
   return (
     <>
@@ -58,73 +39,53 @@ export default function Pricing() {
         </Stack>
       </Container>
       <Container>
-        {isLoading ? (
-          <Center p="xl">
-            <Loader />
-          </Center>
-        ) : !products ? (
-          <Center>
-            <Alert p="xl" title="There are no products to display">
-              Check back in a little while to see what we have to offer
-            </Alert>
-          </Center>
-        ) : (
-          <div className={classes.grid}>
-            {products.map((product) => (
-              <Card key={product.id} className={classes.flexItem} withBorder>
-                <Stack spacing={0}>
-                  <Title order={2} align="center">
-                    {product.name}
-                  </Title>
-                  <Text align="center">
-                    ${product.price.unitAmount / 100} {product.price.currency.toUpperCase()} /{' '}
-                    {product.price.interval}
-                  </Text>
-                  {showSubscribeButton && (
-                    <Button
-                      onClick={() => processSubscription(product.price.id)}
-                      loading={sessionLoading}
-                    >
-                      Subscribe
-                    </Button>
-                  )}
-                  {showSignIn && (
-                    <Link href={`/login?returnUrl=${router.asPath}`} passHref>
-                      <Button component="a">Sign in</Button>
-                    </Link>
-                  )}
-                </Stack>
-              </Card>
-            ))}
-          </div>
-        )}
-        <DonateButton>
-          <Button>Donate</Button>
-        </DonateButton>
+        <Stack>
+          {isLoading ? (
+            <Center p="xl">
+              <Loader />
+            </Center>
+          ) : !products ? (
+            <Center>
+              <Alert p="xl" title="There are no products to display">
+                Check back in a little while to see what we have to offer
+              </Alert>
+            </Center>
+          ) : (
+            <Grid justify="center">
+              {products.map((product) => (
+                <Grid.Col key={product.id} md={5} sm={6} xs={12}>
+                  <Card withBorder style={{ height: '100%' }}>
+                    <Stack justify="space-between" style={{ height: '100%' }}>
+                      <PlanDetails
+                        name={product.name}
+                        description={product.description}
+                        unitAmount={product.price.unitAmount}
+                        currency={product.price.currency}
+                        interval={product.price.interval}
+                      />
+                      {showSubscribeButton && (
+                        <SubscribeButton priceId={product.price.id}>
+                          <Button>Subscribe</Button>
+                        </SubscribeButton>
+                      )}
+                    </Stack>
+                  </Card>
+                </Grid.Col>
+              ))}
+            </Grid>
+          )}
+          {!!subscription && (
+            <Center>
+              <ManageSubscriptionButton>
+                <Button>Manage your Subscription</Button>
+              </ManageSubscriptionButton>
+            </Center>
+          )}
+        </Stack>
       </Container>
     </>
   );
 }
-
-// TODO - style
-const useStyles = createStyles((theme) => {
-  const maxColumns = 3;
-  const gap = theme.spacing.md;
-  return {
-    grid: {
-      // display: 'grid',
-      // gridTemplateColumns: `repeat(auto-fill, minmax(max(250px, calc(100%/${maxColumns} - ${theme.spacing.md})), 1fr));`,
-      // gridGap: theme.spacing.md,
-      display: 'flex',
-      flexWrap: 'wrap',
-      gap: gap,
-      justifyContent: 'center',
-    },
-    flexItem: {
-      width: `calc(100% / ${maxColumns} - ${gap * ((maxColumns - 1) / maxColumns)}px)`,
-    },
-  };
-});
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -133,10 +94,3 @@ export const getServerSideProps = createServerSideProps({
     await ssg?.stripe.getUserSubscription.prefetch();
   },
 });
-
-const planDetails = [
-  {
-    name: 'Supporter Tier',
-    benefits: [],
-  },
-];
