@@ -15,7 +15,10 @@ const clFetch = async (url: string, options: RequestInit = {}) => {
     ...options,
     credentials: 'include',
   });
-  if (!response.ok) throw new Error(response.statusText);
+  if (!response.ok) {
+    console.error(response);
+    return {} as unknown;
+  }
   return response.json() as unknown;
 };
 
