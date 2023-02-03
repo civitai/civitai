@@ -7,6 +7,7 @@ import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
 import EmailProvider from 'next-auth/providers/email';
+import { deleteCookie, getCookie, setCookie } from 'cookies-next';
 
 // Prisma adapter for NextAuth, optional and can be removed
 import { env } from '~/env/server.mjs';
@@ -36,6 +37,7 @@ const setUserName = async (email: string) => {
 const useSecureCookies = env.NEXTAUTH_URL.startsWith('https://');
 const cookiePrefix = useSecureCookies ? '__Secure-' : '';
 const { hostname } = new URL(env.NEXTAUTH_URL);
+const cookieName = `${cookiePrefix}civitai-session`;
 
 export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   adapter: PrismaAdapter(prisma),
@@ -131,10 +133,10 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   ],
   cookies: {
     sessionToken: {
-      name: `${cookiePrefix}next-auth.session-token`,
+      name: cookieName,
       options: {
         httpOnly: true,
-        sameSite: 'lax',
+        sameSite: 'none',
         path: '/',
         secure: useSecureCookies,
         domain: hostname == 'localhost' ? hostname : '.' + hostname, // add a . in front so that subdomains are included
@@ -147,7 +149,13 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   },
 });
 
+const oldAuthCookieKey = `${cookiePrefix}next-auth.session-token`;
 const authOptions = async (req: NextApiRequest, res: NextApiResponse) => {
+  const oldAuthCookie = getCookie(oldAuthCookieKey, { req, res });
+  if (oldAuthCookie) {
+    setCookie(cookieName, oldAuthCookie, { req, res, maxAge: 30 * 24 * 60 * 60 });
+    deleteCookie(oldAuthCookieKey, { req, res });
+  }
   return NextAuth(req, res, createAuthOptions(req));
 };
 
