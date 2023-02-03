@@ -1,4 +1,5 @@
-import { ModelEngagementType, ModelVersionEngagementType } from '@prisma/client';
+import { CosmeticType, ModelEngagementType, ModelVersionEngagementType } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
 import {
@@ -14,8 +15,8 @@ import {
   toggleHideUser,
   toggleModelHide,
   toggleModelFavorite,
+  getUserCosmetics,
 } from '~/server/services/user.service';
-import { TRPCError } from '@trpc/server';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllUsersInput,
@@ -28,6 +29,7 @@ import {
   GetUserTagsSchema,
   BatchBlockTagsSchema,
   ToggleModelEngagementInput,
+  GetUserCosmeticsSchema,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
@@ -38,6 +40,8 @@ import {
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
+import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export const getAllUsersHandler = ({ input }: { input: GetAllUsersInput }) => {
   try {
@@ -76,7 +80,7 @@ export const getUserByIdHandler = async ({ input }: { input: GetByIdInput }) => 
     return user;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
-    else throwDbError(error);
+    else throw throwDbError(error);
   }
 };
 
@@ -123,21 +127,40 @@ export const updateUserHandler = async ({
   ctx: DeepNonNullable<Context>;
   input: Partial<UserUpsertInput>;
 }) => {
-  const { id, ...data } = input;
+  const { id, badgeId, nameplateId, ...data } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
 
   try {
-    const updatedUser = await updateUserById({ id, data });
-
-    if (!updatedUser) {
-      throw throwNotFoundError(`No user with id ${id}`);
+    const { memberBadges } = getFeatureFlags({ user: currentUser });
+    const payloadCosmeticIds: number[] = [];
+    if (memberBadges) {
+      if (badgeId) payloadCosmeticIds.push(badgeId);
+      if (nameplateId) payloadCosmeticIds.push(nameplateId);
     }
+
+    const updatedUser = await updateUserById({
+      id,
+      data: {
+        ...data,
+        cosmetics: {
+          updateMany: {
+            where: { equippedAt: { not: null } },
+            data: { equippedAt: null },
+          },
+          update: payloadCosmeticIds.map((cosmeticId) => ({
+            where: { userId_cosmeticId: { userId: id, cosmeticId } },
+            data: { equippedAt: new Date() },
+          })),
+        },
+      },
+    });
+    if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
 
     return updatedUser;
   } catch (error) {
     if (error instanceof TRPCError) throw error; // Rethrow the error if it's already a TRCPError
-    else throwDbError(error); // Otherwise, generate a db error
+    else throw throwDbError(error); // Otherwise, generate a db error
   }
 };
 
@@ -159,7 +182,7 @@ export const deleteUserHandler = async ({
     return user;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
-    else throwDbError(error);
+    else throw throwDbError(error);
   }
 };
 
@@ -425,6 +448,19 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
             answerCountMonth: true,
           },
         },
+        cosmetics: {
+          where: { equippedAt: { not: null } },
+          select: {
+            cosmetic: {
+              select: {
+                id: true,
+                data: true,
+                type: true,
+                source: true,
+              },
+            },
+          },
+        },
       },
       orderBy: { rank: { leaderboardRank: 'asc' } },
     });
@@ -554,4 +590,37 @@ export const toggleBanHandler = async ({
   await invalidateSession(id);
 
   return updatedUser;
+};
+
+export const getUserCosmeticsHandler = async ({
+  input,
+  ctx,
+}: {
+  input?: GetUserCosmeticsSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const { equipped = false } = input || {};
+    const user = await getUserCosmetics({ equipped, userId });
+    if (!user) throw throwNotFoundError(`No user with id ${userId}`);
+
+    const cosmetics = user.cosmetics.reduce(
+      (acc, { obtainedAt, cosmetic }) => {
+        const { type, data, ...rest } = cosmetic;
+        if (type === CosmeticType.Badge)
+          acc.badges.push({ ...rest, data: data as BadgeCosmetic['data'], obtainedAt });
+        else if (type === CosmeticType.NamePlate)
+          acc.nameplates.push({ ...rest, data: data as NamePlateCosmetic['data'], obtainedAt });
+
+        return acc;
+      },
+      { badges: [] as BadgeCosmetic[], nameplates: [] as NamePlateCosmetic[] }
+    );
+
+    return cosmetics;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
 };

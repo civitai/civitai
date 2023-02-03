@@ -6,7 +6,7 @@ import {
 } from './../services/answer.service';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { Context } from '~/server/createContext';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getAnswers } from '~/server/services/answer.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { AnswerVoteInput, GetAnswersInput, UpsertAnswerInput } from './../schema/answer.schema';
@@ -29,7 +29,7 @@ export const getAnswersHandler = async ({
         content: true,
         createdAt: true,
         updatedAt: true,
-        user: { select: simpleUserSelect },
+        user: { select: userWithCosmeticsSelect },
         rank: {
           select: {
             heartCountAllTime: true,
@@ -79,13 +79,7 @@ export const getAnswersHandler = async ({
   }
 };
 
-export const getAnswerDetailHandler = async ({
-  ctx,
-  input: { id },
-}: {
-  ctx: Context;
-  input: GetByIdInput;
-}) => {
+export const getAnswerDetailHandler = async ({ input: { id } }: { input: GetByIdInput }) => {
   try {
     return await getAnswerDetail({
       id,
@@ -94,7 +88,7 @@ export const getAnswerDetailHandler = async ({
         content: true,
         createdAt: true,
         updatedAt: true,
-        user: { select: simpleUserSelect },
+        user: { select: userWithCosmeticsSelect },
       },
     });
   } catch (error) {
@@ -116,13 +110,7 @@ export const upsertAnswerHandler = async ({
   }
 };
 
-export const deleteAnswerHandler = async ({
-  ctx,
-  input: { id },
-}: {
-  ctx: DeepNonNullable<Context>;
-  input: GetByIdInput;
-}) => {
+export const deleteAnswerHandler = async ({ input: { id } }: { input: GetByIdInput }) => {
   try {
     return await deleteAnswer({ id });
   } catch (error) {

@@ -65,7 +65,7 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
         if (user) token.user = user;
       }
 
-      const { createdAt, deletedAt, ...restUser } = token.user as User;
+      const { deletedAt, ...restUser } = token.user as User;
       token.user = { ...restUser };
 
       return token;

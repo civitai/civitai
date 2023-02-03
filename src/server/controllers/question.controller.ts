@@ -1,5 +1,5 @@
 import { SetQuestionAnswerInput } from './../schema/question.schema';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   getQuestions,
@@ -14,13 +14,7 @@ import { Context } from '~/server/createContext';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 
 export type GetQuestionsProps = AsyncReturnType<typeof getQuestionsHandler>;
-export const getQuestionsHandler = async ({
-  ctx,
-  input,
-}: {
-  ctx: Context;
-  input: GetQuestionsInput;
-}) => {
+export const getQuestionsHandler = async ({ input }: { input: GetQuestionsInput }) => {
   try {
     const { items, ...rest } = await getQuestions({
       ...input,
@@ -84,7 +78,7 @@ export const getQuestionDetailHandler = async ({
         title: true,
         content: true,
         selectedAnswerId: true,
-        user: { select: simpleUserSelect },
+        user: { select: userWithCosmeticsSelect },
         tags: {
           select: {
             tag: {
@@ -150,13 +144,7 @@ export const upsertQuestionHandler = async ({
   }
 };
 
-export const deleteQuestionHandler = async ({
-  ctx,
-  input,
-}: {
-  ctx: DeepNonNullable<Context>;
-  input: GetByIdInput;
-}) => {
+export const deleteQuestionHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     await deleteQuestion(input);
   } catch (error) {
@@ -164,13 +152,7 @@ export const deleteQuestionHandler = async ({
   }
 };
 
-export const setQuestionAnswerHandler = async ({
-  ctx,
-  input,
-}: {
-  ctx: DeepNonNullable<Context>;
-  input: SetQuestionAnswerInput;
-}) => {
+export const setQuestionAnswerHandler = async ({ input }: { input: SetQuestionAnswerInput }) => {
   try {
     await setQuestionAnswer(input);
   } catch (error) {

@@ -1,10 +1,11 @@
-import { ModelFileFormat } from '@prisma/client';
-import { DefaultSession } from 'next-auth';
+import type { ModelFileFormat } from '@prisma/client';
+import type { DefaultSession } from 'next-auth';
 
 interface ExtendedUser {
   id: number;
   showNsfw: boolean;
   blurNsfw: boolean;
+  createdAt?: Date;
   username?: string;
   tos?: boolean;
   isModerator?: boolean;

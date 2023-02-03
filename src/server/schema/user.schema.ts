@@ -23,6 +23,8 @@ export const userUpsertSchema = z.object({
   email: z.string().email(),
   preferredModelFormat: z.nativeEnum(ModelFileFormat),
   preferredPrunedModel: z.boolean(),
+  badgeId: z.number().nullish(),
+  nameplateId: z.number().nullish(),
 });
 export type UserUpsertInput = z.input<typeof userUpsertSchema>;
 
@@ -49,4 +51,9 @@ export const deleteUserSchema = z.object({
   id: z.number(),
   username: z.string().optional(),
   removeModels: z.boolean().optional(),
+});
+
+export type GetUserCosmeticsSchema = z.infer<typeof getUserCosmeticsSchema>;
+export const getUserCosmeticsSchema = z.object({
+  equipped: z.boolean(),
 });
