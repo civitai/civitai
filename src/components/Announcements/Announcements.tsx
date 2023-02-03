@@ -1,13 +1,14 @@
 /* eslint-disable react-hooks/rules-of-hooks */
-import { Alert, createStyles, Group, MantineColor, Stack, Text } from '@mantine/core';
+import { Alert, createStyles, Group, MantineColor, Stack, Sx, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import useIsClient from '~/hooks/useIsClient';
 import { trpc } from '~/utils/trpc';
 
-export const Announcements = ({}) => {
+export const Announcements = (props: AnnouncementsProps) => {
   const isClient = useIsClient();
+  const isIndex = isClient && window.location.pathname === '/';
 
   const dismissed: number[] = useMemo(() => {
     if (!isClient) return [];
@@ -28,23 +29,38 @@ export const Announcements = ({}) => {
   );
 
   if (!isClient) return null;
-  if (!dismissed.length) return <WelcomeAnnouncement />;
+  console.log(dismissed, latestAnnouncement);
+  if (!dismissed.length && isIndex) return <WelcomeAnnouncement {...props} />;
   if (isFetching || !latestAnnouncement) return null;
 
-  return <Announcement {...latestAnnouncement} />;
+  return <Announcement {...latestAnnouncement} {...props} />;
 };
 
-const WelcomeAnnouncement = () => (
+type AnnouncementsProps = {
+  className?: string;
+  sx?: Sx;
+};
+
+const WelcomeAnnouncement = (props: AnnouncementsProps) => (
   <Announcement
     id={0}
     emoji="👋"
     title="Welcome to Civitai!"
     content="Browse, share, and review custom AI art models, [learn more...](/content/guides/what-is-civitai)"
+    {...props}
   />
 );
 
-const Announcement = ({ id, title, content, color = 'blue', emoji = '👋' }: AnnouncementProps) => {
-  const { classes } = useStyles({ color });
+const Announcement = ({
+  id,
+  title,
+  content,
+  color = 'blue',
+  emoji = '👋',
+  className = '',
+  sx,
+}: AnnouncementProps) => {
+  const { classes, cx } = useStyles({ color });
   const [dismissed, setDismissed] = useLocalStorage({
     key: `announcement-${id}`,
     defaultValue: false,
@@ -56,8 +72,9 @@ const Announcement = ({ id, title, content, color = 'blue', emoji = '👋' }: An
     <Alert
       color={color}
       py={8}
-      className={classes.announcement}
+      className={cx(className, classes.announcement)}
       onClose={() => setDismissed(true)}
+      sx={sx}
       withCloseButton
     >
       <Group spacing="xs" noWrap>
@@ -87,6 +104,8 @@ type AnnouncementProps = {
   content: string;
   emoji?: string | null;
   color?: MantineColor;
+  className?: string;
+  sx?: Sx;
 };
 
 const useStyles = createStyles((theme, { color }: { color: MantineColor }) => ({
@@ -94,8 +113,8 @@ const useStyles = createStyles((theme, { color }: { color: MantineColor }) => ({
     minWidth: 300,
     maxWidth: 600,
     top: 'calc(var(--mantine-header-height,0) + 16px)',
-    marginBottom: -35,
     position: 'sticky',
+    margin: '0 auto',
     alignSelf: 'center',
     zIndex: 11,
     boxShadow: theme.shadows.md,
@@ -107,7 +126,6 @@ const useStyles = createStyles((theme, { color }: { color: MantineColor }) => ({
         ? theme.fn.darken(theme.colors[color][8], 0.5)
         : theme.colors[color][1],
     [theme.fn.smallerThan('md')]: {
-      marginBottom: -5,
       marginLeft: -5,
       marginRight: -5,
     },
