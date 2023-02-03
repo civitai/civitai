@@ -41,6 +41,7 @@ import {
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export const getAllUsersHandler = ({ input }: { input: GetAllUsersInput }) => {
   try {
@@ -131,9 +132,12 @@ export const updateUserHandler = async ({
   if (id !== currentUser.id) throw throwAuthorizationError();
 
   try {
+    const { memberBadges } = getFeatureFlags({ user: currentUser });
     const payloadCosmeticIds: number[] = [];
-    if (badgeId) payloadCosmeticIds.push(badgeId);
-    if (nameplateId) payloadCosmeticIds.push(nameplateId);
+    if (memberBadges) {
+      if (badgeId) payloadCosmeticIds.push(badgeId);
+      if (nameplateId) payloadCosmeticIds.push(nameplateId);
+    }
 
     const updatedUser = await updateUserById({
       id,

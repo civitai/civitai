@@ -1,5 +1,7 @@
 import { initTRPC, TRPCError } from '@trpc/server';
+import { SessionUser } from 'next-auth';
 import superjson from 'superjson';
+import { FeatureFlags, getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { Context } from './createContext';
 
 const t = initTRPC.context<Context>().create({
@@ -56,6 +58,14 @@ const isMuted = middleware(async ({ ctx, next }) => {
     },
   });
 });
+
+export const isFlagProtected = (flag: keyof FeatureFlags) =>
+  middleware(({ ctx, next }) => {
+    const features = getFeatureFlags({ user: ctx.user });
+    if (!features[flag]) throw new TRPCError({ code: 'FORBIDDEN' });
+
+    return next({ ctx: { user: ctx.user as SessionUser } });
+  });
 
 /**
  * Protected procedure

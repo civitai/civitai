@@ -40,7 +40,7 @@ import {
   batchBlockTagsSchema,
   getUserCosmeticsSchema,
 } from '~/server/schema/user.schema';
-import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const userRouter = router({
   getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),
@@ -57,6 +57,7 @@ export const userRouter = router({
   getLeaderboard: publicProcedure.input(getAllQuerySchema).query(getLeaderboardHandler),
   getCosmetics: protectedProcedure
     .input(getUserCosmeticsSchema.optional())
+    .use(isFlagProtected('memberBadges'))
     .query(getUserCosmeticsHandler),
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
   update: protectedProcedure.input(userUpsertSchema.partial()).mutation(updateUserHandler),
