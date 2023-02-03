@@ -136,16 +136,15 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
 
 const authOptions = async (req: NextApiRequest, res: NextApiResponse) => {
   if (isProduction) {
-    const badCookie = getCookie('__Secure-next-auth.session-token', { req, res });
-    setCookie('__Secure-next-auth.session-token', badCookie, {
+    deleteCookie('__Secure-next-auth.session-token', {
       req,
       res,
-      maxAge: 30 * 24 * 60 * 60,
       httpOnly: true,
       secure: true,
       sameSite: 'lax',
+      path: '/',
+      domain: '.civitai.com',
     });
-    deleteCookie('__Secure-next-auth.session-token', { req, res });
   }
 
   return NextAuth(req, res, createAuthOptions(req));
