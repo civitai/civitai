@@ -50,6 +50,7 @@ export const serverSchema = z.object({
   UNAUTHENTICATE_LIST_NSFW: z.preprocess((val) => val === true || val === 'true', z.boolean()),
   STRIPE_SECRET_KEY: z.string(),
   STRIPE_WEBHOOK_SECRET: z.string(),
+  STRIPE_DONATE_ID: z.string(),
   LOGGING: z.preprocess((value) => {
     const str = String(value);
     return str.split(',');

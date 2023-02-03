@@ -67,7 +67,7 @@ model User {
   deletedAt            DateTime?
   preferredModelFormat ModelFileFormat?      @default(SafeTensor)
   preferredPrunedModel Boolean?              @default(false)
-  customerId           String?
+  customerId           String?               @unique
   subscriptionId       String?
   subscription         CustomerSubscription?
 
@@ -109,6 +109,7 @@ model User {
   rank                UserRank?
   downloads           DownloadHistory[]
   imageConnections    ImageConnection[]
+  purchases           Purchase[]
 }
 
 model CustomerSubscription {
@@ -140,6 +141,7 @@ model Product {
 
   prices                Price[]
   customerSubscriptions CustomerSubscription[]
+  purchases             Purchase[]
 }
 
 model Price {
@@ -155,6 +157,19 @@ model Price {
   intervalCount         Int?
   metadata              Json
   customerSubscriptions CustomerSubscription[]
+  purchases             Purchase[]
+}
+
+model Purchase {
+  id         Int      @id @default(autoincrement())
+  customerId String
+  customer   User     @relation(fields: [customerId], references: [customerId])
+  productId  String?
+  product    Product? @relation(fields: [productId], references: [id])
+  priceId    String?
+  price      Price?   @relation(fields: [priceId], references: [id])
+  status     String?
+  createdAt  DateTime @default(now())
 }
 
 enum UserEngagementType {

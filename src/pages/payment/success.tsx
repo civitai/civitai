@@ -3,7 +3,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export default function PaymentSuccess() {
   const currentUser = useCurrentUser();
-  console.log({ currentUser });
+  // console.log({ currentUser });
   return (
     <Container>
       <Title>Success</Title>

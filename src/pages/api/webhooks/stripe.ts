@@ -1,4 +1,8 @@
 import {
+  manageCheckoutPayment,
+  manageInvoicePaid,
+} from './../../../server/services/stripe.service';
+import {
   upsertPriceRecord,
   upsertProductRecord,
   upsertSubscription,
@@ -36,6 +40,7 @@ const relevantEvents = new Set([
   'product.created',
   'product.deleted',
   'product.updated',
+  'invoice.paid',
 ]);
 
 /*
@@ -64,6 +69,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (relevantEvents.has(event.type)) {
       try {
         switch (event.type) {
+          case 'invoice.paid':
+            console.log('-----INVOICE PAID-----');
+            const invoice = event.data.object as Stripe.Invoice;
+            await manageInvoicePaid(invoice);
+            break;
           case 'product.created':
           case 'product.updated':
           case 'product.deleted':
@@ -83,16 +93,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             break;
           case 'checkout.session.completed':
             const checkoutSession = event.data.object as Stripe.Checkout.Session;
-            // console.log('----CHECKOUT SESSION EVENT----');
-            // console.log({ checkoutSession });
             if (checkoutSession.mode === 'subscription') {
-              // TODO - verify that I can do nothing...
-              // do nothing, we're already capturing this event with customer.subscription.created
-              // const subscriptionId = checkoutSession.subscription;
-              // await manageSubscriptionStatusChange(
-              //   subscriptionId as string,
-              //   checkoutSession.customer as string
-              // );
+              // do nothing
+            } else if (checkoutSession.mode === 'payment') {
+              //TODO - capture payment details?
+              await manageCheckoutPayment(checkoutSession.id, checkoutSession.customer as string);
             }
             break;
           default:

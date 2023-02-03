@@ -17,6 +17,7 @@ import { trpc } from '~/utils/trpc';
 import { getClientStripe } from '~/utils/get-client-stripe';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { cloneElement } from 'react';
+import { DonateButton } from '~/components/Stripe/DonateButton';
 
 export default function Pricing() {
   const user = useCurrentUser();
@@ -139,16 +140,3 @@ const planDetails = [
     benefits: [],
   },
 ];
-
-function DonateButton({ children }: { children: React.ReactElement }) {
-  const { mutate, isLoading } = trpc.stripe.createDonateSession.useMutation({
-    async onSuccess({ sessionId }) {
-      const stripe = await getClientStripe();
-      await stripe.redirectToCheckout({ sessionId });
-    },
-  });
-
-  const handleClick = () => mutate({ returnUrl: location.href });
-
-  return cloneElement(children, { onClick: handleClick });
-}
