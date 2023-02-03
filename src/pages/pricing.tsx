@@ -16,7 +16,7 @@ import Link from 'next/link';
 import { trpc } from '~/utils/trpc';
 import { getClientStripe } from '~/utils/get-client-stripe';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { SubscriptionCard } from '~/components/Account/SubscriptionCard';
+import { cloneElement } from 'react';
 
 export default function Pricing() {
   const user = useCurrentUser();
@@ -97,6 +97,9 @@ export default function Pricing() {
             ))}
           </div>
         )}
+        <DonateButton>
+          <Button>Donate</Button>
+        </DonateButton>
       </Container>
     </>
   );
@@ -136,3 +139,16 @@ const planDetails = [
     benefits: [],
   },
 ];
+
+function DonateButton({ children }: { children: React.ReactElement }) {
+  const { mutate, isLoading } = trpc.stripe.createDonateSession.useMutation({
+    async onSuccess({ sessionId }) {
+      const stripe = await getClientStripe();
+      await stripe.redirectToCheckout({ sessionId });
+    },
+  });
+
+  const handleClick = () => mutate({ returnUrl: location.href });
+
+  return cloneElement(children, { onClick: handleClick });
+}

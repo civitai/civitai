@@ -134,14 +134,41 @@ export const createSubscribeSession = async ({
   return { sessionId: session.id };
 };
 
-export const createPortalSession = async ({ customerId }: { customerId: string }) => {
+// export const createPortalSession = async ({ customerId }: { customerId: string }) => {
+//   const stripe = await getServerStripe();
+//   const session = await stripe.billingPortal.sessions.create({
+//     customer: customerId,
+//     return_url: `${baseUrl}/pricing`,
+//   });
+
+//   return { url: session.url };
+// };
+
+export const createDonateSession = async ({
+  customerId,
+  user,
+  returnUrl,
+}: {
+  customerId?: string;
+  user: Schema.CreateCustomerInput;
+  returnUrl: string;
+}) => {
   const stripe = await getServerStripe();
-  const session = await stripe.billingPortal.sessions.create({
+
+  if (!customerId) {
+    customerId = await createCustomer(user);
+  }
+
+  const session = await stripe.checkout.sessions.create({
     customer: customerId,
-    return_url: `${baseUrl}/pricing`,
+    cancel_url: returnUrl,
+    line_items: [{ price: 'price_1MX9ZEAFgdjIzMi0Lk07Lj82', quantity: 1 }],
+    mode: 'payment',
+    payment_method_types: ['card'],
+    success_url: `${baseUrl}/success?type=donation`,
   });
 
-  return { url: session.url };
+  return { sessionId: session.id };
 };
 
 export const createManageSubscriptionSession = async ({ customerId }: { customerId: string }) => {
@@ -155,46 +182,46 @@ export const createManageSubscriptionSession = async ({ customerId }: { customer
   return { url: session.url };
 };
 
-export const manageSubscriptionStatusChange = async (
-  subscriptionId: string,
-  customerId: string
-) => {
-  const stripe = await getServerStripe();
-  const subscription = await stripe.subscriptions.retrieve(subscriptionId, { expand: ['plan'] });
-  console.log('----MANAGE SUBSCRIPTION STATUS CHANGE----');
-  console.log({ subscription });
+// export const manageSubscriptionStatusChange = async (
+//   subscriptionId: string,
+//   customerId: string
+// ) => {
+//   const stripe = await getServerStripe();
+//   const subscription = await stripe.subscriptions.retrieve(subscriptionId, { expand: ['plan'] });
+//   // console.log('----MANAGE SUBSCRIPTION STATUS CHANGE----');
+//   // console.log({ subscription });
 
-  const user = await prisma.user.findFirst({
-    where: { customerId: customerId },
-    select: { id: true, customerId: true, subscriptionId: true },
-  });
+//   const user = await prisma.user.findFirst({
+//     where: { customerId: customerId },
+//     select: { id: true, customerId: true, subscriptionId: true },
+//   });
 
-  if (!user) throw throwNotFoundError(`User with customerId: ${customerId} not found`);
+//   if (!user) throw throwNotFoundError(`User with customerId: ${customerId} not found`);
 
-  const data = {
-    id: subscription.id,
-    userId: user.id,
-    metadata: subscription.metadata,
-    status: subscription.status,
-    // as far as I can tell, there are never multiple items in this array
-    priceId: subscription.items.data[0].price.id,
-    productId: subscription.items.data[0].price.product as string,
-    cancelAtPeriodEnd: subscription.cancel_at_period_end,
-    cancelAt: subscription.cancel_at ? toDateTime(subscription.cancel_at) : null,
-    canceledAt: subscription.canceled_at ? toDateTime(subscription.canceled_at) : null,
-    currentPeriodStart: toDateTime(subscription.current_period_start),
-    currentPeriodEnd: toDateTime(subscription.current_period_end),
-    createdAt: toDateTime(subscription.created),
-    endedAt: subscription.ended_at ? toDateTime(subscription.ended_at) : null,
-  };
+//   const data = {
+//     id: subscription.id,
+//     userId: user.id,
+//     metadata: subscription.metadata,
+//     status: subscription.status,
+//     // as far as I can tell, there are never multiple items in this array
+//     priceId: subscription.items.data[0].price.id,
+//     productId: subscription.items.data[0].price.product as string,
+//     cancelAtPeriodEnd: subscription.cancel_at_period_end,
+//     cancelAt: subscription.cancel_at ? toDateTime(subscription.cancel_at) : null,
+//     canceledAt: subscription.canceled_at ? toDateTime(subscription.canceled_at) : null,
+//     currentPeriodStart: toDateTime(subscription.current_period_start),
+//     currentPeriodEnd: toDateTime(subscription.current_period_end),
+//     createdAt: toDateTime(subscription.created),
+//     endedAt: subscription.ended_at ? toDateTime(subscription.ended_at) : null,
+//   };
 
-  await prisma.$transaction([
-    prisma.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
-    prisma.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
-  ]);
+//   await prisma.$transaction([
+//     prisma.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
+//     prisma.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
+//   ]);
 
-  invalidateSession(user.id);
-};
+//   invalidateSession(user.id);
+// };
 
 export const upsertSubscription = async (subscription: Stripe.Subscription, customerId: string) => {
   const user = await prisma.user.findFirst({
@@ -249,6 +276,7 @@ export const upsertProductRecord = async (product: Stripe.Product) => {
     update: productData,
     create: productData,
   });
+  return productData;
 };
 
 export const upsertPriceRecord = async (price: Stripe.Price) => {
@@ -269,4 +297,25 @@ export const upsertPriceRecord = async (price: Stripe.Price) => {
     update: priceData,
     create: priceData,
   });
+  return priceData;
+};
+
+export const initStripePrices = async () => {
+  const stripe = await getServerStripe();
+  const { data: prices } = await stripe.prices.list();
+  await Promise.all(
+    prices.map(async (price) => {
+      await upsertPriceRecord(price);
+    })
+  );
+};
+
+export const initStripeProducts = async () => {
+  const stripe = await getServerStripe();
+  const { data: products } = await stripe.products.list();
+  await Promise.all(
+    products.map(async (product) => {
+      await upsertProductRecord(product);
+    })
+  );
 };

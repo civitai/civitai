@@ -8,3 +8,6 @@ export const createSubscribeSessionSchema = z.object({ priceId: z.string() });
 
 export type GetUserSubscriptionInput = z.infer<typeof getUserSubscriptionSchema>;
 export const getUserSubscriptionSchema = z.object({ userId: z.number() });
+
+export type CreateDonateSessionInput = z.infer<typeof createDonateSessionSchema>;
+export const createDonateSessionSchema = z.object({ returnUrl: z.string() });

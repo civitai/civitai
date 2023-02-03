@@ -3,6 +3,7 @@ import {
   createCustomer,
   createSubscribeSession,
   createManageSubscriptionSession,
+  createDonateSession,
   getUserSubscription,
 } from './../services/stripe.service';
 import { Context } from '~/server/createContext';
@@ -27,6 +28,22 @@ export const createCustomerHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   return await createCustomer({ ...input });
+};
+
+export const createDonateSessionHandler = async ({
+  input: { returnUrl },
+  ctx,
+}: {
+  input: Schema.CreateDonateSessionInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { id, email, customerId } = ctx.user;
+  if (!email) throw throwAuthorizationError('email required');
+  return await createDonateSession({
+    returnUrl,
+    customerId,
+    user: { id, email },
+  });
 };
 
 export const createSubscriptionSessionHandler = async ({
