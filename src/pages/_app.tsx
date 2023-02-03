@@ -50,8 +50,8 @@ type CustomAppProps = {
   flags: FeatureFlags;
 }>;
 
+const isDevelopment = process.env.NODE_ENV === 'development';
 function MyApp(props: CustomAppProps) {
-  deleteCookie('__Secure-next-auth.session-token', { path: '/', domain: 'civitai.com' });
   const {
     Component,
     pageProps: { session, colorScheme: initialColorScheme, cookies, flags, ...pageProps },
@@ -138,7 +138,7 @@ function MyApp(props: CustomAppProps) {
           {content}
         </MantineProvider>
       </ColorSchemeProvider>
-      {process.env.NODE_ENV == 'development' && <ReactQueryDevtools />}
+      {isDevelopment && <ReactQueryDevtools />}
     </>
   );
 }
