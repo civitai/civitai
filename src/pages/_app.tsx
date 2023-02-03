@@ -31,6 +31,7 @@ import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { FeatureFlags } from '~/server/services/feature-flags.service';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
+import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -85,7 +86,9 @@ function MyApp(props: CustomAppProps) {
               <CustomModalsProvider>
                 <NotificationsProvider>
                   {/* <RoutedContextProvider> */}
-                  <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                  <CivitaiLinkProvider>
+                    <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                  </CivitaiLinkProvider>
                   <RoutedContextProvider2 />
                   {/* </RoutedContextProvider> */}
                 </NotificationsProvider>
