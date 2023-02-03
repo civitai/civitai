@@ -65,6 +65,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
 }) => {
   const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
+  const lowerQuery = query?.toLowerCase();
   if (!sessionUser?.isModerator) {
     AND.push({
       OR: [
@@ -92,6 +93,13 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
                     },
                   }
                 : undefined,
+            },
+          },
+        },
+        {
+          modelVersions: {
+            some: {
+              trainedWords: { has: lowerQuery },
             },
           },
         },
@@ -249,6 +257,7 @@ export const createModel = async ({
       modelVersions: {
         create: parsedModelVersions.map(({ images, files, ...version }, versionIndex) => ({
           ...version,
+          trainedWords: version.trainedWords?.map((x) => x.toLowerCase()),
           index: versionIndex,
           status: data.status,
           files: files.length > 0 ? { create: files } : undefined,
@@ -447,6 +456,7 @@ export const updateModel = async ({
             where: { id },
             data: {
               ...version,
+              trainedWords: version.trainedWords?.map((x) => x.toLowerCase()),
               status: data.status,
               files: {
                 deleteMany: { id: { notIn: fileIds } },
