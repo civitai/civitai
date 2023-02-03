@@ -29,7 +29,6 @@ export const Announcements = (props: AnnouncementsProps) => {
   );
 
   if (!isClient) return null;
-  console.log(dismissed, latestAnnouncement);
   if (!dismissed.length && isIndex) return <WelcomeAnnouncement {...props} />;
   if (isFetching || !latestAnnouncement) return null;
 

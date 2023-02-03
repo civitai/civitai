@@ -81,11 +81,10 @@ const registry = {
   galleryDetailModal: {
     Component: GalleryDetailModal,
     resolve: ({ galleryImageId, ...args }: React.ComponentProps<typeof GalleryDetailModal>) => {
-      const [pathname] = Router.asPath.split('?');
+      const slug = Router.query.slug ?? 'placeholder';
       return [
         {
-          pathname,
-          query: { ...Router.query, galleryImageId, ...args, modal: 'galleryDetailModal' },
+          query: { ...Router.query, slug, galleryImageId, ...args, modal: 'galleryDetailModal' },
         },
         {
           pathname: `/gallery/${galleryImageId}`,
