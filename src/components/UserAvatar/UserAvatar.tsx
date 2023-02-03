@@ -10,11 +10,11 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { User } from '@prisma/client';
 import Link from 'next/link';
 
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { Username } from '~/components/User/Username';
+import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { getInitials } from '~/utils/string-helpers';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
@@ -23,7 +23,7 @@ const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSiz
     sm: { textSize: 'sm', subTextSize: 'xs' },
     md: { textSize: 'sm', subTextSize: 'xs' },
     lg: { textSize: 'md', subTextSize: 'sm' },
-    xl: { textSize: 'md', subTextSize: 'sm' },
+    xl: { textSize: 'lg', subTextSize: 'sm' },
   };
 
 export function UserAvatar({
@@ -61,7 +61,7 @@ export function UserAvatar({
         <Stack spacing={0}>
           {withUsername && (
             <Group spacing={4}>
-              <Username username={user.username} deletedAt={user.deletedAt} size={textSize} />
+              <Username {...user} size={textSize} />
               {badge}
             </Group>
           )}
@@ -93,7 +93,7 @@ export function UserAvatar({
 }
 
 type Props = {
-  user?: Pick<Partial<User>, 'username' | 'image' | 'deletedAt'> | null;
+  user?: Partial<UserWithCosmetics> | null;
   withUsername?: boolean;
   withLink?: boolean;
   avatarProps?: AvatarProps;

@@ -1,5 +1,5 @@
-import { ModelFileFormat } from '@prisma/client';
-import { DefaultSession } from 'next-auth';
+import type { ModelFileFormat } from '@prisma/client';
+import type { DefaultSession } from 'next-auth';
 
 interface ExtendedUser {
   id: number;

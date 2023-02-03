@@ -33,6 +33,7 @@ type UserRouter = RouterOutput['user'];
 export type LeaderboardGetAll = UserRouter['getLeaderboard'];
 export type CreatorsGetAll = UserRouter['getCreators'];
 export type UsersGetAll = UserRouter['getAll'];
+export type UsersGetCosmetics = UserRouter['getCosmetics'];
 
 type ImageRouter = RouterOutput['image'];
 export type ImageGetAllInfinite = ImageRouter['getGalleryImagesInfinite']['items'];

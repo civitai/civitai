@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 
 import { imageSelect } from '~/server/selectors/image.selector';
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 export const reviewDetailSelect = (includeNSFW = true) =>
   Prisma.validator<Prisma.ReviewSelect>()({
@@ -19,7 +19,7 @@ export const reviewDetailSelect = (includeNSFW = true) =>
       select: { name: true },
     },
     user: {
-      select: simpleUserSelect,
+      select: userWithCosmeticsSelect,
     },
     imagesOnReviews: {
       // orderBy: prioritizeSafeImages

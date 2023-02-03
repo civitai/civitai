@@ -12,3 +12,26 @@ const simpleUser = Prisma.validator<Prisma.UserArgs>()({
 });
 
 export type SimpleUser = Prisma.UserGetPayload<typeof simpleUser>;
+
+export const userWithCosmeticsSelect = Prisma.validator<Prisma.UserSelect>()({
+  ...simpleUserSelect,
+  cosmetics: {
+    where: { equippedAt: { not: null } },
+    select: {
+      cosmetic: {
+        select: {
+          id: true,
+          data: true,
+          type: true,
+          source: true,
+        },
+      },
+    },
+  },
+});
+
+const userWithCosmetics = Prisma.validator<Prisma.UserArgs>()({
+  select: userWithCosmeticsSelect,
+});
+
+export type UserWithCosmetics = Prisma.UserGetPayload<typeof userWithCosmetics>;

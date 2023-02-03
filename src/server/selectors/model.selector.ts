@@ -126,6 +126,19 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
         username: true,
         deletedAt: true,
         rank: { select: { leaderboardRank: true } },
+        cosmetics: {
+          where: { equippedAt: { not: null } },
+          select: {
+            cosmetic: {
+              select: {
+                id: true,
+                data: true,
+                type: true,
+                source: true,
+              },
+            },
+          },
+        },
       },
     },
     // TODO - why is this not referencing `getModelVersionDetailsSelect`? If they are out of sync, we should sync it up
