@@ -33,7 +33,7 @@ export function SettingsCard() {
           description="If you are not of legal age to view adult content, please do not enable this option"
           defaultChecked={user.showNsfw}
           disabled={isLoading}
-          onChange={(e) => mutate({ id: user.id, showNsfw: e.target.checked })}
+          onChange={(e) => mutate({ ...user, showNsfw: e.target.checked })}
         />
         {user.showNsfw && (
           <Switch
@@ -41,7 +41,7 @@ export function SettingsCard() {
             label="Blur adult content"
             defaultChecked={user.blurNsfw}
             disabled={isLoading}
-            onChange={(e) => mutate({ id: user.id, blurNsfw: e.target.checked })}
+            onChange={(e) => mutate({ ...user, blurNsfw: e.target.checked })}
           />
         )}
         <Divider label="Model File Preferences" mb={-12} />
@@ -51,9 +51,7 @@ export function SettingsCard() {
             name="fileFormat"
             data={validModelFormats}
             defaultValue={user.preferredModelFormat ?? ModelFileFormat.SafeTensor}
-            onChange={(value: ModelFileFormat) =>
-              mutate({ id: user.id, preferredModelFormat: value })
-            }
+            onChange={(value: ModelFileFormat) => mutate({ ...user, preferredModelFormat: value })}
             disabled={isLoading}
           />
           <Select
@@ -61,7 +59,7 @@ export function SettingsCard() {
             name="fileFormat"
             data={['Full', 'Pruned']}
             defaultValue={user.preferredPrunedModel ? 'Pruned' : 'Full'}
-            onChange={(value) => mutate({ id: user.id, preferredPrunedModel: value === 'Pruned' })}
+            onChange={(value) => mutate({ ...user, preferredPrunedModel: value === 'Pruned' })}
             disabled={isLoading}
           />
         </Group>

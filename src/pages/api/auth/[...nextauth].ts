@@ -1,4 +1,5 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
+import { User } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import NextAuth, { Session, type NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
@@ -9,13 +10,11 @@ import RedditProvider from 'next-auth/providers/reddit';
 import EmailProvider from 'next-auth/providers/email';
 import { deleteCookie, getCookie, setCookie } from 'cookies-next';
 
-// Prisma adapter for NextAuth, optional and can be removed
 import { env } from '~/env/server.mjs';
 import { prisma } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
 import { sendVerificationRequest } from '~/server/auth/verificationEmail';
 import { refreshToken } from '~/server/utils/session-helpers';
-import { User } from '@prisma/client';
 
 const setUserName = async (email: string) => {
   try {
@@ -122,12 +121,13 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
         username: { label: 'Username', type: 'text' },
         password: { label: 'Password', type: 'password' },
       },
-      async authorize(_, req) {
+      async authorize(credentials, req) {
+        const { username = 'bot' } = credentials || {};
         const reqToken = (req.headers?.['x-civitai-api-key'] as string) ?? '';
 
         // TODO: verify token here
 
-        return { id: reqToken, showNsfw: false, blurNsfw: false };
+        return { id: reqToken, username, showNsfw: false, blurNsfw: false };
       },
     }),
   ],

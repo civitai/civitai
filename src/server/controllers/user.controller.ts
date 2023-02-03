@@ -20,7 +20,7 @@ import {
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllUsersInput,
-  UserUpsertInput,
+  UserUpdateInput,
   GetUserByUsernameSchema,
   ToggleFollowUserSchema,
   GetByUsernameSchema,
@@ -125,7 +125,7 @@ export const updateUserHandler = async ({
   input,
 }: {
   ctx: DeepNonNullable<Context>;
-  input: Partial<UserUpsertInput>;
+  input: Partial<UserUpdateInput>;
 }) => {
   const { id, badgeId, nameplateId, ...data } = input;
   const currentUser = ctx.user;

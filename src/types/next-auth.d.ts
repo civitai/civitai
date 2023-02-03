@@ -5,11 +5,11 @@ interface ExtendedUser {
   id: number;
   showNsfw: boolean;
   blurNsfw: boolean;
+  username: string;
+  email?: string;
   createdAt?: Date;
-  username?: string;
   tos?: boolean;
   isModerator?: boolean;
-  email?: string;
   preferredModelFormat?: ModelFileFormat;
   preferredPrunedModel?: boolean;
   muted?: boolean;
