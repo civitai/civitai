@@ -33,7 +33,7 @@ import {
   getByUsernameSchema,
   toggleModelEngagementInput,
   toggleFollowUserSchema,
-  userUpsertSchema,
+  userUpdateSchema,
   deleteUserSchema,
   toggleBlockedTagSchema,
   getUserTagsSchema,
@@ -60,7 +60,7 @@ export const userRouter = router({
     .use(isFlagProtected('memberBadges'))
     .query(getUserCosmeticsHandler),
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
-  update: protectedProcedure.input(userUpsertSchema.partial()).mutation(updateUserHandler),
+  update: protectedProcedure.input(userUpdateSchema).mutation(updateUserHandler),
   delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),
   toggleFavoriteModel: protectedProcedure
     .input(toggleModelEngagementInput)

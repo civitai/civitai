@@ -13,20 +13,20 @@ export const getAllUsersInput = getAllQuerySchema
   .partial();
 export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
 
-export const userUpsertSchema = z.object({
+export const userUpdateSchema = z.object({
   id: z.number(),
   username: z.string(),
-  showNsfw: z.boolean(),
-  blurNsfw: z.boolean(),
-  tos: z.boolean(),
-  image: z.string().nullable(),
-  email: z.string().email(),
-  preferredModelFormat: z.nativeEnum(ModelFileFormat),
-  preferredPrunedModel: z.boolean(),
+  showNsfw: z.boolean().optional(),
+  blurNsfw: z.boolean().optional(),
+  tos: z.boolean().optional(),
+  email: z.string().email().optional(),
+  image: z.string().nullish(),
+  preferredModelFormat: z.nativeEnum(ModelFileFormat).optional(),
+  preferredPrunedModel: z.boolean().optional(),
   badgeId: z.number().nullish(),
   nameplateId: z.number().nullish(),
 });
-export type UserUpsertInput = z.input<typeof userUpsertSchema>;
+export type UserUpdateInput = z.input<typeof userUpdateSchema>;
 
 export const toggleModelEngagementInput = z.object({ modelId: z.number() });
 export type ToggleModelEngagementInput = z.infer<typeof toggleModelEngagementInput>;

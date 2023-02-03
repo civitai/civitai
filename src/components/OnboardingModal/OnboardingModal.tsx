@@ -1,7 +1,6 @@
 import { Button, Stack, Text, Alert } from '@mantine/core';
 import { ContextModalProps } from '@mantine/modals';
 import Link from 'next/link';
-import { useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 
@@ -9,11 +8,12 @@ import { Form, InputCheckbox, InputSwitch, InputText, useForm } from '~/libs/for
 import { reloadSession } from '~/utils/next-auth-helpers';
 import { trpc } from '~/utils/trpc';
 import { toStringList } from '~/utils/array-helpers';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const schema = z.object({
   username: z
     .string()
-    .min(3)
+    .min(3, 'Your username must be at least 3 characters long')
     .regex(/^[A-Za-z0-9_]*$/, 'The "username" field can only contain letters, numbers, and _.'),
   tos: z.preprocess(
     (val) => (val === false ? null : val),
@@ -33,7 +33,7 @@ const schema = z.object({
 });
 
 export default function OnboardingModal({ context, id }: ContextModalProps) {
-  const { data: session } = useSession();
+  const user = useCurrentUser();
   const [alerts, setAlerts] = useState<string[]>([]);
 
   const { mutate, isLoading, error } = trpc.user.update.useMutation();
@@ -42,32 +42,33 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
     schema,
     mode: 'onChange',
     shouldUnregister: false,
-    defaultValues: { ...session?.user, showNsfw: true, blurNsfw: true },
+    defaultValues: { ...user, showNsfw: true, blurNsfw: true },
   });
 
   const handleSubmit = (values: z.infer<typeof schema>) => {
-    mutate(
-      { ...session?.user, ...values },
-      {
-        onSuccess: async () => {
-          await reloadSession();
-          context.closeModal(id);
-          setAlerts([]);
-        },
-      }
-    );
+    if (user)
+      mutate(
+        { ...user, ...values },
+        {
+          onSuccess: async () => {
+            await reloadSession();
+            context.closeModal(id);
+            setAlerts([]);
+          },
+        }
+      );
   };
 
   useEffect(() => {
     const alerts: string[] = [];
-    if (!session?.user?.email) alerts.push('verify your email');
-    if (!session?.user?.username) alerts.push('verify your username');
-    if (!session?.user?.tos) alerts.push('agree to the terms of service');
+    if (!user?.email) alerts.push('verify your email');
+    if (!user?.username) alerts.push('verify your username');
+    if (!user?.tos) alerts.push('agree to the terms of service');
 
     setAlerts(alerts);
-  }, [session?.user]);
+  }, [user]);
 
-  if (!session?.user) {
+  if (!user) {
     context.closeModal(id);
     return null;
   }
@@ -85,9 +86,7 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
 
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
-          {!session?.user?.email && (
-            <InputText name="email" label="Email" type="email" withAsterisk />
-          )}
+          {!user?.email && <InputText name="email" label="Email" type="email" withAsterisk />}
           <InputText name="username" label="Username" withAsterisk />
           <InputSwitch
             name="showNsfw"
@@ -100,7 +99,7 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
             visible={({ showNsfw }) => !!showNsfw}
           />
 
-          {!session.user.tos && (
+          {!user?.tos && (
             <InputCheckbox
               name="tos"
               label={
