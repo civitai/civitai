@@ -145,7 +145,7 @@ const authOptions = async (req: NextApiRequest, res: NextApiResponse) => {
       secure: true,
       sameSite: 'lax',
     });
-    deleteCookie('__Secure-next-auth.session-token.sig', { req, res });
+    deleteCookie('__Secure-next-auth.session-token', { req, res });
   }
 
   return NextAuth(req, res, createAuthOptions(req));
