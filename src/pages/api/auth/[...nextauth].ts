@@ -153,7 +153,13 @@ const oldAuthCookieKey = `${cookiePrefix}next-auth.session-token`;
 const authOptions = async (req: NextApiRequest, res: NextApiResponse) => {
   const oldAuthCookie = getCookie(oldAuthCookieKey, { req, res });
   if (oldAuthCookie) {
-    setCookie(cookieName, oldAuthCookie, { req, res, maxAge: 30 * 24 * 60 * 60 });
+    setCookie(cookieName, oldAuthCookie, {
+      req,
+      res,
+      maxAge: 30 * 24 * 60 * 60,
+      path: '/',
+      domain: '.' + hostname,
+    });
     deleteCookie(oldAuthCookieKey, { req, res, path: '/', domain: hostname });
     deleteCookie(oldAuthCookieKey, { req, res, path: '/', domain: '.' + hostname });
   }
