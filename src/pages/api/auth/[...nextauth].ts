@@ -14,7 +14,7 @@ import { prisma } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
 import { sendVerificationRequest } from '~/server/auth/verificationEmail';
 import { refreshToken } from '~/server/utils/session-helpers';
-import { getCookies, setCookie } from 'cookies-next';
+import { deleteCookie, getCookies, setCookie } from 'cookies-next';
 
 const setUserName = async (email: string) => {
   try {
@@ -151,20 +151,29 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
 
 const oldCookieName = `${cookiePrefix}next-auth.session-token`;
 const authOptions = async (req: NextApiRequest, res: NextApiResponse) => {
-  const cookies = getCookies({ req, res });
-  const oldToken = cookies[oldCookieName];
-  const currentToken = cookies[cookieName];
-  if (oldToken && !currentToken)
-    setCookie(cookieName, oldToken, {
-      res,
-      req,
-      maxAge: 30 * 24 * 60 * 60,
-      httpOnly: true,
-      sameSite: 'lax',
-      path: '/',
-      secure: useSecureCookies,
-      domain: hostname == 'localhost' ? hostname : '.' + hostname,
-    });
+  // Disabling because it seems it may be causing issues
+  // const cookies = getCookies({ req, res });
+  // const oldToken = cookies[oldCookieName];
+  // const currentToken = cookies[cookieName];
+  // if (oldToken && !currentToken) {
+  //   setCookie(cookieName, oldToken, {
+  //     res,
+  //     req,
+  //     maxAge: 30 * 24 * 60 * 60,
+  //     httpOnly: true,
+  //     sameSite: 'lax',
+  //     path: '/',
+  //     secure: useSecureCookies,
+  //     domain: hostname == 'localhost' ? hostname : '.' + hostname,
+  //   });
+  //   deleteCookie(oldCookieName, {
+  //     res,
+  //     req,
+  //     path: '/',
+  //     secure: useSecureCookies,
+  //     domain: hostname,
+  //   });
+  // }
 
   return NextAuth(req, res, createAuthOptions(req));
 };
