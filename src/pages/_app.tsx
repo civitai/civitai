@@ -2,7 +2,7 @@
 import { ColorScheme, ColorSchemeProvider, MantineProvider } from '@mantine/core';
 import { NotificationsProvider } from '@mantine/notifications';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
-import { getCookie, getCookies, setCookie } from 'cookies-next';
+import { getCookie, getCookies, setCookie, deleteCookie } from 'cookies-next';
 import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
 import isBetween from 'dayjs/plugin/isBetween';
@@ -50,6 +50,7 @@ type CustomAppProps = {
   flags: FeatureFlags;
 }>;
 
+const isDevelopment = process.env.NODE_ENV === 'development';
 function MyApp(props: CustomAppProps) {
   const {
     Component,
@@ -139,7 +140,7 @@ function MyApp(props: CustomAppProps) {
           {content}
         </MantineProvider>
       </ColorSchemeProvider>
-      {process.env.NODE_ENV == 'development' && <ReactQueryDevtools />}
+      {isDevelopment && <ReactQueryDevtools />}
     </>
   );
 }
@@ -164,7 +165,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       ...appProps,
     };
   } else {
-    const session = await getSession(appContext.ctx);
+    const session = typeof window === 'undefined' ? await getSession(appContext.ctx) : undefined;
     const flags = getFeatureFlags({ user: session?.user });
     return {
       pageProps: {

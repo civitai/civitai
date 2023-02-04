@@ -51,7 +51,6 @@ export default createRoutedContext({
         showErrorNotification({
           error: new Error(error.message),
           title: 'Could not save the comment',
-          reason: `There was an error when trying to save your comment. Please try again`,
         });
       },
     });

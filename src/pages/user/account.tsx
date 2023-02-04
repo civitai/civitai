@@ -79,7 +79,7 @@ type Props = {
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ssg, session }) => {
-    if (!session?.user)
+    if (!session?.user || session.user.bannedAt)
       return {
         redirect: {
           destination: '/',

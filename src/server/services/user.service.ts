@@ -7,6 +7,7 @@ import {
   DeleteUserInput,
   GetAllUsersInput,
   GetByUsernameSchema,
+  GetUserCosmeticsSchema,
   ToggleBlockedTagSchema,
 } from '~/server/schema/user.schema';
 import { invalidateSession } from '~/server/utils/session-helpers';
@@ -24,6 +25,8 @@ export const getUserCreator = async ({ username }: { username: string }) => {
       id: true,
       image: true,
       username: true,
+      muted: true,
+      bannedAt: true,
       links: {
         select: {
           url: true,
@@ -40,6 +43,19 @@ export const getUserCreator = async ({ username }: { username: string }) => {
         },
       },
       rank: { select: { leaderboardRank: true } },
+      cosmetics: {
+        where: { equippedAt: { not: null } },
+        select: {
+          cosmetic: {
+            select: {
+              id: true,
+              data: true,
+              type: true,
+              source: true,
+            },
+          },
+        },
+      },
       _count: {
         select: {
           models: true,
@@ -347,4 +363,31 @@ export const getSessionUser = async ({ userId }: { userId: number }) => {
     ...rest,
     class: ((subscription?.product.metadata as any).class as string | undefined) ?? 'test',
   };
+};
+
+export const getUserCosmetics = ({
+  userId,
+  equipped,
+}: GetUserCosmeticsSchema & { userId: number }) => {
+  return prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      cosmetics: {
+        where: equipped ? { equippedAt: { not: null } } : undefined,
+        select: {
+          obtainedAt: true,
+          cosmetic: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              type: true,
+              source: true,
+              data: true,
+            },
+          },
+        },
+      },
+    },
+  });
 };

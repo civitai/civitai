@@ -80,14 +80,19 @@ const registry = {
   },
   galleryDetailModal: {
     Component: GalleryDetailModal,
-    resolve: ({ galleryImageId, ...args }: React.ComponentProps<typeof GalleryDetailModal>) => [
-      { query: { ...Router.query, galleryImageId, ...args, modal: 'galleryDetailModal' } },
-      {
-        pathname: `/gallery/${galleryImageId}`,
-        query: args,
-      }, // could be a page url for reviews here (/comments/:commentId)
-      { shallow: true },
-    ],
+    resolve: ({ galleryImageId, ...args }: React.ComponentProps<typeof GalleryDetailModal>) => {
+      const slug = Router.query.slug ?? 'placeholder';
+      return [
+        {
+          query: { ...Router.query, slug, galleryImageId, ...args, modal: 'galleryDetailModal' },
+        },
+        {
+          pathname: `/gallery/${galleryImageId}`,
+          query: args,
+        }, // could be a page url for reviews here (/comments/:commentId)
+        { shallow: true },
+      ];
+    },
   },
 };
 

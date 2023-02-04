@@ -6,7 +6,7 @@ import { logToDb } from '~/utils/logging';
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   const session = await getServerAuthSession({ req, res });
   const userId = session?.user?.id;
-  if (!userId) {
+  if (!userId || session.user?.bannedAt) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }

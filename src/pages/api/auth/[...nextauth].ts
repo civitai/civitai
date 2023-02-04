@@ -1,5 +1,6 @@
 import { getSessionUser } from './../../../server/services/user.service';
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
+import { User } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import NextAuth, { Session, type NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
@@ -9,12 +10,12 @@ import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
 import EmailProvider from 'next-auth/providers/email';
 
-// Prisma adapter for NextAuth, optional and can be removed
 import { env } from '~/env/server.mjs';
 import { prisma } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
 import { sendVerificationRequest } from '~/server/auth/verificationEmail';
 import { refreshToken } from '~/server/utils/session-helpers';
+import { getCookies, setCookie } from 'cookies-next';
 
 const setUserName = async (email: string) => {
   try {
@@ -32,6 +33,11 @@ const setUserName = async (email: string) => {
     return undefined;
   }
 };
+
+const useSecureCookies = env.NEXTAUTH_URL.startsWith('https://');
+const cookiePrefix = useSecureCookies ? '__Secure-' : '';
+const { hostname } = new URL(env.NEXTAUTH_URL);
+const cookieName = `${cookiePrefix}civitai-token`;
 
 export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   adapter: PrismaAdapter(prisma),
@@ -60,6 +66,10 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
         token.sub = Number(token.sub) as any; //eslint-disable-line
         if (user) token.user = user;
       }
+
+      const { deletedAt, ...restUser } = token.user as User;
+      token.user = { ...restUser };
+
       return token;
     },
     session: async ({ session, token }) => {
@@ -111,22 +121,51 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
         username: { label: 'Username', type: 'text' },
         password: { label: 'Password', type: 'password' },
       },
-      async authorize(_, req) {
+      async authorize(credentials, req) {
+        const { username = 'bot' } = credentials || {};
         const reqToken = (req.headers?.['x-civitai-api-key'] as string) ?? '';
 
         // TODO: verify token here
 
-        return { id: reqToken, showNsfw: false, blurNsfw: false };
+        return { id: reqToken, username, showNsfw: false, blurNsfw: false };
       },
     }),
   ],
+  cookies: {
+    sessionToken: {
+      name: cookieName,
+      options: {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        secure: useSecureCookies,
+        domain: hostname == 'localhost' ? hostname : '.' + hostname, // add a . in front so that subdomains are included
+      },
+    },
+  },
   pages: {
     signIn: '/login',
     error: '/login',
   },
 });
 
+const oldCookieName = `${cookiePrefix}next-auth.session-token`;
 const authOptions = async (req: NextApiRequest, res: NextApiResponse) => {
+  const cookies = getCookies({ req, res });
+  const oldToken = cookies[oldCookieName];
+  const currentToken = cookies[cookieName];
+  if (oldToken && !currentToken)
+    setCookie(cookieName, oldToken, {
+      res,
+      req,
+      maxAge: 30 * 24 * 60 * 60,
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+      secure: useSecureCookies,
+      domain: hostname == 'localhost' ? hostname : '.' + hostname,
+    });
+
   return NextAuth(req, res, createAuthOptions(req));
 };
 

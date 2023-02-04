@@ -1,5 +1,4 @@
-import { Alert, createStyles, Container, Group, Stack, Text, Title } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
+import { Container, Group, Stack, Title } from '@mantine/core';
 import { GetServerSideProps } from 'next';
 import { useRouter } from 'next/router';
 import { Announcements } from '~/components/Announcements/Announcements';
@@ -59,7 +58,14 @@ function Home() {
         {favorites && <Title>Your Liked Models</Title>}
         {hidden && <Title>Your Hidden Models</Title>}
         <Stack spacing="xs">
-          <Announcements />
+          <Announcements
+            sx={(theme) => ({
+              marginBottom: -35,
+              [theme.fn.smallerThan('md')]: {
+                marginBottom: -5,
+              },
+            })}
+          />
           <Group position="apart" spacing={0}>
             <InfiniteModelsSort />
             <Group spacing={4}>

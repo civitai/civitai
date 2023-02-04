@@ -69,7 +69,7 @@ export function invalidateSession(userId: number) {
   sessionsToInvalidate[userId] = new Date();
 
   // Store in DB so that we can resume on reboot
-  prisma.sessionInvalidation
+  return prisma.sessionInvalidation
     .createMany({
       data: { userId },
     })

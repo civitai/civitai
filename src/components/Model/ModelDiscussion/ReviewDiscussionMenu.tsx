@@ -32,6 +32,7 @@ export function ReviewDiscussionMenu({
 
   const isMod = user?.isModerator ?? false;
   const isOwner = review.user.id === user?.id;
+  const isMuted = user?.muted ?? false;
 
   const deleteMutation = trpc.review.delete.useMutation({
     async onSuccess() {
@@ -177,7 +178,7 @@ export function ReviewDiscussionMenu({
             >
               Delete review
             </Menu.Item>
-            {(!review.locked || isMod) && (
+            {(!(review.locked && isMuted) || isMod) && (
               <Menu.Item
                 icon={<IconEdit size={14} stroke={1.5} />}
                 onClick={() => openRoutedContext('reviewEdit', { reviewId: review.id })}

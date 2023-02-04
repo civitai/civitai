@@ -76,8 +76,8 @@ export function ModEndpoint(
       return res.status(405).json({ error: 'Method not allowed' });
 
     const session = await getServerAuthSession({ req, res });
-    const { isModerator } = session?.user ?? {};
-    if (!isModerator) return res.status(401).json({ error: 'Unauthorized' });
+    const { isModerator, bannedAt } = session?.user ?? {};
+    if (!isModerator || bannedAt) return res.status(401).json({ error: 'Unauthorized' });
 
     await handler(req, res);
   };

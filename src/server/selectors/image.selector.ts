@@ -1,9 +1,9 @@
-import { Prisma, MetricTimeframe } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 
-import { simpleUserSelect } from './user.selector';
+import { userWithCosmeticsSelect } from './user.selector';
 
 export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   id: true,
@@ -27,7 +27,7 @@ export const imageGallerySelect = ({ user }: { user?: SessionUser }) =>
   Prisma.validator<Prisma.ImageSelect>()({
     ...imageSelect,
     createdAt: true,
-    user: { select: simpleUserSelect },
+    user: { select: userWithCosmeticsSelect },
     connections: {
       select: {
         modelId: true,

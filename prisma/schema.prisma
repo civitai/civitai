@@ -70,6 +70,8 @@ model User {
   customerId           String?               @unique
   subscriptionId       String?
   subscription         CustomerSubscription?
+  muted                Boolean?              @default(false)
+  bannedAt             DateTime?
 
   accounts             Account[]
   sessions             Session[]
@@ -110,6 +112,7 @@ model User {
   downloads           DownloadHistory[]
   imageConnections    ImageConnection[]
   purchases           Purchase[]
+  cosmetics           UserCosmetic[]
 }
 
 model CustomerSubscription {
@@ -1096,6 +1099,42 @@ model Announcement {
   updatedAt DateTime  @updatedAt
   startsAt  DateTime?
   endsAt    DateTime?
+}
+
+enum CosmeticType {
+  Badge
+  NamePlate
+}
+
+enum CosmeticSource {
+  Trophy
+  Purchase
+  Event
+  Membership
+}
+
+model Cosmetic {
+  id              Int            @id
+  name            String
+  description     String?
+  type            CosmeticType
+  source          CosmeticSource
+  permanentUnlock Boolean
+  data            Json
+  createdAt       DateTime?      @default(now())
+  updatedAt       DateTime?      @updatedAt
+  UserCosmetic    UserCosmetic[]
+}
+
+model UserCosmetic {
+  userId     Int
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cosmeticId Int
+  cosmetic   Cosmetic  @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  obtainedAt DateTime  @default(now()) // createdAt
+  equippedAt DateTime?
+
+  @@id([userId, cosmeticId])
 }
 
 /// @view

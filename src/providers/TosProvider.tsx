@@ -10,7 +10,7 @@ export function TosProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // if (!session.data?.user) return;
     if (status !== 'authenticated' || router.pathname.startsWith('/content')) return;
-    if (!session?.user?.tos || !session.user.email) {
+    if (!session?.user?.tos || !session.user.email || !session.user.username) {
       closeModal('onboarding');
       openContextModal({
         modal: 'onboarding',
@@ -21,7 +21,7 @@ export function TosProvider({ children }: { children: React.ReactNode }) {
         innerProps: {},
       });
     }
-  }, [status, session?.user?.tos, router.pathname, session?.user?.email]);
+  }, [status, session?.user?.tos, router.pathname, session?.user?.email, session?.user?.username]);
 
   // https://next-auth.js.org/tutorials/refresh-token-rotation#client-side
   useEffect(() => {

@@ -10,11 +10,11 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { User } from '@prisma/client';
 import Link from 'next/link';
 
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { Username } from '~/components/User/Username';
+import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { getInitials } from '~/utils/string-helpers';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
@@ -23,7 +23,7 @@ const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSiz
     sm: { textSize: 'sm', subTextSize: 'xs' },
     md: { textSize: 'sm', subTextSize: 'xs' },
     lg: { textSize: 'md', subTextSize: 'sm' },
-    xl: { textSize: 'md', subTextSize: 'sm' },
+    xl: { textSize: 'lg', subTextSize: 'sm' },
   };
 
 export function UserAvatar({
@@ -42,25 +42,26 @@ export function UserAvatar({
   const { classes } = useStyles();
 
   if (!user) return null;
+  const userDeleted = !!user.deletedAt;
 
   textSize ??= mapAvatarTextSize[size].textSize;
   subTextSize ??= mapAvatarTextSize[size].subTextSize;
   const avatar = (
     <Group align="center" spacing={spacing} noWrap>
       <Avatar
-        src={user.image ? getEdgeUrl(user.image, { width: 96 }) : undefined}
-        alt={user.username ? `${user.username}'s Avatar` : undefined}
+        src={user.image && !userDeleted ? getEdgeUrl(user.image, { width: 96 }) : undefined}
+        alt={user.username && !userDeleted ? `${user.username}'s Avatar` : undefined}
         radius="xl"
         size={size}
         {...avatarProps}
       >
-        {user.username ? getInitials(user.username) : null}
+        {user.username && !userDeleted ? getInitials(user.username) : null}
       </Avatar>
       {withUsername || subText ? (
         <Stack spacing={0}>
           {withUsername && (
             <Group spacing={4}>
-              <Username username={user.username} deletedAt={user.deletedAt} size={textSize} />
+              <Username {...user} size={textSize} />
               {badge}
             </Group>
           )}
@@ -76,7 +77,7 @@ export function UserAvatar({
     </Group>
   );
 
-  return linkToProfile && !user.deletedAt ? (
+  return linkToProfile && !userDeleted ? (
     <Link href={`/user/${user.username}`} passHref>
       <Anchor
         variant="text"
@@ -92,7 +93,7 @@ export function UserAvatar({
 }
 
 type Props = {
-  user?: Pick<Partial<User>, 'username' | 'image' | 'deletedAt'> | null;
+  user?: Partial<UserWithCosmetics> | null;
   withUsername?: boolean;
   withLink?: boolean;
   avatarProps?: AvatarProps;

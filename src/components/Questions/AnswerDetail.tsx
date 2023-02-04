@@ -30,6 +30,7 @@ export function AnswerDetail({
 
   const isModerator = user?.isModerator ?? false;
   const isOwner = user?.id === answer?.user.id;
+  const isMuted = user?.muted ?? false;
 
   const { data: count = 0 } = trpc.commentv2.getCount.useQuery(
     { entityId: answer.id, entityType: 'answer' },
@@ -71,12 +72,14 @@ export function AnswerDetail({
                         Delete answer
                       </Menu.Item>
                     </DeleteAnswer>
-                    <Menu.Item
-                      icon={<IconEdit size={14} stroke={1.5} />}
-                      onClick={() => setEditing(true)}
-                    >
-                      Edit answer
-                    </Menu.Item>
+                    {(!isMuted || isModerator) && (
+                      <Menu.Item
+                        icon={<IconEdit size={14} stroke={1.5} />}
+                        onClick={() => setEditing(true)}
+                      >
+                        Edit answer
+                      </Menu.Item>
+                    )}
                   </>
                 )}
               </Menu.Dropdown>

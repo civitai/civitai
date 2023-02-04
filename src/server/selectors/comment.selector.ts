@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 export const commentDetailSelect = Prisma.validator<Prisma.CommentSelect>()({
   id: true,
@@ -13,7 +13,7 @@ export const commentDetailSelect = Prisma.validator<Prisma.CommentSelect>()({
   reviewId: true,
   locked: true,
   user: {
-    select: simpleUserSelect,
+    select: userWithCosmeticsSelect,
   },
   reactions: {
     select: getReactionsSelect,

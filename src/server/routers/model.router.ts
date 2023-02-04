@@ -23,7 +23,13 @@ import {
   ModelInput,
   modelSchema,
 } from '~/server/schema/model.schema';
-import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  middleware,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { checkFileExists, getS3Client } from '~/utils/s3-utils';
 import { prepareFile } from '~/utils/file-helpers';
@@ -83,7 +89,7 @@ export const modelRouter = router({
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
     .query(getModelsWithVersionsHandler),
   getVersions: publicProcedure.input(getByIdSchema).query(getModelVersionsHandler),
-  add: protectedProcedure.input(modelSchema).use(checkFilesExistence).mutation(createModelHandler),
+  add: guardedProcedure.input(modelSchema).use(checkFilesExistence).mutation(createModelHandler),
   update: protectedProcedure
     .input(modelSchema.extend({ id: z.number() }))
     .use(isOwnerOrModerator)

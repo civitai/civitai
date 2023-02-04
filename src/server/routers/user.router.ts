@@ -13,7 +13,10 @@ import {
   batchBlockTagsHandler,
   getUserEngagedModelsHandler,
   getUserEngagedModelVersionsHandler,
+  toggleBanHandler,
   toggleHideModelHandler,
+  toggleMuteHandler,
+  getUserCosmeticsHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -30,13 +33,14 @@ import {
   getByUsernameSchema,
   toggleModelEngagementInput,
   toggleFollowUserSchema,
-  userUpsertSchema,
+  userUpdateSchema,
   deleteUserSchema,
   toggleBlockedTagSchema,
   getUserTagsSchema,
   batchBlockTagsSchema,
+  getUserCosmeticsSchema,
 } from '~/server/schema/user.schema';
-import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const userRouter = router({
   getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),
@@ -51,8 +55,12 @@ export const userRouter = router({
   getNotificationSettings: protectedProcedure.query(getNotificationSettingsHandler),
   getLists: publicProcedure.input(getByUsernameSchema).query(getUserListsHandler),
   getLeaderboard: publicProcedure.input(getAllQuerySchema).query(getLeaderboardHandler),
+  getCosmetics: protectedProcedure
+    .input(getUserCosmeticsSchema.optional())
+    .use(isFlagProtected('memberBadges'))
+    .query(getUserCosmeticsHandler),
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
-  update: protectedProcedure.input(userUpsertSchema.partial()).mutation(updateUserHandler),
+  update: protectedProcedure.input(userUpdateSchema).mutation(updateUserHandler),
   delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),
   toggleFavoriteModel: protectedProcedure
     .input(toggleModelEngagementInput)
@@ -66,4 +74,6 @@ export const userRouter = router({
     .input(toggleBlockedTagSchema)
     .mutation(toggleBlockedTagHandler),
   batchBlockTags: protectedProcedure.input(batchBlockTagsSchema).mutation(batchBlockTagsHandler),
+  toggleMute: protectedProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
+  toggleBan: protectedProcedure.input(getByIdSchema).mutation(toggleBanHandler),
 });

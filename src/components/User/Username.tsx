@@ -1,55 +1,42 @@
-import { Badge, BadgeProps, Group, MantineSize, Text, TextProps } from '@mantine/core';
-import React, { useEffect, useState } from 'react';
+import { Group, MantineSize, Text } from '@mantine/core';
+import React from 'react';
+
+import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { getRandom } from '~/utils/array-helpers';
+import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import { UserWithCosmetics } from '~/server/selectors/user.selector';
 
-// TODO justin: remove once final support badge is implemented
-const levels: SupportLevel[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
-
-const textBadgeProps: Record<SupportLevel, { textProps: TextProps; badgeProps: BadgeProps }> = {
-  common: { textProps: {}, badgeProps: {} },
-  uncommon: {
-    textProps: { variant: 'gradient', gradient: { from: '#1eff00', to: '#00ffc4', deg: 180 } },
-    badgeProps: { color: 'green' },
-  },
-  rare: {
-    textProps: { variant: 'gradient', gradient: { from: '#0070dd', to: '#3700dd', deg: 180 } },
-    badgeProps: { color: 'blue' },
-  },
-  epic: {
-    textProps: { variant: 'gradient', gradient: { from: '#ee35dc', to: '#a335ee', deg: 180 } },
-    badgeProps: { color: 'violet' },
-  },
-  legendary: {
-    textProps: { variant: 'gradient', gradient: { from: '#ffbf00', to: '#ff8000', deg: 180 } },
-    badgeProps: { color: 'orange' },
-  },
+const mapSizeToImageWidth: Record<MantineSize, number> = {
+  xs: 16,
+  sm: 20,
+  md: 24,
+  lg: 32,
+  xl: 36,
 };
 
 export function Username({
   username,
   deletedAt,
-  supportLevel: initialSupportLevel,
+  cosmetics = [],
   size = 'sm',
   inherit = false,
 }: Props) {
   const features = useFeatureFlags();
-
-  // TODO justin: remove random once final support badge is implemented
-  // Briant made a change to `supportLevel` to fix ssr mismatches
-  const [supportLevel, setSupportLevel] = useState<SupportLevel>('common');
-  useEffect(() => {
-    setSupportLevel(features.memberBadges ? getRandom(levels) : 'common');
-  }, []); // eslint-disable-line
-
   if (deletedAt) return <Text size={size}>[deleted]</Text>;
 
-  const { textProps, badgeProps } = textBadgeProps[supportLevel];
+  const nameplate = cosmetics.find(({ cosmetic }) => cosmetic.type === 'NamePlate')
+    ?.cosmetic as Omit<NamePlateCosmetic, 'name' | 'description' | 'obtainedAt'>;
+  const badge = cosmetics.find(({ cosmetic }) => cosmetic.type === 'Badge')?.cosmetic as Omit<
+    BadgeCosmetic,
+    'name' | 'description' | 'obtainedAt'
+  >;
+  const additionalTextProps = features.memberBadges ? nameplate?.data : {};
+  const badgeSize = mapSizeToImageWidth[size];
 
   return (
     <Group spacing={4} noWrap>
       <Text
-        {...textProps}
+        {...additionalTextProps}
         size={size}
         weight={500}
         lineClamp={1}
@@ -58,21 +45,17 @@ export function Username({
       >
         {username}
       </Text>
-      {supportLevel !== 'common' ? (
-        // TODO justin: replace with icon once final support badge is implemented
-        <Badge {...badgeProps} radius="xl">
-          {supportLevel}
-        </Badge>
-      ) : null}
+      {features.memberBadges && badge?.data.url && (
+        <EdgeImage src={badge.data.url} width={badgeSize} />
+      )}
     </Group>
   );
 }
 
-type SupportLevel = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 type Props = {
   username?: string | null;
   deletedAt?: Date | null;
-  supportLevel?: SupportLevel;
+  cosmetics?: UserWithCosmetics['cosmetics'];
   size?: MantineSize;
   inherit?: boolean;
 };

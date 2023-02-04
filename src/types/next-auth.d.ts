@@ -1,19 +1,22 @@
-import { ModelFileFormat } from '@prisma/client';
-import { DefaultSession } from 'next-auth';
+import type { ModelFileFormat } from '@prisma/client';
+import type { DefaultSession } from 'next-auth';
 
 interface ExtendedUser {
   id: number;
   showNsfw: boolean;
   blurNsfw: boolean;
-  username?: string;
+  username: string;
+  email?: string;
+  createdAt?: Date;
   tos?: boolean;
   isModerator?: boolean;
-  email?: string;
   preferredModelFormat?: ModelFileFormat;
   preferredPrunedModel?: boolean;
   customerId?: string; // TODO.stripe - consider removing this from session
   subscriptionId?: string; // TODO.stripe - consider removing this from session
   class?: string;
+  muted?: boolean;
+  bannedAt?: Date;
 }
 
 declare module 'next-auth' {

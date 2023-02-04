@@ -54,7 +54,7 @@ export default createRoutedContext({
       if (form.formState.isDirty) {
         mutate(data, {
           onSuccess: async (_, { modelId }) => {
-            await context.close();
+            context.close();
             await queryUtils.review.getAll.invalidate({ modelId });
             if (reviewId) await queryUtils.review.getDetail.invalidate({ id: reviewId });
           },
@@ -62,7 +62,6 @@ export default createRoutedContext({
             showErrorNotification({
               error: new Error(error.message),
               title: 'Could not save the review',
-              reason: `There was an error when trying to save your review. Please try again`,
             });
           },
         });
