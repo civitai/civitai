@@ -49,7 +49,6 @@ export const getGalleryImageDetailHandler = async ({
   ctx: Context;
 }) => {
   try {
-    console.log('fetch');
     const item = await prisma.image.findUnique({
       where: { id },
       // TODO.gallery - If the gallery is infinite, use the current gallery filters. If the gallery is finite, use MetricTimeFrame.AllTime
@@ -104,6 +103,19 @@ export const getGalleryImagesInfiniteHandler = async ({
   }
 };
 
+type SortableImage = {
+  nsfw: boolean;
+  createdAt: Date;
+  connections: {
+    index: number | null;
+  } | null;
+};
+const sortByIndex = (a: SortableImage, b: SortableImage) => {
+  const aIndex = a.connections?.index ?? 0;
+  const bIndex = b.connections?.index ?? 0;
+  return aIndex - bIndex;
+};
+
 export type GetGalleryImagesReturnType = AsyncReturnType<typeof getGalleryImagesHandler>;
 export const getGalleryImagesHandler = async ({
   input,
@@ -116,7 +128,7 @@ export const getGalleryImagesHandler = async ({
     const items = await getGalleryImages({
       ...input,
       user: ctx.user,
-      orderBy: [{ connections: { index: 'asc' } }, { createdAt: 'desc' }],
+      // orderBy: [{ connections: { index: 'asc' } }, { createdAt: 'desc' }], // Disabled for performance reasons
     });
 
     const isOwnerOrModerator =
@@ -124,8 +136,8 @@ export const getGalleryImagesHandler = async ({
     const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
 
     return prioritizeSafeImages && !isOwnerOrModerator
-      ? items.sort((a, b) => (a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1))
-      : items;
+      ? items.sort((a, b) => (a.nsfw === b.nsfw ? sortByIndex(a, b) : a.nsfw ? 1 : -1))
+      : items.sort(sortByIndex);
   } catch (error) {
     throw throwDbError(error);
   }
