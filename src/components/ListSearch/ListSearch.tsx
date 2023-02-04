@@ -46,7 +46,8 @@ export function ListSearch({ onSearch }: Props) {
 
   useHotkeys([['mod+K', () => searchRef.current?.focus()]]);
 
-  const canQueryUsers = value.startsWith('@') ? value.length > 1 : !value.startsWith('#');
+  const queryingUsers = value.startsWith('@');
+  const canQueryUsers = queryingUsers && value.length > 1;
   const parseUserQuery = (query: string) =>
     query.startsWith('@') ? query.substring(1).toLowerCase().trim() : query.toLowerCase();
 
@@ -108,7 +109,11 @@ export function ListSearch({ onSearch }: Props) {
             badge: model.nsfw ? <Badge color="red">NSFW</Badge> : null,
           })) ?? []
         )
-        .concat(users?.map((user) => ({ value: user.username as string, group: 'Users' })) ?? [])
+        .concat(
+          queryingUsers
+            ? users?.map((user) => ({ value: user.username as string, group: 'Users' })) ?? []
+            : []
+        )
         .concat(tags?.items.map((tag) => ({ value: tag.name, group: 'Tags' })) ?? []),
     [models?.items, tags?.items, users]
   );
