@@ -1,4 +1,3 @@
-import { getSessionUser } from './../../../server/services/user.service';
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import { User } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
@@ -14,7 +13,7 @@ import { env } from '~/env/server.mjs';
 import { prisma } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
 import { sendVerificationRequest } from '~/server/auth/verificationEmail';
-import { refreshToken } from '~/server/utils/session-helpers';
+import { refreshToken, invalidateSession } from '~/server/utils/session-helpers';
 import { getCookies, setCookie } from 'cookies-next';
 
 const setUserName = async (email: string) => {
@@ -58,15 +57,11 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   callbacks: {
     jwt: async ({ token, user }) => {
       if (req.url === '/api/auth/session?update') {
-        const user = await getSessionUser({ userId: Number(token.sub) });
-        token.user = user;
-        token.signedAt = Date.now();
-      } else {
-        // have to do this to be able to connect to other providers
-        token.sub = Number(token.sub) as any; //eslint-disable-line
-        if (user) token.user = user;
+        invalidateSession(Number(token.sub));
       }
 
+      token.sub = Number(token.sub) as any; //eslint-disable-line
+      if (user) token.user = user;
       const { deletedAt, ...restUser } = token.user as User;
       token.user = { ...restUser };
 

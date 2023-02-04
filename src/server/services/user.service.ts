@@ -348,8 +348,6 @@ export const toggleBlockedTag = async ({
 };
 
 export const getSessionUser = async ({ userId }: { userId: number }) => {
-  console.log('----FIRFIREA----');
-
   const user = await prisma.user.findFirst({
     where: { id: userId, deletedAt: null },
     include: { subscription: { select: { product: { select: { metadata: true } } } } },
@@ -361,7 +359,7 @@ export const getSessionUser = async ({ userId }: { userId: number }) => {
 
   return {
     ...rest,
-    class: ((subscription?.product.metadata as any).class as string | undefined) ?? 'test',
+    class: (subscription?.product.metadata as any).class as string | undefined,
   };
 };
 

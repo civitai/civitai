@@ -19,6 +19,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 export default function Account({ providers }: Props) {
   const { apiKeys } = useFeatureFlags();
   const currentUser = useCurrentUser();
+  console.log({ currentUser });
 
   return (
     <>
