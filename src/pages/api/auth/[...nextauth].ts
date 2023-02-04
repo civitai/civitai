@@ -1,3 +1,4 @@
+import { getSessionUser } from './../../../server/services/user.service';
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import { NextApiRequest, NextApiResponse } from 'next';
 import NextAuth, { Session, type NextAuthOptions } from 'next-auth';
@@ -51,7 +52,7 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   callbacks: {
     jwt: async ({ token, user }) => {
       if (req.url === '/api/auth/session?update') {
-        const user = await prisma.user.findUnique({ where: { id: Number(token.sub) } });
+        const user = await getSessionUser({ userId: Number(token.sub) });
         token.user = user;
         token.signedAt = Date.now();
       } else {
@@ -62,10 +63,9 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
       return token;
     },
     session: async ({ session, token }) => {
-      const localSession = { ...session };
       token = await refreshToken(token);
-      if (token.user) localSession.user = token.user as Session['user'];
-      return localSession;
+      session.user = (token.user ? token.user : session.user) as Session['user'];
+      return session;
     },
   },
   // Configure one or more authentication providers

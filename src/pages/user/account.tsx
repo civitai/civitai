@@ -79,6 +79,14 @@ type Props = {
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ssg, session }) => {
+    if (!session?.user)
+      return {
+        redirect: {
+          destination: '/',
+          permanent: false,
+        },
+      };
+
     const providers = await getProviders();
     await ssg?.account.getAll.prefetch();
     if (session?.user?.subscriptionId) await ssg?.stripe.getUserSubscription.prefetch();

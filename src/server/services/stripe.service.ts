@@ -1,3 +1,4 @@
+import { isFutureDate } from '~/utils/date-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import * as Schema from '../schema/stripe.schema';
@@ -34,6 +35,10 @@ export const getPlans = async () => {
 
   // Only show the default price for a subscription product
   return products
+    .filter(({ metadata }) => {
+      console.log({ metadata });
+      return !!(metadata as any)?.class;
+    })
     .map(({ prices, ...product }) => {
       const price = prices.filter((x) => x.id === product.defaultPriceId)[0];
       return {

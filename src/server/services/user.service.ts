@@ -330,3 +330,21 @@ export const toggleBlockedTag = async ({
 
   return prisma.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
 };
+
+export const getSessionUser = async ({ userId }: { userId: number }) => {
+  console.log('----FIRFIREA----');
+
+  const user = await prisma.user.findFirst({
+    where: { id: userId, deletedAt: null },
+    include: { subscription: { select: { product: { select: { metadata: true } } } } },
+  });
+
+  if (!user) return undefined;
+
+  const { subscription, ...rest } = user;
+
+  return {
+    ...rest,
+    class: ((subscription?.product.metadata as any).class as string | undefined) ?? 'test',
+  };
+};

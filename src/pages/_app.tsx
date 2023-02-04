@@ -72,6 +72,8 @@ function MyApp(props: CustomAppProps) {
     [Component.getLayout]
   );
 
+  console.log({ session });
+
   const content = env.NEXT_PUBLIC_MAINTENANCE_MODE ? (
     <MaintenanceMode />
   ) : (
