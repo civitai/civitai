@@ -40,6 +40,7 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { splitUppercase } from '~/utils/string-helpers';
 import { IconExternalLink } from '@tabler/icons';
+import { upperFirst } from 'lodash';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerAuthSession(context);
@@ -68,13 +69,6 @@ export default function Reports() {
     type,
   });
 
-  if (!data)
-    return (
-      <Center p="xl">
-        <Loader />
-      </Center>
-    );
-
   const handlePageChange = (page: number) => {
     const [pathname, query] = router.asPath.split('?');
     router.replace({ pathname, query: { ...QS.parse(query), page } }, undefined, {
@@ -94,7 +88,7 @@ export default function Reports() {
       <Stack>
         <Title>Reports</Title>
         <SegmentedControl
-          data={Object.values(ReportEntity) as ReportEntity[]}
+          data={Object.values(ReportEntity).map((x) => ({ label: upperFirst(x), value: x }))}
           onChange={handleTypeChange}
           value={type}
         />
@@ -106,12 +100,12 @@ export default function Reports() {
                 <th></th>
                 <th>Reason</th>
                 <th>Status</th>
-                <th>CreatedAt</th>
-                <th>User</th>
+                <th>Created</th>
+                <th>Reported by</th>
               </tr>
             </thead>
             <tbody>
-              {data.items.map((item) => (
+              {data?.items.map((item) => (
                 <tr key={item.id}>
                   <td>
                     <Group spacing="xs">
@@ -144,7 +138,7 @@ export default function Reports() {
                   <td>{formatDate(item.createdAt)}</td>
                   <td>
                     <Link href={`/user/${item.user.username}`} passHref>
-                      <Text variant="link" component="a">
+                      <Text variant="link" component="a" target="_blank">
                         {item.user.username}
                       </Text>
                     </Link>
@@ -154,7 +148,7 @@ export default function Reports() {
             </tbody>
           </Table>
         </div>
-        {data.totalPages > 1 && (
+        {data?.totalPages > 1 && (
           <Group position="apart">
             <Text>Total {data.totalItems} items</Text>
 
@@ -163,7 +157,7 @@ export default function Reports() {
         )}
       </Stack>
       <ReportDrawer
-        report={data.items.find((x) => x.id === selected)}
+        report={data?.items.find((x) => x.id === selected)}
         onClose={() => setSelected(undefined)}
         type={type}
         page={page}
@@ -241,9 +235,10 @@ function ReportDetails({ report }: { report: ReportDetail }) {
   const detailItems = entries
     .filter(([key, value]) => value !== undefined && value !== null)
     .map(([key, value]) => {
+      const label = upperFirst(key);
       if (key === 'images' && Array.isArray(value))
         return {
-          label: key,
+          label,
           value: (
             <Stack>
               {value.map((cuid, i) => {
@@ -264,7 +259,7 @@ function ReportDetails({ report }: { report: ReportDetail }) {
         };
       if (key === 'comment' && typeof value === 'string')
         return {
-          label: key,
+          label,
           value: (
             <ContentClamp maxHeight={100}>
               <RenderHtml html={value} />
@@ -272,7 +267,7 @@ function ReportDetails({ report }: { report: ReportDetail }) {
           ),
         };
 
-      return { label: key, value: value?.toString() };
+      return { label, value: value?.toString() };
     });
 
   if (report.image) {
