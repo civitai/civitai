@@ -105,50 +105,51 @@ export default function Reports() {
               </tr>
             </thead>
             <tbody>
-              {data?.items.map((item) => (
-                <tr key={item.id}>
-                  <td>
-                    <Group spacing="xs">
-                      <Button compact size="xs" onClick={() => setSelected(item.id)}>
-                        Details
-                      </Button>
-                      <Tooltip label="Open reported item" withArrow>
-                        <ActionIcon
-                          component="a"
-                          href={getReportLink(item)}
-                          target="_blank"
-                          variant="subtle"
-                          size="sm"
-                        >
-                          <IconExternalLink />
-                        </ActionIcon>
-                      </Tooltip>
-                    </Group>
-                  </td>
-                  <td>{splitUppercase(item.reason)}</td>
-                  <td>
-                    <ToggleReportStatus
-                      id={item.id}
-                      status={item.status}
-                      page={page}
-                      type={type}
-                      limit={limit}
-                    />
-                  </td>
-                  <td>{formatDate(item.createdAt)}</td>
-                  <td>
-                    <Link href={`/user/${item.user.username}`} passHref>
-                      <Text variant="link" component="a" target="_blank">
-                        {item.user.username}
-                      </Text>
-                    </Link>
-                  </td>
-                </tr>
-              ))}
+              {data &&
+                data.items.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <Group spacing="xs">
+                        <Button compact size="xs" onClick={() => setSelected(item.id)}>
+                          Details
+                        </Button>
+                        <Tooltip label="Open reported item" withArrow>
+                          <ActionIcon
+                            component="a"
+                            href={getReportLink(item)}
+                            target="_blank"
+                            variant="subtle"
+                            size="sm"
+                          >
+                            <IconExternalLink />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Group>
+                    </td>
+                    <td>{splitUppercase(item.reason)}</td>
+                    <td>
+                      <ToggleReportStatus
+                        id={item.id}
+                        status={item.status}
+                        page={page}
+                        type={type}
+                        limit={limit}
+                      />
+                    </td>
+                    <td>{formatDate(item.createdAt)}</td>
+                    <td>
+                      <Link href={`/user/${item.user.username}`} passHref>
+                        <Text variant="link" component="a" target="_blank">
+                          {item.user.username}
+                        </Text>
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </Table>
         </div>
-        {data?.totalPages > 1 && (
+        {data && data.totalPages > 1 && (
           <Group position="apart">
             <Text>Total {data.totalItems} items</Text>
 
@@ -156,13 +157,15 @@ export default function Reports() {
           </Group>
         )}
       </Stack>
-      <ReportDrawer
-        report={data?.items.find((x) => x.id === selected)}
-        onClose={() => setSelected(undefined)}
-        type={type}
-        page={page}
-        limit={limit}
-      />
+      {data && (
+        <ReportDrawer
+          report={data.items.find((x) => x.id === selected)}
+          onClose={() => setSelected(undefined)}
+          type={type}
+          page={page}
+          limit={limit}
+        />
+      )}
     </Container>
   );
 }
