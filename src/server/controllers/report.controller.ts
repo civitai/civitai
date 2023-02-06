@@ -46,7 +46,7 @@ export async function getReportsHandler({
       ...input,
       select: {
         id: true,
-        user: { select: simpleUserSelect },
+        user: { select: { ...simpleUserSelect, email: true } },
         reason: true,
         createdAt: true,
         details: true,

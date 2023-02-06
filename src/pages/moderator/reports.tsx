@@ -243,18 +243,20 @@ function ReportDetails({ report }: { report: ReportDetail }) {
         return {
           label,
           value: (
-            <Stack>
+            <Stack spacing="xs">
               {value.map((cuid, i) => {
                 if (typeof cuid !== 'string') return null;
                 return (
-                  <a
+                  <Text
                     key={cuid}
+                    component="a"
+                    variant="link"
                     href={getEdgeUrl(cuid, { width: 450 })}
                     target="_blank"
                     rel="noreferrer"
                   >
                     Image {i + 1}
-                  </a>
+                  </Text>
                 );
               })}
             </Stack>
@@ -283,6 +285,17 @@ function ReportDetails({ report }: { report: ReportDetail }) {
       value: (
         <Text component="a" href={sourceHref} variant="link" target="_blank">
           {report.image.reviewId ? 'Review' : 'Model Samples'}
+        </Text>
+      ),
+    });
+  }
+
+  if (report.reason === 'Ownership') {
+    detailItems.unshift({
+      label: 'Claiming User',
+      value: (
+        <Text component="a" href={`mailto:${report.user.email}}`} variant="link" target="_blank">
+          {report.user.username} ({report.user.email})
         </Text>
       ),
     });
