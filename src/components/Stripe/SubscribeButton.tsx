@@ -3,6 +3,7 @@ import { cloneElement } from 'react';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { getClientStripe } from '~/utils/get-client-stripe';
 import { trpc } from '~/utils/trpc';
+import Router from 'next/router';
 
 export function SubscribeButton({
   children,
@@ -13,9 +14,12 @@ export function SubscribeButton({
 }) {
   const mutateCount = useIsMutating();
   const { mutate, isLoading } = trpc.stripe.createSubscriptionSession.useMutation({
-    async onSuccess({ sessionId }) {
-      const stripe = await getClientStripe();
-      await stripe.redirectToCheckout({ sessionId });
+    async onSuccess({ sessionId, url }) {
+      if (url) Router.push(url);
+      else {
+        const stripe = await getClientStripe();
+        await stripe.redirectToCheckout({ sessionId });
+      }
     },
   });
 

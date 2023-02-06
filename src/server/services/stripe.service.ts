@@ -137,7 +137,7 @@ export const createSubscribeSession = async ({
     cancel_url: `${baseUrl}/pricing`,
   });
 
-  return { sessionId: session.id };
+  return { sessionId: session.id, url: session.url };
 };
 
 // export const createPortalSession = async ({ customerId }: { customerId: string }) => {
@@ -174,7 +174,7 @@ export const createDonateSession = async ({
     success_url: `${baseUrl}/payment/success?type=donation`,
   });
 
-  return { sessionId: session.id };
+  return { sessionId: session.id, url: session.url };
 };
 
 export const createManageSubscriptionSession = async ({ customerId }: { customerId: string }) => {
