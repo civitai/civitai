@@ -115,7 +115,7 @@ export function ListSearch({ onSearch }: Props) {
             : []
         )
         .concat(tags?.items.map((tag) => ({ value: tag.name, group: 'Tags' })) ?? []),
-    [models?.items, tags?.items, users]
+    [models?.items, queryingUsers, tags?.items, users]
   );
 
   return (

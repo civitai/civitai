@@ -60,6 +60,7 @@ export function parseCookies(
       baseModels: cookies?.['f_baseModels'],
       hideNSFW: cookies?.['f_hideNSFW'],
       status: cookies?.['f_status'],
+      checkpointType: cookies?.['f_ckptType'],
     },
     questions: {
       sort: cookies?.['q_sort'],
@@ -86,6 +87,7 @@ const zodParse = z
           baseModels: z.string(),
           hideNSFW: z.string(),
           status: z.string(),
+          checkpointType: z.string(),
         })
         .partial(),
       questions: z

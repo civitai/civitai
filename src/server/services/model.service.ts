@@ -106,7 +106,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       ],
     });
   }
-  if (excludedTagIds && !username) {
+  if (excludedTagIds && excludedTagIds.length && !username) {
     AND.push({
       tagsOnModels: { every: { tagId: { notIn: excludedTagIds } } },
     });
@@ -114,7 +114,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (excludedIds) {
     AND.push({ id: { notIn: excludedIds } });
   }
-  if (checkpointType && types?.length && types.includes('Checkpoint')) {
+  if (checkpointType && (!types?.length || types?.includes('Checkpoint'))) {
     AND.push({ checkpointType });
   }
 
