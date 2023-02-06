@@ -1,5 +1,4 @@
-import { MetricTimeframe } from '@prisma/client';
-
+import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -13,6 +12,7 @@ import {
   getModelVersionImages,
   getReviewImages,
   getGalleryImages,
+  deleteImageById,
 } from '~/server/services/image.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
@@ -140,5 +140,17 @@ export const getGalleryImagesHandler = async ({
       : items.sort(sortByIndex);
   } catch (error) {
     throw throwDbError(error);
+  }
+};
+
+export const deleteImageHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const image = await deleteImageById(input);
+    if (!image) throw throwNotFoundError(`No image with id ${input.id} found`);
+
+    return image;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };

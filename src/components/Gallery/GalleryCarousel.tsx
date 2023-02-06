@@ -1,12 +1,13 @@
-import { GetGalleryImagesReturnType } from '~/server/controllers/image.controller';
-import Router, { useRouter } from 'next/router';
 import { createStyles, UnstyledButton, Center } from '@mantine/core';
+import { useHotkeys } from '@mantine/hooks';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons';
-import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
+import Router from 'next/router';
+
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
-import { useHotkeys } from '@mantine/hooks';
+import { GetGalleryImagesReturnType } from '~/server/controllers/image.controller';
 import { QS } from '~/utils/qs';
 
 type GalleryCarouselProps = {
