@@ -57,7 +57,7 @@ export function GalleryDetail() {
       enabled: !infinite,
     }
   );
-  const isLoading = infiniteLoading || finiteLoading;
+  const isLoading = infinite ? infiniteLoading : finiteLoading;
 
   // const {data: }
   const galleryImages = useMemo(

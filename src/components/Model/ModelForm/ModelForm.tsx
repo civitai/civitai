@@ -35,7 +35,6 @@ import {
   IconPlus,
   IconShoppingCart,
   IconTrash,
-  IconExclamationCircle,
   IconLock,
 } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
@@ -76,7 +75,6 @@ import { isBetweenToday } from '~/utils/date-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { uniq } from 'lodash';
-import { useLocalStorage } from '@mantine/hooks';
 import Link from 'next/link';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
@@ -85,37 +83,45 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
   - If all of a models images are nsfw, then the model will be marked as nsfw
 */
 
-const schema = modelSchema.extend({
-  tagsOnModels: z.string().array(),
-  modelVersions: z
-    .array(
-      modelVersionUpsertSchema
-        .extend({
-          uuid: z.string(),
-          files: z.preprocess((val) => {
-            const list = val as ModelFileInput[];
-            return list.filter((file) => file.url);
-          }, z.array(modelFileSchema)),
-          skipTrainedWords: z.boolean().default(false),
-          earlyAccessTimeFrame: z.string().refine(
-            (data) => {
-              const value = Number(data);
-              const valid = isNumber(value);
-              if (!valid) return false;
+const schema = modelSchema
+  .extend({
+    tagsOnModels: z.string().array(),
+    modelVersions: z
+      .array(
+        modelVersionUpsertSchema
+          .extend({
+            uuid: z.string(),
+            files: z.preprocess((val) => {
+              const list = val as ModelFileInput[];
+              return list.filter((file) => file.url);
+            }, z.array(modelFileSchema)),
+            skipTrainedWords: z.boolean().default(false),
+            earlyAccessTimeFrame: z.string().refine(
+              (data) => {
+                const value = Number(data);
+                const valid = isNumber(value);
+                if (!valid) return false;
 
-              return value >= 0 && value <= 5;
-            },
-            { message: 'Needs to be a number between 0 and 5', path: ['earlyAccessTimeFrame'] }
-          ),
-          createdAt: z.date().optional(),
-        })
-        .refine((data) => (!data.skipTrainedWords ? data.trainedWords.length > 0 : true), {
-          message: 'You need to specify at least one trained word',
-          path: ['trainedWords'],
-        })
-    )
-    .min(1, 'At least one model version is required.'),
-});
+                return value >= 0 && value <= 5;
+              },
+              { message: 'Needs to be a number between 0 and 5', path: ['earlyAccessTimeFrame'] }
+            ),
+            createdAt: z.date().optional(),
+          })
+          .refine((data) => (!data.skipTrainedWords ? data.trainedWords.length > 0 : true), {
+            message: 'You need to specify at least one trained word',
+            path: ['trainedWords'],
+          })
+      )
+      .min(1, 'At least one model version is required.'),
+  })
+  .refine(
+    (data) => {
+      if (data.type === 'Checkpoint') return !!data.checkpointType;
+      return true;
+    },
+    { message: 'Please select the checkpoint type', path: ['checkpointType'] }
+  );
 type FormSchema = z.infer<typeof schema>;
 
 type CreateModelProps = z.infer<typeof modelSchema>;
@@ -175,7 +181,6 @@ export function ModelForm({ model }: Props) {
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
     type: model?.type ?? ModelType.Checkpoint,
     status: model?.status ?? ModelStatus.Published,
-    checkpointType: model?.checkpointType ?? 'Trained',
     tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
     modelVersions: model?.modelVersions.map(
       ({ trainedWords, images, files, baseModel, ...version }) => ({
@@ -208,7 +213,7 @@ export function ModelForm({ model }: Props) {
     rules: { minLength: 1, required: true },
   });
 
-  const { isDirty, isSubmitted } = form.formState;
+  const { isDirty, isSubmitted, errors } = form.formState;
   useCatchNavigation({ unsavedChanges: isDirty && !isSubmitted });
 
   const tagsOnModels = form.watch('tagsOnModels');
@@ -354,7 +359,7 @@ export function ModelForm({ model }: Props) {
     form.setValue('checkpointType', null);
     switch (value) {
       case 'Checkpoint':
-        form.setValue('checkpointType', CheckpointType.Trained);
+        form.setValue('checkpointType', CheckpointType.Merge);
         break;
       case 'TextualInversion':
         fields.forEach((_, index) => {
@@ -421,46 +426,53 @@ export function ModelForm({ model }: Props) {
               <Paper radius="md" p="xl" withBorder>
                 <Stack>
                   <InputText name="name" label="Name" placeholder="Name" withAsterisk />
-                  <Group spacing={8} grow>
-                    <InputSelect
-                      name="type"
-                      label="Type"
-                      placeholder="Type"
-                      data={Object.values(ModelType).map((type) => ({
-                        label: splitUppercase(type),
-                        value: type,
-                      }))}
-                      onChange={handleModelTypeChange}
-                      withAsterisk
-                    />
-                    {type === 'Checkpoint' && (
-                      <Input.Wrapper label="Checkpoint Type" withAsterisk>
-                        <InputSegmentedControl
-                          name="checkpointType"
-                          data={Object.values(CheckpointType).map((type) => ({
-                            label: splitUppercase(type),
-                            value: type,
-                          }))}
-                          color="blue"
-                          styles={(theme) => ({
-                            root: {
-                              border: `1px solid ${
-                                theme.colorScheme === 'dark'
-                                  ? theme.colors.dark[4]
-                                  : theme.colors.gray[4]
-                              }`,
-                              background: 'none',
-                              height: 36,
-                            },
-                            label: {
-                              padding: '2px 10px',
-                            },
-                          })}
-                          fullWidth
-                        />
-                      </Input.Wrapper>
+                  <Stack spacing={5}>
+                    <Group spacing={8} grow>
+                      <InputSelect
+                        name="type"
+                        label="Type"
+                        placeholder="Type"
+                        data={Object.values(ModelType).map((type) => ({
+                          label: splitUppercase(type),
+                          value: type,
+                        }))}
+                        onChange={handleModelTypeChange}
+                        withAsterisk
+                      />
+                      {type === 'Checkpoint' && (
+                        <Input.Wrapper label="Checkpoint Type" withAsterisk>
+                          <InputSegmentedControl
+                            name="checkpointType"
+                            data={Object.values(CheckpointType).map((type) => ({
+                              label: splitUppercase(type),
+                              value: type,
+                            }))}
+                            color="blue"
+                            styles={(theme) => ({
+                              root: {
+                                border: `1px solid ${
+                                  errors.checkpointType
+                                    ? theme.colors.red[theme.fn.primaryShade()]
+                                    : theme.colorScheme === 'dark'
+                                    ? theme.colors.dark[4]
+                                    : theme.colors.gray[4]
+                                }`,
+                                background: 'none',
+                                height: 36,
+                              },
+                              label: {
+                                padding: '2px 10px',
+                              },
+                            })}
+                            fullWidth
+                          />
+                        </Input.Wrapper>
+                      )}
+                    </Group>
+                    {errors.checkpointType && (
+                      <Input.Error>{errors.checkpointType.message}</Input.Error>
                     )}
-                  </Group>
+                  </Stack>
                   <InputMultiSelect
                     name="tagsOnModels"
                     label="Tags"

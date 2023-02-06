@@ -108,6 +108,10 @@ export function getDownloadFilename({
   const modelName = filenamize(model.name);
   let versionName = filenamize(replaceInsensitive(modelVersion.name, modelName, ''));
 
+  // If the model name is empty (due to unsupported characters), we should keep the filename as is
+  const shouldKeepFilename = modelName.length === 0;
+  if (shouldKeepFilename) return fileName;
+
   const ext = file.name.split('.').pop();
   if (!constants.modelFileTypes.includes(file.type as ModelFileType)) return file.name;
   const fileType = file.type as ModelFileType;
