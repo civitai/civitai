@@ -379,7 +379,7 @@ export default function ModelDetail({
       value: (
         <Group spacing={4}>
           {model.tagsOnModels.map(({ tag }) => (
-            <Link key={tag.id} href={`/tag/${tag.name.toLowerCase()}`} passHref>
+            <Link key={tag.id} href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
               <Badge
                 key={tag.id}
                 color={tag.color ?? 'blue'}

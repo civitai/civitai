@@ -30,6 +30,7 @@ export const imageGallerySelect = ({ user }: { user?: SessionUser }) =>
     user: { select: userWithCosmeticsSelect },
     connections: {
       select: {
+        index: true,
         modelId: true,
         reviewId: true,
       },

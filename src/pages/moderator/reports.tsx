@@ -14,6 +14,9 @@ import {
   Drawer,
   useMantineTheme,
   Title,
+  Button,
+  ActionIcon,
+  Tooltip,
 } from '@mantine/core';
 import { GetServerSideProps } from 'next/types';
 import { useRouter } from 'next/router';
@@ -28,13 +31,16 @@ import {
   SetReportStatusInput,
 } from '~/server/schema/report.schema';
 import { Prisma, ReportStatus } from '@prisma/client';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { GetReportsProps } from '~/server/controllers/report.controller';
 import produce from 'immer';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { splitUppercase } from '~/utils/string-helpers';
+import { IconExternalLink } from '@tabler/icons';
+import { upperFirst } from 'lodash';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerAuthSession(context);
@@ -63,13 +69,6 @@ export default function Reports() {
     type,
   });
 
-  if (!data)
-    return (
-      <Center p="xl">
-        <Loader />
-      </Center>
-    );
-
   const handlePageChange = (page: number) => {
     const [pathname, query] = router.asPath.split('?');
     router.replace({ pathname, query: { ...QS.parse(query), page } }, undefined, {
@@ -89,7 +88,7 @@ export default function Reports() {
       <Stack>
         <Title>Reports</Title>
         <SegmentedControl
-          data={Object.values(ReportEntity) as ReportEntity[]}
+          data={Object.values(ReportEntity).map((x) => ({ label: upperFirst(x), value: x }))}
           onChange={handleTypeChange}
           value={type}
         />
@@ -98,49 +97,59 @@ export default function Reports() {
           <Table>
             <thead>
               <tr>
-                <th>Entity</th>
+                <th></th>
                 <th>Reason</th>
                 <th>Status</th>
-                <th>CreatedAt</th>
-                <th>User</th>
+                <th>Created</th>
+                <th>Reported by</th>
               </tr>
             </thead>
             <tbody>
-              {data.items.map((item) => (
-                <tr key={item.id}>
-                  <td>
-                    <Text
-                      variant="link"
-                      sx={{ cursor: 'pointer' }}
-                      onClick={() => setSelected(item.id)}
-                    >
-                      View Details
-                    </Text>
-                  </td>
-                  <td>{item.reason}</td>
-                  <td>
-                    <ToggleReportStatus
-                      id={item.id}
-                      status={item.status}
-                      page={page}
-                      type={type}
-                      limit={limit}
-                    />
-                  </td>
-                  <td>{formatDate(item.createdAt)}</td>
-                  <td>
-                    <Link href={`/user/${item.user.username}`} passHref>
-                      <Text variant="link" component="a">
-                        {item.user.username}
-                      </Text>
-                    </Link>
-                  </td>
-                </tr>
-              ))}
+              {data &&
+                data.items.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <Group spacing="xs">
+                        <Button compact size="xs" onClick={() => setSelected(item.id)}>
+                          Details
+                        </Button>
+                        <Tooltip label="Open reported item" withArrow>
+                          <ActionIcon
+                            component="a"
+                            href={getReportLink(item)}
+                            target="_blank"
+                            variant="subtle"
+                            size="sm"
+                          >
+                            <IconExternalLink />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Group>
+                    </td>
+                    <td>{splitUppercase(item.reason)}</td>
+                    <td>
+                      <ToggleReportStatus
+                        id={item.id}
+                        status={item.status}
+                        page={page}
+                        type={type}
+                        limit={limit}
+                      />
+                    </td>
+                    <td>{formatDate(item.createdAt)}</td>
+                    <td>
+                      <Link href={`/user/${item.user.username}`} passHref>
+                        <Text variant="link" component="a" target="_blank">
+                          {item.user.username}
+                        </Text>
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </Table>
         </div>
-        {data.totalPages > 1 && (
+        {data && data.totalPages > 1 && (
           <Group position="apart">
             <Text>Total {data.totalItems} items</Text>
 
@@ -148,13 +157,15 @@ export default function Reports() {
           </Group>
         )}
       </Stack>
-      <ReportDrawer
-        report={data.items.find((x) => x.id === selected)}
-        onClose={() => setSelected(undefined)}
-        type={type}
-        page={page}
-        limit={limit}
-      />
+      {data && (
+        <ReportDrawer
+          report={data.items.find((x) => x.id === selected)}
+          onClose={() => setSelected(undefined)}
+          type={type}
+          page={page}
+          limit={limit}
+        />
+      )}
     </Container>
   );
 }
@@ -173,6 +184,7 @@ function ReportDrawer({
   limit: number;
 }) {
   const theme = useMantineTheme();
+  const href = useMemo(() => (report ? getReportLink(report) : null), [report]);
   return (
     <Drawer
       withOverlay={false}
@@ -192,40 +204,6 @@ function ReportDrawer({
     >
       {report && (
         <Stack>
-          {type === ReportEntity.Model && report.model && (
-            <Link href={`/models/${report.model.id}`} passHref>
-              <Text variant="link" component="a" target="_blank">
-                View Model
-              </Text>
-            </Link>
-          )}
-          {type === ReportEntity.Review && report.review && (
-            <Link
-              href={`/models/${report.review.modelId}/?modal=reviewThread&reviewId=${report.review.id}`}
-              passHref
-            >
-              <Text variant="link" component="a" target="_blank">
-                View Review
-              </Text>
-            </Link>
-          )}
-          {type === ReportEntity.Comment && report.comment && (
-            <Stack>
-              <Text>CommentId: {report.comment.id}</Text>
-              {report.comment.modelId && (
-                <Link
-                  href={`/models/${report.comment.modelId}/?modal=commentThread&commentId=${
-                    report.comment.parentId ?? report.comment.id
-                  }&highlight=${report.comment.id}`}
-                  passHref
-                >
-                  <Text variant="link" component="a" target="_blank">
-                    View comment model
-                  </Text>
-                </Link>
-              )}
-            </Stack>
-          )}
           <ToggleReportStatus
             id={report.id}
             status={report.status}
@@ -233,61 +211,118 @@ function ReportDrawer({
             type={type}
             limit={limit}
           />
-          <ReportDetails details={report.details} />
+          {href && (
+            <Link href={href} passHref>
+              <Button component="a" target="_blank">
+                View {type}
+              </Button>
+            </Link>
+          )}
+          <ReportDetails report={report} />
         </Stack>
       )}
     </Drawer>
   );
 }
 
-function ReportDetails({ details }: { details: Prisma.JsonValue }) {
+function ReportDetails({ report }: { report: ReportDetail }) {
+  const { details } = report;
   if (!details) return null;
   if (typeof details === 'string' || typeof details === 'number' || typeof details === 'boolean')
     return <>{details}</>;
   if (Array.isArray(details)) return <>Bad data</>;
 
-  return (
-    <DescriptionTable
-      items={Object.entries(details)
-        .filter(([key, value]) => value !== undefined && value !== null)
-        .map(([key, value]) => {
-          if (key === 'images' && Array.isArray(value))
-            return {
-              label: key,
-              value: (
-                <Stack>
-                  {value.map((cuid, i) => {
-                    if (typeof cuid !== 'string') return null;
-                    return (
-                      <a
-                        key={cuid}
-                        href={getEdgeUrl(cuid, { width: 450 })}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Image {i + 1}
-                      </a>
-                    );
-                  })}
-                </Stack>
-              ),
-            };
-          if (key === 'comment' && typeof value === 'string')
-            return {
-              label: key,
-              value: (
-                <ContentClamp maxHeight={100}>
-                  <RenderHtml html={value} />
-                </ContentClamp>
-              ),
-            };
+  const entries = Object.entries(details);
+  if (entries.length === 0) return null;
 
-          return { label: key, value: value?.toString() };
-        })}
-      labelWidth="30%"
-    />
-  );
+  const detailItems = entries
+    .filter(([key, value]) => value !== undefined && value !== null)
+    .map(([key, value]) => {
+      const label = upperFirst(key);
+      if (key === 'images' && Array.isArray(value))
+        return {
+          label,
+          value: (
+            <Stack spacing="xs">
+              {value.map((cuid, i) => {
+                if (typeof cuid !== 'string') return null;
+                return (
+                  <Text
+                    key={cuid}
+                    component="a"
+                    variant="link"
+                    href={getEdgeUrl(cuid, { width: 450 })}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Image {i + 1}
+                  </Text>
+                );
+              })}
+            </Stack>
+          ),
+        };
+      if (key === 'comment' && typeof value === 'string')
+        return {
+          label,
+          value: (
+            <ContentClamp maxHeight={100}>
+              <RenderHtml html={value} />
+            </ContentClamp>
+          ),
+        };
+
+      return { label, value: value?.toString() };
+    });
+
+  if (report.image) {
+    const sourceHref = report.image.reviewId
+      ? `/models/${report.image.modelId}/?modal=reviewThread&reviewId=${report.image.reviewId}`
+      : `/models/${report.image.modelId}`;
+
+    detailItems.push({
+      label: 'Source',
+      value: (
+        <Text component="a" href={sourceHref} variant="link" target="_blank">
+          {report.image.reviewId ? 'Review' : 'Model Samples'}
+        </Text>
+      ),
+    });
+  }
+
+  if (report.reason === 'Ownership') {
+    detailItems.unshift({
+      label: 'Claiming User',
+      value: (
+        <Text component="a" href={`mailto:${report.user.email}}`} variant="link" target="_blank">
+          {report.user.username} ({report.user.email})
+        </Text>
+      ),
+    });
+  }
+
+  return <DescriptionTable items={detailItems} labelWidth="30%" />;
 }
+
+const getReportLink = (report: ReportDetail) => {
+  if (report.model) return `/models/${report.model.id}`;
+  else if (report.review)
+    return `/models/${report.review.modelId}/?modal=reviewThread&reviewId=${report.review.id}`;
+  else if (report.comment)
+    return `/models/${report.comment.modelId}/?modal=commentThread&commentId=${
+      report.comment.parentId ?? report.comment.id
+    }&highlight=${report.comment.id}`;
+  else if (report.image) {
+    const returnUrl = report.image.reviewId
+      ? `/models/${report.image.modelId}/?modal=reviewThread&reviewId=${report.image.reviewId}`
+      : `/models/${report.image.modelId}`;
+    const parts = [`returnUrl=${encodeURIComponent(returnUrl)}`];
+    if (report.image.modelId) parts.push(`modelId=${report.image.modelId}`);
+    if (report.image.modelVersionId) parts.push(`modelVersionId=${report.image.modelVersionId}`);
+    if (report.image.reviewId) parts.push(`reviewId=${report.image.reviewId}`);
+    return `/gallery/${report.image.id}/?${parts.join('&')}`;
+  }
+};
 
 function ToggleReportStatus({
   id,

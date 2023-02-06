@@ -3,7 +3,7 @@ import { ModelType, MetricTimeframe, CheckpointType, ModelStatus } from '@prisma
 import { ModelSort } from '~/server/common/enums';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { splitUppercase } from '~/utils/string-helpers';
-import { deleteCookie, setCookie as sc } from 'cookies-next';
+import { deleteCookie } from 'cookies-next';
 import { immer } from 'zustand/middleware/immer';
 import { modelFilterSchema, useCookies } from '~/providers/CookiesProvider';
 import {
@@ -91,10 +91,21 @@ export const useInfiniteModelsFilters = () => {
     types,
     hideNSFW,
     status,
+    checkpointType,
   } = useCookies().models;
 
   const filters = useFilters((state) => state.filters);
-  return { limit: 100, sort, period, types, baseModels, hideNSFW, status, ...filters };
+  return {
+    limit: 100,
+    sort,
+    period,
+    types,
+    baseModels,
+    hideNSFW,
+    status,
+    checkpointType,
+    ...filters,
+  };
 };
 
 const sortOptions = Object.values(ModelSort);

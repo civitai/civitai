@@ -46,7 +46,7 @@ export async function getReportsHandler({
       ...input,
       select: {
         id: true,
-        user: { select: simpleUserSelect },
+        user: { select: { ...simpleUserSelect, email: true } },
         reason: true,
         createdAt: true,
         details: true,
@@ -95,6 +95,25 @@ export async function getReportsHandler({
             },
           },
         },
+        image: {
+          select: {
+            image: {
+              select: {
+                id: true,
+                user: { select: simpleUserSelect },
+                nsfw: true,
+                tosViolation: true,
+                connections: {
+                  select: {
+                    modelId: true,
+                    modelVersionId: true,
+                    reviewId: true,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
     return {
@@ -104,6 +123,12 @@ export async function getReportsHandler({
           model: item.model?.model,
           review: item.review?.review,
           comment: item.comment?.comment,
+          image: item.image && {
+            ...item.image.image,
+            modelId: item.image.image.connections?.modelId,
+            modelVersionId: item.image.image.connections?.modelVersionId,
+            reviewId: item.image.image.connections?.reviewId,
+          },
         };
       }),
       ...result,

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useForm as useReactHookForm, UseFormProps, UseFormReset } from 'react-hook-form';
 import { z } from 'zod';
 
-export const useForm = <TSchema extends z.AnyZodObject, TContext>(
+export const useForm = <TSchema extends z.AnyZodObject | z.Schema, TContext>(
   args?: Omit<UseFormProps<z.infer<TSchema>, TContext>, 'resolver'> & {
     schema?: TSchema;
   }
@@ -11,7 +11,9 @@ export const useForm = <TSchema extends z.AnyZodObject, TContext>(
   const { schema, ...props } = args ?? {};
   const [resetCount, setResetCount] = useState(0);
   const form = useReactHookForm<z.infer<TSchema>, TContext>({
-    resolver: schema ? zodResolver(schema.passthrough()) : undefined,
+    resolver: schema
+      ? zodResolver(schema instanceof z.ZodObject ? schema.passthrough() : schema)
+      : undefined,
     shouldUnregister: true, // TODO - do we need this?
     ...props,
   });
