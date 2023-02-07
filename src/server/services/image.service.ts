@@ -10,7 +10,7 @@ import { imageGallerySelect, imageSelect } from '~/server/selectors/image.select
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await prisma.imagesOnModels.findMany({
-    where: { modelVersionId },
+    where: { modelVersionId, image: { tosViolation: false } },
     select: { image: { select: imageSelect } },
   });
   return result.map((x) => x.image);
@@ -18,7 +18,7 @@ export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId
 
 export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
   const result = await prisma.imagesOnReviews.findMany({
-    where: { reviewId },
+    where: { reviewId, image: { tosViolation: false } },
     select: { image: { select: imageSelect } },
   });
   return result.map((x) => x.image);
@@ -90,4 +90,16 @@ export const getGalleryImages = async <
 
 export const deleteImageById = ({ id }: GetByIdInput) => {
   return prisma.image.delete({ where: { id } });
+};
+
+export const updateImageById = <TSelect extends Prisma.ImageSelect>({
+  id,
+  select,
+  data,
+}: {
+  id: number;
+  data: Prisma.ImageUpdateArgs['data'];
+  select: TSelect;
+}) => {
+  return prisma.image.update({ where: { id }, data, select });
 };

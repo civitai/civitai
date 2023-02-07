@@ -1,11 +1,13 @@
-import {
-  GetReportsInput,
-  SetReportStatusInput,
-  GetReportCountInput,
-} from './../schema/report.schema';
 import { Prisma, ReportReason, ReportStatus } from '@prisma/client';
+
 import { prisma } from '~/server/db/client';
-import { ReportEntity, CreateReportInput } from '~/server/schema/report.schema';
+import {
+  CreateReportInput,
+  GetReportCountInput,
+  GetReportsInput,
+  ReportEntity,
+  SetReportStatusInput,
+} from '~/server/schema/report.schema';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export const createReport = async ({

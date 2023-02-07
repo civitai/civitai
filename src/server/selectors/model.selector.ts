@@ -165,7 +165,7 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
               select: imageSelect,
             },
           },
-          where: includeNSFW ? undefined : { image: { nsfw: false } },
+          where: { image: { nsfw: includeNSFW ? undefined : false, tosViolation: false } },
         },
         rank: {
           select: {

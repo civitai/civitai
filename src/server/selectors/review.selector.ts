@@ -35,7 +35,7 @@ export const reviewDetailSelect = (includeNSFW = true) =>
           select: imageSelect,
         },
       },
-      where: includeNSFW ? undefined : { image: { nsfw: false } },
+      where: { image: { nsfw: includeNSFW ? undefined : false, tosViolation: false } },
     },
     reactions: {
       select: getReactionsSelect,

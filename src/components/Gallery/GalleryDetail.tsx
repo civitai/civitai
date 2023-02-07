@@ -14,7 +14,15 @@ import {
   Stack,
 } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
-import { IconFlag, IconInfoCircle, IconShare, IconDotsVertical, IconTrash } from '@tabler/icons';
+import { closeModal, openConfirmModal } from '@mantine/modals';
+import {
+  IconFlag,
+  IconInfoCircle,
+  IconShare,
+  IconDotsVertical,
+  IconTrash,
+  IconBan,
+} from '@tabler/icons';
 import Router, { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef } from 'react';
 
@@ -148,6 +156,36 @@ export function GalleryDetail() {
     if (image) deleteMutation.mutate({ id: image.id });
   };
 
+  const tosViolationMutation = trpc.image.setTosViolation.useMutation({
+    async onSuccess() {
+      if (image) {
+        await queryUtils.image.getGalleryImageDetail.invalidate({ id: image.id });
+        if (image.connections?.modelId)
+          await queryUtils.model.getById.invalidate({ id: image.connections?.modelId });
+      }
+      closeModal('confirm-tos-violation');
+      handleCloseContext();
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Could not report review, please try again',
+      });
+    },
+  });
+  const handleTosViolation = () => {
+    openConfirmModal({
+      modalId: 'confirm-tos-violation',
+      title: 'Report ToS Violation',
+      children: `Are you sure you want to report this image for a Terms of Service violation? Once marked, it won't show up for other people`,
+      centered: true,
+      labels: { confirm: 'Yes', cancel: 'Cancel' },
+      confirmProps: { color: 'red', loading: tosViolationMutation.isLoading },
+      closeOnConfirm: false,
+      onConfirm: image ? () => tosViolationMutation.mutate({ id: image.id }) : undefined,
+    });
+  };
+
   if (!image && isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
   // if (image?.nsfw && !currentUser?.showNsfw) return <SensitiveShield />;
@@ -232,6 +270,14 @@ export function GalleryDetail() {
                         >
                           Delete
                         </Menu.Item>
+                        {isMod && (
+                          <Menu.Item
+                            icon={<IconBan size={14} stroke={1.5} />}
+                            onClick={handleTosViolation}
+                          >
+                            Remove as TOS Violation
+                          </Menu.Item>
+                        )}
                       </Menu.Dropdown>
                     </Menu>
                   )}
