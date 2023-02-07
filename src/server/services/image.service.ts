@@ -4,6 +4,7 @@ import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { ImageSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetGalleryImageInput } from '~/server/schema/image.schema';
 import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
 
@@ -84,4 +85,8 @@ export const getGalleryImages = async <
       commentCount: stats?.commentCountAllTime,
     },
   }));
+};
+
+export const deleteImageById = ({ id }: GetByIdInput) => {
+  return prisma.image.delete({ where: { id } });
 };
