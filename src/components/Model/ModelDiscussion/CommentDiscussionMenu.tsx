@@ -1,5 +1,5 @@
 import { ActionIcon, MantineNumberSize, Menu, MenuProps, Text } from '@mantine/core';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
+import { closeAllModals, closeModal, openConfirmModal } from '@mantine/modals';
 import {
   IconDotsVertical,
   IconTrash,
@@ -7,6 +7,7 @@ import {
   IconFlag,
   IconLock,
   IconLockOpen,
+  IconBan,
 } from '@tabler/icons';
 import { SessionUser } from 'next-auth';
 
@@ -90,6 +91,32 @@ export function CommentDiscussionMenu({
     toggleLockMutation.mutate({ id: comment.id });
   };
 
+  const tosViolationMutation = trpc.comment.setTosViolation.useMutation({
+    async onSuccess() {
+      await queryUtils.comment.getById.invalidate({ id: comment.id });
+      closeModal('confirm-tos-violation');
+      closeRoutedContext();
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Could not report review, please try again',
+      });
+    },
+  });
+  const handleTosViolation = () => {
+    openConfirmModal({
+      modalId: 'confirm-tos-violation',
+      title: 'Report ToS Violation',
+      children: `Are you sure you want to report this comment for a Terms of Service violation? Once marked, it won't show up for other people`,
+      centered: true,
+      labels: { confirm: 'Yes', cancel: 'Cancel' },
+      confirmProps: { color: 'red', disabled: tosViolationMutation.isLoading },
+      closeOnConfirm: false,
+      onConfirm: () => tosViolationMutation.mutate({ id: comment.id }),
+    });
+  };
+
   return (
     <Menu position="bottom-end" withinPortal {...props}>
       <Menu.Target>
@@ -127,6 +154,11 @@ export function CommentDiscussionMenu({
                 onClick={handleToggleLockThread}
               >
                 {comment.locked ? 'Unlock comment' : 'Lock comment'}
+              </Menu.Item>
+            )}
+            {isMod && (
+              <Menu.Item icon={<IconBan size={14} stroke={1.5} />} onClick={handleTosViolation}>
+                Remove as TOS Violation
               </Menu.Item>
             )}
           </>

@@ -62,6 +62,7 @@ export const getGalleryImages = async <
     where: {
       userId,
       nsfw: !canViewNsfw ? { equals: false } : undefined,
+      tosViolation: false,
       ...(infinite ? infiniteWhere : finiteWhere),
       // TODO.gallery - excludedTagIds (hidden tags)
     },

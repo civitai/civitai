@@ -1,7 +1,8 @@
-import { GetByIdInput } from './../schema/base.schema';
 import { TRPCError } from '@trpc/server';
 
+import { env } from '~/env/server.mjs';
 import { Context } from '~/server/createContext';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllReviewsInput,
   GetReviewReactionsInput,
@@ -10,6 +11,7 @@ import {
 } from '~/server/schema/review.schema';
 import { commentDetailSelect } from '~/server/selectors/comment.selector';
 import { getAllReviewsSelect, reviewDetailSelect } from '~/server/selectors/review.selector';
+import { createNotification } from '~/server/services/notification.service';
 import {
   getReviewReactions,
   getReviews,
@@ -21,11 +23,11 @@ import {
   convertReviewToComment,
 } from '~/server/services/review.service';
 import {
+  throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { env } from '~/env/server.mjs';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 export const getReviewsInfiniteHandler = async ({
@@ -194,7 +196,8 @@ export const getReviewDetailsHandler = async ({
           : imagesOnReviews.map((x) => x.image),
     };
   } catch (error) {
-    throw throwDbError(error);
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };
 
@@ -271,6 +274,39 @@ export const toggleLockHandler = async ({ input }: { input: GetByIdInput }) => {
           updateMany: { where: { reviewId: review.id }, data: { locked: !review.locked } },
         },
       },
+    });
+
+    return updatedReview;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const setTosViolationHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { user } = ctx;
+    const { id } = input;
+    if (!user.isModerator) throw throwAuthorizationError('Only moderators can set TOS violation');
+
+    const updatedReview = await updateReviewById({ id, data: { tosViolation: true } });
+    if (!updatedReview) throw throwNotFoundError(`No review with id ${id}`);
+
+    // Create notifications in the background
+    createNotification({
+      userId: updatedReview.user.id,
+      type: 'tos-violation',
+      details: { modelName: updatedReview.model.name, entity: 'review' },
+    }).catch((error) => {
+      // Print out any errors
+      // TODO.logs: sent to logger service
+      console.error(error);
     });
 
     return updatedReview;

@@ -37,6 +37,7 @@ export const getComments = <TSelect extends Prisma.CommentSelect>({
       userId,
       reviewId: { equals: null },
       parentId: { equals: null },
+      tosViolation: false,
       // OR: [
       //   {
       //     userId: { not: user?.id },
@@ -59,8 +60,8 @@ export const getCommentById = <TSelect extends Prisma.CommentSelect>({
   id,
   select,
 }: GetByIdInput & { select: TSelect }) => {
-  return prisma.comment.findUnique({
-    where: { id },
+  return prisma.comment.findFirst({
+    where: { id, tosViolation: false },
     select,
   });
 };

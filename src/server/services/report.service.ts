@@ -144,3 +144,42 @@ export const getReportCounts = async ({ type }: GetReportCountInput) => {
     where: { [type]: { isNot: null }, status: ReportStatus.Pending },
   });
 };
+
+export const getReviewReports = <TSelect extends Prisma.ReviewReportSelect>({
+  reviewId,
+  select,
+}: {
+  reviewId: number;
+  select: TSelect;
+}) => {
+  return prisma.reviewReport.findMany({
+    select,
+    where: { reviewId },
+  });
+};
+
+export const getCommentReports = <TSelect extends Prisma.CommentReportSelect>({
+  commentId,
+  select,
+}: {
+  commentId: number;
+  select: TSelect;
+}) => {
+  return prisma.commentReport.findMany({
+    select,
+    where: { commentId },
+  });
+};
+
+export const getImageReports = <TSelect extends Prisma.ImageReportSelect>({
+  imageId,
+  select,
+}: {
+  imageId: number;
+  select: TSelect;
+}) => {
+  return prisma.imageReport.findMany({
+    select,
+    where: { imageId },
+  });
+};

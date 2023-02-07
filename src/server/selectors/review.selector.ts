@@ -15,6 +15,9 @@ export const reviewDetailSelect = (includeNSFW = true) =>
     locked: true,
     modelId: true,
     modelVersionId: true,
+    model: {
+      select: { name: true },
+    },
     modelVersion: {
       select: { name: true },
     },

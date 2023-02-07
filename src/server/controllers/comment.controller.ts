@@ -18,7 +18,12 @@ import {
   getUserReactionByCommentId,
   updateCommentById,
 } from '~/server/services/comment.service';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { createNotification } from '~/server/services/notification.service';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 export const getCommentsInfiniteHandler = async ({
@@ -145,7 +150,8 @@ export const getCommentHandler = async ({ input }: { input: GetByIdInput }) => {
 
     return comment;
   } catch (error) {
-    throw throwDbError(error);
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };
 
@@ -200,6 +206,39 @@ export const toggleLockHandler = async ({ input }: { input: GetByIdInput }) => {
           updateMany: { where: { parentId: comment.id }, data: { locked: !comment.locked } },
         },
       },
+    });
+
+    return updatedComment;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const setTosViolationHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { user } = ctx;
+    const { id } = input;
+    if (!user.isModerator) throw throwAuthorizationError('Only moderators can set TOS violation');
+
+    const updatedComment = await updateCommentById({ id, data: { tosViolation: true } });
+    if (!updatedComment) throw throwNotFoundError(`No comment with id ${id}`);
+
+    // Create notifications in the background
+    createNotification({
+      userId: updatedComment.user.id,
+      type: 'tos-violation',
+      details: { modelName: updatedComment.model.name, entity: 'comment' },
+    }).catch((error) => {
+      // Print out any errors
+      // TODO.logs: sent to logger service
+      console.error(error);
     });
 
     return updatedComment;
