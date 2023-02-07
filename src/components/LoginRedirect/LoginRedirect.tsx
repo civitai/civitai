@@ -3,7 +3,7 @@ import { useRouter } from 'next/router';
 import React, { MouseEventHandler, MouseEvent } from 'react';
 import { getLoginLink, LoginRedirectReason } from '~/utils/login-helpers';
 
-type Props = {
+export type Props = {
   children: React.ReactElement<{ onClick?: MouseEventHandler<HTMLElement> }>;
   reason: LoginRedirectReason;
   returnUrl?: string;
