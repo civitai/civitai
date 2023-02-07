@@ -14,6 +14,9 @@ import {
   HoverCard,
   ScrollArea,
   LoadingOverlay,
+  Tooltip,
+  Box,
+  Popover,
 } from '@mantine/core';
 import { IconInfoCircle, IconRosette } from '@tabler/icons';
 import { useEffect } from 'react';
@@ -135,10 +138,26 @@ export function ProfileCard() {
                   label={
                     <Group spacing={4} noWrap>
                       <Input.Label>Nameplate Style</Input.Label>
-                      <IconBadge
-                        tooltip="Select the style for your username"
-                        icon={<IconInfoCircle size={14} />}
-                      />
+                      <Popover withArrow width={300} withinPortal position="top">
+                        <Popover.Target>
+                          <Box
+                            display="inline-block"
+                            sx={{ lineHeight: 0.8, cursor: 'pointer', opacity: 0.5 }}
+                          >
+                            <IconInfoCircle size={16} />
+                          </Box>
+                        </Popover.Target>
+                        <Popover.Dropdown>
+                          <Text weight={500} size="sm">
+                            Nameplates
+                          </Text>
+                          <Text size="sm">
+                            Nameplates change the appearance of your username. They can include
+                            special colors or effects. You can earn nameplates by being a subscriber
+                            or earning trophies on the site.
+                          </Text>
+                        </Popover.Dropdown>
+                      </Popover>
                     </Group>
                   }
                   nothingFound="Your earned nameplate styles will appear here"
@@ -158,14 +177,30 @@ export function ProfileCard() {
             </Grid.Col>
             {cosmeticsEnabled && (
               <Grid.Col span={12}>
-                <Stack spacing={5}>
+                <Stack spacing={0}>
                   <Group position="apart">
                     <Group spacing={4}>
                       <Input.Label>Badge</Input.Label>
-                      <IconBadge
-                        tooltip="Select the badge you want to display next to your username"
-                        icon={<IconInfoCircle size={14} />}
-                      />
+                      <Popover withArrow width={300} withinPortal position="top">
+                        <Popover.Target>
+                          <Box
+                            display="inline-block"
+                            sx={{ lineHeight: 0.8, cursor: 'pointer', opacity: 0.5 }}
+                          >
+                            <IconInfoCircle size={16} />
+                          </Box>
+                        </Popover.Target>
+                        <Popover.Dropdown>
+                          <Text weight={500} size="sm">
+                            Badges
+                          </Text>
+                          <Text size="sm">
+                            Badges appear next your username and can even include special effects.
+                            You can earn badges by being a subscriber or earning trophies on the
+                            site.
+                          </Text>
+                        </Popover.Dropdown>
+                      </Popover>
                     </Group>
                     {selectedBadge && (
                       <Button
@@ -183,9 +218,18 @@ export function ProfileCard() {
                     {selectedBadge?.data.url ? (
                       <EdgeImage src={selectedBadge.data.url} width={96} />
                     ) : (
-                      <ThemeIcon size={96} variant="outline" color="gray">
-                        <IconRosette size={48} stroke={1.5} />
-                      </ThemeIcon>
+                      <Paper
+                        withBorder
+                        sx={{
+                          width: 96,
+                          height: 96,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <IconRosette style={{ opacity: 0.5 }} size={48} stroke={1.5} />
+                      </Paper>
                     )}
                     <Paper
                       component={ScrollArea}
@@ -240,7 +284,7 @@ export function ProfileCard() {
                           ))}
                         </Group>
                       ) : (
-                        <Center sx={{ width: '100%' }}>
+                        <Center sx={{ width: '100%', height: 72 }}>
                           <Text size="sm" color="dimmed">
                             Your earned badges will appear here
                           </Text>

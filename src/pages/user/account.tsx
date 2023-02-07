@@ -38,9 +38,9 @@ export default function Account({ providers }: Props) {
           <CreatorCard />
           <SettingsCard />
           <TagsCard />
+          {currentUser?.subscriptionId && <SubscriptionCard />}
           <NotificationsCard />
           <AccountsCard providers={providers} />
-          {currentUser?.subscriptionId && <SubscriptionCard />}
           {apiKeys && <ApiKeysCard />}
           <DeleteCard />
         </Stack>
