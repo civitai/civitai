@@ -18,6 +18,7 @@ export const commentDetailSelect = Prisma.validator<Prisma.CommentSelect>()({
   reactions: {
     select: getReactionsSelect,
   },
+  model: { select: { name: true } },
 });
 
 export const getAllCommentsSelect = Prisma.validator<Prisma.CommentSelect>()({

@@ -68,3 +68,7 @@ export const updateUserNoticationById = ({
 export const deleteUserNotificationSetting = ({ type, userId }: ToggleNotificationSettingInput) => {
   return prisma.userNotificationSettings.deleteMany({ where: { type, userId } });
 };
+
+export const createNotification = (data: Prisma.NotificationCreateArgs['data']) => {
+  return prisma.notification.create({ data });
+};

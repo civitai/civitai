@@ -15,6 +15,9 @@ export const reviewDetailSelect = (includeNSFW = true) =>
     locked: true,
     modelId: true,
     modelVersionId: true,
+    model: {
+      select: { name: true },
+    },
     modelVersion: {
       select: { name: true },
     },
@@ -32,7 +35,7 @@ export const reviewDetailSelect = (includeNSFW = true) =>
           select: imageSelect,
         },
       },
-      where: includeNSFW ? undefined : { image: { nsfw: false } },
+      where: { image: { nsfw: includeNSFW ? undefined : false, tosViolation: false } },
     },
     reactions: {
       select: getReactionsSelect,

@@ -1,10 +1,11 @@
 import {
-  getGalleryImagesInfiniteHandler,
+  deleteImageHandler,
   getGalleryImageDetailHandler,
+  getGalleryImagesHandler,
+  getGalleryImagesInfiniteHandler,
   getModelVersionImagesHandler,
   getReviewImagesHandler,
-  getGalleryImagesHandler,
-  deleteImageHandler,
+  setTosViolationHandler,
 } from '~/server/controllers/image.controller';
 import { prisma } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
@@ -54,4 +55,5 @@ export const imageRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteImageHandler),
+  setTosViolation: protectedProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
 });

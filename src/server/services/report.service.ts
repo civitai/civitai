@@ -1,11 +1,13 @@
-import {
-  GetReportsInput,
-  SetReportStatusInput,
-  GetReportCountInput,
-} from './../schema/report.schema';
 import { Prisma, ReportReason, ReportStatus } from '@prisma/client';
+
 import { prisma } from '~/server/db/client';
-import { ReportEntity, CreateReportInput } from '~/server/schema/report.schema';
+import {
+  CreateReportInput,
+  GetReportCountInput,
+  GetReportsInput,
+  ReportEntity,
+  SetReportStatusInput,
+} from '~/server/schema/report.schema';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export const createReport = async ({
@@ -142,5 +144,44 @@ export const setReportStatus = async ({ id, status }: SetReportStatusInput) => {
 export const getReportCounts = async ({ type }: GetReportCountInput) => {
   return await prisma.report.count({
     where: { [type]: { isNot: null }, status: ReportStatus.Pending },
+  });
+};
+
+export const getReviewReports = <TSelect extends Prisma.ReviewReportSelect>({
+  reviewId,
+  select,
+}: {
+  reviewId: number;
+  select: TSelect;
+}) => {
+  return prisma.reviewReport.findMany({
+    select,
+    where: { reviewId },
+  });
+};
+
+export const getCommentReports = <TSelect extends Prisma.CommentReportSelect>({
+  commentId,
+  select,
+}: {
+  commentId: number;
+  select: TSelect;
+}) => {
+  return prisma.commentReport.findMany({
+    select,
+    where: { commentId },
+  });
+};
+
+export const getImageReports = <TSelect extends Prisma.ImageReportSelect>({
+  imageId,
+  select,
+}: {
+  imageId: number;
+  select: TSelect;
+}) => {
+  return prisma.imageReport.findMany({
+    select,
+    where: { imageId },
   });
 };
