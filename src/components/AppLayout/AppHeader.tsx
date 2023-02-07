@@ -13,19 +13,23 @@ import {
   Paper,
   Grid,
   Badge,
+  ActionIcon,
 } from '@mantine/core';
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import {
+  IconCircleDashed,
   IconCrown,
   IconFile,
   IconHeart,
   IconHistory,
   IconLogout,
+  IconMoonStars,
   IconPalette,
   IconPlus,
   IconQuestionCircle,
   IconSettings,
+  IconSun,
   IconUpload,
   IconUserCircle,
   IconUsers,
@@ -33,7 +37,7 @@ import {
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -42,6 +46,7 @@ import { NotificationBell } from '~/components/Notifications/NotificationBell';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { LoginRedirectReason } from '~/utils/login-helpers';
 
 const HEADER_HEIGHT = 70;
 
@@ -148,7 +153,14 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function AppHeader({ links }: Props) {
+type MenuLink = {
+  label: React.ReactNode;
+  href: string;
+  redirectReason?: LoginRedirectReason;
+  visible?: boolean;
+};
+
+export function AppHeader() {
   const currentUser = useCurrentUser();
   const { classes, cx, theme } = useStyles();
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
@@ -160,215 +172,143 @@ export function AppHeader({ links }: Props) {
 
   const isMuted = currentUser?.muted ?? false;
 
-  const menuItems =
-    links?.map((link) => (
-      <Link
-        key={link.label}
-        href={link.url}
-        passHref
-        className={cx(classes.link, { [classes.linkActive]: router.asPath === link.url })}
-      >
-        <Anchor
-          variant="text"
-          className={cx(classes.link, { [classes.linkActive]: router.asPath === link.url })}
-          onClick={() => closeBurger()}
-        >
-          {link.label}
-        </Anchor>
-      </Link>
-    )) ?? [];
-  const extendedMenuItems = [
-    ...(!isMuted
-      ? [
-          <LoginRedirect key="upload-menu-item" reason="upload-model" returnUrl="/models/create">
-            <Link href="/models/create" passHref>
+  const links: MenuLink[] = useMemo(
+    () => [
+      {
+        href: '/models/create',
+        visible: !isMuted,
+        loginRedirect: 'upload-model',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconUpload stroke={1.5} />
+            Upload a model
+          </Group>
+        ),
+      },
+      {
+        href: `/user/${currentUser?.username}`,
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconFile stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            Your models
+          </Group>
+        ),
+      },
+      {
+        href: '/?favorites=true',
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconHeart stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+            Liked models
+          </Group>
+        ),
+      },
+      {
+        href: '/?hidden=true',
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconCircleDashed stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
+            Hidden models
+          </Group>
+        ),
+      },
+      {
+        href: '/questions',
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconQuestionCircle stroke={1.5} />
+            Questions{' '}
+            <Badge color="yellow" size="xs">
+              Beta
+            </Badge>
+          </Group>
+        ),
+      },
+      {
+        href: `/user/${currentUser?.username}/following`,
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconUsers stroke={1.5} />
+            Creators you follow
+          </Group>
+        ),
+      },
+      {
+        href: '/user/downloads',
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconHistory stroke={1.5} />
+            Download History
+          </Group>
+        ),
+      },
+      {
+        href: `/login?returnUrl=${router.asPath}`,
+        visible: !currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconUserCircle stroke={1.5} />
+            Sign In/Sign up
+          </Group>
+        ),
+      },
+      {
+        href: '/leaderboard',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconCrown stroke={1.5} />
+            Leaderboard
+          </Group>
+        ),
+      },
+    ],
+    [currentUser, isMuted, router.asPath, theme]
+  );
+
+  const burgerMenuItems = useMemo(
+    () =>
+      links
+        .filter(({ visible }) => visible !== false)
+        .map((link) => {
+          const item = (
+            <Link key={link.href} href={link.href} passHref>
               <Anchor
-                className={cx(classes.link, {
-                  [classes.linkActive]: router.asPath.includes('/models/create'),
-                })}
                 variant="text"
+                className={cx(classes.link, { [classes.linkActive]: router.asPath === link.href })}
                 onClick={() => closeBurger()}
               >
-                <Group align="center" spacing="xs">
-                  <IconUpload stroke={1.5} />
-                  Upload a model
-                </Group>
+                {link.label}
               </Anchor>
             </Link>
-          </LoginRedirect>,
-        ]
-      : []),
-    ...(currentUser
-      ? [
-          <Link key="your-models-menu-item" href={`/user/${currentUser.username}`} passHref>
-            <Anchor
-              className={cx(classes.link, {
-                [classes.linkActive]: router.asPath.includes(`/user/${currentUser.username}`),
-              })}
-              variant="text"
-              onClick={() => closeBurger()}
-            >
-              <Group align="center" spacing="xs">
-                <IconFile stroke={1.5} color={theme.colors.blue[6]} />
-                Your models
-              </Group>
-            </Anchor>
-          </Link>,
-          <Link key="your-favorites-menu-item" href={`/?favorites=true`} passHref>
-            <Anchor
-              className={cx(classes.link, {
-                [classes.linkActive]: router.asPath.includes(`favorites=true`),
-              })}
-              variant="text"
-              onClick={() => closeBurger()}
-            >
-              <Group align="center" spacing="xs">
-                <IconHeart stroke={1.5} color={theme.colors.pink[6]} />
-                Liked models
-              </Group>
-            </Anchor>
-          </Link>,
-          <Link key="questions" href={`/questions`} passHref>
-            <Anchor
-              className={cx(classes.link, {
-                [classes.linkActive]: router.asPath.includes(`/questions`),
-              })}
-              variant="text"
-              onClick={() => closeBurger()}
-            >
-              <Group align="center" spacing="xs">
-                <IconQuestionCircle stroke={1.5} />
-                Questions{' '}
-                <Badge color="yellow" size="xs">
-                  Beta
-                </Badge>
-              </Group>
-            </Anchor>
-          </Link>,
-          <Link
-            key="your-following-menu-item"
-            href={`/user/${currentUser.username}/following`}
-            passHref
-          >
-            <Anchor
-              className={cx(classes.link, {
-                [classes.linkActive]: router.asPath.includes(`/following`),
-              })}
-              variant="text"
-              onClick={() => closeBurger()}
-            >
-              <Group align="center" spacing="xs">
-                <IconUsers stroke={1.5} />
-                Creators you follow
-              </Group>
-            </Anchor>
-          </Link>,
-          <Link key="your-history-menu-item" href={`/user/downloads`} passHref>
-            <Anchor
-              className={cx(classes.link, {
-                [classes.linkActive]: router.asPath.includes(`/user/downloads`),
-              })}
-              variant="text"
-              onClick={() => closeBurger()}
-            >
-              <Group align="center" spacing="xs">
-                <IconHistory stroke={1.5} />
-                Download History
-              </Group>
-            </Anchor>
-          </Link>,
-        ]
-      : [
-          <Link key="sign-in-menu-item" href={`/login?returnUrl=${router.asPath}`} passHref>
-            <Anchor
-              className={cx(classes.link, {
-                [classes.linkActive]: router.asPath.includes('/login'),
-              })}
-              variant="text"
-              onClick={() => closeBurger()}
-            >
-              <Group align="center" spacing="xs">
-                <IconUserCircle stroke={1.5} />
-                Sign In/Sign up
-              </Group>
-            </Anchor>
-          </Link>,
-        ]),
-    ...menuItems,
+          );
 
-    <Link key="leaderboard-menu-item" href="/leaderboard" passHref>
-      <Anchor
-        className={cx(classes.link, {
-          [classes.linkActive]: router.asPath.includes('/leaderboard'),
-        })}
-        variant="text"
-        onClick={() => closeBurger()}
-      >
-        <Group align="center" spacing="xs">
-          <IconCrown stroke={1.5} />
-          Leaderboard
-        </Group>
-      </Anchor>
-    </Link>,
-    <UnstyledButton
-      key="theme-switcher"
-      className={classes.link}
-      onClick={() => toggleColorScheme()}
-    >
-      <Group align="center" spacing="xs">
-        <IconPalette stroke={1.5} />
-        Dark mode
-      </Group>
-      <Switch
-        checked={colorScheme === 'dark'}
-        sx={{ display: 'flex', alignItems: 'center' }}
-        onClick={(e) => e.stopPropagation()}
-      />
-    </UnstyledButton>,
-    ...(currentUser
-      ? [
-          ...(currentUser?.showNsfw
-            ? [
-                <BlurToggle key="nsfw-switcher">
-                  {({ icon, toggle }) => (
-                    <UnstyledButton className={classes.link} onClick={toggle}>
-                      <Group align="center" spacing="xs">
-                        {icon}
-                        Toggle NSFW blur
-                      </Group>
-                      <Switch
-                        checked={!currentUser?.blurNsfw}
-                        sx={{ display: 'flex', alignItems: 'center' }}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </UnstyledButton>
-                  )}
-                </BlurToggle>,
-              ]
-            : []),
-          <Link key="account-settings-menu-item" href="/user/account" passHref>
-            <Anchor
-              className={cx(classes.link, {
-                [classes.linkActive]: router.asPath.includes('/user/account'),
-              })}
-              variant="text"
-              onClick={() => closeBurger()}
-            >
-              <Group align="center" spacing="xs">
-                <IconSettings stroke={1.5} />
-                Account settings
-              </Group>
-            </Anchor>
-          </Link>,
-          <UnstyledButton key="user-logout" className={classes.link} onClick={() => signOut()}>
-            <Group>
-              <IconLogout stroke={1.5} color={theme.colors.red[9]} />
-              Logout
-            </Group>
-          </UnstyledButton>,
-        ]
-      : []),
-  ];
+          return link.redirectReason ? (
+            <LoginRedirect key={link.href} reason={link.redirectReason} returnUrl={link.href}>
+              {item}
+            </LoginRedirect>
+          ) : (
+            item
+          );
+        }),
+    [classes, closeBurger, cx, links, router.asPath]
+  );
+  const userMenuItems = useMemo(
+    () =>
+      links
+        .filter(({ href, visible }) => visible !== false && href !== '/models/create')
+        .map((link) => (
+          <Menu.Item key={link.href} component={NextLink} href={link.href}>
+            {link.label}
+          </Menu.Item>
+        )),
+    [links]
+  );
 
   return (
     <Header ref={ref} height={HEADER_HEIGHT} fixed>
@@ -401,7 +341,6 @@ export function AppHeader({ links }: Props) {
           <ListSearch onSearch={() => closeBurger()} />
         </Grid.Col>
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
-          <Group spacing="sm">{menuItems}</Group>
           <Group spacing="xs" align="center">
             {!currentUser ? (
               <Button
@@ -431,63 +370,10 @@ export function AppHeader({ links }: Props) {
                 </UnstyledButton>
               </Menu.Target>
               <Menu.Dropdown>
-                {currentUser ? (
-                  <>
-                    <Menu.Item
-                      icon={<IconFile size={14} color={theme.colors.blue[6]} stroke={1.5} />}
-                      component={NextLink}
-                      href={`/user/${currentUser.username}`}
-                    >
-                      Your models
-                    </Menu.Item>
-                    <Menu.Item
-                      icon={<IconHeart size={14} color={theme.colors.pink[6]} stroke={1.5} />}
-                      component={NextLink}
-                      href={`/?favorites=true`}
-                    >
-                      Liked models
-                    </Menu.Item>
-                    <Menu.Item
-                      icon={<IconQuestionCircle size={14} stroke={1.5} />}
-                      component={NextLink}
-                      href="/questions"
-                    >
-                      Questions{' '}
-                      <Badge color="yellow" size="xs">
-                        Beta
-                      </Badge>
-                    </Menu.Item>
-                    <Menu.Item
-                      icon={<IconUsers size={14} stroke={1.5} />}
-                      component={NextLink}
-                      href={`/user/${currentUser.username}/following`}
-                    >
-                      Creators you follow
-                    </Menu.Item>
-                    <Menu.Item
-                      icon={<IconHistory size={14} stroke={1.5} />}
-                      component={NextLink}
-                      href={`/user/downloads`}
-                    >
-                      Download History
-                    </Menu.Item>
-                  </>
-                ) : (
-                  <Menu.Item component={NextLink} href={`/login?returnUrl=${router.asPath}`}>
-                    Sign in/Sign up
-                  </Menu.Item>
-                )}
-
-                <Menu.Item
-                  icon={<IconCrown size={14} stroke={1.5} />}
-                  component={NextLink}
-                  href="/leaderboard"
-                >
-                  Leaderboard
-                </Menu.Item>
+                {userMenuItems}
                 <Menu.Item
                   closeMenuOnClick={false}
-                  icon={<IconPalette size={14} stroke={1.5} />}
+                  icon={<IconPalette stroke={1.5} />}
                   onClick={() => toggleColorScheme()}
                 >
                   <Group align="center" position="apart">
@@ -503,14 +389,14 @@ export function AppHeader({ links }: Props) {
                 {currentUser ? (
                   <>
                     <Menu.Item
-                      icon={<IconSettings size={14} stroke={1.5} />}
+                      icon={<IconSettings stroke={1.5} />}
                       component={NextLink}
                       href="/user/account"
                     >
                       Account settings
                     </Menu.Item>
                     <Menu.Item
-                      icon={<IconLogout size={14} color={theme.colors.red[9]} stroke={1.5} />}
+                      icon={<IconLogout color={theme.colors.red[9]} stroke={1.5} />}
                       onClick={() => signOut()}
                     >
                       Logout
@@ -532,7 +418,51 @@ export function AppHeader({ links }: Props) {
             <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
               {(styles) => (
                 <Paper className={classes.dropdown} withBorder style={styles}>
-                  {extendedMenuItems}
+                  {burgerMenuItems}
+                  <Group p="md" position="apart" grow>
+                    <ActionIcon
+                      variant="default"
+                      onClick={() => toggleColorScheme()}
+                      size="lg"
+                      sx={(theme) => ({
+                        color:
+                          theme.colorScheme === 'dark'
+                            ? theme.colors.yellow[theme.fn.primaryShade()]
+                            : theme.colors.blue[theme.fn.primaryShade()],
+                      })}
+                    >
+                      {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoonStars size={18} />}
+                    </ActionIcon>
+                    {currentUser && (
+                      <>
+                        {currentUser?.showNsfw && (
+                          <BlurToggle iconProps={{ stroke: 1.5 }}>
+                            {({ icon, toggle }) => (
+                              <ActionIcon variant="default" size="lg" onClick={toggle}>
+                                {icon}
+                              </ActionIcon>
+                            )}
+                          </BlurToggle>
+                        )}
+                        <Link href="/user/account" passHref>
+                          <ActionIcon
+                            variant="default"
+                            component="a"
+                            size="lg"
+                            onClick={closeBurger}
+                          >
+                            <IconSettings stroke={1.5} />
+                          </ActionIcon>
+                        </Link>
+                        <ActionIcon variant="default" onClick={() => signOut()} size="lg">
+                          <IconLogout
+                            stroke={1.5}
+                            color={theme.colors.red[theme.fn.primaryShade()]}
+                          />
+                        </ActionIcon>
+                      </>
+                    )}
+                  </Group>
                 </Paper>
               )}
             </Transition>
@@ -542,7 +472,3 @@ export function AppHeader({ links }: Props) {
     </Header>
   );
 }
-
-type Props = {
-  links?: Array<{ url: string; label: string }>;
-};
