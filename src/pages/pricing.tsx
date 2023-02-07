@@ -10,13 +10,18 @@ import {
   Alert,
   Grid,
   Tabs,
+  List,
+  ThemeIcon,
 } from '@mantine/core';
 import { trpc } from '~/utils/trpc';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { PlanDetails } from '~/components/Stripe/PlanDetails';
 import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
-import { IconCalendarDue, IconHeartHandshake } from '@tabler/icons';
+import { IconCalendarDue, IconCircleCheck, IconHeartHandshake } from '@tabler/icons';
+import { DonateButton } from '~/components/Stripe/DonateButton';
+import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 
 export default function Pricing() {
   const { data: products, isLoading: productsLoading } = trpc.stripe.getPlans.useQuery();
@@ -33,7 +38,7 @@ export default function Pricing() {
         <Stack>
           <Title align="center">Support Us ❤️</Title>
           <Text align="center" sx={{ lineHeight: 1.25 }}>
-            {`Support Civitai and get exclusive perks. As the leading model sharing service, we're proud to be ad-free and adding new features every week. Help us keep the community thriving by becoming a member or making a donation.`}
+            {`As the leading model sharing service, we're proud to be ad-free and adding new features every week. Help us keep the community thriving by becoming a member or making a donation. Support Civitai and get exclusive perks.`}
           </Text>
         </Stack>
       </Container>
@@ -41,7 +46,7 @@ export default function Pricing() {
         <Tabs variant="outline" defaultValue="subscribe">
           <Tabs.List position="center">
             <Tabs.Tab value="subscribe" icon={<IconCalendarDue size={20} />}>
-              Subscribe
+              Membership
             </Tabs.Tab>
             <Tabs.Tab value="donate" icon={<IconHeartHandshake size={20} />}>
               Donate
@@ -63,7 +68,7 @@ export default function Pricing() {
               ) : (
                 <Grid justify="center">
                   {products.map((product) => (
-                    <Grid.Col key={product.id} md={5} sm={6} xs={12}>
+                    <Grid.Col key={product.id} md={4} sm={6} xs={12}>
                       <Card withBorder style={{ height: '100%' }}>
                         <Stack justify="space-between" style={{ height: '100%' }}>
                           <PlanDetails
@@ -87,7 +92,7 @@ export default function Pricing() {
               {!!subscription && (
                 <Center>
                   <ManageSubscriptionButton>
-                    <Button>Manage your Subscription</Button>
+                    <Button>Manage your Membership</Button>
                   </ManageSubscriptionButton>
                 </Center>
               )}
@@ -95,7 +100,31 @@ export default function Pricing() {
           </Tabs.Panel>
 
           <Tabs.Panel value="donate" pt="md">
-            Something
+            <Grid justify="center">
+              <Grid.Col md={4} sm={6} xs={12}>
+                <Card withBorder style={{ height: '100%' }}>
+                  <Stack justify="space-between" style={{ height: '100%' }}>
+                    <Stack spacing={0} mb="md">
+                      <Center>
+                        <EdgeImage src="ab3e161b-7c66-4412-9573-ca16dde9f900" width={128} />
+                      </Center>
+                      <Title order={2} align="center">
+                        One-time Donation
+                      </Title>
+                    </Stack>
+                    <PlanBenefitList
+                      benefits={[
+                        { content: 'Unique Donator badge' },
+                        { content: 'Unique nameplate color' },
+                      ]}
+                    />
+                    <DonateButton>
+                      <Button>Donate</Button>
+                    </DonateButton>
+                  </Stack>
+                </Card>
+              </Grid.Col>
+            </Grid>
           </Tabs.Panel>
         </Tabs>
       </Container>
