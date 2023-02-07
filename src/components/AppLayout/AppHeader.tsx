@@ -419,9 +419,9 @@ export function AppHeader() {
               {(styles) => (
                 <Paper className={classes.dropdown} withBorder style={styles}>
                   {burgerMenuItems}
-                  <Group p="md" position="apart">
+                  <Group p="md" position="apart" grow>
                     <ActionIcon
-                      variant="light"
+                      variant="default"
                       onClick={() => toggleColorScheme()}
                       size="lg"
                       sx={(theme) => ({
@@ -438,18 +438,23 @@ export function AppHeader() {
                         {currentUser?.showNsfw && (
                           <BlurToggle iconProps={{ stroke: 1.5 }}>
                             {({ icon, toggle }) => (
-                              <ActionIcon variant="light" size="lg" onClick={toggle}>
+                              <ActionIcon variant="default" size="lg" onClick={toggle}>
                                 {icon}
                               </ActionIcon>
                             )}
                           </BlurToggle>
                         )}
                         <Link href="/user/account" passHref>
-                          <ActionIcon variant="light" component="a" size="lg" onClick={closeBurger}>
+                          <ActionIcon
+                            variant="default"
+                            component="a"
+                            size="lg"
+                            onClick={closeBurger}
+                          >
                             <IconSettings stroke={1.5} />
                           </ActionIcon>
                         </Link>
-                        <ActionIcon variant="light" onClick={() => signOut()} size="lg">
+                        <ActionIcon variant="default" onClick={() => signOut()} size="lg">
                           <IconLogout
                             stroke={1.5}
                             color={theme.colors.red[theme.fn.primaryShade()]}
