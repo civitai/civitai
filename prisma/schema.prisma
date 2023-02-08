@@ -118,7 +118,7 @@ model User {
 model CustomerSubscription {
   id                 String    @id
   userId             Int       @unique
-  user               User      @relation(fields: [userId], references: [id])
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   metadata           Json
   status             String
   priceId            String
@@ -1114,7 +1114,7 @@ enum CosmeticSource {
 }
 
 model Cosmetic {
-  id              Int            @id
+  id              Int            @id @default(autoincrement())
   name            String
   description     String?
   type            CosmeticType
@@ -1123,6 +1123,9 @@ model Cosmetic {
   data            Json
   createdAt       DateTime?      @default(now())
   updatedAt       DateTime?      @updatedAt
+  availableStart  DateTime?
+  availableEnd    DateTime?
+  productId       String?
   UserCosmetic    UserCosmetic[]
 }
 

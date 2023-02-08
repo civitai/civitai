@@ -127,11 +127,11 @@ export function ProfileCard() {
                 />
               </Grid.Col>
             )}
-            <Grid.Col xs={12} md={cosmeticsEnabled ? 8 : 12}>
+            <Grid.Col xs={12} md={cosmeticsEnabled ? 7 : 12}>
               <InputText name="username" label="Username" required />
             </Grid.Col>
             {cosmeticsEnabled && (
-              <Grid.Col xs={12} md={4}>
+              <Grid.Col xs={12} md={5}>
                 <InputSelect
                   name="nameplateId"
                   placeholder="Select style"
@@ -249,7 +249,7 @@ export function ProfileCard() {
                             <HoverCard
                               key={cosmetic.id}
                               position="top"
-                              width={250}
+                              width={300}
                               openDelay={300}
                               withArrow
                               withinPortal
@@ -268,14 +268,16 @@ export function ProfileCard() {
                                 </Button>
                               </HoverCard.Target>
                               <HoverCard.Dropdown>
-                                <Stack spacing={4}>
-                                  <Text size="md" weight="bold">
+                                <Stack spacing={0}>
+                                  <Text size="sm" weight={500}>
                                     {cosmetic.name}
                                   </Text>
                                   {cosmetic.description && (
-                                    <Text size="sm">{cosmetic.description}</Text>
+                                    <Text size="sm" sx={{ lineHeight: 1.2 }}>
+                                      {cosmetic.description}
+                                    </Text>
                                   )}
-                                  <Text size="xs" color="dimmed">
+                                  <Text size="xs" color="dimmed" mt="xs">
                                     {`Acquired on ${formatDate(cosmetic.obtainedAt)}`}
                                   </Text>
                                 </Stack>
