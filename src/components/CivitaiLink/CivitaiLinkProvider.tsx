@@ -1,11 +1,17 @@
 /* eslint-disable @typescript-eslint/no-empty-function */
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { CivitaiLinkInstance, getLinkInstances } from '~/components/CivitaiLink/civitai-link-api';
+import {
+  CivitaiLinkInstance,
+  getLinkInstances,
+  useGetLinkInstances,
+} from '~/components/CivitaiLink/civitai-link-api';
 import {
   Command,
   ResponseResourcesList,
   Response,
   CommandRequest,
+  ActivitiesResponse,
+  ResponseStatus,
 } from '~/components/CivitaiLink/shared-types';
 import SharedWorker from '@okikio/sharedworker';
 import { showNotification } from '@mantine/notifications';
@@ -14,6 +20,7 @@ import { immer } from 'zustand/middleware/immer';
 import create from 'zustand';
 import { useLocalStorage } from '@mantine/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import isEqual from 'lodash/isEqual';
 
 // #region types
 type Instance = { key: string | null; connected: boolean };
@@ -21,7 +28,7 @@ type IncomingMessage =
   | { type: 'ready' }
   | { type: 'error'; msg: string }
   | { type: 'message'; msg: string }
-  | { type: 'activitiesUpdate'; payload: Response[] }
+  | { type: 'activitiesUpdate'; payload: ActivitiesResponse[] }
   | { type: 'resourcesUpdate'; payload: ResponseResourcesList['resources'] }
   | { type: 'commandComplete'; payload: Response }
   | { type: 'instance'; payload: Instance };
@@ -30,11 +37,11 @@ type IncomingMessage =
 // #region context
 type CivitaiLinkState = {
   instances: CivitaiLinkInstance[];
-  selectedInstance: CivitaiLinkInstance | undefined;
+  selectedInstance?: CivitaiLinkInstance;
   connected: boolean;
   resources: ResponseResourcesList['resources'];
   fetchInstances: () => Promise<void>;
-  selectInstance: (instance: CivitaiLinkInstance) => Promise<void>;
+  selectInstance: (instance: { key: string }) => Promise<void>;
   runCommand: (command: CommandRequest) => Promise<unknown>;
 };
 
@@ -50,16 +57,34 @@ const CivitaiLinkCtx = createContext<CivitaiLinkState>({
 // #endregion
 
 // #region zu store
+const finalStatus: ResponseStatus[] = ['canceled', 'success', 'error'];
 type CivitaiLinkStore = {
-  activities: Response[];
+  ids: string[];
+  activities: Record<string, Response>;
   setActivities: (activities: Response[]) => void;
 };
 export const useCivitaiLinkStore = create<CivitaiLinkStore>()(
   immer((set) => ({
-    activities: [],
+    ids: [],
+    activities: {},
     setActivities: (activities: Response[]) =>
       set((state) => {
-        state.activities = activities;
+        const ids = activities.map((x) => x.id);
+        if (!isEqual(state.ids, ids)) state.ids = ids;
+
+        const dict = ids.reduce<Record<string, Response>>((acc, id) => {
+          const activity = activities.find((x) => x.id === id);
+          return !activity ? acc : { ...acc, [id]: activity };
+        }, {});
+
+        for (const id in dict) {
+          const activity = dict[id];
+          if (
+            !finalStatus.includes(activity.status) ||
+            activity.status !== state.activities[id]?.status
+          )
+            state.activities[id] = activity;
+        }
       }),
   }))
 );
@@ -79,11 +104,13 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
   const [selectedInstanceId, setSelectedInstanceId] = useLocalStorage<number | undefined>({
     key: 'civitai-link-instance-id',
   });
-  const [instances, setInstances] = useState<CivitaiLinkInstance[]>([]);
+  const { data: instances = [], refetch } = useGetLinkInstances();
+  // const [instances, setInstances] = useState<CivitaiLinkInstance[]>([]);
   const [selectedInstance, setSelectedInstance] = useState<CivitaiLinkInstance | undefined>();
   const [resources, setResources] = useState<ResponseResourcesList['resources']>([]);
   const [connected, setConnected] = useState(false);
   const setActivities = useCivitaiLinkStore((state) => state.setActivities);
+  console.log({instances})
 
   const getWorker = () => {
     if (!canUseLink) throw Error('User is not logged in');
@@ -111,9 +138,23 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
       setConnected(instance.connected);
     };
 
-    const handleActivities = (activities: Response[]) => {
-      console.log(activities);
-      setActivities(activities);
+    const handleActivities = (activities: ActivitiesResponse[]) => {
+      const sorted = activities.sort((a, b) => {
+        const aDate = new Date(a.createdAt ?? new Date());
+        const bDate = new Date(b.createdAt ?? new Date());
+        return bDate.getTime() - aDate.getTime();
+      });
+
+      // const removed = sorted.filter((x) => x.type === 'resources:remove');
+      // const added = sorted.filter((x) => x.type === 'resources:add');
+
+      // // TODO - determine how to show that an item has been removed while still being able to show the correct status if removing an item fails
+      // const filtered = added.map((activity) => {
+      //   const index = removed.findIndex((x) => x.resource.hash === activity.resource.hash);
+      //   return index > -1 ? removed[index] : activity;
+      // });
+
+      setActivities(sorted);
     };
 
     const handleCommandComplete = (response: Response) => {
@@ -144,10 +185,10 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
   };
 
   const fetchInstances = useCallback(async () => {
-    setInstances(await getLinkInstances());
-  }, []);
+    await refetch();
+  }, [refetch]);
 
-  const selectInstance = async (instance: CivitaiLinkInstance) => {
+  const selectInstance = async (instance: { key: string }) => {
     const worker = await getWorker();
     worker.port.postMessage({ type: 'join', key: instance.key });
   };

@@ -1,6 +1,7 @@
 import { useWindowEvent } from '@mantine/hooks';
 import { closeAllModals, ContextModalProps, ModalsProvider } from '@mantine/modals';
 import dynamic from 'next/dynamic';
+import { openCivitaiLinkModal } from '~/components/CivitaiLink/CivitaiLinkWizard';
 import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal';
 import { openReportModal } from '~/components/Modals/ReportModal';
 import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
@@ -12,6 +13,7 @@ const QuestionsInfoModal = dynamic(() => import('~/components/Questions/Question
 const BlockModelTagsModal = dynamic(() => import('~/components/Modals/BlockModelTagsModal'));
 const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'));
 const RunStrategyModal = dynamic(() => import('~/components/Modals/RunStrategyModal'));
+const CivitaiLinkWizard = dynamic(() => import('~/components/CivitaiLink/CivitaiLinkWizard'));
 
 const registry = {
   blockModelTags: {
@@ -25,6 +27,10 @@ const registry = {
   runStrategy: {
     Component: RunStrategyModal,
     fn: openRunStrategyModal,
+  },
+  'civitai-link-wizard': {
+    Component: CivitaiLinkWizard,
+    fn: openCivitaiLinkModal,
   },
 };
 

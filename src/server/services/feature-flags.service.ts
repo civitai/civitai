@@ -14,6 +14,7 @@ const featureFlags = createTypedDictionary({
   apiKeys: ['dev'],
   ambientCard: ['public'],
   gallery: ['mod'],
+  civitaiLink: ['dev', 'mod'],
 });
 
 const isDev = process.env.NODE_ENV === 'development';

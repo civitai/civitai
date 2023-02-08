@@ -6,18 +6,20 @@ import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: false,
+      staleTime: Infinity,
+    },
+  },
+});
+
 export const trpc = createTRPCNext<AppRouter>({
   config() {
     return {
-      queryClient: new QueryClient({
-        defaultOptions: {
-          queries: {
-            refetchOnWindowFocus: false,
-            retry: false,
-            staleTime: Infinity,
-          },
-        },
-      }),
+      queryClient,
       transformer: superjson,
       links: [
         loggerLink({

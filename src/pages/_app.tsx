@@ -86,6 +86,7 @@ function MyApp(props: CustomAppProps) {
               <CustomModalsProvider>
                 <NotificationsProvider>
                   {/* <RoutedContextProvider> */}
+                  {/* TODO.civitai-link - dont' use provider if they don't have the flag */}
                   <CivitaiLinkProvider>
                     <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
                   </CivitaiLinkProvider>

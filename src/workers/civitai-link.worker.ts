@@ -35,9 +35,10 @@ const socket: SocketClient = io(env.NEXT_PUBLIC_CIVITAI_LINK, {
 });
 
 // helpers
-const sendCommand = (payload: Omit<Command, 'id'>) => {
+const sendCommand = (payload: Omit<Command, 'id' | 'createdAt'>) => {
   const _payload = payload as Command;
   _payload.id = uuid();
+  _payload.createdAt = new Date();
   socket.emit('command', _payload);
 };
 
@@ -118,7 +119,7 @@ socket.on('linkStatus', (active: boolean) => {
 });
 
 const completedStatuses: ResponseStatus[] = ['canceled', 'error', 'success'];
-const ignoredCommands: CommandTypes[] = ['resources:add:cancel'];
+const ignoredCommands: CommandTypes[] = ['activities:cancel'];
 socket.on('commandStatus', (payload: Response) => {
   if (ignoredCommands.includes(payload.type)) return;
   if (payload.type === 'resources:list') {
@@ -127,7 +128,7 @@ socket.on('commandStatus', (payload: Response) => {
   }
 
   let value: Response[] = [];
-  if (payload.type === 'activities:list') {
+  if (payload.type === 'activities:list' || payload.type === 'activities:clear') {
     value = payload.activities;
   } else {
     let found = false;
@@ -186,7 +187,7 @@ const handleCommand = (payload: Command) => {
     emitError('You must join a session before sending commands');
     return;
   }
-  socket.emit('command', payload);
+  socket.emit('command', { ...payload, createdAt: new Date() });
 };
 
 const handleInitialization = () => {

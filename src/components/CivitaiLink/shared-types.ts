@@ -47,6 +47,8 @@ export type ResourceType =
 
 type CommandBase = {
   id: string;
+  groupId?: string;
+  createdAt: Date;
 };
 
 export type CommandResourcesList = {
@@ -56,29 +58,30 @@ export type CommandResourcesList = {
 
 export type CommandResourcesAdd = {
   type: 'resources:add';
-  resources: {
+  resource: {
     type: ResourceType;
     hash: string;
     name: string;
+    modelName: string;
+    modelVersionName: string;
     previewImage: string;
     url: string;
-  }[];
+  };
 };
 
 export type CommandResourcesAddCancel = {
-  type: 'resources:add:cancel';
-  resources: {
-    type: ResourceType;
-    hash: string;
-  }[];
+  type: 'activities:cancel';
+  activityId: string;
 };
 
 export type CommandResourcesRemove = {
   type: 'resources:remove';
-  resources: {
+  resource: {
     type: ResourceType;
     hash: string;
-  }[];
+    modelName: string;
+    modelVersionName: string;
+  };
 };
 
 export type CommandActivitiesList = {
@@ -86,12 +89,17 @@ export type CommandActivitiesList = {
   quantity?: number;
 };
 
+export type CommandActivitiesClear = {
+  type: 'activities:clear';
+};
+
 export type CommandRequest =
   | CommandResourcesList
   | CommandResourcesAdd
   | CommandResourcesRemove
   | CommandResourcesAddCancel
-  | CommandActivitiesList;
+  | CommandActivitiesList
+  | CommandActivitiesClear;
 export type Command = CommandRequest & CommandBase;
 
 export type CommandTypes = Command['type'];
@@ -102,6 +110,8 @@ type ResponseBase = {
   status: ResponseStatus;
   progress?: number;
   error?: string;
+  updatedAt?: Date;
+  createdAt: Date;
 };
 
 export type ResponseResourcesList = ResponseBase & {
@@ -110,39 +120,36 @@ export type ResponseResourcesList = ResponseBase & {
     type: ResourceType;
     hash: string;
     name: string;
-    path: string;
+    path?: string;
     hasPreview: string;
+    downloading?: boolean;
   }[];
 };
 
 export type ResponseResourcesAdd = ResponseBase & {
   type: 'resources:add';
-  resources: CommandResourcesAdd['resources'] &
-    {
-      status: ResponseStatus;
-      progress?: number;
-      remainingTime?: number; // seconds
-      speed?: number; // bytes per second
-    }[];
+  resource: CommandResourcesAdd['resource'];
+  remainingTime?: number; // seconds
+  speed?: number; // bytes per second
 };
 
 export type ResponseResourcesAddCancel = ResponseBase & {
-  type: 'resources:add:cancel';
-  resources: CommandResourcesAddCancel['resources'] &
-    {
-      status: ResponseStatus;
-    }[];
+  type: 'activities:cancel';
+  activityId: string;
 };
 
 export type ResponseResourcesRemove = ResponseBase & {
   type: 'resources:remove';
-  resources: CommandResourcesRemove['resources'] & {
-    status: ResponseStatus;
-  };
+  resource: CommandResourcesRemove['resource'];
 };
 
 export type ResponseActivitesList = ResponseBase & {
   type: 'activities:list';
+  activities: Response[];
+};
+
+export type ResponseActivitesClear = ResponseBase & {
+  type: 'activities:clear';
   activities: Response[];
 };
 
@@ -151,4 +158,7 @@ export type Response =
   | ResponseResourcesAdd
   | ResponseResourcesRemove
   | ResponseResourcesAddCancel
-  | ResponseActivitesList;
+  | ResponseActivitesList
+  | ResponseActivitesClear;
+
+export type ActivitiesResponse = ResponseResourcesAdd | ResponseResourcesRemove;
