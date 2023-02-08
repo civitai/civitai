@@ -5,7 +5,7 @@ import React from 'react';
 
 import { AccountsCard } from '~/components/Account/AccountsCard';
 import { ApiKeysCard } from '~/components/Account/ApiKeysCard';
-import { CreatorCard } from '~/components/Account/CreatorCard';
+import { SocialProfileCard } from '~/components/Account/SocialProfileCard';
 import { DeleteCard } from '~/components/Account/DeleteCard';
 import { NotificationsCard } from '~/components/Account/NotificationsCard';
 import { ProfileCard } from '~/components/Account/ProfileCard';
@@ -34,7 +34,7 @@ export default function Account({ providers, isDev = false }: Props) {
             </Text>
           </Stack>
           <ProfileCard />
-          <CreatorCard />
+          <SocialProfileCard />
           <SettingsCard />
           <TagsCard />
           <NotificationsCard />
