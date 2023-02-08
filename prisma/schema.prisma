@@ -457,22 +457,24 @@ enum ReportReason {
 enum ReportStatus {
   Pending
   Processing
-  Valid
-  Invalid
+  Actioned
+  Inactioned
 }
 
 model Report {
-  id        Int            @id @default(autoincrement())
-  userId    Int
-  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reason    ReportReason
-  createdAt DateTime       @default(now())
-  details   Json?
-  status    ReportStatus
-  model     ModelReport?
-  review    ReviewReport?
-  comment   CommentReport?
-  image     ImageReport?
+  id            Int          @id @default(autoincrement())
+  userId        Int
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason        ReportReason
+  createdAt     DateTime     @default(now())
+  details       Json?
+  internalNotes String?
+
+  status  ReportStatus
+  model   ModelReport?
+  review  ReviewReport?
+  comment CommentReport?
+  image   ImageReport?
 }
 
 model ModelReport {
@@ -806,6 +808,8 @@ model Notification {
   details   Json?
   createdAt DateTime  @default(now())
   viewedAt  DateTime?
+
+  @@index([userId])
 }
 
 model UserNotificationSettings {
