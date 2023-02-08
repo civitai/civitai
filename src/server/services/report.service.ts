@@ -1,12 +1,12 @@
 import { Prisma, ReportReason, ReportStatus } from '@prisma/client';
 
 import { prisma } from '~/server/db/client';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CreateReportInput,
   GetReportCountInput,
   GetReportsInput,
   ReportEntity,
-  SetReportStatusInput,
 } from '~/server/schema/report.schema';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
@@ -20,7 +20,7 @@ export const createReport = async ({
     create: {
       ...data,
       userId,
-      status: data.reason === ReportReason.NSFW ? ReportStatus.Valid : ReportStatus.Pending,
+      status: data.reason === ReportReason.NSFW ? ReportStatus.Actioned : ReportStatus.Pending,
     },
   };
 
@@ -137,12 +137,15 @@ export const getReports = async <TSelect extends Prisma.ReportSelect>({
   return getPagingData({ items, count }, take, page);
 };
 
-export const setReportStatus = async ({ id, status }: SetReportStatusInput) => {
-  await prisma.report.update({ where: { id }, data: { status } });
+export const updateReportById = ({
+  id,
+  data,
+}: GetByIdInput & { data: Prisma.ReportUpdateArgs['data'] }) => {
+  return prisma.report.update({ where: { id }, data });
 };
 
-export const getReportCounts = async ({ type }: GetReportCountInput) => {
-  return await prisma.report.count({
+export const getReportCounts = ({ type }: GetReportCountInput) => {
+  return prisma.report.count({
     where: { [type]: { isNot: null }, status: ReportStatus.Pending },
   });
 };

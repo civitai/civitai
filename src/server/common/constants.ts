@@ -30,6 +30,9 @@ export const constants = {
   tagFilterDefaults: {
     trendingTagsLimit: 20,
   },
+  reportingFilterDefaults: {
+    limit: 50,
+  },
 } as const;
 
 export type BaseModel = typeof constants.baseModels[number];

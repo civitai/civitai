@@ -1,9 +1,15 @@
-import { simpleUserSelect } from '~/server/selectors/user.selector';
-import { GetReportsInput, SetReportStatusInput } from './../schema/report.schema';
-import { createReport, getReports, setReportStatus } from './../services/report.service';
-import { throwDbError } from '~/server/utils/errorHandling';
+import { TRPCError } from '@trpc/server';
+
 import { Context } from '~/server/createContext';
-import { CreateReportInput } from '~/server/schema/report.schema';
+import {
+  CreateReportInput,
+  GetReportsInput,
+  SetReportStatusInput,
+  UpdateReportSchema,
+} from '~/server/schema/report.schema';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { createReport, getReports, updateReportById } from '~/server/services/report.service';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export async function createReportHandler({
   input,
@@ -19,28 +25,21 @@ export async function createReportHandler({
   }
 }
 
-export async function setReportStatusHandler({
-  input,
-  ctx,
-}: {
-  input: SetReportStatusInput;
-  ctx: DeepNonNullable<Context>;
-}) {
+export async function setReportStatusHandler({ input }: { input: SetReportStatusInput }) {
   try {
-    return await setReportStatus({ ...input });
+    const { id, status } = input;
+    const report = await updateReportById({ id, data: { status } });
+    if (!report) throw throwNotFoundError(`No report with id ${id}`);
+
+    return report;
   } catch (e) {
-    throw throwDbError(e);
+    if (e instanceof TRPCError) throw e;
+    else throw throwDbError(e);
   }
 }
 
 export type GetReportsProps = AsyncReturnType<typeof getReportsHandler>;
-export async function getReportsHandler({
-  input,
-  ctx,
-}: {
-  input: GetReportsInput;
-  ctx: DeepNonNullable<Context>; // nonNullable because this is a protected controller
-}) {
+export async function getReportsHandler({ input }: { input: GetReportsInput }) {
   try {
     const { items, ...result } = await getReports({
       ...input,
@@ -51,6 +50,7 @@ export async function getReportsHandler({
         createdAt: true,
         details: true,
         status: true,
+        internalNotes: true,
         // model: { select: { modelId: true } },
         // review: { select: { reviewId: true } },
         // comment: { select: { commentId: true } },
@@ -137,3 +137,16 @@ export async function getReportsHandler({
     throw throwDbError(e);
   }
 }
+
+export const updateReportHandler = async ({ input }: { input: UpdateReportSchema }) => {
+  try {
+    const { id, ...data } = input;
+    const report = await updateReportById({ id, data });
+    if (!report) throw throwNotFoundError(`No report with id ${id}`);
+
+    return report;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};

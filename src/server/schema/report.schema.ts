@@ -95,8 +95,15 @@ export const getReportCount = z.object({
 });
 
 export const reportStatusColorScheme: Record<ReportStatus, MantineColor> = {
-  [ReportStatus.Invalid]: 'red',
-  [ReportStatus.Valid]: 'green',
+  [ReportStatus.Inactioned]: 'green',
+  [ReportStatus.Actioned]: 'red',
   [ReportStatus.Processing]: 'orange',
   [ReportStatus.Pending]: 'yellow',
 };
+
+export type UpdateReportSchema = z.infer<typeof updateReportSchema>;
+export const updateReportSchema = z.object({
+  id: z.number(),
+  status: z.nativeEnum(ReportStatus),
+  internalNotes: z.string().nullish(),
+});
