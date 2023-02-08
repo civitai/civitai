@@ -27,9 +27,9 @@ export function getDomainLinkType(url: string) {
   return key;
 }
 
-export function sortDomainLinks<T extends { url: string }>(links?: T[]) {
+export function sortDomainLinks<T extends { url: string }>(links: T[]) {
   return links
-    ?.map((link) => {
+    .map((link) => {
       const domain = getDomainLinkType(link.url);
       return { ...link, domain };
     })

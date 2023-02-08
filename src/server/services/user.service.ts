@@ -27,6 +27,7 @@ export const getUserCreator = async ({ username }: { username: string }) => {
       username: true,
       muted: true,
       bannedAt: true,
+      createdAt: true,
       links: {
         select: {
           url: true,

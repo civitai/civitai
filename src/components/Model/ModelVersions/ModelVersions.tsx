@@ -11,6 +11,7 @@ import {
   Box,
   AspectRatio,
 } from '@mantine/core';
+import { ModelType } from '@prisma/client';
 import { useRouter } from 'next/router';
 import { startCase } from 'lodash';
 import React from 'react';
@@ -38,19 +39,18 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
-import { ModelType } from '@prisma/client';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
 
 const VERSION_IMAGES_LIMIT = 8;
 
 export function ModelVersions({ items, initialTab, nsfw, type }: Props) {
-  const mobile = useIsMobile();
+  const mobile = useIsMobile({ breakpoint: 'md' });
 
   return (
     <Tabs defaultValue={initialTab} orientation={mobile ? 'horizontal' : 'vertical'}>
       <Grid gutter="lg" style={{ flex: 1 }}>
-        <Grid.Col xs={12} sm={3} md={2}>
+        <Grid.Col xs={12} md={2}>
           <Tabs.List>
             {items.map((version) => (
               <Tabs.Tab
@@ -63,7 +63,7 @@ export function ModelVersions({ items, initialTab, nsfw, type }: Props) {
             ))}
           </Tabs.List>
         </Grid.Col>
-        <Grid.Col xs={12} sm={9} md={10}>
+        <Grid.Col xs={12} md={10}>
           {items.map((version) => (
             <Tabs.Panel key={version.id} value={version.id.toString()}>
               <TabContent version={version} nsfw={nsfw} type={type} />
@@ -283,15 +283,6 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
               variant="outline"
               sx={!mobile ? { height: '100%' } : undefined}
               onClick={() =>
-                // router.push({
-                //   pathname: `/gallery/${versionImages[imagesLimit].id}`,
-                //   query: {
-                //     modelId,
-                //     modelVersionId: version.id,
-                //     infinite: false,
-                //     returnUrl: router.asPath,
-                //   },
-                // })
                 openRoutedContext('galleryDetailModal', {
                   galleryImageId: versionImages[imagesLimit].id,
                   modelId: version.modelId,
