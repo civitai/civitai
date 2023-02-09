@@ -17,7 +17,7 @@ import {
 } from '~/server/services/report.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
-export async function createReportHandler({
+export function createReportHandler({
   input,
   ctx,
 }: {
@@ -25,7 +25,7 @@ export async function createReportHandler({
   ctx: DeepNonNullable<Context>;
 }) {
   try {
-    return await createReport({ ...input, userId: ctx.user.id });
+    return createReport({ ...input, userId: ctx.user.id });
   } catch (e) {
     throw throwDbError(e);
   }
@@ -46,7 +46,6 @@ export async function setReportStatusHandler({ input }: { input: SetReportStatus
         status,
         previouslyReviewedCount:
           status === ReportStatus.Actioned ? report.alsoReportedBy.length + 1 : undefined,
-        alsoReportedBy: status === ReportStatus.Actioned ? [] : undefined,
       },
     });
 

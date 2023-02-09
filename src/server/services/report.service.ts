@@ -1,4 +1,4 @@
-import { Prisma, ReportReason, ReportStatus } from '@prisma/client';
+import { Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
 
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -17,12 +17,70 @@ export const getReportById = <TSelect extends Prisma.ReportSelect>({
   return prisma.report.findUnique({ where: { id }, select });
 };
 
+const validateReportCreation = async ({
+  userId,
+  reportType,
+  entityReportId,
+  reason,
+}: {
+  userId: number;
+  reportType: 'model' | 'review' | 'comment' | 'image';
+  entityReportId: number;
+  reason: ReportReason;
+}): Promise<Report | null> => {
+  // Look if there's already a report for this type with the same reason
+  const existingReport = await prisma.report.findFirst({
+    where: { reason, [reportType]: { [`${reportType}Id`]: entityReportId } },
+    orderBy: { id: 'desc' },
+  });
+  if (!existingReport) return null;
+
+  const { id, alsoReportedBy, previouslyReviewedCount } = existingReport;
+  // if alsoReportedBy includes the userId, then do nothing
+  if (alsoReportedBy.includes(userId)) return existingReport;
+
+  // if alsoReportedBy count is greater than previouslyReviewedCount * 2,
+  // then set the status to pending and reset the previouslyReviewedCount
+  if (previouslyReviewedCount > 0 && alsoReportedBy.length >= previouslyReviewedCount * 2) {
+    const updatedReport = await prisma.report.update({
+      where: { id },
+      data: {
+        status: ReportStatus.Pending,
+        previouslyReviewedCount: 0,
+        alsoReportedBy: [...alsoReportedBy, userId],
+      },
+    });
+
+    return updatedReport;
+  }
+
+  const updatedReport = await prisma.report.update({
+    where: { id },
+    data: {
+      alsoReportedBy: [...alsoReportedBy, userId],
+    },
+  });
+
+  return updatedReport;
+};
+
 export const createReport = async ({
   userId,
   type,
   id,
   ...data
 }: CreateReportInput & { userId: number }) => {
+  const validReport =
+    data.reason !== ReportReason.NSFW
+      ? await validateReportCreation({
+          userId,
+          reportType: type,
+          entityReportId: id,
+          reason: data.reason,
+        })
+      : null;
+  if (validReport) return validReport;
+
   const report: Prisma.ReportCreateNestedOneWithoutModelInput = {
     create: {
       ...data,
@@ -31,61 +89,11 @@ export const createReport = async ({
     },
   };
 
-  const toUpdate =
-    data.reason === ReportReason.NSFW
-      ? { nsfw: true }
-      : data.reason === ReportReason.TOSViolation
-      ? { tosViolation: true }
-      : undefined;
+  const toUpdate = data.reason === ReportReason.NSFW ? { nsfw: true } : undefined;
 
-  await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
     switch (type) {
       case ReportEntity.Model:
-        // look if there's already a report for this model with the same reason
-        const existingReport = await tx.modelReport.findFirst({
-          where: {
-            modelId: id,
-            report: { reason: data.reason },
-          },
-          select: {
-            report: {
-              select: {
-                id: true,
-                alsoReportedBy: true,
-                previouslyReviewedCount: true,
-                status: true,
-              },
-            },
-          },
-        });
-
-        if (existingReport) {
-          // if there is, just update the report
-          const { id, alsoReportedBy, previouslyReviewedCount } = existingReport.report;
-          // if alsoReportedBy count is larger than previouslyReviewedCount * 2, then set the status to pending and reset the previouslyReviewedCount
-          if (previouslyReviewedCount > 0 && alsoReportedBy.length > previouslyReviewedCount * 2) {
-            await tx.report.update({
-              where: { id },
-              data: { status: ReportStatus.Pending, previouslyReviewedCount: 0 },
-            });
-
-            break;
-          }
-
-          const newAlsoReportedBy = !alsoReportedBy.includes(userId)
-            ? [...alsoReportedBy, userId]
-            : alsoReportedBy;
-
-          await tx.report.update({
-            where: { id },
-            data: {
-              alsoReportedBy: newAlsoReportedBy,
-            },
-          });
-
-          break;
-        }
-
         await tx.modelReport.create({
           data: {
             model: { connect: { id } },

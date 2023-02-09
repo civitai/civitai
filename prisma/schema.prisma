@@ -523,7 +523,7 @@ enum ReportStatus {
   Pending
   Processing
   Actioned
-  Inactioned
+  Unactioned
 }
 
 model Report {
