@@ -11,6 +11,7 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext } from '@dnd-kit/sortable';
 import {
+  Alert,
   createStyles,
   Group,
   Input,
@@ -29,6 +30,7 @@ import {
   Loader,
   Center,
   Overlay,
+  Tabs,
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
@@ -345,76 +347,107 @@ function ImageMetaPopover({
   return (
     <Popover opened={opened} onClose={handleClose} withArrow withinPortal width={400}>
       <Popover.Target>{cloneElement(children, { onClick: handleClose })}</Popover.Target>
-      <Popover.Dropdown>
-        <Title order={4}>Generation details</Title>
-        <Grid gutter="xs">
-          <Grid.Col span={12}>
-            <Textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              label="Prompt"
-              autosize
-              maxRows={3}
-            />
-          </Grid.Col>
-          <Grid.Col span={12}>
-            <Textarea
-              value={negativePrompt}
-              onChange={(e) => setNegativePrompt(e.target.value)}
-              label="Negative prompt"
-              autosize
-              maxRows={3}
-            />
-          </Grid.Col>
-          <Grid.Col span={6}>
-            <NumberInput
-              value={cfgScale}
-              onChange={(number) => setCfgScale(number)}
-              label="Guidance scale"
-              min={0}
-              max={30}
-            />
-          </Grid.Col>
-          <Grid.Col span={6}>
-            <NumberInput value={steps} onChange={(value) => setSteps(value)} label="Steps" />
-          </Grid.Col>
-          <Grid.Col span={6}>
-            <Select
-              clearable
-              searchable
-              data={[
-                'Euler a',
-                'Euler',
-                'LMS',
-                'Heun',
-                'DPM2',
-                'DPM2 a',
-                'DPM++ 2S a',
-                'DPM++ 2M',
-                'DPM++ SDE',
-                'DPM fast',
-                'DPM adaptive',
-                'LMS Karras',
-                'DPM2 Karras',
-                'DPM2 a Karras',
-                'DPM++ 2S a Karras',
-                'DPM++ 2M Karras',
-                'DPM++ SDE Karras',
-                'DDIM',
-                'PLMS',
-              ]}
-              value={sampler}
-              onChange={(value) => setSampler(value ?? undefined)}
-              label="Sampler"
-            />
-          </Grid.Col>
-          <Grid.Col span={6}>
-            <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
-          </Grid.Col>
-        </Grid>
-        <Button mt="xs" fullWidth onClick={() => handleSubmit()}>
-          Save
-        </Button>
+      <Popover.Dropdown p={0}>
+        <Tabs defaultValue="tags">
+          <Tabs.List grow>
+            <Tabs.Tab value="tags">Tags</Tabs.Tab>
+            <Tabs.Tab value="metadata">Generation Details</Tabs.Tab>
+          </Tabs.List>
+          <Tabs.Panel value="tags" p="xs">
+            <Stack>
+              <Alert withCloseButton closeButtonLabel="Close alert">
+                These tags are used to help showcase your work in the right communities. Good tags
+                will help your image get more love!
+              </Alert>
+              <Select
+                label="Main Category"
+                placeholder="Select a category"
+                data={['Anime', 'Landscapes', 'Portraits', 'Painting', 'Punk', 'Futuristic']}
+                searchable
+              />
+              <Select
+                label="Tags"
+                placeholder="Select tags"
+                data={['Anime', 'Landscapes', 'Portraits', 'Painting', 'Punk', 'Futuristic']}
+                searchable
+                multiple
+              />
+              <Button mt="xs" fullWidth onClick={() => handleSubmit()}>
+                Save
+              </Button>
+            </Stack>
+          </Tabs.Panel>
+          <Tabs.Panel value="metadata" p="xs">
+            <Grid gutter="xs">
+              <Grid.Col span={12}>
+                <Textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  label="Prompt"
+                  autosize
+                  maxRows={3}
+                />
+              </Grid.Col>
+              <Grid.Col span={12}>
+                <Textarea
+                  value={negativePrompt}
+                  onChange={(e) => setNegativePrompt(e.target.value)}
+                  label="Negative prompt"
+                  autosize
+                  maxRows={3}
+                />
+              </Grid.Col>
+              <Grid.Col span={6}>
+                <NumberInput
+                  value={cfgScale}
+                  onChange={(number) => setCfgScale(number)}
+                  label="Guidance scale"
+                  min={0}
+                  max={30}
+                />
+              </Grid.Col>
+              <Grid.Col span={6}>
+                <NumberInput value={steps} onChange={(value) => setSteps(value)} label="Steps" />
+              </Grid.Col>
+              <Grid.Col span={6}>
+                <Select
+                  clearable
+                  searchable
+                  data={[
+                    'Euler a',
+                    'Euler',
+                    'LMS',
+                    'Heun',
+                    'DPM2',
+                    'DPM2 a',
+                    'DPM++ 2S a',
+                    'DPM++ 2M',
+                    'DPM++ SDE',
+                    'DPM fast',
+                    'DPM adaptive',
+                    'LMS Karras',
+                    'DPM2 Karras',
+                    'DPM2 a Karras',
+                    'DPM++ 2S a Karras',
+                    'DPM++ 2M Karras',
+                    'DPM++ SDE Karras',
+                    'DDIM',
+                    'PLMS',
+                  ]}
+                  value={sampler}
+                  onChange={(value) => setSampler(value ?? undefined)}
+                  label="Sampler"
+                />
+              </Grid.Col>
+              <Grid.Col span={6}>
+                <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
+              </Grid.Col>
+            </Grid>
+            <Button mt="xs" fullWidth onClick={() => handleSubmit()}>
+              Save
+            </Button>
+          </Tabs.Panel>
+        </Tabs>
       </Popover.Dropdown>
     </Popover>
   );
