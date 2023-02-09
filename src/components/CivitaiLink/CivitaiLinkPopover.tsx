@@ -44,10 +44,7 @@ export function CivitaiLinkPopover() {
 */
 
 function LinkDropdown() {
-  const { selectedInstance, connected } = useCivitaiLink();
-  const ids = useCivitaiLinkStore((state) => state.ids);
-  const { classes } = useCivitaiLinkDropdownStyles();
-  const hasSelectedInstance = false; // TODO.temp - update references with references to `selectedInstance`
+  const { selectedInstance, connected, socketConnected, instances } = useCivitaiLink();
   return (
     <Paper style={{ overflow: 'hidden' }}>
       <Stack spacing={0}>
@@ -60,49 +57,17 @@ function LinkDropdown() {
           <IconSettings />
         </ActionIcon> */}
         </Group>
-        <Text color="dimmed" size="xs">
-          {selectedInstance?.name}
-        </Text>
+        {selectedInstance && (
+          <Text color="dimmed" size="xs">
+            {selectedInstance?.name}
+          </Text>
+        )}
       </Stack>
       <Divider />
-      {connected ? (
-        <>
-          {hasSelectedInstance ? (
-            ids.length > 0 ? (
-              <ScrollArea.Autosize maxHeight={410}>
-                {ids.map((id) => (
-                  <LinkActivity key={id} id={id} p="xs" pr="sm" className={classes.linkActivity} />
-                ))}
-              </ScrollArea.Autosize>
-            ) : (
-              <Center p="lg">
-                <Text color="dimmed">No activity history for this instance</Text>
-              </Center>
-            )
-          ) : (
-            <Stack p="xs">
-              <Text size="sm">
-                Manage your Automatic1111 Stable Diffusion instance right from Civitai. Add and
-                remove resources while you browse the site. More to come soon!
-              </Text>
-            </Stack>
-          )}
-          {/* TODO.civitai-link - figure out what needs to change for managing multiple instances  */}
-          {!hasSelectedInstance && (
-            <>
-              <Divider />
-              <Stack>
-                <Button
-                  leftIcon={<IconPlus size={18} />}
-                  radius={0}
-                  onClick={() => openContext('civitai-link-wizard', {})}
-                >
-                  {hasSelectedInstance ? 'Connect new stable diffusion instance' : 'Get Started'}
-                </Button>
-              </Stack>
-            </>
-          )}
-        </>
+      {!instances.length ? (
+        <GetStarted />
+      ) : connected ? ( // TODO - instance connected?
+        <ActivityList />
       ) : (
         <Center p="xl">
           <Text color="dimmed">Not connected</Text>
@@ -112,7 +77,49 @@ function LinkDropdown() {
   );
 }
 
-const useCivitaiLinkDropdownStyles = createStyles((theme) => ({
+function GetStarted() {
+  return (
+    <>
+      <Stack p="xs">
+        <Text size="sm">
+          Manage your Automatic1111 Stable Diffusion instance right from Civitai. Add and remove
+          resources while you browse the site. More to come soon!
+        </Text>
+      </Stack>
+      <Divider />
+      <Stack>
+        <Button
+          leftIcon={<IconPlus size={18} />}
+          radius={0}
+          onClick={() => openContext('civitai-link-wizard', {})}
+        >
+          Get Started
+        </Button>
+      </Stack>
+    </>
+  );
+}
+
+function ActivityList() {
+  const { selectedInstance } = useCivitaiLink();
+  const ids = useCivitaiLinkStore((state) => state.ids);
+  const { classes } = useActivityListStyles();
+  return selectedInstance?.connected ? (
+    ids.length > 0 ? (
+      <ScrollArea.Autosize maxHeight={410}>
+        {ids.map((id) => (
+          <LinkActivity key={id} id={id} p="xs" pr="sm" className={classes.linkActivity} />
+        ))}
+      </ScrollArea.Autosize>
+    ) : (
+      <Center p="lg">
+        <Text color="dimmed">No activity history for this instance</Text>
+      </Center>
+    )
+  ) : null;
+}
+
+const useActivityListStyles = createStyles((theme) => ({
   linkActivity: {
     '&:nth-of-type(2n + 1)': {
       backgroundColor: theme.colors.dark[6],
@@ -121,11 +128,16 @@ const useCivitaiLinkDropdownStyles = createStyles((theme) => ({
 }));
 
 function LinkButton() {
-  const { connected } = useCivitaiLink();
-
+  // only show the connected indicator if there are any instances
+  const { connected, instances } = useCivitaiLink();
+  const showIndicator = instances.length > 0;
   return (
     <ActionIcon>
-      <Indicator color={connected ? 'green' : 'orange'}>
+      <Indicator
+        color={connected ? 'green' : 'orange'}
+        showZero={showIndicator}
+        dot={showIndicator}
+      >
         <IconLink />
       </Indicator>
     </ActionIcon>

@@ -19,7 +19,6 @@ import { IconCheck, IconChevronRight, IconCopy } from '@tabler/icons';
 import { useState } from 'react';
 import { z } from 'zod';
 import {
-  createLinkInstance,
   useCreateLinkInstance,
   useUpdateLinkInstance,
 } from '~/components/CivitaiLink/civitai-link-api';
@@ -33,11 +32,12 @@ const schema = z.object({
 
 const { openModal, Modal } = createContextModal({
   name: 'civitai-link-wizard',
-  title: 'Civitai Link Setup',
-  closeOnClickOutside: false,
+  // title: 'Civitai Link Setup',
   size: 800,
+  withCloseButton: false,
+  closeOnClickOutside: false,
   Element: ({ context, props }) => {
-    const [key, setKey] = useState<string>('TEST_KEY');
+    const [key, setKey] = useState<string>();
     const [active, setActive] = useState(0);
     const nextStep = () => setActive((current) => (current < 2 ? current + 1 : current));
     const prevStep = () => setActive((current) => (current > 0 ? current - 1 : current));
@@ -66,12 +66,20 @@ const { openModal, Modal } = createContextModal({
     };
 
     const handleSubmit = (data: z.infer<typeof schema>) => {
-      if (selectedInstance) updateLinkInstance({ ...data, id: selectedInstance.id });
+      if (selectedInstance)
+        updateLinkInstance(
+          { ...data, id: selectedInstance.id },
+          {
+            onSuccess: () => {
+              context.close();
+            },
+          }
+        );
     };
 
     return (
       <>
-      {/* TODO.civitai-link - determine different variable to use here... `connected` is not correct */}
+        {/* TODO.civitai-link - determine different variable to use here... `connected` is not correct */}
         {!connected ? (
           <Stepper
             active={active}
@@ -161,9 +169,9 @@ const { openModal, Modal } = createContextModal({
           </Stepper>
         ) : (
           <Center>
-            <Stack>
-              <Stack spacing={0} justify="center">
-                <ThemeIcon color="green">
+            <Stack p="xl">
+              <Stack spacing={0} justify="center" align="center">
+                <ThemeIcon color="green" size="xl" radius="xl">
                   <IconCheck />
                 </ThemeIcon>
                 <Title align="center">{`You're connected!`}</Title>

@@ -3,9 +3,8 @@ import { Socket } from 'socket.io-client';
 export type ClientType = 'client' | 'sd';
 
 export interface ServerToClientEvents {
-  joined: (msg: { type: ClientType }) => void;
+  roomPresence: (msg: { client: number; sd: number }) => void;
   upgradeKey: (msg: { key: string }) => void;
-  linkStatus: (active: boolean) => void;
   error: (msg: { msg: string }) => void;
   command: (payload: Command) => void;
   commandStatus: (payload: Response) => void;

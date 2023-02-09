@@ -22,7 +22,6 @@ import '~/styles/globals.css';
 import { CustomModalsProvider } from './../providers/CustomModalsProvider';
 import { TosProvider } from '~/providers/TosProvider';
 import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
-import { RoutedContextProvider } from '~/routed-context/routed-context.provider';
 import { env } from '~/env/client.mjs';
 import { MaintenanceMode } from '~/components/MaintenanceMode/MaintenanceMode';
 import { NsfwWorkerProvider } from '~/providers/NsfwWorkerProvider';
@@ -50,6 +49,10 @@ type CustomAppProps = {
   cookies: CookiesContext;
   flags: FeatureFlags;
 }>;
+
+// export function ConditionalProvider({ children, provider, condition }) {
+//   return condition ? provider({ children }) : children;
+// }
 
 const isDevelopment = process.env.NODE_ENV === 'development';
 function MyApp(props: CustomAppProps) {
@@ -80,20 +83,19 @@ function MyApp(props: CustomAppProps) {
     <>
       <ClientHistoryStore />
       <SessionProvider session={session}>
+        {/* {flags.civitaiLink && <CivitaiLinkProvider />} */}
         <CookiesProvider value={cookies}>
           <FeatureFlagsProvider flags={flags}>
             <NsfwWorkerProvider>
-              <CustomModalsProvider>
-                <NotificationsProvider>
-                  {/* <RoutedContextProvider> */}
-                  {/* TODO.civitai-link - dont' use provider if they don't have the flag */}
-                  <CivitaiLinkProvider>
+              {/* TODO.civitai-link - dont' use provider if they don't have the flag */}
+              <CivitaiLinkProvider>
+                <CustomModalsProvider>
+                  <NotificationsProvider>
                     <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                  </CivitaiLinkProvider>
-                  <RoutedContextProvider2 />
-                  {/* </RoutedContextProvider> */}
-                </NotificationsProvider>
-              </CustomModalsProvider>
+                    <RoutedContextProvider2 />
+                  </NotificationsProvider>
+                </CustomModalsProvider>
+              </CivitaiLinkProvider>
             </NsfwWorkerProvider>
           </FeatureFlagsProvider>
         </CookiesProvider>

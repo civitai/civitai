@@ -23,7 +23,12 @@ type IncomingMessage =
   | { type: 'leave' }
   | { type: 'command'; payload: Command };
 
-type Instance = { key: string | null; connected: boolean };
+type Instance = {
+  key: string | null;
+  connected: boolean;
+  sdConnected: boolean;
+  clientsConnected: number;
+};
 
 // --------------------------------
 // Setup Socket
@@ -49,6 +54,8 @@ let initialized = false;
 const instance: Instance = {
   key: null,
   connected: false,
+  sdConnected: false,
+  clientsConnected: 0,
 };
 let resources: ResponseResourcesList['resources'] = [];
 let activities: Response[] = [];
@@ -61,6 +68,7 @@ const sharedCallbacks = {
   error: [] as ((msg: string) => void)[],
   message: [] as ((msg: string) => void)[],
   completion: [] as ((response: Response) => void)[],
+  socketConnection: [] as ((connected: boolean) => void)[],
 };
 const onUpdate = (type: 'resources' | 'activities' | 'instance', cb: () => void) => {
   sharedCallbacks[type].push(cb);
@@ -82,6 +90,15 @@ const updateSharedValue = ({ type, value }: UpdateSharedValueProps) => {
     if (value.connected) instance.connected = value.connected;
     sharedCallbacks.instance.forEach((cb) => cb());
   }
+};
+
+// Shared socket connection events
+const onSocketConnection = (cb: (connected: boolean) => void) => {
+  sharedCallbacks.socketConnection.push(cb);
+};
+const emitSocketConnection = (connected: boolean) => {
+  console.log('emitSocketConnection', { connected });
+  sharedCallbacks.socketConnection.forEach((cb) => cb(connected));
 };
 
 // Shared completion events
@@ -114,8 +131,16 @@ const emitMessage = (msg: string) => {
 // --------------------------------
 // Handle Socket Events
 // --------------------------------
-socket.on('linkStatus', (active: boolean) => {
-  updateSharedValue({ type: 'instance', value: { connected: active } });
+socket.on('connect', () => {
+  emitSocketConnection(true);
+  if (instance.key) {
+    // rejoin if key is set
+    handleJoin(instance.key);
+    handleInitialization();
+  }
+});
+socket.on('disconnect', () => {
+  emitSocketConnection(false);
 });
 
 const completedStatuses: ResponseStatus[] = ['canceled', 'error', 'success'];
@@ -154,9 +179,14 @@ socket.on('error', ({ msg }) => {
   emitError(msg);
 });
 
-socket.on('joined', ({ type }) => {
-  if (type === 'client') return; // ignore client joins
-  else if (type === 'sd') emitMessage('Stable Diffusion service connected');
+socket.on('roomPresence', ({ client, sd }) => {
+  if (!instance.sdConnected && sd > 0) emitMessage('Stable Diffusion service connected');
+  else if (instance.sdConnected && sd === 0) emitMessage('Stable Diffusion service disconnected');
+
+  updateSharedValue({
+    type: 'instance',
+    value: { sdConnected: sd > 0, clientsConnected: client, connected: sd > 0 && client > 0 },
+  });
 });
 
 // --------------------------------
@@ -179,7 +209,10 @@ const handleJoin = (key: string) => {
 const handleLeave = () => {
   if (!instance.key) return;
   socket.emit('leave');
-  updateSharedValue({ type: 'instance', value: { key: null, connected: false } });
+  updateSharedValue({
+    type: 'instance',
+    value: { key: null, sdConnected: false, clientsConnected: 0, connected: false },
+  });
 };
 
 const handleCommand = (payload: Command) => {
@@ -217,6 +250,10 @@ const start = (port: MessagePort) => {
   port.postMessage({ type: 'activitiesUpdate', payload: activities });
   onUpdate('activities', () => {
     port.postMessage({ type: 'activitiesUpdate', payload: activities });
+  });
+  port.postMessage({ type: 'socketConnection', payload: socket.connected });
+  onSocketConnection((connected) => {
+    port.postMessage({ type: 'socketConnection', payload: connected });
   });
 
   port.onmessage = ({ data }: { data: IncomingMessage }) => {

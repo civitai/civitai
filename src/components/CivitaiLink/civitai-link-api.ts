@@ -44,7 +44,7 @@ const clFetch = async (url: string, options: RequestInit = {}) => {
 };
 
 export const getLinkInstances = async () => {
-  return links; // TODO.civitai-link - comment this out
+  // return links; // TODO.civitai-link - comment this out
   return (await clFetch('/api/link')) as CivitaiLinkInstance[];
 };
 
@@ -69,7 +69,6 @@ export const createLinkInstance = async (data?: { id?: number }) => {
 export const useCreateLinkInstance = () => {
   return useMutation(createLinkInstance, {
     onSuccess: async (result) => {
-      console.log(1);
       await queryClient.invalidateQueries({ queryKey });
     },
   });
