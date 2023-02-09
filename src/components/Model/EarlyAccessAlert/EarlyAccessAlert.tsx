@@ -65,7 +65,6 @@ export function EarlyAccessAlert({ versionId, modelType, deadline }: Props) {
   if (!inEarlyAccess || currentUser?.isMember) return null;
 
   return (
-    // TODO justin: Handle sending the notification when deadline is reached
     <AlertWithIcon color="green" iconColor="green" icon={<IconAlertCircle />}>
       {`This ${splitUppercase(
         modelType
