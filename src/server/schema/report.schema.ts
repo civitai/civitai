@@ -95,7 +95,7 @@ export const getReportCount = z.object({
 });
 
 export const reportStatusColorScheme: Record<ReportStatus, MantineColor> = {
-  [ReportStatus.Inactioned]: 'green',
+  [ReportStatus.Unactioned]: 'green',
   [ReportStatus.Actioned]: 'red',
   [ReportStatus.Processing]: 'orange',
   [ReportStatus.Pending]: 'yellow',
