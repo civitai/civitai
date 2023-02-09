@@ -44,7 +44,7 @@ export function CivitaiLinkPopover() {
 */
 
 function LinkDropdown() {
-  const { selectedInstance, connected, socketConnected, instances } = useCivitaiLink();
+  const { instance: selectedInstance, connected, socketConnected, instances } = useCivitaiLink();
   return (
     <Paper style={{ overflow: 'hidden' }}>
       <Stack spacing={0}>
@@ -101,7 +101,7 @@ function GetStarted() {
 }
 
 function ActivityList() {
-  const { selectedInstance } = useCivitaiLink();
+  const { instance: selectedInstance } = useCivitaiLink();
   const ids = useCivitaiLinkStore((state) => state.ids);
   const { classes } = useActivityListStyles();
   return selectedInstance?.connected ? (

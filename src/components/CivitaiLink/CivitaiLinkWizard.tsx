@@ -18,10 +18,6 @@ import {
 import { IconCheck, IconChevronRight, IconCopy } from '@tabler/icons';
 import { useState } from 'react';
 import { z } from 'zod';
-import {
-  useCreateLinkInstance,
-  useUpdateLinkInstance,
-} from '~/components/CivitaiLink/civitai-link-api';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { Form, InputText, useForm } from '~/libs/form';
@@ -37,7 +33,6 @@ const { openModal, Modal } = createContextModal({
   withCloseButton: false,
   closeOnClickOutside: false,
   Element: ({ context, props }) => {
-    const [key, setKey] = useState<string>();
     const [active, setActive] = useState(0);
     const nextStep = () => setActive((current) => (current < 2 ? current + 1 : current));
     const prevStep = () => setActive((current) => (current > 0 ? current - 1 : current));
@@ -46,35 +41,22 @@ const { openModal, Modal } = createContextModal({
       schema,
     });
 
-    const { connected, selectInstance, selectedInstance } = useCivitaiLink();
-    const { mutate: createLinkInstance, isLoading: isCreatingLinkInstance } =
-      useCreateLinkInstance();
-    const { mutate: updateLinkInstance, isLoading: isUpdatingLinkInstance } =
-      useUpdateLinkInstance();
+    const {
+      connected,
+      instance: selectedInstance,
+      createInstance,
+      renameInstance,
+    } = useCivitaiLink();
 
     const handleCreateInstance = () => {
       nextStep();
-      if (!key && !isCreatingLinkInstance) {
-        createLinkInstance(undefined, {
-          onSuccess: (result) => {
-            selectInstance({ key: result.key });
-            setKey(result.key);
-            nextStep();
-          },
-        });
-      }
+      createInstance();
     };
 
     const handleSubmit = (data: z.infer<typeof schema>) => {
-      if (selectedInstance)
-        updateLinkInstance(
-          { ...data, id: selectedInstance.id },
-          {
-            onSuccess: () => {
-              context.close();
-            },
-          }
-        );
+      if (!selectedInstance?.id) return;
+      renameInstance(selectedInstance.id, data.name);
+      context.close();
     };
 
     return (
@@ -123,7 +105,6 @@ const { openModal, Modal } = createContextModal({
                   <Button
                     onClick={handleCreateInstance}
                     leftIcon={<IconChevronRight />}
-                    loading={isCreatingLinkInstance}
                   >{`Ok, it's installed`}</Button>
                 </Group>
               </Stack>
@@ -136,8 +117,8 @@ const { openModal, Modal } = createContextModal({
                 </Text>
                 <Text> Paste this code into the Civitai Link settings and save.</Text>
                 <Center>
-                  {key ? (
-                    <CopyButton value={key}>
+                  {selectedInstance?.key ? (
+                    <CopyButton value={selectedInstance.key}>
                       {({ copied, copy }) => (
                         <Tooltip label="copy">
                           <Button
@@ -145,7 +126,7 @@ const { openModal, Modal } = createContextModal({
                             onClick={copy}
                             rightIcon={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
                           >
-                            {!copied ? key : 'Copied'}
+                            {!copied ? selectedInstance.key : 'Copied'}
                           </Button>
                         </Tooltip>
                       )}
@@ -184,9 +165,7 @@ const { openModal, Modal } = createContextModal({
                     label="Name your stable diffusion instance"
                     placeholder="name"
                   />
-                  <Button type="submit" loading={isUpdatingLinkInstance}>
-                    Save
-                  </Button>
+                  <Button type="submit">Save</Button>
                 </Stack>
               </Form>
             </Stack>

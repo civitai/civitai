@@ -3,6 +3,7 @@ import { Socket } from 'socket.io-client';
 export type ClientType = 'client' | 'sd';
 
 export interface ServerToClientEvents {
+  kicked: () => void;
   roomPresence: (msg: { client: number; sd: number }) => void;
   upgradeKey: (msg: { key: string }) => void;
   error: (msg: { msg: string }) => void;

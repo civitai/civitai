@@ -6,9 +6,23 @@ import {
   Response,
   ResponseResourcesList,
   ResponseStatus,
+  ActivitiesResponse,
 } from '~/components/CivitaiLink/shared-types';
 import { env } from '~/env/client.mjs';
 import { v4 as uuid } from 'uuid';
+import {
+  CivitaiLinkInstance,
+  createLinkInstance,
+  deleteLinkInstance,
+  getLinkInstances,
+  updateLinkInstance,
+} from '~/components/CivitaiLink/civitai-link-api';
+import {
+  WorkerIncomingMessage,
+  Instance,
+  WorkerOutgoingMessage,
+} from '~/workers/civitai-link-worker-types';
+import { get, set, del } from 'idb-keyval';
 
 // --------------------------------
 // Types
@@ -17,18 +31,6 @@ interface SharedWorkerGlobalScope {
   onconnect: (event: MessageEvent) => void;
 }
 const _self: SharedWorkerGlobalScope = self as any;
-
-type IncomingMessage =
-  | { type: 'join'; key: string }
-  | { type: 'leave' }
-  | { type: 'command'; payload: Command };
-
-type Instance = {
-  key: string | null;
-  connected: boolean;
-  sdConnected: boolean;
-  clientsConnected: number;
-};
 
 // --------------------------------
 // Setup Socket
@@ -50,32 +52,38 @@ const sendCommand = (payload: Omit<Command, 'id' | 'createdAt'>) => {
 // --------------------------------
 // Setup shared state
 // --------------------------------
-let initialized = false;
-const instance: Instance = {
+const defaultInstance: Instance = {
+  id: null,
   key: null,
+  name: null,
   connected: false,
   sdConnected: false,
   clientsConnected: 0,
 };
+let initialized: number | null = null;
+let instance: Instance = { ...defaultInstance };
+let instances: CivitaiLinkInstance[] = [];
 let resources: ResponseResourcesList['resources'] = [];
-let activities: Response[] = [];
+let activities: ActivitiesResponse[] = [];
 
 // Shared value events
 const sharedCallbacks = {
   resources: [] as (() => void)[],
   activities: [] as (() => void)[],
   instance: [] as (() => void)[],
+  instances: [] as (() => void)[],
   error: [] as ((msg: string) => void)[],
   message: [] as ((msg: string) => void)[],
   completion: [] as ((response: Response) => void)[],
   socketConnection: [] as ((connected: boolean) => void)[],
 };
-const onUpdate = (type: 'resources' | 'activities' | 'instance', cb: () => void) => {
+const onUpdate = (type: UpdateSharedValueProps['type'], cb: () => void) => {
   sharedCallbacks[type].push(cb);
 };
 type UpdateSharedValueProps =
   | { type: 'resources'; value: ResponseResourcesList['resources'] }
-  | { type: 'activities'; value: Response[] }
+  | { type: 'activities'; value: ActivitiesResponse[] }
+  | { type: 'instances'; value: CivitaiLinkInstance[] }
   | { type: 'instance'; value: Partial<Instance> };
 const updateSharedValue = ({ type, value }: UpdateSharedValueProps) => {
   console.log('updateSharedValue', { type, value });
@@ -86,9 +94,11 @@ const updateSharedValue = ({ type, value }: UpdateSharedValueProps) => {
     activities = value;
     sharedCallbacks.activities.forEach((cb) => cb());
   } else if (type === 'instance') {
-    if (value.key) instance.key = value.key;
-    if (value.connected) instance.connected = value.connected;
+    instance = { ...instance, ...value };
     sharedCallbacks.instance.forEach((cb) => cb());
+  } else if (type === 'instances') {
+    instances = value;
+    sharedCallbacks.instances.forEach((cb) => cb());
   }
 };
 
@@ -128,15 +138,39 @@ const emitMessage = (msg: string) => {
   sharedCallbacks.message.forEach((cb) => cb(msg));
 };
 
+// Storage
+const storageKey = 'cl-id';
+const storeInstanceId = async () => {
+  if (!instance.id) {
+    console.log(`${storageKey}: clear`);
+    await del(storageKey);
+  } else {
+    console.log(`${storageKey}: ${instance.id}`);
+    await set(storageKey, instance.id.toString());
+  }
+};
+
+const getStoredInstanceId = async () => {
+  const id = await get(storageKey);
+  console.log(`${storageKey}: ${id}`);
+  if (!id) return null;
+  return Number(id);
+};
+
+// --------------------------------
+// Handle Instance Events
+// --------------------------------
+
 // --------------------------------
 // Handle Socket Events
 // --------------------------------
 socket.on('connect', () => {
+  socket.emit('iam', { type: 'client' });
   emitSocketConnection(true);
-  if (instance.key) {
-    // rejoin if key is set
-    handleJoin(instance.key);
-    handleInitialization();
+  if (instance.id) {
+    // rejoin if id is set
+    initialized = null;
+    handleJoin(instance.id);
   }
 });
 socket.on('disconnect', () => {
@@ -152,16 +186,16 @@ socket.on('commandStatus', (payload: Response) => {
     return;
   }
 
-  let value: Response[] = [];
+  let value: ActivitiesResponse[] = [];
   if (payload.type === 'activities:list' || payload.type === 'activities:clear') {
-    value = payload.activities;
+    value = payload.activities as ActivitiesResponse[];
   } else {
     let found = false;
     for (const activity of activities) {
       if (activity.id !== payload.id) value.push(activity);
       else {
         found = true;
-        value.push(payload);
+        value.push(payload as ActivitiesResponse);
 
         // emit completion if status changed to a completed status
         const activityCompleted =
@@ -169,10 +203,22 @@ socket.on('commandStatus', (payload: Response) => {
         if (activityCompleted) emitCompletion(payload);
       }
     }
-    if (!found) value.push(payload);
+    if (!found) value.push(payload as ActivitiesResponse);
   }
 
   updateSharedValue({ type: 'activities', value });
+});
+
+socket.on('upgradeKey', ({ key }) => {
+  const match = instances.find((x) => x.id === instance.id);
+  if (match) match.key = key;
+
+  updateSharedValue({ type: 'instance', value: { key } });
+});
+
+socket.on('kicked', () => {
+  updateSharedValue({ type: 'instance', value: defaultInstance });
+  storeInstanceId();
 });
 
 socket.on('error', ({ msg }) => {
@@ -180,39 +226,51 @@ socket.on('error', ({ msg }) => {
 });
 
 socket.on('roomPresence', ({ client, sd }) => {
+  console.log('roomPresence', { client, sd });
   if (!instance.sdConnected && sd > 0) emitMessage('Stable Diffusion service connected');
   else if (instance.sdConnected && sd === 0) emitMessage('Stable Diffusion service disconnected');
 
+  const connected = sd > 0 && client > 0;
+  if (connected && !instance.connected) handleInitialization();
+  else if (!connected && instance.connected) initialized = null;
   updateSharedValue({
     type: 'instance',
-    value: { sdConnected: sd > 0, clientsConnected: client, connected: sd > 0 && client > 0 },
+    value: { sdConnected: sd > 0, clientsConnected: client, connected },
   });
 });
 
 // --------------------------------
 // Handle Incoming Messages
 // --------------------------------
-const handleJoin = (key: string) => {
-  if (instance.key === key && instance.connected) return;
+const handleJoin = (id: number) => {
+  if (instance.id === id && instance.connected) return;
+
+  const targetInstance = instances.find((i) => i.id === id);
+  if (!targetInstance) {
+    emitError('Could not find instance');
+    return;
+  }
+  const { key, name } = targetInstance;
 
   if (!socket.connected) {
     socket.connect();
     socket.emit('iam', { type: 'client' });
   }
 
-  socket.emit('join', key, ({ success, msg }) => {
-    updateSharedValue({ type: 'instance', value: { key } });
+  socket.emit('join', targetInstance.key, ({ success, msg }) => {
     if (!success && msg) emitError(msg);
+    else updateSharedValue({ type: 'instance', value: { id, key, name } });
   });
 };
 
 const handleLeave = () => {
-  if (!instance.key) return;
+  if (!instance.id) return;
   socket.emit('leave');
   updateSharedValue({
     type: 'instance',
-    value: { key: null, sdConnected: false, clientsConnected: 0, connected: false },
+    value: defaultInstance,
   });
+  storeInstanceId();
 };
 
 const handleCommand = (payload: Command) => {
@@ -223,46 +281,101 @@ const handleCommand = (payload: Command) => {
   socket.emit('command', { ...payload, createdAt: new Date() });
 };
 
+const handleLoadInstances = async () => {
+  try {
+    const result = await getLinkInstances();
+    updateSharedValue({ type: 'instances', value: result });
+  } catch (err: any) {
+    emitError(`Error loading instances: ${err.message}`);
+  }
+};
+
+const handleRename = async (id: number, name: string) => {
+  try {
+    await updateLinkInstance({ id, name });
+    if (instance.id === id) updateSharedValue({ type: 'instance', value: { name } });
+    await handleLoadInstances();
+  } catch (err: any) {
+    emitError(`Error renaming instance: ${err.message}`);
+  }
+};
+
+const handleDelete = async (id: number) => {
+  try {
+    if (instance.id === id) handleLeave();
+    await deleteLinkInstance(id);
+    await handleLoadInstances();
+  } catch (err: any) {
+    emitError(`Error deleting instance: ${err.message}`);
+  }
+};
+
+const handleCreate = async (id?: number) => {
+  try {
+    const result = await createLinkInstance(id);
+    await handleLoadInstances();
+    handleJoin(result.id);
+  } catch (err: any) {
+    emitError(`Error creating instance: ${err.message}`);
+  }
+};
+
 const handleInitialization = () => {
+  if (!instance.id || initialized === instance.id) return;
+
   sendCommand({ type: 'activities:list' });
   sendCommand({ type: 'resources:list' });
-  initialized = true;
+  initialized = instance.id;
+  console.log(`Initialized instance: ${instance.id}`);
+  storeInstanceId();
 };
 
 // --------------------------------
 // Bootstrap Worker
 // --------------------------------
-const start = (port: MessagePort) => {
+const start = async (port: MessagePort) => {
   if (!port.postMessage) return;
 
-  onError((msg) => port.postMessage({ type: 'error', msg }));
-  onMessage((msg) => port.postMessage({ type: 'message', msg }));
-  onCompletion((payload) => port.postMessage({ type: 'commandComplete', payload }));
-  port.postMessage({ type: 'instance', payload: instance });
+  const portReq = (req: WorkerOutgoingMessage) => port.postMessage(req);
+
+  onError((msg) => portReq({ type: 'error', msg }));
+  onMessage((msg) => portReq({ type: 'message', msg }));
+  onCompletion((payload) => portReq({ type: 'commandComplete', payload }));
+  portReq({ type: 'instance', payload: instance });
   onUpdate('instance', () => {
-    if (instance.connected && !initialized) handleInitialization();
-    port.postMessage({ type: 'instance', payload: instance });
+    portReq({ type: 'instance', payload: instance });
   });
-  port.postMessage({ type: 'resourcesUpdate', payload: resources });
+  portReq({ type: 'resourcesUpdate', payload: resources });
   onUpdate('resources', () => {
-    port.postMessage({ type: 'resourcesUpdate', payload: resources });
+    portReq({ type: 'resourcesUpdate', payload: resources });
   });
-  port.postMessage({ type: 'activitiesUpdate', payload: activities });
+  portReq({ type: 'activitiesUpdate', payload: activities });
   onUpdate('activities', () => {
-    port.postMessage({ type: 'activitiesUpdate', payload: activities });
+    portReq({ type: 'activitiesUpdate', payload: activities });
   });
-  port.postMessage({ type: 'socketConnection', payload: socket.connected });
+  portReq({ type: 'instancesUpdate', payload: instances });
+  onUpdate('instances', () => {
+    portReq({ type: 'instancesUpdate', payload: instances });
+  });
+  portReq({ type: 'socketConnection', payload: socket.connected });
   onSocketConnection((connected) => {
-    port.postMessage({ type: 'socketConnection', payload: connected });
+    portReq({ type: 'socketConnection', payload: connected });
   });
 
-  port.onmessage = ({ data }: { data: IncomingMessage }) => {
-    if (data.type === 'join') handleJoin(data.key);
+  port.onmessage = ({ data }: { data: WorkerIncomingMessage }) => {
+    if (data.type === 'join') handleJoin(data.id);
+    else if (data.type === 'create') handleCreate(data.id);
+    else if (data.type === 'delete') handleDelete(data.id);
+    else if (data.type === 'rename') handleRename(data.id, data.name);
     else if (data.type === 'leave') handleLeave();
     else if (data.type === 'command') handleCommand(data.payload);
   };
 
-  port.postMessage({ type: 'ready' });
+  handleLoadInstances().finally(async () => {
+    portReq({ type: 'ready' });
+    const storedInstanceId = await getStoredInstanceId();
+    if (storedInstanceId) handleJoin(Number(storedInstanceId));
+  });
 };
 
 _self.onconnect = (e) => {

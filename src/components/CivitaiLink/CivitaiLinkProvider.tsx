@@ -1,9 +1,6 @@
 /* eslint-disable @typescript-eslint/no-empty-function */
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import {
-  CivitaiLinkInstance,
-  useGetLinkInstances,
-} from '~/components/CivitaiLink/civitai-link-api';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { CivitaiLinkInstance } from '~/components/CivitaiLink/civitai-link-api';
 import {
   Command,
   ResponseResourcesList,
@@ -17,55 +14,40 @@ import { showNotification } from '@mantine/notifications';
 import { v4 as uuid } from 'uuid';
 import { immer } from 'zustand/middleware/immer';
 import create from 'zustand';
-import { useLocalStorage } from '@mantine/hooks';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import isEqual from 'lodash/isEqual';
-
-// #region types
-type Instance = {
-  key: string | null;
-  connected: boolean; // general connection status - aggregate of `clientsConnected` and `sdConnected`
-  clientsConnected: number; // number of people in room, even though it's probably just you
-  sdConnected: boolean; // if the sd instance is available to connect to
-};
-
-type SelectedInstance = CivitaiLinkInstance & Omit<Instance, 'key'>;
-
-type IncomingMessage =
-  | { type: 'ready' }
-  | { type: 'socketConnection'; payload: boolean }
-  | { type: 'error'; msg: string }
-  | { type: 'message'; msg: string }
-  | { type: 'activitiesUpdate'; payload: ActivitiesResponse[] }
-  | { type: 'resourcesUpdate'; payload: ResponseResourcesList['resources'] }
-  | { type: 'commandComplete'; payload: Response }
-  | { type: 'instance'; payload: Instance }
-  | { type: 'socketConnection'; payload: boolean };
-// #endregion
+import {
+  WorkerOutgoingMessage,
+  WorkerIncomingMessage,
+  Instance,
+} from '~/workers/civitai-link-worker-types';
 
 // #region context
 type CivitaiLinkState = {
   instances: CivitaiLinkInstance[];
-  selectedInstance?: SelectedInstance;
+  instance?: Instance;
   socketConnected: boolean;
   connected: boolean;
   resources: ResponseResourcesList['resources'];
-  fetchInstances: () => Promise<void>;
-  selectInstance: (instance: { key: string }) => Promise<void>;
-  runCommand: (command: CommandRequest) => Promise<unknown>;
+  createInstance: (id?: number) => Promise<void>;
+  deleteInstance: (id: number) => Promise<void>;
+  renameInstance: (id: number, name: string) => Promise<void>;
+  selectInstance: (id: number) => Promise<void>;
   deselectInstance: () => Promise<void>;
+  runCommand: (command: CommandRequest) => Promise<unknown>;
 };
 
 const CivitaiLinkCtx = createContext<CivitaiLinkState>({
   instances: [],
-  selectedInstance: undefined,
+  instance: undefined,
   connected: false,
   socketConnected: false,
   resources: [],
-  fetchInstances: async () => {},
+  createInstance: async () => {},
+  deleteInstance: async () => {},
+  renameInstance: async () => {},
   selectInstance: async () => {},
-  runCommand: async () => {},
   deselectInstance: async () => {},
+  runCommand: async () => {},
 } as CivitaiLinkState);
 // #endregion
 
@@ -110,38 +92,16 @@ const commandPromises: Record<
 
 export const useCivitaiLink = () => useContext(CivitaiLinkCtx);
 export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode }) => {
-  const user = useCurrentUser();
-  const canUseLink = user != null; // TODO: Briant - Check for subscription...
   const workerRef = useRef<SharedWorker>();
   const workerPromise = useRef<Promise<SharedWorker>>();
   const [socketConnected, setSocketConnected] = useState(false);
-  const [selectedInstanceId, setSelectedInstanceId] = useLocalStorage<number | undefined>({
-    key: 'civitai-link-instance-id',
-  });
-  const { data: instances = [], refetch } = useGetLinkInstances();
-  // const [instances, setInstances] = useState<CivitaiLinkInstance[]>([]);
-  const [selectedInstance, setSelectedInstance] = useState<SelectedInstance>();
+  const [instances, setInstances] = useState<CivitaiLinkInstance[]>([]);
+  const [instance, setInstance] = useState<Instance>();
   const [resources, setResources] = useState<ResponseResourcesList['resources']>([]);
   const [connected, setConnected] = useState(false);
   const setActivities = useCivitaiLinkStore((state) => state.setActivities);
 
-  console.log({ selectedInstance });
-
-  const updateSelectedInstance = useCallback(
-    (instance: Instance) => {
-      const detectedInstance = instances.find((x) => x.key === instance.key);
-      console.log('FIRFIREA', { instance, detectedInstance, instances });
-      if (detectedInstance) {
-        setSelectedInstanceId(detectedInstance?.id);
-        setSelectedInstance({ ...instance, ...detectedInstance });
-      }
-      setConnected(instance.connected);
-    },
-    [instances, setSelectedInstanceId]
-  );
-
   const getWorker = () => {
-    if (!canUseLink) throw Error('User is not logged in');
     if (workerPromise.current) return workerPromise.current;
     if (workerRef.current) return Promise.resolve(workerRef.current);
     const worker = new SharedWorker(
@@ -157,15 +117,9 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
       showNotification({ message: msg });
     };
 
-    const handleInstance = (instance: Instance) => {
-      // // const detectedInstance = instances.find((x) => x.key === instance.key);
-      // // console.log('FIRFIREA', { instance, detectedInstance, instances });
-      // // if (detectedInstance) {
-      // setSelectedInstanceId(instance.id);
-      // setSelectedInstance({ ...instance });
-      // // }
-      // setConnected(instance.connected);
-      updateSelectedInstance(instance);
+    const handleInstance = (payload: Instance) => {
+      setInstance(payload);
+      setConnected(payload?.connected ?? false);
     };
 
     const handleActivities = (activities: ActivitiesResponse[]) => {
@@ -174,15 +128,6 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
         const bDate = new Date(b.createdAt ?? new Date());
         return bDate.getTime() - aDate.getTime();
       });
-
-      // const removed = sorted.filter((x) => x.type === 'resources:remove');
-      // const added = sorted.filter((x) => x.type === 'resources:add');
-
-      // // TODO - determine how to show that an item has been removed while still being able to show the correct status if removing an item fails
-      // const filtered = added.map((activity) => {
-      //   const index = removed.findIndex((x) => x.resource.hash === activity.resource.hash);
-      //   return index > -1 ? removed[index] : activity;
-      // });
 
       setActivities(sorted);
     };
@@ -200,40 +145,39 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
         resolve(worker);
       };
 
-      worker.port.onmessage = async function ({ data }: { data: IncomingMessage }) {
+      worker.port.onmessage = async function ({ data }: { data: WorkerOutgoingMessage }) {
         if (data.type === 'ready') handleReady();
         else if (data.type === 'error') handleError(data.msg);
         else if (data.type === 'message') handleMessage(data.msg);
         else if (data.type === 'instance') handleInstance(data.payload);
+        else if (data.type === 'instancesUpdate') setInstances(data.payload);
         else if (data.type === 'resourcesUpdate') setResources(data.payload);
         else if (data.type === 'activitiesUpdate') handleActivities(data.payload);
         else if (data.type === 'commandComplete') handleCommandComplete(data.payload);
         else if (data.type === 'socketConnection') setSocketConnected(data.payload);
-        //TODO.Justin
-        // else if (data.type === 'instances.list') setSocketConnected(data.payload);
       };
     });
 
     return workerPromise.current;
   };
 
-  const fetchInstances = useCallback(async () => {
-    await refetch();
-  }, [refetch]);
-
-  const selectInstance = async (instance: { key: string }) => {
+  const boot = async () => {
     const worker = await getWorker();
-    worker.port.postMessage({ type: 'join', key: instance.key });
+    return worker;
   };
 
-  // TODO.Justin
-  // const createInstance = async (instance: { key: string }) => {
-  //   const worker = await getWorker();
-  //   worker.port.postMessage({ type: 'join', key: instance.key });
-  // };
+  const workerReq = async (req: WorkerIncomingMessage) => {
+    const worker = await getWorker();
+    worker.port.postMessage(req);
+  };
+
+  const selectInstance = (id: number) => workerReq({ type: 'join', id });
+  const deselectInstance = () => workerReq({ type: 'leave' });
+  const createInstance = (id?: number) => workerReq({ type: 'create', id });
+  const deleteInstance = (id: number) => workerReq({ type: 'delete', id });
+  const renameInstance = (id: number, name: string) => workerReq({ type: 'rename', id, name });
 
   const runCommand = async (command: CommandRequest, timeout = 0) => {
-    const worker = await getWorker();
     const payload = command as Command;
     payload.id = uuid();
 
@@ -248,37 +192,26 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
       }, timeout);
     });
 
-    worker.port.postMessage({ type: 'command', payload });
+    await workerReq({ type: 'command', payload });
 
     return promise;
   };
 
-  const deselectInstance = async () => {
-    if (!selectedInstance) return;
-    const worker = await getWorker();
-    worker.port.postMessage({ type: 'leave' });
-  };
-
   useEffect(() => {
-    if (!canUseLink) return;
-    fetchInstances();
-  }, [fetchInstances, canUseLink]);
-
-  useEffect(() => {
-    if (!canUseLink || !selectedInstanceId || !instances.length || selectedInstance) return;
-    const storedInstance = instances.find((x) => x.id === selectedInstanceId);
-    if (storedInstance) selectInstance(storedInstance);
-  }, [instances, canUseLink]);
+    boot();
+  }, [boot]);
 
   return (
     <CivitaiLinkCtx.Provider
       value={{
         instances,
-        selectedInstance,
+        instance,
         connected,
         socketConnected,
         resources,
-        fetchInstances,
+        createInstance,
+        deleteInstance,
+        renameInstance,
         selectInstance,
         deselectInstance,
         runCommand,
@@ -288,12 +221,3 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
     </CivitaiLinkCtx.Provider>
   );
 };
-
-// export function ActualProvider({ children }) {
-//   const { civitaiLink } = useFeatureFlags();
-//   return civitaiLink ? <CivitaiLinkProvider>{children}</CivitaiLinkProvider> : children;
-// }
-
-// export function ConditionalProvider({ children, provider, condition }) {
-//   return condition ? provider({ children }) : children;
-// }
