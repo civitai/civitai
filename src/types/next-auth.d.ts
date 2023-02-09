@@ -12,8 +12,8 @@ interface ExtendedUser {
   isModerator?: boolean;
   preferredModelFormat?: ModelFileFormat;
   preferredPrunedModel?: boolean;
-  customerId?: string; // TODO.stripe - consider removing this from session
-  subscriptionId?: string; // TODO.stripe - consider removing this from session
+  customerId?: string;
+  subscriptionId?: string;
   tier?: string;
   muted?: boolean;
   bannedAt?: Date;

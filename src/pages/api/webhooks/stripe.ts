@@ -41,12 +41,6 @@ const relevantEvents = new Set([
   'invoice.paid',
 ]);
 
-/*
-  TODO.stripe - listen to the following events
-    - "invoice.paid" - something to do with badges
-
-*/
-
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
     const stripe = await getServerStripe();
@@ -68,7 +62,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try {
         switch (event.type) {
           case 'invoice.paid':
-            console.log('-----INVOICE PAID-----');
             const invoice = event.data.object as Stripe.Invoice;
             await manageInvoicePaid(invoice);
             break;
@@ -86,7 +79,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           case 'customer.subscription.updated':
           case 'customer.subscription.deleted':
             const subscription = event.data.object as Stripe.Subscription;
-            // console.log('----SUBSCRIPTION EVENT----');
             await upsertSubscription(subscription, subscription.customer as string);
             break;
           case 'checkout.session.completed':
@@ -94,7 +86,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             if (checkoutSession.mode === 'subscription') {
               // do nothing
             } else if (checkoutSession.mode === 'payment') {
-              //TODO - capture payment details?
               await manageCheckoutPayment(checkoutSession.id, checkoutSession.customer as string);
             }
             break;
