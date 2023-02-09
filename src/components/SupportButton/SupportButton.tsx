@@ -1,5 +1,6 @@
 import { Box, BoxProps, createStyles, keyframes } from '@mantine/core';
 import Link from 'next/link';
+import { wiggle } from '~/libs/animations';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 export const SupportButton = ({ ...props }: Props) => {
   const { classes } = useStyles();
@@ -65,21 +66,6 @@ const pulseSize = keyframes({
   },
 });
 
-const wiggle = keyframes({
-  '0%': {
-    transform: 'rotate(0deg)',
-  },
-  '25%': {
-    transform: 'rotate(-5deg)',
-  },
-  '75%': {
-    transform: 'rotate(5deg)',
-  },
-  '100%': {
-    transform: 'rotate(0deg)',
-  },
-});
-
 const useStyles = createStyles((theme) => ({
   root: {
     height: 30,
@@ -90,7 +76,7 @@ const useStyles = createStyles((theme) => ({
     animation: `${pulseSize} 1s ease-in-out infinite`,
 
     [`&:hover`]: {
-      animation: `${wiggle} 750ms ease-in-out infinite`,
+      animation: `${wiggle()} 750ms ease-in-out infinite`,
     },
   },
 

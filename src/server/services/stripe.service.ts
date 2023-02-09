@@ -132,7 +132,7 @@ export const createSubscribeSession = async ({
     mode: 'subscription',
     payment_method_types: ['card'],
     line_items: lineItems,
-    success_url: `${baseUrl}/payment/success`,
+    success_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
     cancel_url: `${baseUrl}/pricing`,
   });
 
@@ -170,7 +170,7 @@ export const createDonateSession = async ({
     line_items: [{ price: env.STRIPE_DONATE_ID, quantity: 1 }],
     mode: 'payment',
     payment_method_types: ['card'],
-    success_url: `${baseUrl}/payment/success?type=donation`,
+    success_url: `${baseUrl}/payment/success?type=donation&cid=${customerId.slice(-8)}`,
   });
 
   return { sessionId: session.id, url: session.url };
