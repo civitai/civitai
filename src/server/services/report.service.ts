@@ -1,4 +1,4 @@
-import { Prisma, ReportReason, ReportStatus } from '@prisma/client';
+import { Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
 
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -10,12 +10,77 @@ import {
 } from '~/server/schema/report.schema';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
+export const getReportById = <TSelect extends Prisma.ReportSelect>({
+  id,
+  select,
+}: GetByIdInput & { select: TSelect }) => {
+  return prisma.report.findUnique({ where: { id }, select });
+};
+
+const validateReportCreation = async ({
+  userId,
+  reportType,
+  entityReportId,
+  reason,
+}: {
+  userId: number;
+  reportType: 'model' | 'review' | 'comment' | 'image';
+  entityReportId: number;
+  reason: ReportReason;
+}): Promise<Report | null> => {
+  // Look if there's already a report for this type with the same reason
+  const existingReport = await prisma.report.findFirst({
+    where: { reason, [reportType]: { [`${reportType}Id`]: entityReportId } },
+    orderBy: { id: 'desc' },
+  });
+  if (!existingReport) return null;
+
+  const { id, alsoReportedBy, previouslyReviewedCount } = existingReport;
+  // if alsoReportedBy includes the userId, then do nothing
+  if (alsoReportedBy.includes(userId)) return existingReport;
+
+  // if alsoReportedBy count is greater than previouslyReviewedCount * 2,
+  // then set the status to pending and reset the previouslyReviewedCount
+  if (previouslyReviewedCount > 0 && alsoReportedBy.length >= previouslyReviewedCount * 2) {
+    const updatedReport = await prisma.report.update({
+      where: { id },
+      data: {
+        status: ReportStatus.Pending,
+        previouslyReviewedCount: 0,
+        alsoReportedBy: [...alsoReportedBy, userId],
+      },
+    });
+
+    return updatedReport;
+  }
+
+  const updatedReport = await prisma.report.update({
+    where: { id },
+    data: {
+      alsoReportedBy: [...alsoReportedBy, userId],
+    },
+  });
+
+  return updatedReport;
+};
+
 export const createReport = async ({
   userId,
   type,
   id,
   ...data
 }: CreateReportInput & { userId: number }) => {
+  const validReport =
+    data.reason !== ReportReason.NSFW
+      ? await validateReportCreation({
+          userId,
+          reportType: type,
+          entityReportId: id,
+          reason: data.reason,
+        })
+      : null;
+  if (validReport) return validReport;
+
   const report: Prisma.ReportCreateNestedOneWithoutModelInput = {
     create: {
       ...data,
@@ -24,14 +89,9 @@ export const createReport = async ({
     },
   };
 
-  const toUpdate =
-    data.reason === ReportReason.NSFW
-      ? { nsfw: true }
-      : data.reason === ReportReason.TOSViolation
-      ? { tosViolation: true }
-      : undefined;
+  const toUpdate = data.reason === ReportReason.NSFW ? { nsfw: true } : undefined;
 
-  await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
     switch (type) {
       case ReportEntity.Model:
         await tx.modelReport.create({
@@ -40,15 +100,18 @@ export const createReport = async ({
             report,
           },
         });
+
         if (data.reason === ReportReason.NSFW) {
           await tx.image.updateMany({
             where: { imagesOnModels: { modelVersion: { modelId: id } } },
             data: { nsfw: true },
           });
         }
+
         if (toUpdate) {
           await tx.model.update({ where: { id }, data: toUpdate });
         }
+
         break;
       case ReportEntity.Review:
         await prisma.reviewReport.create({
@@ -112,7 +175,6 @@ export const createReport = async ({
 // get report by category (model, review, comment)
 export const getReports = async <TSelect extends Prisma.ReportSelect>({
   page,
-  query,
   type,
   limit = 20,
   select,
