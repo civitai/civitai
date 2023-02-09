@@ -44,6 +44,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
 import { NotificationBell } from '~/components/Notifications/NotificationBell';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
+import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
@@ -335,6 +336,7 @@ export function AppHeader() {
                 </Button>
               </LoginRedirect>
             )}
+            <SupportButton />
           </Group>
         </Grid.Col>
         <Grid.Col span={6} md={5}>

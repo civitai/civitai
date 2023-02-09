@@ -48,6 +48,10 @@ export const serverSchema = z.object({
   SCANNING_TOKEN: z.string(),
   UNAUTHENTICATED_DOWNLOAD: z.preprocess((val) => val === true || val === 'true', z.boolean()),
   UNAUTHENTICATE_LIST_NSFW: z.preprocess((val) => val === true || val === 'true', z.boolean()),
+  STRIPE_SECRET_KEY: z.string(),
+  STRIPE_WEBHOOK_SECRET: z.string(),
+  STRIPE_DONATE_ID: z.string(),
+  STRIPE_METADATA_KEY: z.string(),
   LOGGING: z.preprocess((value) => {
     const str = String(value);
     return str.split(',');
@@ -60,6 +64,7 @@ export const serverSchema = z.object({
  * To expose them to the client, prefix them with `NEXT_PUBLIC_`.
  */
 export const clientSchema = z.object({
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string(),
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string(),
   NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
   NEXT_PUBLIC_MAINTENANCE_MODE: z.preprocess((val) => val === true || val === 'true', z.boolean()),
@@ -72,6 +77,7 @@ export const clientSchema = z.object({
  * @type {{ [k in keyof z.infer<typeof clientSchema>]: z.infer<typeof clientSchema>[k] | undefined }}
  */
 export const clientEnv = {
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: process.env.NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION,
   NEXT_PUBLIC_IMAGE_LOCATION: process.env.NEXT_PUBLIC_IMAGE_LOCATION,
   NEXT_PUBLIC_MAINTENANCE_MODE: process.env.NEXT_PUBLIC_MAINTENANCE_MODE === 'true',

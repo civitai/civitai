@@ -12,6 +12,8 @@ import { constants } from '~/server/common/constants';
 import { prisma } from '~/server/db/client';
 import { ScannerTasks } from '~/server/jobs/scan-files';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { bytesToKB } from '~/utils/number-helpers';
+import { getGetUrl } from '~/utils/s3-utils';
 
 export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -23,7 +25,7 @@ export default WebhookEndpoint(async (req, res) => {
   const where: Prisma.ModelFileFindUniqueArgs['where'] = {
     modelVersionId_type_format: { modelVersionId, type, format },
   };
-  const { url, id: fileId } = (await prisma.modelFile.findUnique({ where })) ?? {};
+  const { url, id: fileId, name } = (await prisma.modelFile.findUnique({ where })) ?? {};
   if (!url || !fileId) return res.status(404).json({ error: 'File not found' });
 
   const data: Prisma.ModelFileUpdateInput = {};
@@ -53,6 +55,31 @@ export default WebhookEndpoint(async (req, res) => {
 
   if (tasks.includes('Convert')) {
     // TODO justin: handle conversion result
+    const [format, { url, hashes, conversionOutput }] = Object.entries(scanResult.conversions)[0];
+    const baseUrl = url.split('?')[0];
+    const convertedName = baseUrl.split('/').pop();
+    if (convertedName) {
+      const { url: s3Url } = await getGetUrl(baseUrl);
+      const { headers } = await fetch(s3Url, { method: 'HEAD' });
+      const sizeKB = bytesToKB(parseInt(headers.get('Content-Length') ?? '0'));
+      await prisma.modelFile.create({
+        data: {
+          name: convertedName,
+          sizeKB,
+          modelVersionId,
+          url: baseUrl,
+          type,
+          format:
+            format == 'safetensors' ? ModelFileFormat.SafeTensor : ModelFileFormat.PickleTensor,
+          hashes: {
+            create: Object.entries(hashes).map(([type, hash]) => ({
+              type: hashTypeMap[type.toLowerCase()] as ModelHashType,
+              hash,
+            })),
+          },
+        },
+      });
+    }
   }
 
   // Update if we made changes...
@@ -137,6 +164,13 @@ type ScanResult = {
   clamscanExitCode: ScanExitCode;
   clamscanOutput: string;
   hashes: Record<ModelHashType, string>;
+  conversions: Record<'safetensors' | 'ckpt', ConversionResult>;
+};
+
+type ConversionResult = {
+  url: string;
+  hashes: Record<ModelHashType, string>;
+  conversionOutput: string;
 };
 
 const querySchema = z.object({

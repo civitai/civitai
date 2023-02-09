@@ -177,4 +177,48 @@ export const modelNotifications = createNotificationProcessor({
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-model-from-following');
     `,
   },
+  'early-access-complete': {
+    toggleable: false,
+    displayName: 'Early Access Complete',
+    prepareMessage: ({ details }) => ({
+      message: `${details.modelName}: ${details.versionName} has left Early Access!`,
+      url: `/models/${details.modelId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      -- early access complete
+      WITH early_access_versions AS (
+        SELECT
+          mv.id version_id,
+          mv.name version_name,
+          m.id model_id,
+          m.name model_name,
+          m.type model_type,
+          GREATEST(mv."createdAt", m."publishedAt") + interval '1' day * mv."earlyAccessTimeFrame" early_access_deadline
+        FROM "ModelVersion" mv
+        JOIN "Model" m ON m.id = mv."modelId"
+        where "earlyAccessTimeFrame" != 0
+        AND m."publishedAt" IS NOT NULL
+      ), early_access_complete AS (
+        SELECT DISTINCT
+          mve."userId" owner_id,
+          jsonb_build_object(
+            'modelId', model_id,
+            'modelName', model_name,
+            'modelType', model_type,
+            'versionId', version_id,
+            'versionName', version_name
+          ) details
+        FROM early_access_versions ev
+        JOIN "ModelVersionEngagement" mve ON mve."modelVersionId" = ev.version_id AND mve.type = 'Notify'
+        WHERE ev.early_access_deadline > '${lastSent}' AND ev.early_access_deadline < now()
+      )
+      INSERT INTO "Notification"("id", "userId", "type", "details")
+      SELECT
+        REPLACE(gen_random_uuid()::text, '-', ''),
+        owner_id,
+        'early-access-complete',
+        details
+      FROM early_access_complete;
+    `,
+  }
 });

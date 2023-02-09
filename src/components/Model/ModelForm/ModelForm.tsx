@@ -77,6 +77,8 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { uniq } from 'lodash';
 import Link from 'next/link';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { NextLink } from '@mantine/next';
 
 /**NOTES**
   - If a model depicts an actual person, it cannot have nsfw content
@@ -591,6 +593,69 @@ export function ModelForm({ model }: Props) {
                               )}
                           </Stack>
                         </Grid.Col>
+                        {showEarlyAccess && (
+                          <Grid.Col span={12}>
+                            <Input.Wrapper
+                              label="Early Access"
+                              description={
+                                <DismissibleAlert
+                                  id="ea-info"
+                                  size="sm"
+                                  title="Get feedback on your model before full release"
+                                  content={
+                                    <>
+                                      {`This puts your model in the "Early Access" list of models
+                                      available to `}
+                                      <Text
+                                        component={NextLink}
+                                        href="/pricing"
+                                        variant="link"
+                                        target="_blank"
+                                      >
+                                        Supporter Tier members
+                                      </Text>
+                                      {
+                                        ' of the community. This can be a great way to get feedback from an engaged community before your model is available to the general public. If you choose to enable Early Access, your model will be released to the public after the selected time frame.'
+                                      }
+                                    </>
+                                  }
+                                  mb="xs"
+                                />
+                              }
+                              error={
+                                form.formState.errors.modelVersions?.[index]?.earlyAccessTimeFrame
+                                  ?.message
+                              }
+                            >
+                              <InputSegmentedControl
+                                name={`modelVersions.${index}.earlyAccessTimeFrame`}
+                                orientation={mobile ? 'vertical' : 'horizontal'}
+                                data={[
+                                  { label: 'None', value: '0' },
+                                  { label: '1 day', value: '1' },
+                                  { label: '2 days', value: '2' },
+                                  { label: '3 days', value: '3' },
+                                  { label: '4 days', value: '4' },
+                                  { label: '5 days', value: '5' },
+                                ]}
+                                color="blue"
+                                size="xs"
+                                styles={(theme) => ({
+                                  root: {
+                                    border: `1px solid ${
+                                      theme.colorScheme === 'dark'
+                                        ? theme.colors.dark[4]
+                                        : theme.colors.gray[4]
+                                    }`,
+                                    background: 'none',
+                                    marginTop: theme.spacing.xs * 0.5, // 5px
+                                  },
+                                })}
+                                fullWidth
+                              />
+                            </Input.Wrapper>
+                          </Grid.Col>
+                        )}
                         <Grid.Col span={12}>
                           <Group noWrap align="flex-end" spacing="xs">
                             <InputSelect
@@ -665,47 +730,7 @@ export function ModelForm({ model }: Props) {
                             step={500}
                           />
                         </Grid.Col>
-                        {showEarlyAccess && (
-                          <Grid.Col span={12}>
-                            {/* TODO justin: adjust text as necessary */}
-                            <Input.Wrapper
-                              label="Early Access"
-                              description="Set an early access for this version so your supporters can generate their own creations before anyone else"
-                              error={
-                                form.formState.errors.modelVersions?.[index]?.earlyAccessTimeFrame
-                                  ?.message
-                              }
-                            >
-                              <InputSegmentedControl
-                                name={`modelVersions.${index}.earlyAccessTimeFrame`}
-                                orientation={mobile ? 'vertical' : 'horizontal'}
-                                data={[
-                                  // TODO justin: adjust text as necessary
-                                  { label: 'All Access', value: '0' },
-                                  { label: '1 day', value: '1' },
-                                  { label: '2 days', value: '2' },
-                                  { label: '3 days', value: '3' },
-                                  { label: '4 days', value: '4' },
-                                  { label: '5 days', value: '5' },
-                                ]}
-                                color="blue"
-                                size="xs"
-                                styles={(theme) => ({
-                                  root: {
-                                    border: `1px solid ${
-                                      theme.colorScheme === 'dark'
-                                        ? theme.colors.dark[4]
-                                        : theme.colors.gray[4]
-                                    }`,
-                                    background: 'none',
-                                    marginTop: theme.spacing.xs * 0.5, // 5px
-                                  },
-                                })}
-                                fullWidth
-                              />
-                            </Input.Wrapper>
-                          </Grid.Col>
-                        )}
+
                         <Grid.Col span={12}>
                           <FileList parentIndex={index} form={form} />
                         </Grid.Col>

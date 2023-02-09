@@ -10,6 +10,9 @@ import { getGetUrl } from '~/utils/s3-utils';
 import requestIp from 'request-ip';
 import { constants, ModelFileType } from '~/server/common/constants';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
+import { getJoinLink } from '~/utils/join-helpers';
+import { getLoginLink } from '~/utils/login-helpers';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -42,9 +45,11 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
     where: { id: modelVersionId },
     select: {
       id: true,
-      model: { select: { id: true, name: true, type: true } },
+      model: { select: { id: true, name: true, type: true, publishedAt: true } },
       name: true,
       trainedWords: true,
+      earlyAccessTimeFrame: true,
+      createdAt: true,
       files: { where: fileWhere, select: { url: true, name: true, type: true, format: true } },
     },
   });
@@ -60,11 +65,23 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
         });
   if (!file) return res.status(404).json({ error: 'Model file not found' });
 
+  // Handle unauthenticated downloads
   const userId = session?.user?.id;
   if (!env.UNAUTHENTICATED_DOWNLOAD && !userId) {
     if (req.headers['content-type'] === 'application/json')
       return res.status(401).json({ error: 'Unauthorized' });
-    else return res.redirect(`/login?returnUrl=/models/${modelVersion.model.id}`);
+    else return res.redirect(getLoginLink({ reason: 'download-auth', returnUrl: `/models/${modelVersion.model.id}`}));
+  }
+
+  // Handle early access
+  if (!session?.user?.tier) {
+    const earlyAccessDeadline = getEarlyAccessDeadline({ versionCreatedAt: modelVersion.createdAt, publishedAt: modelVersion.model.publishedAt, earlyAccessTimeframe: modelVersion.earlyAccessTimeFrame });
+    const inEarlyAccess = new Date() < earlyAccessDeadline;
+    if (inEarlyAccess) {
+      if (req.headers['content-type'] === 'application/json')
+        return res.status(403).json({ error: 'Early Access', deadline: earlyAccessDeadline });
+      else return res.redirect(getJoinLink({ reason: 'early-access', returnUrl: `/models/${modelVersion.model.id}` }));
+    }
   }
 
   // Track download

@@ -23,6 +23,7 @@ import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { ModelStatus } from '@prisma/client';
 import {
   IconBan,
+  IconClock,
   IconDotsVertical,
   IconDownload,
   IconEdit,
@@ -91,6 +92,7 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { ModelById } from '~/types/router';
+import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 
 //TODO - Break model query into multiple queries
 /*
@@ -311,6 +313,9 @@ export default function ModelDetail({
   const isFavorite = favoriteModels.find((modelId) => modelId === id);
   const deleted = !!model.deletedAt && model.status === 'Deleted';
 
+  const published = model.status === ModelStatus.Published;
+  const isMuted = currentUser?.muted ?? false;
+
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model.modelVersions[0];
   const primaryFile = getPrimaryFile(latestVersion?.files, {
@@ -319,6 +324,8 @@ export default function ModelDetail({
   });
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
+  const onlyEarlyAccess = model.modelVersions.every((version) => version.earlyAccessDeadline);
+  const canDiscuss = !isMuted && (!onlyEarlyAccess || currentUser?.isMember);
 
   const meta = (
     <Meta
@@ -435,8 +442,6 @@ export default function ModelDetail({
       ),
     },
   ];
-  const published = model.status === ModelStatus.Published;
-  const isMuted = currentUser?.muted ?? false;
 
   return (
     <>
@@ -485,6 +490,16 @@ export default function ModelDetail({
                     {abbreviateNumber(model.rank?.ratingCountAllTime ?? 0)}
                   </Text>
                 </IconBadge>
+                {latestVersion?.earlyAccessDeadline && (
+                  <IconBadge
+                    radius="sm"
+                    color="green"
+                    size="lg"
+                    icon={<IconClock size={18} />}
+                  >
+                    Early Access
+                  </IconBadge>
+                )}
               </Group>
               <Menu position="bottom-end" transition="pop-top-right">
                 <Menu.Target>
@@ -607,56 +622,75 @@ export default function ModelDetail({
                   <ModelCarousel model={model} latestVersion={latestVersion} mobile />
                 </Box>
                 <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
-                  <Stack sx={{ flex: 1 }} spacing={4}>
-                    <MultiActionButton
-                      component="a"
-                      href={createModelFileDownloadUrl({
-                        versionId: latestVersion.id,
-                        primary: true,
-                      })}
-                      leftIcon={<IconDownload size={16} />}
-                      disabled={!primaryFile}
-                      menuItems={
-                        latestVersion?.files.length > 1
-                          ? latestVersion?.files.map((file, index) => (
-                              <Menu.Item
-                                key={index}
-                                component="a"
-                                py={4}
-                                icon={<VerifiedText file={file} iconOnly />}
-                                href={createModelFileDownloadUrl({
-                                  versionId: latestVersion.id,
-                                  type: file.type,
-                                  format: file.format,
-                                })}
-                                download
-                              >
-                                {`${startCase(file.type)}${
-                                  ['Model', 'Pruned Model'].includes(file.type)
-                                    ? ' ' + file.format
-                                    : ''
-                                } (${formatKBytes(file.sizeKB)})`}
-                              </Menu.Item>
-                            ))
-                          : []
-                      }
-                      menuTooltip="Other Downloads"
-                      download
-                    >
-                      <Text align="center">
-                        {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
-                      </Text>
-                    </MultiActionButton>
-                    {primaryFile && (
-                      <Group position="apart" noWrap spacing={0}>
-                        <VerifiedText file={primaryFile} />
-                        <Text size="xs" color="dimmed">
-                          {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                          {primaryFile.format}
+                  {latestVersion.canDownload ? (
+                    <Stack sx={{ flex: 1 }} spacing={4}>
+                      <MultiActionButton
+                        component="a"
+                        href={createModelFileDownloadUrl({
+                          versionId: latestVersion.id,
+                          primary: true,
+                        })}
+                        leftIcon={<IconDownload size={16} />}
+                        disabled={!primaryFile}
+                        menuItems={
+                          latestVersion?.files.length > 1
+                            ? latestVersion?.files.map((file, index) => (
+                                <Menu.Item
+                                  key={index}
+                                  component="a"
+                                  py={4}
+                                  icon={<VerifiedText file={file} iconOnly />}
+                                  href={createModelFileDownloadUrl({
+                                    versionId: latestVersion.id,
+                                    type: file.type,
+                                    format: file.format,
+                                  })}
+                                  download
+                                >
+                                  {`${startCase(file.type)}${
+                                    ['Model', 'Pruned Model'].includes(file.type)
+                                      ? ' ' + file.format
+                                      : ''
+                                  } (${formatKBytes(file.sizeKB)})`}
+                                </Menu.Item>
+                              ))
+                            : []
+                        }
+                        menuTooltip="Other Downloads"
+                        download
+                      >
+                        <Text align="center">
+                          {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
                         </Text>
-                      </Group>
-                    )}
-                  </Stack>
+                      </MultiActionButton>
+                      {primaryFile && (
+                        <Group position="apart" noWrap spacing={0}>
+                          <VerifiedText file={primaryFile} />
+                          <Text size="xs" color="dimmed">
+                            {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+                            {primaryFile.format}
+                          </Text>
+                        </Group>
+                      )}
+                    </Stack>
+                  ) : (<Stack sx={{ flex: 1 }} spacing={4}>
+                    <JoinPopover>
+                      <Button leftIcon={<IconDownload size={16} />} >
+                        <Text align="center">
+                          {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+                        </Text>
+                      </Button>
+                    </JoinPopover>
+                    {primaryFile && (
+                        <Group position="apart" noWrap spacing={0}>
+                          <VerifiedText file={primaryFile} />
+                          <Text size="xs" color="dimmed">
+                            {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+                            {primaryFile.format}
+                          </Text>
+                        </Group>
+                      )}
+                  </Stack>)}
 
                   <RunButton modelVersionId={latestVersion.id} />
                   <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
@@ -675,6 +709,7 @@ export default function ModelDetail({
                 </Group>
                 <EarlyAccessAlert
                   versionId={latestVersion.id}
+                  modelType={model.type}
                   deadline={latestVersion.earlyAccessDeadline}
                 />
                 <ModelFileAlert
@@ -786,7 +821,7 @@ export default function ModelDetail({
                   <Group spacing="xs">
                     <Title order={3}>Discussion</Title>
 
-                    {!isMuted ? (
+                    {canDiscuss ? (
                       <>
                         <LoginRedirect reason="create-review">
                           <Button
@@ -811,7 +846,19 @@ export default function ModelDetail({
                           </Button>
                         </LoginRedirect>
                       </>
-                    ) : null}
+                    ) : !isMuted  && (
+                      <JoinPopover message="You must be a Supporter Tier member to join this discussion">
+                        <Button
+                            className={classes.discussionActionButton}
+                            leftIcon={<IconClock size={16} />}
+                            variant="outline"
+                            size="xs"
+                            color="green"
+                          >
+                            Early Access
+                          </Button>
+                      </JoinPopover>
+                    )}
                   </Group>
                 </Group>
                 <ModelDiscussion modelId={model.id} />

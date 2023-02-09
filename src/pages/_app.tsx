@@ -56,7 +56,7 @@ function MyApp(props: CustomAppProps) {
     Component,
     pageProps: { session, colorScheme: initialColorScheme, cookies, flags, ...pageProps },
   } = props;
-  const [colorScheme, setColorScheme] = useState<ColorScheme>(initialColorScheme);
+  const [colorScheme, setColorScheme] = useState<ColorScheme>(initialColorScheme ?? 'dark');
   const toggleColorScheme = useCallback(
     (value?: ColorScheme) => {
       const nextColorScheme = value || (colorScheme === 'dark' ? 'light' : 'dark');
@@ -67,6 +67,13 @@ function MyApp(props: CustomAppProps) {
     },
     [colorScheme]
   );
+
+  useEffect(() => {
+    if (!initialColorScheme && typeof window !== 'undefined') {
+      const osColor = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      setColorScheme(osColor);
+    }
+  }, [initialColorScheme]);
 
   const getLayout = useMemo(
     () => Component.getLayout ?? ((page: any) => <AppLayout>{page}</AppLayout>),
@@ -149,7 +156,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   if (isClient) return initialProps;
 
   const { pageProps, ...appProps } = initialProps;
-  const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'light';
+  const colorScheme = getCookie('mantine-color-scheme', appContext.ctx);
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
 

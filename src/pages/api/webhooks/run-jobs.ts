@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
 import { cleanOldSessionInvalidation } from '~/server/jobs/clean-old-session-invalidation';
+import { deliverCosmetics } from '~/server/jobs/deliver-cosmetics';
 import { processImportsJob } from '~/server/jobs/process-imports';
 import { scanFilesJob } from '~/server/jobs/scan-files';
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
@@ -19,6 +20,7 @@ const jobs = [
   sendWebhooksJob,
   addOnDemandRunStrategiesJob,
   cleanOldSessionInvalidation,
+  deliverCosmetics,
 ];
 
 export default WebhookEndpoint(async (req, res) => {

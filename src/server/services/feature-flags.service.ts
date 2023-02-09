@@ -1,7 +1,7 @@
 import { SessionUser } from 'next-auth';
 
 /** 'dev' AND ('mod' OR 'public' OR etc...)  */
-const featureAvailability = ['dev', 'mod', 'public', 'tier1'] as const;
+const featureAvailability = ['dev', 'mod', 'public', 'founder'] as const;
 type FeatureAvailability = typeof featureAvailability[number];
 
 const createTypedDictionary = <T extends Record<string, FeatureAvailability[]>>(dictionary: T) =>
@@ -10,10 +10,11 @@ const createTypedDictionary = <T extends Record<string, FeatureAvailability[]>>(
 type FeatureFlagKey = keyof typeof featureFlags;
 const featureFlags = createTypedDictionary({
   earlyAccessModel: ['dev'],
-  memberBadges: ['dev'],
+  memberBadges: ['public'],
   apiKeys: ['dev'],
   ambientCard: ['public'],
   gallery: ['mod'],
+  stripe: [],
 });
 
 const isDev = process.env.NODE_ENV === 'development';
