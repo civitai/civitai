@@ -771,7 +771,7 @@ export function ModelForm({ model }: Props) {
                     data={[ModelStatus.Published, ModelStatus.Draft]}
                     withAsterisk
                   />
-                  <InputCheckbox name="locked" label="Don't accept reviews or comments" />
+                  <InputCheckbox name="locked" label="Lock discussion area" />
                 </Stack>
               </Paper>
               <Paper radius="md" p="xl" withBorder>
