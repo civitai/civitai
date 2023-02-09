@@ -51,6 +51,7 @@ export const serverSchema = z.object({
   STRIPE_SECRET_KEY: z.string(),
   STRIPE_WEBHOOK_SECRET: z.string(),
   STRIPE_DONATE_ID: z.string(),
+  STRIPE_METADATA_KEY: z.string(),
   LOGGING: z.preprocess((value) => {
     const str = String(value);
     return str.split(',');

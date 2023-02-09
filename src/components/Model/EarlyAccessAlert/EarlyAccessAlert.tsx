@@ -1,4 +1,6 @@
 import { Text } from '@mantine/core';
+import { NextLink } from '@mantine/next';
+import { ModelType } from '@prisma/client';
 import { IconAlertCircle } from '@tabler/icons';
 import React from 'react';
 
@@ -9,9 +11,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
+import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-export function EarlyAccessAlert({ versionId, deadline }: Props) {
+export function EarlyAccessAlert({ versionId, modelType, deadline }: Props) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
@@ -47,7 +50,7 @@ export function EarlyAccessAlert({ versionId, deadline }: Props) {
       showSuccessNotification({
         message: alreadyNotifying
           ? 'You have been removed from the notification list'
-          : 'You will be notified when this model version is available for download',
+          : 'You will be notified when this is available for download',
       });
     },
     onError(error, _variables, context) {
@@ -59,14 +62,20 @@ export function EarlyAccessAlert({ versionId, deadline }: Props) {
     toggleNotifyMutation.mutate({ id: versionId });
   };
 
-  if (!inEarlyAccess) return null;
+  if (!inEarlyAccess || currentUser?.isMember) return null;
 
   return (
-    // TODO justin: Adjust alert text and handle sending the notification when deadline is reached
+    // TODO justin: Handle sending the notification when deadline is reached
     <AlertWithIcon color="green" iconColor="green" icon={<IconAlertCircle />}>
-      {`This checkpoint is marked as Supporter's only. Come back in `}
+      {`This ${splitUppercase(
+        modelType
+      ).toLowerCase()} is in "Early Access" to collect feedback from `}{' '}
+      <Text variant="link" component={NextLink} href="/pricing">
+        Supporter Tier members
+      </Text>
+      {`. It will be publicly available in `}
       <Countdown endTime={deadline} />
-      {' to download for free. '}
+      {'. '}
       <LoginRedirect reason="notify-version">
         <Text
           variant="link"
@@ -83,4 +92,4 @@ export function EarlyAccessAlert({ versionId, deadline }: Props) {
   );
 }
 
-type Props = { versionId: number; deadline?: Date };
+type Props = { versionId: number; modelType: ModelType; deadline?: Date };

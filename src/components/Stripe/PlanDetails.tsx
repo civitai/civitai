@@ -1,5 +1,5 @@
-import { Stack, Title, Text, List, Center, ThemeIcon, DefaultMantineColor } from '@mantine/core';
-import { IconCircleCheck, IconCirclePlus, IconClock } from '@tabler/icons';
+import { Stack, Title, Text, Center } from '@mantine/core';
+import { IconCirclePlus, IconClock } from '@tabler/icons';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { benefitIconSize, BenefitItem, PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 
@@ -51,7 +51,21 @@ const meta: PlanMeta[] = [
         icon: <IconClock size={benefitIconSize} />,
         iconColor: 'yellow',
       },
-      { content: 'Early access to new features' },
+      {
+        content: (
+          <Text>
+            Early access to{' '}
+            <Text
+              component="a"
+              variant="link"
+              href="https://sharing.clickup.com/8459928/b/h/6-900500453357-2/56d60e52b842e83"
+              target="_blank"
+            >
+              new features
+            </Text>
+          </Text>
+        ),
+      },
       { content: 'Unique Supporter Tier badge' },
       { content: 'Unique nameplate color' },
       {

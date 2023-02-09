@@ -41,6 +41,7 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { ModelType } from '@prisma/client';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
+import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 
 const VERSION_IMAGES_LIMIT = 8;
 
@@ -142,6 +143,8 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
       <Grid.Col xs={12} md={4} orderMd={2}>
         <Stack spacing="xs">
           <Group spacing="xs" align="flex-start">
+            {version.canDownload ? (
+
             <Stack spacing={4} style={{ flex: 1 }}>
               <MultiActionButton
                 variant="light"
@@ -184,10 +187,34 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
                 </Group>
               )}
             </Stack>
+            ) : (
+              <Stack spacing={4} style={{ flex: 1 }}>
+                <JoinPopover>
+                  <Button variant="light">
+                    <Text align="center">
+                      {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+                    </Text>
+                  </Button>
+                </JoinPopover>
+                {primaryFile && (
+                  <Group position="apart" noWrap spacing={0}>
+                    <VerifiedText file={primaryFile} />
+                    <Text size="xs" color="dimmed">
+                      {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+                      {primaryFile.format}
+                    </Text>
+                  </Group>
+                )}
+              </Stack>
+            )}
             <RunButton modelVersionId={version.id} variant="light" />
           </Group>
 
-          <EarlyAccessAlert versionId={version.id} deadline={version.earlyAccessDeadline} />
+          <EarlyAccessAlert
+            versionId={version.id}
+            modelType={type}
+            deadline={version.earlyAccessDeadline}
+          />
           <ModelFileAlert versionId={version.id} modelType={type} files={version.files} />
 
           <DescriptionTable items={versionDetails} labelWidth="30%" />

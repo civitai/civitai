@@ -1,8 +1,6 @@
 import {
   manageCheckoutPayment,
   manageInvoicePaid,
-} from './../../../server/services/stripe.service';
-import {
   upsertPriceRecord,
   upsertProductRecord,
   upsertSubscription,

@@ -37,6 +37,16 @@ export function AppFooter() {
           &copy; Civitai {new Date().getFullYear()}
         </Text>
         <Group spacing={0} sx={{ flexWrap: 'nowrap' }}>
+          <Button
+            component={NextLink}
+            href="/pricing"
+            {...buttonProps}
+            variant="subtle"
+            color="pink"
+            px={mobile ? 5 : 'xs'}
+          >
+            Support Us ❤️
+          </Button>
           <Button component={NextLink} href="/content/tos" {...buttonProps} px={mobile ? 5 : 'xs'}>
             Terms of Service
           </Button>

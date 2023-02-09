@@ -36,8 +36,7 @@ export const getPlans = async () => {
   // Only show the default price for a subscription product
   return products
     .filter(({ metadata }) => {
-      console.log({ metadata });
-      return !!(metadata as any)?.class;
+      return !!(metadata as any)?.[env.STRIPE_METADATA_KEY];
     })
     .map(({ prices, ...product }) => {
       const price = prices.filter((x) => x.id === product.defaultPriceId)[0];

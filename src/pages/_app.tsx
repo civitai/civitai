@@ -31,7 +31,6 @@ import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { FeatureFlags } from '~/server/services/feature-flags.service';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
-import useIsClient from '~/hooks/useIsClient';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);

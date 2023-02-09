@@ -24,6 +24,7 @@ import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { ModelStatus } from '@prisma/client';
 import {
   IconBan,
+  IconClock,
   IconDotsVertical,
   IconDownload,
   IconEdit,
@@ -95,6 +96,7 @@ import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { Username } from '~/components/User/Username';
+import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 
 //TODO - Break model query into multiple queries
 /*
@@ -485,6 +487,16 @@ export default function ModelDetail({
                     {abbreviateNumber(model.rank?.ratingCountAllTime ?? 0)}
                   </Text>
                 </IconBadge>
+                {latestVersion?.earlyAccessDeadline && (
+                  <IconBadge
+                    radius="sm"
+                    color="green"
+                    size="lg"
+                    icon={<IconClock size={18} />}
+                  >
+                    Early Access
+                  </IconBadge>
+                )}
               </Group>
               <Menu position="bottom-end" transition="pop-top-right">
                 <Menu.Target>
@@ -604,56 +616,75 @@ export default function ModelDetail({
             <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
               <Stack>
                 <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
-                  <Stack sx={{ flex: 1 }} spacing={4}>
-                    <MultiActionButton
-                      component="a"
-                      href={createModelFileDownloadUrl({
-                        versionId: latestVersion.id,
-                        primary: true,
-                      })}
-                      leftIcon={<IconDownload size={16} />}
-                      disabled={!primaryFile}
-                      menuItems={
-                        latestVersion?.files.length > 1
-                          ? latestVersion?.files.map((file, index) => (
-                              <Menu.Item
-                                key={index}
-                                component="a"
-                                py={4}
-                                icon={<VerifiedText file={file} iconOnly />}
-                                href={createModelFileDownloadUrl({
-                                  versionId: latestVersion.id,
-                                  type: file.type,
-                                  format: file.format,
-                                })}
-                                download
-                              >
-                                {`${startCase(file.type)}${
-                                  ['Model', 'Pruned Model'].includes(file.type)
-                                    ? ' ' + file.format
-                                    : ''
-                                } (${formatKBytes(file.sizeKB)})`}
-                              </Menu.Item>
-                            ))
-                          : []
-                      }
-                      menuTooltip="Other Downloads"
-                      download
-                    >
-                      <Text align="center">
-                        {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
-                      </Text>
-                    </MultiActionButton>
-                    {primaryFile && (
-                      <Group position="apart" noWrap spacing={0}>
-                        <VerifiedText file={primaryFile} />
-                        <Text size="xs" color="dimmed">
-                          {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                          {primaryFile.format}
+                  {latestVersion.canDownload ? (
+                    <Stack sx={{ flex: 1 }} spacing={4}>
+                      <MultiActionButton
+                        component="a"
+                        href={createModelFileDownloadUrl({
+                          versionId: latestVersion.id,
+                          primary: true,
+                        })}
+                        leftIcon={<IconDownload size={16} />}
+                        disabled={!primaryFile}
+                        menuItems={
+                          latestVersion?.files.length > 1
+                            ? latestVersion?.files.map((file, index) => (
+                                <Menu.Item
+                                  key={index}
+                                  component="a"
+                                  py={4}
+                                  icon={<VerifiedText file={file} iconOnly />}
+                                  href={createModelFileDownloadUrl({
+                                    versionId: latestVersion.id,
+                                    type: file.type,
+                                    format: file.format,
+                                  })}
+                                  download
+                                >
+                                  {`${startCase(file.type)}${
+                                    ['Model', 'Pruned Model'].includes(file.type)
+                                      ? ' ' + file.format
+                                      : ''
+                                  } (${formatKBytes(file.sizeKB)})`}
+                                </Menu.Item>
+                              ))
+                            : []
+                        }
+                        menuTooltip="Other Downloads"
+                        download
+                      >
+                        <Text align="center">
+                          {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
                         </Text>
-                      </Group>
-                    )}
-                  </Stack>
+                      </MultiActionButton>
+                      {primaryFile && (
+                        <Group position="apart" noWrap spacing={0}>
+                          <VerifiedText file={primaryFile} />
+                          <Text size="xs" color="dimmed">
+                            {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+                            {primaryFile.format}
+                          </Text>
+                        </Group>
+                      )}
+                    </Stack>
+                  ) : (<Stack sx={{ flex: 1 }} spacing={4}>
+                    <JoinPopover>
+                      <Button leftIcon={<IconDownload size={16} />} >
+                        <Text align="center">
+                          {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+                        </Text>
+                      </Button>
+                    </JoinPopover>
+                    {primaryFile && (
+                        <Group position="apart" noWrap spacing={0}>
+                          <VerifiedText file={primaryFile} />
+                          <Text size="xs" color="dimmed">
+                            {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+                            {primaryFile.format}
+                          </Text>
+                        </Group>
+                      )}
+                  </Stack>)}
 
                   <RunButton modelVersionId={latestVersion.id} />
                   <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
@@ -672,6 +703,7 @@ export default function ModelDetail({
                 </Group>
                 <EarlyAccessAlert
                   versionId={latestVersion.id}
+                  modelType={model.type}
                   deadline={latestVersion.earlyAccessDeadline}
                 />
                 <ModelFileAlert

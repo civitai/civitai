@@ -10,8 +10,8 @@ export const SupportButton = ({ ...props }: Props) => {
           xmlns="http://www.w3.org/2000/svg"
           viewBox="0 0 24 24"
           fill="none"
-          stroke-linecap="round"
-          stroke-linejoin="round"
+          strokeLinecap="round"
+          strokeLinejoin="round"
           className={classes.svg}
         >
           <path

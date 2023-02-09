@@ -61,17 +61,20 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
                   return a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1;
                 })
             : version.images.flatMap((x) => x.image);
-        const earlyAccessDeadline = features.earlyAccessModel
+        let earlyAccessDeadline = features.earlyAccessModel
           ? increaseDate(
               model.publishedAt ? maxDate(version.createdAt, model.publishedAt) : version.createdAt,
               version.earlyAccessTimeFrame,
               'days'
             )
           : undefined;
+        if (earlyAccessDeadline && new Date() > earlyAccessDeadline) earlyAccessDeadline = undefined;
+        const canDownload = !earlyAccessDeadline || ctx.user?.tier;
         return {
           ...version,
           images,
           earlyAccessDeadline,
+          canDownload,
         };
       }),
     };

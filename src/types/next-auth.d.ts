@@ -14,7 +14,7 @@ interface ExtendedUser {
   preferredPrunedModel?: boolean;
   customerId?: string; // TODO.stripe - consider removing this from session
   subscriptionId?: string; // TODO.stripe - consider removing this from session
-  class?: string;
+  tier?: string;
   muted?: boolean;
   bannedAt?: Date;
 }

@@ -11,6 +11,7 @@ import {
   ToggleBlockedTagSchema,
 } from '~/server/schema/user.schema';
 import { invalidateSession } from '~/server/utils/session-helpers';
+import { env } from '~/env/server.mjs';
 
 // const xprisma = prisma.$extends({
 //   result: {
@@ -350,17 +351,20 @@ export const toggleBlockedTag = async ({
 export const getSessionUser = async ({ userId }: { userId: number }) => {
   const user = await prisma.user.findFirst({
     where: { id: userId, deletedAt: null },
-    include: { subscription: { select: { product: { select: { metadata: true } } } } },
+    include: {
+      subscription: { select: { status: true, product: { select: { metadata: true } } } },
+    },
   });
 
   if (!user) return undefined;
 
   const { subscription, ...rest } = user;
+  const tier: string | undefined =
+    subscription && subscription.status === 'active'
+      ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]
+      : undefined;
 
-  return {
-    ...rest,
-    class: (subscription?.product.metadata as any).class as string | undefined,
-  };
+  return { ...rest, tier };
 };
 
 export const getUserCosmetics = ({
