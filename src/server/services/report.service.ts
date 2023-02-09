@@ -10,6 +10,13 @@ import {
 } from '~/server/schema/report.schema';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
+export const getReportById = <TSelect extends Prisma.ReportSelect>({
+  id,
+  select,
+}: GetByIdInput & { select: TSelect }) => {
+  return prisma.report.findUnique({ where: { id }, select });
+};
+
 export const createReport = async ({
   userId,
   type,
@@ -34,21 +41,69 @@ export const createReport = async ({
   await prisma.$transaction(async (tx) => {
     switch (type) {
       case ReportEntity.Model:
+        // look if there's already a report for this model with the same reason
+        const existingReport = await tx.modelReport.findFirst({
+          where: {
+            modelId: id,
+            report: { reason: data.reason },
+          },
+          select: {
+            report: {
+              select: {
+                id: true,
+                alsoReportedBy: true,
+                previouslyReviewedCount: true,
+                status: true,
+              },
+            },
+          },
+        });
+
+        if (existingReport) {
+          // if there is, just update the report
+          const { id, alsoReportedBy, previouslyReviewedCount } = existingReport.report;
+          // if alsoReportedBy count is larger than previouslyReviewedCount * 2, then set the status to pending and reset the previouslyReviewedCount
+          if (previouslyReviewedCount > 0 && alsoReportedBy.length > previouslyReviewedCount * 2) {
+            await tx.report.update({
+              where: { id },
+              data: { status: ReportStatus.Pending, previouslyReviewedCount: 0 },
+            });
+
+            break;
+          }
+
+          const newAlsoReportedBy = !alsoReportedBy.includes(userId)
+            ? [...alsoReportedBy, userId]
+            : alsoReportedBy;
+
+          await tx.report.update({
+            where: { id },
+            data: {
+              alsoReportedBy: newAlsoReportedBy,
+            },
+          });
+
+          break;
+        }
+
         await tx.modelReport.create({
           data: {
             model: { connect: { id } },
             report,
           },
         });
+
         if (data.reason === ReportReason.NSFW) {
           await tx.image.updateMany({
             where: { imagesOnModels: { modelVersion: { modelId: id } } },
             data: { nsfw: true },
           });
         }
+
         if (toUpdate) {
           await tx.model.update({ where: { id }, data: toUpdate });
         }
+
         break;
       case ReportEntity.Review:
         await prisma.reviewReport.create({
@@ -112,7 +167,6 @@ export const createReport = async ({
 // get report by category (model, review, comment)
 export const getReports = async <TSelect extends Prisma.ReportSelect>({
   page,
-  query,
   type,
   limit = 20,
   select,

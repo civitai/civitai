@@ -52,6 +52,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { Meta } from '~/components/Meta/Meta';
 import { Form, InputTextArea, useForm } from '~/libs/form';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerAuthSession(context);
@@ -116,6 +117,7 @@ export default function Reports() {
                   <th>Status</th>
                   <th>Created</th>
                   <th>Reported by</th>
+                  <th>Also reported by</th>
                 </tr>
               </thead>
               <tbody>
@@ -134,7 +136,7 @@ export default function Reports() {
                       })}
                     >
                       <td>
-                        <Group spacing="xs">
+                        <Group spacing="xs" noWrap>
                           <Button compact size="xs" onClick={() => setSelected(item.id)}>
                             Details
                           </Button>
@@ -168,6 +170,11 @@ export default function Reports() {
                             {item.user.username}
                           </Text>
                         </Link>
+                      </td>
+                      <td>
+                        {item.alsoReportedBy.length > 0
+                          ? `${abbreviateNumber(item.alsoReportedBy.length)} Users`
+                          : null}
                       </td>
                     </Box>
                   ))}

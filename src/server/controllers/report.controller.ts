@@ -1,3 +1,4 @@
+import { ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
@@ -8,7 +9,12 @@ import {
   UpdateReportSchema,
 } from '~/server/schema/report.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
-import { createReport, getReports, updateReportById } from '~/server/services/report.service';
+import {
+  createReport,
+  getReportById,
+  getReports,
+  updateReportById,
+} from '~/server/services/report.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export async function createReportHandler({
@@ -28,10 +34,23 @@ export async function createReportHandler({
 export async function setReportStatusHandler({ input }: { input: SetReportStatusInput }) {
   try {
     const { id, status } = input;
-    const report = await updateReportById({ id, data: { status } });
+    const report = await getReportById({
+      id,
+      select: { alsoReportedBy: true, previouslyReviewedCount: true },
+    });
     if (!report) throw throwNotFoundError(`No report with id ${id}`);
 
-    return report;
+    const updatedReport = await updateReportById({
+      id,
+      data: {
+        status,
+        previouslyReviewedCount:
+          status === ReportStatus.Actioned ? report.alsoReportedBy.length + 1 : undefined,
+        alsoReportedBy: status === ReportStatus.Actioned ? [] : undefined,
+      },
+    });
+
+    return updatedReport;
   } catch (e) {
     if (e instanceof TRPCError) throw e;
     else throw throwDbError(e);
@@ -51,6 +70,7 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
         details: true,
         status: true,
         internalNotes: true,
+        alsoReportedBy: true,
         // model: { select: { modelId: true } },
         // review: { select: { reviewId: true } },
         // comment: { select: { commentId: true } },

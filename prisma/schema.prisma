@@ -527,13 +527,15 @@ enum ReportStatus {
 }
 
 model Report {
-  id            Int          @id @default(autoincrement())
-  userId        Int
-  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reason        ReportReason
-  createdAt     DateTime     @default(now())
-  details       Json?
-  internalNotes String?
+  id                      Int          @id @default(autoincrement())
+  userId                  Int
+  user                    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason                  ReportReason
+  createdAt               DateTime     @default(now())
+  details                 Json?
+  internalNotes           String?
+  previouslyReviewedCount Int          @default(0)
+  alsoReportedBy          Int[]        @default([]) // UserIds
 
   status  ReportStatus
   model   ModelReport?
