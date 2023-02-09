@@ -15,6 +15,7 @@ import {
 import { prisma } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  CommentUpsertInput,
   commentUpsertInput,
   getAllCommentsSchema,
   getCommentReactionsSchema,
@@ -56,9 +57,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
 const isLocked = middleware(async ({ ctx, next, input }) => {
   if (!ctx?.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
 
-  const { id } = input as { id: number };
   const isModerator = ctx.user.isModerator;
-
   if (isModerator)
     return next({
       ctx: {
@@ -68,14 +67,16 @@ const isLocked = middleware(async ({ ctx, next, input }) => {
       },
     });
 
-  const comment = await prisma.comment.findUnique({ where: { id } });
-  if (!comment) throw new TRPCError({ code: 'NOT_FOUND' });
+  const { id, modelId } = input as CommentUpsertInput;
+  const model = await prisma.model.findUnique({ where: { id: modelId } });
+  if (model?.locked) throw new TRPCError({ code: 'FORBIDDEN', message: 'Model is locked' });
 
+  const comment = await prisma.comment.findFirst({ where: { id } });
   return next({
     ctx: {
       ...ctx,
       user: ctx.user,
-      locked: comment.locked,
+      locked: comment?.locked || false,
     },
   });
 });

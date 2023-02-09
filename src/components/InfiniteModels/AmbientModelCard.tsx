@@ -161,7 +161,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
   const theme = useMantineTheme();
   const { push } = useRouter();
 
-  const { id, image, name, rank, nsfw, user } = data ?? {};
+  const { id, image, name, rank, nsfw, user, locked } = data ?? {};
 
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
@@ -207,14 +207,18 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
         </Badge>
       )}
       {data.status === ModelStatus.Published && data.earlyAccess && (
-        <Badge className={cx(classes.floatingBadge, classes.earlyAccessBadge)} radius="sm" size="sm">
+        <Badge
+          className={cx(classes.floatingBadge, classes.earlyAccessBadge)}
+          radius="sm"
+          size="sm"
+        >
           Early Access
         </Badge>
       )}
     </>
   );
 
-  const modelRating = (
+  const modelRating = !locked ? (
     <IconBadge
       className={cx(classes.floatingBadge, classes.statBadge)}
       sx={{ userSelect: 'none' }}
@@ -236,7 +240,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
         {abbreviateNumber(rank.ratingCount)}
       </Text>
     </IconBadge>
-  );
+  ) : null;
 
   const modelDownloads = (
     <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>

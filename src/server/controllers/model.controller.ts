@@ -30,7 +30,6 @@ import {
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { env } from '~/env/server.mjs';
-import { increaseDate, maxDate } from '~/utils/date-helpers';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 
@@ -63,9 +62,14 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
                 })
             : version.images.flatMap((x) => x.image);
         let earlyAccessDeadline = features.earlyAccessModel
-          ? getEarlyAccessDeadline({ versionCreatedAt: version.createdAt, publishedAt: model.publishedAt, earlyAccessTimeframe: version.earlyAccessTimeFrame })
+          ? getEarlyAccessDeadline({
+              versionCreatedAt: version.createdAt,
+              publishedAt: model.publishedAt,
+              earlyAccessTimeframe: version.earlyAccessTimeFrame,
+            })
           : undefined;
-        if (earlyAccessDeadline && new Date() > earlyAccessDeadline) earlyAccessDeadline = undefined;
+        if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
+          earlyAccessDeadline = undefined;
         const canDownload = !earlyAccessDeadline || ctx.user?.tier;
         return {
           ...version,
@@ -106,6 +110,7 @@ export const getModelsInfiniteHandler = async ({
       createdAt: true,
       lastVersionAt: true,
       publishedAt: true,
+      locked: true,
       modelVersions: {
         orderBy: { index: 'asc' },
         take: 1,
@@ -155,7 +160,13 @@ export const getModelsInfiniteHandler = async ({
     items: items.map(({ modelVersions, reportStats, publishedAt, ...model }) => {
       const rank = model.rank as Record<string, number>;
       const latestVersion = modelVersions[0];
-      const earlyAccess = !latestVersion || isEarlyAccess({ versionCreatedAt: latestVersion.createdAt, publishedAt, earlyAccessTimeframe: latestVersion.earlyAccessTimeFrame });
+      const earlyAccess =
+        !latestVersion ||
+        isEarlyAccess({
+          versionCreatedAt: latestVersion.createdAt,
+          publishedAt,
+          earlyAccessTimeframe: latestVersion.earlyAccessTimeFrame,
+        });
       return {
         ...model,
         rank: {

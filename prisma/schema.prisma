@@ -302,6 +302,7 @@ model Model {
   meta           Json            @default("{}")
   deletedAt      DateTime?
   checkpointType CheckpointType?
+  locked         Boolean         @default(false)
 
   // Licensing
   allowNoCredit         Boolean       @default(true)

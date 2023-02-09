@@ -114,6 +114,7 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
     allowDifferentLicense: true,
     licenses: true,
     publishedAt: true,
+    locked: true,
     reportStats: {
       select: {
         ownershipProcessing: true,

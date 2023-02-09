@@ -84,6 +84,7 @@ export const modelSchema = licensingSchema.extend({
   tagsOnModels: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   poi: z.boolean().optional(),
+  locked: z.boolean().optional(),
   modelVersions: z
     .array(modelVersionUpsertSchema)
     .min(1, 'At least one model version is required.'),

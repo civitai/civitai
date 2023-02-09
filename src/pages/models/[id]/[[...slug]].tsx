@@ -18,6 +18,7 @@ import {
   Tooltip,
   Rating,
   AspectRatio,
+  Paper,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { ModelStatus } from '@prisma/client';
@@ -475,28 +476,25 @@ export default function ModelDetail({
                     </Text>
                   </IconBadge>
                 </LoginRedirect>
-                <IconBadge
-                  radius="sm"
-                  color="gray"
-                  size="lg"
-                  icon={<Rating value={model.rank?.ratingAllTime ?? 0} fractions={4} readOnly />}
-                  sx={{ cursor: 'pointer' }}
-                  onClick={() => {
-                    if (!discussionSectionRef.current) return;
-                    scrollToTop(discussionSectionRef.current);
-                  }}
-                >
-                  <Text className={classes.modelBadgeText}>
-                    {abbreviateNumber(model.rank?.ratingCountAllTime ?? 0)}
-                  </Text>
-                </IconBadge>
-                {latestVersion?.earlyAccessDeadline && (
+                {!model.locked && (
                   <IconBadge
                     radius="sm"
-                    color="green"
+                    color="gray"
                     size="lg"
-                    icon={<IconClock size={18} />}
+                    icon={<Rating value={model.rank?.ratingAllTime ?? 0} fractions={4} readOnly />}
+                    sx={{ cursor: 'pointer' }}
+                    onClick={() => {
+                      if (!discussionSectionRef.current) return;
+                      scrollToTop(discussionSectionRef.current);
+                    }}
                   >
+                    <Text className={classes.modelBadgeText}>
+                      {abbreviateNumber(model.rank?.ratingCountAllTime ?? 0)}
+                    </Text>
+                  </IconBadge>
+                )}
+                {latestVersion?.earlyAccessDeadline && (
+                  <IconBadge radius="sm" color="green" size="lg" icon={<IconClock size={18} />}>
                     Early Access
                   </IconBadge>
                 )}
@@ -673,15 +671,16 @@ export default function ModelDetail({
                         </Group>
                       )}
                     </Stack>
-                  ) : (<Stack sx={{ flex: 1 }} spacing={4}>
-                    <JoinPopover>
-                      <Button leftIcon={<IconDownload size={16} />} >
-                        <Text align="center">
-                          {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
-                        </Text>
-                      </Button>
-                    </JoinPopover>
-                    {primaryFile && (
+                  ) : (
+                    <Stack sx={{ flex: 1 }} spacing={4}>
+                      <JoinPopover>
+                        <Button leftIcon={<IconDownload size={16} />}>
+                          <Text align="center">
+                            {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+                          </Text>
+                        </Button>
+                      </JoinPopover>
+                      {primaryFile && (
                         <Group position="apart" noWrap spacing={0}>
                           <VerifiedText file={primaryFile} />
                           <Text size="xs" color="dimmed">
@@ -690,7 +689,8 @@ export default function ModelDetail({
                           </Text>
                         </Group>
                       )}
-                  </Stack>)}
+                    </Stack>
+                  )}
 
                   <RunButton modelVersionId={latestVersion.id} />
                   <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
@@ -812,57 +812,68 @@ export default function ModelDetail({
                   items={model.modelVersions}
                   initialTab={latestVersion?.id.toString()}
                   nsfw={model.nsfw}
+                  locked={model.locked}
                 />
               </Stack>
             </Grid.Col>
             <Grid.Col span={12} orderMd={4} my="xl">
-              <Stack spacing="xl">
-                <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
-                  <Group spacing="xs">
-                    <Title order={3}>Discussion</Title>
+              {!model.locked ? (
+                <Stack spacing="xl">
+                  <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
+                    <Group spacing="xs">
+                      <Title order={3}>Discussion</Title>
 
-                    {canDiscuss ? (
-                      <>
-                        <LoginRedirect reason="create-review">
-                          <Button
-                            className={classes.discussionActionButton}
-                            leftIcon={<IconStar size={16} />}
-                            variant="outline"
-                            size="xs"
-                            onClick={() => openRoutedContext('reviewEdit', {})}
-                          >
-                            Add Review
-                          </Button>
-                        </LoginRedirect>
-                        <LoginRedirect reason="create-comment">
-                          <Button
-                            className={classes.discussionActionButton}
-                            leftIcon={<IconMessage size={16} />}
-                            variant="outline"
-                            onClick={() => openRoutedContext('commentEdit', {})}
-                            size="xs"
-                          >
-                            Add Comment
-                          </Button>
-                        </LoginRedirect>
-                      </>
-                    ) : !isMuted  && (
-                      <JoinPopover message="You must be a Supporter Tier member to join this discussion">
-                        <Button
-                            className={classes.discussionActionButton}
-                            leftIcon={<IconClock size={16} />}
-                            variant="outline"
-                            size="xs"
-                            color="green"
-                          >
-                            Early Access
-                          </Button>
-                      </JoinPopover>
-                    )}
+                      {canDiscuss ? (
+                        <>
+                          <LoginRedirect reason="create-review">
+                            <Button
+                              className={classes.discussionActionButton}
+                              leftIcon={<IconStar size={16} />}
+                              variant="outline"
+                              size="xs"
+                              onClick={() => openRoutedContext('reviewEdit', {})}
+                            >
+                              Add Review
+                            </Button>
+                          </LoginRedirect>
+                          <LoginRedirect reason="create-comment">
+                            <Button
+                              className={classes.discussionActionButton}
+                              leftIcon={<IconMessage size={16} />}
+                              variant="outline"
+                              onClick={() => openRoutedContext('commentEdit', {})}
+                              size="xs"
+                            >
+                              Add Comment
+                            </Button>
+                          </LoginRedirect>
+                        </>
+                      ) : (
+                        !isMuted && (
+                          <JoinPopover message="You must be a Supporter Tier member to join this discussion">
+                            <Button
+                              className={classes.discussionActionButton}
+                              leftIcon={<IconClock size={16} />}
+                              variant="outline"
+                              size="xs"
+                              color="green"
+                            >
+                              Early Access
+                            </Button>
+                          </JoinPopover>
+                        )
+                      )}
+                    </Group>
                   </Group>
-                </Group>
-                <ModelDiscussion modelId={model.id} />
-              </Stack>
+                  <ModelDiscussion modelId={model.id} />
+                </Stack>
+              ) : (
+                <Paper p="lg">
+                  <Center>
+                    <Text size="sm">Discussions are turned off for this model.</Text>
+                  </Center>
+                </Paper>
+              )}
             </Grid.Col>
           </Grid>
         </Stack>

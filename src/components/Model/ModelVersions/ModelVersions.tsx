@@ -45,7 +45,7 @@ import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 
 const VERSION_IMAGES_LIMIT = 8;
 
-export function ModelVersions({ items, initialTab, nsfw, type }: Props) {
+export function ModelVersions({ items, initialTab, nsfw, type, locked = false }: Props) {
   const mobile = useIsMobile({ breakpoint: 'md' });
 
   return (
@@ -67,7 +67,7 @@ export function ModelVersions({ items, initialTab, nsfw, type }: Props) {
         <Grid.Col xs={12} md={10}>
           {items.map((version) => (
             <Tabs.Panel key={version.id} value={version.id.toString()}>
-              <TabContent version={version} nsfw={nsfw} type={type} />
+              <TabContent version={version} nsfw={nsfw} type={type} locked={locked} />
             </Tabs.Panel>
           ))}
         </Grid.Col>
@@ -81,9 +81,10 @@ type Props = {
   type: ModelType;
   initialTab?: string | null;
   nsfw?: boolean;
+  locked?: boolean;
 };
 
-function TabContent({ version, nsfw, type }: TabContentProps) {
+function TabContent({ version, nsfw, type, locked }: TabContentProps) {
   const router = useRouter();
   const mobile = useIsMobile();
   const currentUser = useCurrentUser();
@@ -98,6 +99,7 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
           <Text size="sm">({version.rank?.ratingCountAllTime.toLocaleString() ?? 0})</Text>
         </Group>
       ),
+      visible: !locked,
     },
     { label: 'Downloads', value: (version.rank?.downloadCountAllTime ?? 0).toLocaleString() },
     { label: 'Uploaded', value: formatDate(version.createdAt) },
@@ -144,49 +146,48 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
         <Stack spacing="xs">
           <Group spacing="xs" align="flex-start">
             {version.canDownload ? (
-
-            <Stack spacing={4} style={{ flex: 1 }}>
-              <MultiActionButton
-                variant="light"
-                component="a"
-                href={createModelFileDownloadUrl({ versionId: version.id, primary: true })}
-                disabled={!primaryFile}
-                menuItems={
-                  version.files.length === 1
-                    ? []
-                    : version.files.map((file, index) => (
-                        <Menu.Item
-                          key={index}
-                          component="a"
-                          py={4}
-                          icon={<VerifiedText file={file} iconOnly />}
-                          href={createModelFileDownloadUrl({
-                            versionId: version.id,
-                            type: file.type,
-                            format: file.format,
-                          })}
-                          download
-                        >
-                          {`${startCase(file.type)}${
-                            ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.format : ''
-                          } (${formatKBytes(file.sizeKB)})`}
-                        </Menu.Item>
-                      ))
-                }
-                download
-              >
-                {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
-              </MultiActionButton>
-              {primaryFile && (
-                <Group position="apart" noWrap spacing={0}>
-                  <VerifiedText file={primaryFile} />
-                  <Text size="xs" color="dimmed">
-                    {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                    {primaryFile.format}
-                  </Text>
-                </Group>
-              )}
-            </Stack>
+              <Stack spacing={4} style={{ flex: 1 }}>
+                <MultiActionButton
+                  variant="light"
+                  component="a"
+                  href={createModelFileDownloadUrl({ versionId: version.id, primary: true })}
+                  disabled={!primaryFile}
+                  menuItems={
+                    version.files.length === 1
+                      ? []
+                      : version.files.map((file, index) => (
+                          <Menu.Item
+                            key={index}
+                            component="a"
+                            py={4}
+                            icon={<VerifiedText file={file} iconOnly />}
+                            href={createModelFileDownloadUrl({
+                              versionId: version.id,
+                              type: file.type,
+                              format: file.format,
+                            })}
+                            download
+                          >
+                            {`${startCase(file.type)}${
+                              ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.format : ''
+                            } (${formatKBytes(file.sizeKB)})`}
+                          </Menu.Item>
+                        ))
+                  }
+                  download
+                >
+                  {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+                </MultiActionButton>
+                {primaryFile && (
+                  <Group position="apart" noWrap spacing={0}>
+                    <VerifiedText file={primaryFile} />
+                    <Text size="xs" color="dimmed">
+                      {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+                      {primaryFile.format}
+                    </Text>
+                  </Group>
+                )}
+              </Stack>
             ) : (
               <Stack spacing={4} style={{ flex: 1 }}>
                 <JoinPopover>
@@ -328,7 +329,12 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
   );
 }
 
-type TabContentProps = { version: Props['items'][number]; nsfw?: boolean; type: ModelType };
+type TabContentProps = {
+  version: Props['items'][number];
+  nsfw?: boolean;
+  type: ModelType;
+  locked: boolean;
+};
 
 // const useStyles = createStyles((theme, { index, mobile }: { index: number; mobile: boolean }) => ({
 //   image: {
