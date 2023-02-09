@@ -2,6 +2,7 @@ import { Carousel } from '@mantine/carousel';
 import {
   ActionIcon,
   Badge,
+  Box,
   Button,
   Center,
   Container,
@@ -12,12 +13,10 @@ import {
   Stack,
   Text,
   Title,
-  useMantineTheme,
   Alert,
   ThemeIcon,
   Tooltip,
   Rating,
-  Anchor,
   AspectRatio,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -61,8 +60,6 @@ import { ModelDiscussion } from '~/components/Model/ModelDiscussion/ModelDiscuss
 import { ModelVersions } from '~/components/Model/ModelVersions/ModelVersions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
@@ -76,13 +73,11 @@ import { RunButton } from '~/components/RunStrategy/RunButton';
 import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
@@ -95,7 +90,8 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { Announcements } from '~/components/Announcements/Announcements';
-import { Username } from '~/components/User/Username';
+import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { ModelById } from '~/types/router';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 
 //TODO - Break model query into multiple queries
@@ -133,9 +129,21 @@ const useStyles = createStyles((theme) => ({
     },
   },
 
+  titleWrapper: {
+    gap: theme.spacing.xs,
+
+    [theme.fn.smallerThan('md')]: {
+      gap: theme.spacing.xs * 0.4,
+    },
+  },
+
   title: {
-    [theme.fn.smallerThan('sm')]: {
+    paddingBottom: theme.spacing.xs * 0.8,
+
+    [theme.fn.smallerThan('md')]: {
       fontSize: theme.fontSizes.xs * 2.4, // 24px
+      width: '100%',
+      paddingBottom: 0,
     },
   },
 
@@ -144,15 +152,39 @@ const useStyles = createStyles((theme) => ({
       display: 'none',
     },
   },
+
+  mobileCarousel: {
+    display: 'none',
+    [theme.fn.smallerThan('md')]: {
+      display: 'block',
+    },
+  },
+  desktopCarousel: {
+    display: 'block',
+    [theme.fn.smallerThan('md')]: {
+      display: 'none',
+    },
+  },
+
+  modelBadgeText: {
+    fontSize: theme.fontSizes.md,
+    [theme.fn.smallerThan('md')]: {
+      fontSize: theme.fontSizes.sm,
+    },
+  },
+
+  discussionActionButton: {
+    [theme.fn.smallerThan('sm')]: {
+      width: '100%',
+    },
+  },
 }));
 
 export default function ModelDetail({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const theme = useMantineTheme();
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
-  const mobile = useIsMobile();
+  const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();
 
@@ -404,34 +436,6 @@ export default function ModelDetail({
         <TrainedWords trainedWords={latestVersion?.trainedWords} files={latestVersion?.files} />
       ),
     },
-    {
-      label: 'Uploaded By',
-      value:
-        model.user && !model.user.deletedAt ? (
-          <Group align="center" position="apart">
-            <Link href={`/user/${model.user.username}`} passHref>
-              <Anchor>
-                <Group spacing={4} noWrap sx={{ flex: 1, overflow: 'hidden' }}>
-                  <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
-                  <Username
-                    username={model.user.username}
-                    cosmetics={model.user.cosmetics.filter(
-                      ({ cosmetic }) => cosmetic.type === 'NamePlate'
-                    )}
-                    inherit
-                  />
-                </Group>
-              </Anchor>
-            </Link>
-            <Group spacing={4} noWrap>
-              <RankBadge size="md" textSize="xs" rank={model.user.rank?.leaderboardRank} />
-              <FollowUserButton userId={model.user.id} size="xs" compact />
-            </Group>
-          </Group>
-        ) : (
-          '[deleted]'
-        ),
-    },
   ];
   const published = model.status === ModelStatus.Published;
   const isMuted = currentUser?.muted ?? false;
@@ -444,12 +448,8 @@ export default function ModelDetail({
           <Announcements sx={{ marginBottom: 5 }} />
           <Stack spacing="xs" mb="xl">
             <Group align="center" sx={{ justifyContent: 'space-between' }} noWrap>
-              <Group align="center" spacing={mobile ? 4 : 'xs'}>
-                <Title
-                  className={classes.title}
-                  order={1}
-                  sx={{ paddingBottom: mobile ? 0 : 8, width: mobile ? '100%' : undefined }}
-                >
+              <Group className={classes.titleWrapper} align="center">
+                <Title className={classes.title} order={1}>
                   {model?.name}
                 </Title>
                 <LoginRedirect reason="favorite-model">
@@ -467,7 +467,7 @@ export default function ModelDetail({
                     sx={{ cursor: 'pointer' }}
                     onClick={() => handleToggleFavorite()}
                   >
-                    <Text size={mobile ? 'sm' : 'md'}>
+                    <Text className={classes.modelBadgeText}>
                       {abbreviateNumber(model.rank?.favoriteCountAllTime ?? 0)}
                     </Text>
                   </IconBadge>
@@ -483,7 +483,7 @@ export default function ModelDetail({
                     scrollToTop(discussionSectionRef.current);
                   }}
                 >
-                  <Text size={mobile ? 'sm' : 'md'}>
+                  <Text className={classes.modelBadgeText}>
                     {abbreviateNumber(model.rank?.ratingCountAllTime ?? 0)}
                   </Text>
                 </IconBadge>
@@ -613,8 +613,11 @@ export default function ModelDetail({
             )}
           </Stack>
           <Grid gutter="xl">
-            <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
+            <Grid.Col xs={12} md={4} orderMd={2}>
               <Stack>
+                <Box className={classes.mobileCarousel}>
+                  <ModelCarousel model={model} latestVersion={latestVersion} mobile />
+                </Box>
                 <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
                   {latestVersion.canDownload ? (
                     <Stack sx={{ flex: 1 }} spacing={4}>
@@ -712,6 +715,7 @@ export default function ModelDetail({
                   files={latestVersion.files}
                 />
                 <DescriptionTable items={modelDetails} labelWidth="30%" />
+                <CreatorCard user={model.user} />
                 {model?.type === 'Checkpoint' && (
                   <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>
                     <Group
@@ -775,9 +779,8 @@ export default function ModelDetail({
             </Grid.Col>
             <Grid.Col
               xs={12}
-              sm={7}
               md={8}
-              orderSm={1}
+              orderMd={1}
               sx={(theme) => ({
                 [theme.fn.largerThan('xs')]: {
                   padding: `0 ${theme.spacing.sm}px`,
@@ -786,72 +789,9 @@ export default function ModelDetail({
               })}
             >
               <Stack>
-                {latestVersion.images.length > 0 && (
-                  <Carousel
-                    key={model.id}
-                    slideSize="50%"
-                    breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
-                    slideGap="xl"
-                    align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
-                    slidesToScroll={mobile ? 1 : 2}
-                    withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
-                    loop
-                  >
-                    <ImageGuard
-                      images={latestVersion.images}
-                      nsfw={model.nsfw}
-                      connect={{ entityId: model.id, entityType: 'model' }}
-                      render={(image) => (
-                        <Carousel.Slide>
-                          <Center style={{ height: '100%', width: '100%' }}>
-                            <div style={{ width: '100%', position: 'relative' }}>
-                              <ImageGuard.ToggleConnect />
-                              <ImageGuard.Unsafe>
-                                <AspectRatio
-                                  ratio={(image.width ?? 1) / (image.height ?? 1)}
-                                  sx={(theme) => ({
-                                    width: '100%',
-                                    borderRadius: theme.radius.md,
-                                    overflow: 'hidden',
-                                  })}
-                                >
-                                  <MediaHash {...image} />
-                                </AspectRatio>
-                              </ImageGuard.Unsafe>
-                              <ImageGuard.Safe>
-                                <ImagePreview
-                                  image={image}
-                                  edgeImageProps={{ width: 400 }}
-                                  radius="md"
-                                  onClick={() =>
-                                    // Router.push({
-                                    //   pathname: `/gallery/${image.id}`,
-                                    //   query: {
-                                    //     modelId: model.id,
-                                    //     modelVersionId: latestVersion.id,
-                                    //     infinite: false,
-                                    //     returnUrl: Router.asPath,
-                                    //   },
-                                    // })
-                                    openRoutedContext('galleryDetailModal', {
-                                      galleryImageId: image.id,
-                                      modelId: model.id,
-                                      modelVersionId: latestVersion.id,
-                                      infinite: false,
-                                      returnUrl: Router.asPath,
-                                    })
-                                  }
-                                  style={{ width: '100%' }}
-                                  withMeta
-                                />
-                              </ImageGuard.Safe>
-                            </div>
-                          </Center>
-                        </Carousel.Slide>
-                      )}
-                    />
-                  </Carousel>
-                )}
+                <Box className={classes.desktopCarousel}>
+                  <ModelCarousel model={model} latestVersion={latestVersion} />
+                </Box>
                 {model.description ? (
                   <ContentClamp maxHeight={300}>
                     <RenderHtml html={model.description} withMentions />
@@ -859,7 +799,7 @@ export default function ModelDetail({
                 ) : null}
               </Stack>
             </Grid.Col>
-            <Grid.Col span={12} orderSm={3} my="xl">
+            <Grid.Col span={12} orderMd={3} my="xl">
               <Stack spacing="xl">
                 <Title className={classes.title} order={2}>
                   Versions
@@ -872,7 +812,7 @@ export default function ModelDetail({
                 />
               </Stack>
             </Grid.Col>
-            <Grid.Col span={12} orderSm={4} my="xl">
+            <Grid.Col span={12} orderMd={4} my="xl">
               <Stack spacing="xl">
                 <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
                   <Group spacing="xs">
@@ -882,9 +822,9 @@ export default function ModelDetail({
                       <>
                         <LoginRedirect reason="create-review">
                           <Button
+                            className={classes.discussionActionButton}
                             leftIcon={<IconStar size={16} />}
                             variant="outline"
-                            fullWidth={mobile}
                             size="xs"
                             onClick={() => openRoutedContext('reviewEdit', {})}
                           >
@@ -893,9 +833,9 @@ export default function ModelDetail({
                         </LoginRedirect>
                         <LoginRedirect reason="create-comment">
                           <Button
+                            className={classes.discussionActionButton}
                             leftIcon={<IconMessage size={16} />}
                             variant="outline"
-                            fullWidth={mobile}
                             onClick={() => openRoutedContext('commentEdit', {})}
                             size="xs"
                           >
@@ -913,5 +853,75 @@ export default function ModelDetail({
         </Stack>
       </Container>
     </>
+  );
+}
+
+function ModelCarousel({
+  model,
+  latestVersion,
+  mobile = false,
+}: {
+  model: ModelById;
+  latestVersion: ModelById['modelVersions'][number];
+  mobile?: boolean;
+}) {
+  if (!latestVersion.images.length) return null;
+
+  return (
+    <Carousel
+      key={model.id}
+      slideSize="50%"
+      breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
+      slideGap="xl"
+      align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
+      slidesToScroll={mobile ? 1 : 2}
+      withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+      loop
+    >
+      <ImageGuard
+        images={latestVersion.images}
+        nsfw={model.nsfw}
+        connect={{ entityId: model.id, entityType: 'model' }}
+        render={(image) => (
+          <Carousel.Slide>
+            <Center style={{ height: '100%', width: '100%' }}>
+              <div style={{ width: '100%', position: 'relative' }}>
+                <ImageGuard.ToggleConnect />
+                <ImageGuard.Unsafe>
+                  <AspectRatio
+                    ratio={(image.width ?? 1) / (image.height ?? 1)}
+                    sx={(theme) => ({
+                      width: '100%',
+                      borderRadius: theme.radius.md,
+                      overflow: 'hidden',
+                    })}
+                  >
+                    <MediaHash {...image} />
+                  </AspectRatio>
+                </ImageGuard.Unsafe>
+                <ImageGuard.Safe>
+                  <ImagePreview
+                    image={image}
+                    edgeImageProps={{ width: 400 }}
+                    radius="md"
+                    onClick={() =>
+                      openRoutedContext('galleryDetailModal', {
+                        galleryImageId: image.id,
+                        modelId: model.id,
+                        modelVersionId: latestVersion.id,
+                        infinite: false,
+                        returnUrl: Router.asPath,
+                      })
+                    }
+                    style={{ width: '100%' }}
+                    withMeta
+                  />
+                </ImageGuard.Safe>
+              </div>
+            </Center>
+          </Carousel.Slide>
+        )}
+      />
+    </Carousel>
   );
 }

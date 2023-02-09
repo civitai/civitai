@@ -9,10 +9,11 @@ import {
   getReviewDetailsHandler,
   getReviewReactionsHandler,
   getReviewsInfiniteHandler,
-  toggleReactionHandler,
-  upsertReviewHandler,
+  setTosViolationHandler,
   toggleExcludeHandler,
   toggleLockHandler,
+  toggleReactionHandler,
+  upsertReviewHandler,
 } from '~/server/controllers/review.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -96,4 +97,5 @@ export const reviewRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(toggleLockHandler),
+  setTosViolation: protectedProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
 });

@@ -1,14 +1,14 @@
 import { Alert, Button, Card, Center, Divider, Group, Loader, Stack, Title } from '@mantine/core';
 import { LinkType } from '@prisma/client';
 import { useSession } from 'next-auth/react';
-import React from 'react';
-import { useState } from 'react';
+import React, { useState } from 'react';
+
 import { SocialLink } from '~/components/Account/SocialLink';
 import { SocialLinkModal } from '~/components/Account/SocialLinkModal';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 
-export function CreatorCard() {
+export function SocialProfileCard() {
   const { data: session } = useSession();
 
   const [selectedLink, setSelectedLink] = useState<{
@@ -51,7 +51,7 @@ export function CreatorCard() {
             <Alert>You have not added any {type.toLowerCase()} links</Alert>
           ) : (
             <div>
-              {sortDomainLinks(links)?.map((link, index) => (
+              {sortDomainLinks(links).map((link, index) => (
                 <React.Fragment key={link.id}>
                   <SocialLink link={link} setSelected={setSelectedLink} />
                   {index < links.length - 1 && <Divider p={0} my="xs" />}

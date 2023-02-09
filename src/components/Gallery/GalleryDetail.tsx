@@ -1,37 +1,47 @@
-import Router, { useRouter } from 'next/router';
-import { useGalleryFilters } from '~/components/Gallery/GalleryFilters';
-import { trpc } from '~/utils/trpc';
-import { NotFound } from '~/components/AppLayout/NotFound';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
-import { useEffect, useMemo, useRef } from 'react';
-import { GalleryCarousel } from '~/components/Gallery/GalleryCarousel';
 import {
-  createStyles,
-  MantineProvider,
-  Card,
-  Group,
-  CloseButton,
   ActionIcon,
+  Box,
+  Card,
+  CloseButton,
+  createStyles,
+  Divider,
+  Group,
+  LoadingOverlay,
+  MantineProvider,
+  Menu,
+  Paper,
   ScrollArea,
   Stack,
-  Paper,
-  Box,
-  Divider,
 } from '@mantine/core';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useHotkeys } from '@mantine/hooks';
+import { closeModal, openConfirmModal } from '@mantine/modals';
+import {
+  IconFlag,
+  IconInfoCircle,
+  IconShare,
+  IconDotsVertical,
+  IconTrash,
+  IconBan,
+} from '@tabler/icons';
+import Router, { useRouter } from 'next/router';
+import { useEffect, useMemo, useRef } from 'react';
 
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { IconFlag, IconInfoCircle, IconShare, IconDotsVertical } from '@tabler/icons';
-import { ShareButton } from '~/components/ShareButton/ShareButton';
-import { QS } from '~/utils/qs';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import { GalleryCarousel } from '~/components/Gallery/GalleryCarousel';
+import { useGalleryFilters } from '~/components/Gallery/GalleryFilters';
+import { ReportImageButton } from '~/components/Gallery/ReportImageButton';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { useHotkeys } from '@mantine/hooks';
-import { ReportImageButton } from '~/components/Gallery/ReportImageButton';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
+import { showErrorNotification } from '~/utils/notifications';
+import { QS } from '~/utils/qs';
+import { trpc } from '~/utils/trpc';
 
 export function GalleryDetail() {
   const router = useRouter();
@@ -44,6 +54,7 @@ export function GalleryDetail() {
   const returnUrl = router.query.returnUrl as string;
   const active = router.query.active === 'true';
   const hasHistory = useHasClientHistory();
+  const queryUtils = trpc.useContext();
 
   const { modelId, modelVersionId, reviewId, userId, infinite } = filters;
 
@@ -125,9 +136,62 @@ export function GalleryDetail() {
     );
   };
 
+  const deleteMutation = trpc.image.delete.useMutation({
+    async onSuccess() {
+      if (image && image.connections?.modelId) {
+        await queryUtils.model.getById.invalidate({ id: image.connections?.modelId });
+
+        if (image.connections?.reviewId) {
+          await queryUtils.review.getDetail.invalidate({ id: image.connections?.reviewId });
+          await queryUtils.review.getAll.invalidate({ modelId: image.connections?.modelId });
+        }
+      }
+      handleCloseContext();
+    },
+    onError(error) {
+      showErrorNotification({ error: new Error(error.message) });
+    },
+  });
+  const handleDeleteImage = () => {
+    if (image) deleteMutation.mutate({ id: image.id });
+  };
+
+  const tosViolationMutation = trpc.image.setTosViolation.useMutation({
+    async onSuccess() {
+      if (image) {
+        await queryUtils.image.getGalleryImageDetail.invalidate({ id: image.id });
+        if (image.connections?.modelId)
+          await queryUtils.model.getById.invalidate({ id: image.connections?.modelId });
+      }
+      closeModal('confirm-tos-violation');
+      handleCloseContext();
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Could not report review, please try again',
+      });
+    },
+  });
+  const handleTosViolation = () => {
+    openConfirmModal({
+      modalId: 'confirm-tos-violation',
+      title: 'Report ToS Violation',
+      children: `Are you sure you want to report this image for a Terms of Service violation? Once marked, it won't show up for other people`,
+      centered: true,
+      labels: { confirm: 'Yes', cancel: 'Cancel' },
+      confirmProps: { color: 'red', loading: tosViolationMutation.isLoading },
+      closeOnConfirm: false,
+      onConfirm: image ? () => tosViolationMutation.mutate({ id: image.id }) : undefined,
+    });
+  };
+
   if (!image && isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
   // if (image?.nsfw && !currentUser?.showNsfw) return <SensitiveShield />;
+
+  const isMod = currentUser?.isModerator ?? false;
+  const isOwner = currentUser?.id === image.user.id;
 
   return (
     <MantineProvider theme={{ colorScheme: 'dark' }}>
@@ -185,21 +249,45 @@ export function GalleryDetail() {
                       <IconShare />
                     </ActionIcon>
                   </ShareButton>
-                  {/* TODO.gallery - reporting */}
                   <ReportImageButton imageId={image.id}>
                     <ActionIcon size="lg">
                       <IconFlag />
                     </ActionIcon>
                   </ReportImageButton>
-                  {/* <ActionIcon size="lg">
-                  <IconDotsVertical />
-                </ActionIcon> */}
+                  {(isMod || isOwner) && (
+                    <Menu position="left">
+                      <Menu.Target>
+                        <ActionIcon size="lg">
+                          <IconDotsVertical />
+                        </ActionIcon>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        <Menu.Item
+                          color="red"
+                          icon={<IconTrash size={14} stroke={1.5} />}
+                          onClick={handleDeleteImage}
+                          disabled={deleteMutation.isLoading}
+                        >
+                          Delete
+                        </Menu.Item>
+                        {isMod && (
+                          <Menu.Item
+                            icon={<IconBan size={14} stroke={1.5} />}
+                            onClick={handleTosViolation}
+                          >
+                            Remove as TOS Violation
+                          </Menu.Item>
+                        )}
+                      </Menu.Dropdown>
+                    </Menu>
+                  )}
                 </Group>
               </Group>
               <CloseButton size="lg" variant="default" onClick={handleCloseContext} />
             </Group>
           </Card.Section>
-          <Card.Section component={ScrollArea} style={{ flex: 1 }}>
+          <Card.Section component={ScrollArea} style={{ flex: 1, position: 'relative' }}>
+            <LoadingOverlay visible={deleteMutation.isLoading} />
             <Stack spacing="md" pt="md">
               <Box px="md">
                 <Reactions

@@ -5,7 +5,7 @@ export function useIsMobile(options?: { breakpoint: MantineSize }) {
   const theme = useMantineTheme();
   const { breakpoint = 'sm' } = options || {};
 
-  return useMediaQuery(`(max-width: ${theme.breakpoints[breakpoint] - 1}px)`, true, {
+  return useMediaQuery(`(max-width: ${theme.breakpoints[breakpoint] - 1}px)`, false, {
     getInitialValueInEffect: false,
   });
 }

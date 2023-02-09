@@ -7,9 +7,10 @@ import {
   getCommentHandler,
   getCommentReactionsHandler,
   getCommentsInfiniteHandler,
+  setTosViolationHandler,
+  toggleLockHandler,
   toggleReactionHandler,
   upsertCommentHandler,
-  toggleLockHandler,
 } from '~/server/controllers/comment.controller';
 import { prisma } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
@@ -89,4 +90,5 @@ export const commentRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(toggleLockHandler),
+  setTosViolation: protectedProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
 });

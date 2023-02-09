@@ -34,6 +34,7 @@ export const getReviews = <TSelect extends Prisma.ReviewSelect>({
       modelId,
       modelVersionId,
       userId,
+      tosViolation: false,
       // imagesOnReviews: filterBy?.includes(ReviewFilter.IncludesImages) ? { some: {} } : undefined,
       // OR: user
       //   ? [
@@ -63,8 +64,8 @@ export const getReviewById = <TSelect extends Prisma.ReviewSelect>({
   id,
   select,
 }: GetByIdInput & { select: TSelect }) => {
-  return prisma.review.findUnique({
-    where: { id },
+  return prisma.review.findFirst({
+    where: { id, tosViolation: false },
     select,
   });
 };

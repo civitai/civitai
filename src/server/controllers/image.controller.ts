@@ -1,5 +1,4 @@
-import { MetricTimeframe } from '@prisma/client';
-
+import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -13,8 +12,15 @@ import {
   getModelVersionImages,
   getReviewImages,
   getGalleryImages,
+  deleteImageById,
+  updateImageById,
 } from '~/server/services/image.service';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { createNotification } from '~/server/services/notification.service';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 
 export const getModelVersionImagesHandler = ({
   input: { modelVersionId },
@@ -140,5 +146,63 @@ export const getGalleryImagesHandler = async ({
       : items.sort(sortByIndex);
   } catch (error) {
     throw throwDbError(error);
+  }
+};
+
+export const deleteImageHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const image = await deleteImageById(input);
+    if (!image) throw throwNotFoundError(`No image with id ${input.id} found`);
+
+    return image;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const setTosViolationHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { user } = ctx;
+    const { id } = input;
+    if (!user.isModerator) throw throwAuthorizationError('Only moderators can set TOS violation');
+
+    const updatedImage = await updateImageById({
+      id,
+      data: { tosViolation: true },
+      select: {
+        id: true,
+        user: { select: { id: true } },
+        imagesOnModels: {
+          select: { modelVersion: { select: { model: { select: { name: true } } } } },
+        },
+      },
+    });
+    if (!updatedImage) throw throwNotFoundError(`No comment with id ${id}`);
+
+    // Create notifications in the background
+    createNotification({
+      userId: updatedImage.user.id,
+      type: 'tos-violation',
+      details: {
+        modelName: updatedImage.imagesOnModels?.modelVersion.model.name,
+        entity: 'image',
+      },
+    }).catch((error) => {
+      // Print out any errors
+      // TODO.logs: sent to logger service
+      console.error(error);
+    });
+
+    return updatedImage;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };
