@@ -70,17 +70,27 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
   if (!env.UNAUTHENTICATED_DOWNLOAD && !userId) {
     if (req.headers['content-type'] === 'application/json')
       return res.status(401).json({ error: 'Unauthorized' });
-    else return res.redirect(getLoginLink({ reason: 'download-auth', returnUrl: `/models/${modelVersion.model.id}`}));
+    else
+      return res.redirect(
+        getLoginLink({ reason: 'download-auth', returnUrl: `/models/${modelVersion.model.id}` })
+      );
   }
 
   // Handle early access
   if (!session?.user?.tier) {
-    const earlyAccessDeadline = getEarlyAccessDeadline({ versionCreatedAt: modelVersion.createdAt, publishedAt: modelVersion.model.publishedAt, earlyAccessTimeframe: modelVersion.earlyAccessTimeFrame });
+    const earlyAccessDeadline = getEarlyAccessDeadline({
+      versionCreatedAt: modelVersion.createdAt,
+      publishedAt: modelVersion.model.publishedAt,
+      earlyAccessTimeframe: modelVersion.earlyAccessTimeFrame,
+    });
     const inEarlyAccess = new Date() < earlyAccessDeadline;
     if (inEarlyAccess) {
       if (req.headers['content-type'] === 'application/json')
         return res.status(403).json({ error: 'Early Access', deadline: earlyAccessDeadline });
-      else return res.redirect(getJoinLink({ reason: 'early-access', returnUrl: `/models/${modelVersion.model.id}` }));
+      else
+        return res.redirect(
+          getJoinLink({ reason: 'early-access', returnUrl: `/models/${modelVersion.model.id}` })
+        );
     }
   }
 
@@ -146,6 +156,9 @@ export function getDownloadFilename({
     if (fileName.toLowerCase().includes('-inpainting')) {
       versionName = versionName.replace(/_?inpainting/i, '');
       fileSuffix = '-inpainting';
+    } else if (fileName.toLowerCase().includes('.instruct-pix2pix')) {
+      versionName = versionName.replace(/_?instruct|-?pix2pix/gi, '');
+      fileSuffix = '.instruct-pix2pix';
     } else if (fileType === 'Text Encoder') fileSuffix = '_txt';
 
     fileName = `${modelName}_${versionName}${fileSuffix}.${ext}`;
