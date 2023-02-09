@@ -12,7 +12,7 @@ import {
 } from '@tabler/icons';
 import React from 'react';
 
-export const PermissionIndicator = ({ permissions, size = 20, spacing = 2 }: Props) => {
+export const PermissionIndicator = ({ permissions, size = 20, spacing = 2, ...props }: Props) => {
   const { allowNoCredit, allowCommercialUse, allowDerivatives, allowDifferentLicense } =
     permissions;
   const canSellImages =
@@ -45,7 +45,7 @@ export const PermissionIndicator = ({ permissions, size = 20, spacing = 2 }: Pro
   return (
     <Popover withArrow>
       <Popover.Target>
-        <Group spacing={spacing} sx={{ cursor: 'pointer' }} noWrap>
+        <Group spacing={spacing} sx={{ cursor: 'pointer' }} noWrap {...props}>
           {icons.map(({ label, icon }, i) => (
             <Tooltip key={i} label={label} withArrow withinPortal position="top">
               <Box sx={(theme) => ({ color: theme.colors.gray[5] })}>{icon}</Box>
@@ -87,8 +87,7 @@ export const PermissionIndicator = ({ permissions, size = 20, spacing = 2 }: Pro
 type Props = {
   permissions: Permissions;
   size?: number;
-  spacing?: GroupProps['spacing'];
-};
+} & Omit<GroupProps, 'size'>;
 
 type Permissions = {
   allowNoCredit: boolean;

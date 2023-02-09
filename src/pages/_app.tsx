@@ -22,7 +22,6 @@ import '~/styles/globals.css';
 import { CustomModalsProvider } from './../providers/CustomModalsProvider';
 import { TosProvider } from '~/providers/TosProvider';
 import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
-import { RoutedContextProvider } from '~/routed-context/routed-context.provider';
 import { env } from '~/env/client.mjs';
 import { MaintenanceMode } from '~/components/MaintenanceMode/MaintenanceMode';
 import { NsfwWorkerProvider } from '~/providers/NsfwWorkerProvider';
@@ -91,10 +90,8 @@ function MyApp(props: CustomAppProps) {
             <NsfwWorkerProvider>
               <CustomModalsProvider>
                 <NotificationsProvider>
-                  {/* <RoutedContextProvider> */}
                   <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
                   <RoutedContextProvider2 />
-                  {/* </RoutedContextProvider> */}
                 </NotificationsProvider>
               </CustomModalsProvider>
             </NsfwWorkerProvider>

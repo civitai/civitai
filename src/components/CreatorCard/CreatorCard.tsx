@@ -1,4 +1,13 @@
-import { ActionIcon, Card, Group, Rating, Stack, Text, useMantineTheme } from '@mantine/core';
+import {
+  ActionIcon,
+  Card,
+  Group,
+  MantineSize,
+  Rating,
+  Stack,
+  Text,
+  useMantineTheme,
+} from '@mantine/core';
 import { IconDownload, IconHeart, IconUpload, IconUsers, IconStar } from '@tabler/icons';
 
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
@@ -11,6 +20,8 @@ import { sortDomainLinks } from '~/utils/domain-link';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+
+const iconBadgeSize: MantineSize = 'sm';
 
 export function CreatorCard({ user }: Props) {
   const theme = useMantineTheme();
@@ -43,23 +54,22 @@ export function CreatorCard({ user }: Props) {
         <Stack spacing="xs">
           <Group align="center" position="apart">
             <UserAvatar
-              size="md"
+              size="sm"
               user={creator}
-              subText={`Member since ${formatDate(creator.createdAt)}`}
+              subText={`Joined ${formatDate(creator.createdAt)}`}
               withUsername
               linkToProfile
             />
             <Group spacing="xs">
-              <RankBadge size="lg" rank={creator.rank?.leaderboardRank} />
-              <FollowUserButton userId={creator.id} size="sm" compact />
+              <RankBadge size="md" rank={creator.rank?.leaderboardRank} />
+              <FollowUserButton userId={creator.id} size="xs" compact />
             </Group>
           </Group>
           {stats && (
             <Group position="apart">
               <IconBadge
-                tooltip="Average Rating"
                 sx={{ userSelect: 'none' }}
-                size="lg"
+                size={iconBadgeSize}
                 icon={
                   <Rating
                     size="xs"
@@ -82,38 +92,35 @@ export function CreatorCard({ user }: Props) {
               </IconBadge>
               <Group spacing={4} noWrap>
                 <IconBadge
-                  tooltip="Uploads"
                   icon={<IconUpload size={14} />}
+                  href={`/user/${creator.username}`}
                   color="gray"
-                  size="lg"
+                  size={iconBadgeSize}
                   variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                 >
                   <Text size="xs">{abbreviateNumber(uploads)}</Text>
                 </IconBadge>
                 <IconBadge
-                  tooltip="Followers"
                   icon={<IconUsers size={14} />}
-                  href={`${creator.username}/followers`}
+                  href={`/user/${creator.username}/followers`}
                   color="gray"
-                  size="lg"
+                  size={iconBadgeSize}
                   variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                 >
                   <Text size="xs">{abbreviateNumber(stats.followerCountAllTime)}</Text>
                 </IconBadge>
                 <IconBadge
-                  tooltip="Favorites"
                   icon={<IconHeart size={14} />}
                   color="gray"
                   variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                  size="lg"
+                  size={iconBadgeSize}
                 >
                   <Text size="xs">{abbreviateNumber(stats.favoriteCountAllTime)}</Text>
                 </IconBadge>
                 <IconBadge
-                  tooltip="Downloads"
                   icon={<IconDownload size={14} />}
                   variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                  size="lg"
+                  size={iconBadgeSize}
                 >
                   <Text size="xs">{abbreviateNumber(stats.downloadCountAllTime)}</Text>
                 </IconBadge>
@@ -123,7 +130,14 @@ export function CreatorCard({ user }: Props) {
         </Stack>
       </Card.Section>
       {creator.links && creator.links.length > 0 ? (
-        <Card.Section py="xs" withBorder inheritPadding>
+        <Card.Section
+          withBorder
+          inheritPadding
+          sx={(theme) => ({
+            background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+          })}
+          py={5}
+        >
           <Group spacing={4}>
             {sortDomainLinks(creator.links).map((link, index) => (
               <ActionIcon
@@ -134,7 +148,7 @@ export function CreatorCard({ user }: Props) {
                 rel="noopener noreferrer"
                 size="md"
               >
-                <DomainIcon domain={link.domain} size={22} />
+                <DomainIcon domain={link.domain} size={20} />
               </ActionIcon>
             ))}
           </Group>

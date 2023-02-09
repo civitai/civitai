@@ -110,7 +110,7 @@ type Props = {
 const useStyles = createStyles(() => ({
   link: {
     '&:hover': {
-      textDecoration: 'underline',
+      // textDecoration: 'underline',
     },
   },
 }));

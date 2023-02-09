@@ -719,8 +719,9 @@ export default function ModelDetail({
                 />
                 <DescriptionTable items={modelDetails} labelWidth="30%" />
                 <CreatorCard user={model.user} />
-                {model?.type === 'Checkpoint' && (
-                  <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>
+
+                <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>
+                  {model?.type === 'Checkpoint' && (
                     <Group
                       spacing={4}
                       noWrap
@@ -770,9 +771,9 @@ export default function ModelDetail({
                         ))}
                       </Stack>
                     </Group>
-                    <PermissionIndicator spacing={5} size={28} permissions={model} />
-                  </Group>
-                )}
+                  )}
+                  <PermissionIndicator spacing={5} size={28} permissions={model} ml="auto" />
+                </Group>
                 {hasPendingClaimReport && (
                   <AlertWithIcon icon={<IconMessageCircle2 />}>
                     {`A verified artist believes this model was fine-tuned on their art. We're discussing this with the model creator and artist`}

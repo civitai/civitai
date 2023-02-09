@@ -115,7 +115,12 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     AND.push({ id: { notIn: excludedIds } });
   }
   if (checkpointType && (!types?.length || types?.includes('Checkpoint'))) {
-    AND.push({ checkpointType });
+    const TypeOr: Prisma.Enumerable<Prisma.ModelWhereInput> = [{ checkpointType }];
+    if (types?.length) {
+      const otherTypes = types.filter((t) => t !== 'Checkpoint');
+      TypeOr.push({ type: { in: otherTypes } });
+    } else TypeOr.push({ type: { not: 'Checkpoint' } });
+    AND.push({ OR: TypeOr });
   }
 
   const where: Prisma.ModelWhereInput = {
