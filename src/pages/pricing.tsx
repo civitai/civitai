@@ -19,19 +19,25 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { PlanDetails } from '~/components/Stripe/PlanDetails';
 import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
-import { IconCalendarDue, IconCircleCheck, IconExclamationMark, IconHeartHandshake } from '@tabler/icons';
+import {
+  IconCalendarDue,
+  IconCircleCheck,
+  IconExclamationMark,
+  IconHeartHandshake,
+} from '@tabler/icons';
 import { DonateButton } from '~/components/Stripe/DonateButton';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 import { joinRedirectReasons, JoinRedirectReason } from '~/utils/join-helpers';
 import { useRouter } from 'next/router';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export default function Pricing() {
   const router = useRouter();
-  const {
-    returnUrl = '/',
-    reason,
-  } = router.query as { returnUrl: string; reason: JoinRedirectReason };
+  const { returnUrl = '/', reason } = router.query as {
+    returnUrl: string;
+    reason: JoinRedirectReason;
+  };
   const redirectReason = joinRedirectReasons[reason];
 
   const { data: products, isLoading: productsLoading } = trpc.stripe.getPlans.useQuery();
@@ -153,7 +159,10 @@ export default function Pricing() {
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg }) => {
+  resolver: async ({ ssg, session }) => {
+    const features = getFeatureFlags({ user: session?.user });
+    if (!features.stripe) return { notFound: true };
+
     await ssg?.stripe.getPlans.prefetch();
     await ssg?.stripe.getUserSubscription.prefetch();
   },

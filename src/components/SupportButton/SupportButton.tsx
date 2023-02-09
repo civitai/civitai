@@ -1,7 +1,10 @@
 import { Box, BoxProps, createStyles, keyframes } from '@mantine/core';
 import Link from 'next/link';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 export const SupportButton = ({ ...props }: Props) => {
   const { classes } = useStyles();
+  const features = useFeatureFlags();
+  if (!features.stripe) return null;
 
   return (
     <Link href="/pricing" passHref>
