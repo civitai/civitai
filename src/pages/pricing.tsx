@@ -12,23 +12,32 @@ import {
   Tabs,
   List,
   ThemeIcon,
+  Group,
 } from '@mantine/core';
 import { trpc } from '~/utils/trpc';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { PlanDetails } from '~/components/Stripe/PlanDetails';
 import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
-import { IconCalendarDue, IconCircleCheck, IconHeartHandshake } from '@tabler/icons';
+import { IconCalendarDue, IconCircleCheck, IconExclamationMark, IconHeartHandshake } from '@tabler/icons';
 import { DonateButton } from '~/components/Stripe/DonateButton';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
+import { joinRedirectReasons, JoinRedirectReason } from '~/utils/join-helpers';
+import { useRouter } from 'next/router';
 
 export default function Pricing() {
+  const router = useRouter();
+  const {
+    returnUrl = '/',
+    reason,
+  } = router.query as { returnUrl: string; reason: JoinRedirectReason };
+  const redirectReason = joinRedirectReasons[reason];
+
   const { data: products, isLoading: productsLoading } = trpc.stripe.getPlans.useQuery();
   const { data: subscription, isLoading: subscriptionLoading } =
     trpc.stripe.getUserSubscription.useQuery();
 
-  // TODO - add button functionality
   const isLoading = productsLoading || subscriptionLoading;
   const showSubscribeButton = !subscription;
 
@@ -36,6 +45,16 @@ export default function Pricing() {
     <>
       <Container size="sm" mb="lg">
         <Stack>
+          {!!redirectReason && (
+            <Alert color="yellow">
+              <Group spacing="xs" noWrap align="flex-start">
+                <ThemeIcon color="yellow">
+                  <IconExclamationMark />
+                </ThemeIcon>
+                <Text size="md">{redirectReason}</Text>
+              </Group>
+            </Alert>
+          )}
           <Title align="center">Support Us ❤️</Title>
           <Text align="center" sx={{ lineHeight: 1.25 }}>
             {`As the leading model sharing service, we're proud to be ad-free and adding new features every week. Help us keep the community thriving by becoming a member or making a donation. Support Civitai and get exclusive perks.`}

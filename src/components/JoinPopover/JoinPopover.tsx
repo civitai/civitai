@@ -59,9 +59,9 @@ export function JoinPopover({
               <ThemeIcon color="red" size="xl" variant="outline">
                 <IconLock />
               </ThemeIcon>
-              {message ?? (
+              {typeof message != 'string' ? message : (
                 <Text size="sm" weight={500} sx={{ flex: 1 }}>
-                  You must be a Supporter Tier member to access this content.
+                  {message ?? 'You must be a Supporter Tier member to access this content.'}
                 </Text>
               )}
             </Group>

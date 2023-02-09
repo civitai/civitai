@@ -113,6 +113,10 @@ const useStyles = createStyles((theme) => {
       background: theme.fn.rgba(theme.colors.yellow[theme.fn.primaryShade()], 0.4),
     },
 
+    earlyAccessBadge: {
+      background: theme.fn.rgba(theme.colors.green[theme.fn.primaryShade()], 0.4),
+    },
+
     floatingAvatar: {
       position: 'absolute',
       bottom: theme.spacing.xs,
@@ -200,6 +204,11 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
       {data.status !== ModelStatus.Published && (
         <Badge className={cx(classes.floatingBadge, classes.statusBadge)} radius="sm" size="sm">
           {data.status}
+        </Badge>
+      )}
+      {data.status === ModelStatus.Published && data.earlyAccess && (
+        <Badge className={cx(classes.floatingBadge, classes.earlyAccessBadge)} radius="sm" size="sm">
+          Early Access
         </Badge>
       )}
     </>

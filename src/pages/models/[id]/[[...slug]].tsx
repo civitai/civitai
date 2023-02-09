@@ -313,6 +313,9 @@ export default function ModelDetail({
   const isFavorite = favoriteModels.find((modelId) => modelId === id);
   const deleted = !!model.deletedAt && model.status === 'Deleted';
 
+  const published = model.status === ModelStatus.Published;
+  const isMuted = currentUser?.muted ?? false;
+
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model.modelVersions[0];
   const primaryFile = getPrimaryFile(latestVersion?.files, {
@@ -321,6 +324,8 @@ export default function ModelDetail({
   });
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
+  const onlyEarlyAccess = model.modelVersions.every((version) => version.earlyAccessDeadline);
+  const canDiscuss = !isMuted && (!onlyEarlyAccess || currentUser?.isMember);
 
   const meta = (
     <Meta
@@ -437,8 +442,6 @@ export default function ModelDetail({
       ),
     },
   ];
-  const published = model.status === ModelStatus.Published;
-  const isMuted = currentUser?.muted ?? false;
 
   return (
     <>
@@ -818,7 +821,7 @@ export default function ModelDetail({
                   <Group spacing="xs">
                     <Title order={3}>Discussion</Title>
 
-                    {!isMuted ? (
+                    {canDiscuss ? (
                       <>
                         <LoginRedirect reason="create-review">
                           <Button
@@ -843,7 +846,19 @@ export default function ModelDetail({
                           </Button>
                         </LoginRedirect>
                       </>
-                    ) : null}
+                    ) : !isMuted  && (
+                      <JoinPopover message="You must be a Supporter Tier member to join this discussion">
+                        <Button
+                            className={classes.discussionActionButton}
+                            leftIcon={<IconClock size={16} />}
+                            variant="outline"
+                            size="xs"
+                            color="green"
+                          >
+                            Early Access
+                          </Button>
+                      </JoinPopover>
+                    )}
                   </Group>
                 </Group>
                 <ModelDiscussion modelId={model.id} />
