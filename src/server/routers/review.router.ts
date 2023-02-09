@@ -60,14 +60,23 @@ const isLocked = middleware(async ({ ctx, next, input }) => {
 
   const { id } = input as { id: number };
   const isModerator = ctx.user.isModerator;
-  const review = await prisma.review.findFirst({ where: { id } });
-  const locked = isModerator ? false : review?.locked ?? false;
+  if (isModerator)
+    return next({
+      ctx: {
+        ...ctx,
+        user: ctx.user,
+        locked: false,
+      },
+    });
+
+  const review = await prisma.review.findUnique({ where: { id } });
+  if (!review) throw new TRPCError({ code: 'NOT_FOUND' });
 
   return next({
     ctx: {
       ...ctx,
       user: ctx.user,
-      locked,
+      locked: review.locked,
     },
   });
 });

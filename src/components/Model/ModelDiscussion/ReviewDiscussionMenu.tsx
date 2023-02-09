@@ -205,7 +205,7 @@ export function ReviewDiscussionMenu({
             >
               Delete review
             </Menu.Item>
-            {(!(review.locked && isMuted) || isMod) && (
+            {((!review.locked && !isMuted) || isMod) && (
               <Menu.Item
                 icon={<IconEdit size={14} stroke={1.5} />}
                 onClick={() => openRoutedContext('reviewEdit', { reviewId: review.id })}

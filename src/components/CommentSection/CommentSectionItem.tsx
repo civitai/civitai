@@ -205,7 +205,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
                 reactions={reactions}
                 onSelect={(reaction) => toggleReactionMutation.mutate({ id: comment.id, reaction })}
               />
-              {currentUser && !isOwner && !(comment.locked && isMuted) && (
+              {currentUser && !isOwner && !comment.locked && !isMuted && (
                 <Button
                   variant="subtle"
                   size="xs"
@@ -236,49 +236,51 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
           )}
         </Stack>
       </Group>
-      <Menu position="bottom-end">
-        <Menu.Target>
-          <ActionIcon size="xs" variant="subtle">
-            <IconDotsVertical size={14} />
-          </ActionIcon>
-        </Menu.Target>
-        <Menu.Dropdown>
-          {isOwner || isMod ? (
-            <>
-              <Menu.Item
-                icon={<IconTrash size={14} stroke={1.5} />}
-                onClick={() => handleDeleteComment(comment.id)}
-                color="red"
-              >
-                Delete comment
-              </Menu.Item>
-              {(!(comment.locked && isMuted) || isMod) && (
+      {!isEditing && (
+        <Menu position="bottom-end">
+          <Menu.Target>
+            <ActionIcon size="xs" variant="subtle">
+              <IconDotsVertical size={14} />
+            </ActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>
+            {isOwner || isMod ? (
+              <>
                 <Menu.Item
-                  icon={<IconEdit size={14} stroke={1.5} />}
-                  onClick={() => setEditComment(comment)}
+                  icon={<IconTrash size={14} stroke={1.5} />}
+                  onClick={() => handleDeleteComment(comment.id)}
+                  color="red"
                 >
-                  Edit comment
+                  Delete comment
                 </Menu.Item>
-              )}
-            </>
-          ) : null}
-          {(!currentUser || !isOwner) && (
-            <LoginRedirect reason="report-model">
-              <Menu.Item
-                icon={<IconFlag size={14} stroke={1.5} />}
-                onClick={() =>
-                  openContext('report', {
-                    entityType: ReportEntity.Comment,
-                    entityId: comment.id,
-                  })
-                }
-              >
-                Report
-              </Menu.Item>
-            </LoginRedirect>
-          )}
-        </Menu.Dropdown>
-      </Menu>
+                {((!comment.locked && !isMuted) || isMod) && (
+                  <Menu.Item
+                    icon={<IconEdit size={14} stroke={1.5} />}
+                    onClick={() => setEditComment(comment)}
+                  >
+                    Edit comment
+                  </Menu.Item>
+                )}
+              </>
+            ) : null}
+            {(!currentUser || !isOwner) && (
+              <LoginRedirect reason="report-model">
+                <Menu.Item
+                  icon={<IconFlag size={14} stroke={1.5} />}
+                  onClick={() =>
+                    openContext('report', {
+                      entityType: ReportEntity.Comment,
+                      entityId: comment.id,
+                    })
+                  }
+                >
+                  Report
+                </Menu.Item>
+              </LoginRedirect>
+            )}
+          </Menu.Dropdown>
+        </Menu>
+      )}
     </Group>
   );
 }

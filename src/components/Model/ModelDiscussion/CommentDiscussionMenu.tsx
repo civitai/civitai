@@ -134,7 +134,7 @@ export function CommentDiscussionMenu({
             >
               Delete comment
             </Menu.Item>
-            {(!(comment.locked && isMuted) || isMod) && (
+            {((!comment.locked && !isMuted) || isMod) && (
               <Menu.Item
                 icon={<IconEdit size={14} stroke={1.5} />}
                 onClick={() => openRoutedContext('commentEdit', { commentId: comment.id })}
