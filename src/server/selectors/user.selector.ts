@@ -24,6 +24,7 @@ export const userWithCosmeticsSelect = Prisma.validator<Prisma.UserSelect>()({
           data: true,
           type: true,
           source: true,
+          name: true,
         },
       },
     },

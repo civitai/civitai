@@ -1,17 +1,19 @@
-import { Prisma } from '@prisma/client';
+import { ModelStatus, Prisma } from '@prisma/client';
 
 import { prisma } from '~/server/db/client';
 import { GetTagsInput } from '~/server/schema/tag.schema';
 
 export const getTagWithModelCount = async ({ name }: { name: string }) => {
   return await prisma.tag.findFirst({
-    where: { name: { equals: name, mode: 'insensitive' } },
+    where: {
+      name: { equals: name, mode: 'insensitive' },
+    },
     select: {
       id: true,
       name: true,
       _count: {
         select: {
-          tagsOnModels: true,
+          tagsOnModels: { where: { model: { status: ModelStatus.Published } } },
         },
       },
     },
