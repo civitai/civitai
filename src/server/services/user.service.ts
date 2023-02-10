@@ -60,7 +60,9 @@ export const getUserCreator = async ({ username }: { username: string }) => {
       },
       _count: {
         select: {
-          models: true,
+          models: {
+            where: { status: 'Published' },
+          },
         },
       },
     },
