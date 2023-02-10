@@ -13,6 +13,7 @@ import {
   List,
   ThemeIcon,
   Group,
+  createStyles,
 } from '@mantine/core';
 import { trpc } from '~/utils/trpc';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -34,6 +35,7 @@ import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export default function Pricing() {
   const router = useRouter();
+  const { classes, cx } = useStyles();
   const { returnUrl = '/', reason } = router.query as {
     returnUrl: string;
     reason: JoinRedirectReason;
@@ -61,8 +63,10 @@ export default function Pricing() {
               </Group>
             </Alert>
           )}
-          <Title align="center">Support Us ❤️</Title>
-          <Text align="center" sx={{ lineHeight: 1.25 }}>
+          <Title align="center" className={classes.title}>
+            Support Us ❤️
+          </Title>
+          <Text align="center" className={classes.introText} sx={{ lineHeight: 1.25 }}>
             {`As the leading model sharing service, we're proud to be ad-free and adding new features every week. Help us keep the community thriving by becoming a member or making a donation. Support Civitai and get exclusive perks.`}
           </Text>
         </Stack>
@@ -131,9 +135,13 @@ export default function Pricing() {
                   <Stack justify="space-between" style={{ height: '100%' }}>
                     <Stack spacing={0} mb="md">
                       <Center>
-                        <EdgeImage src="ab3e161b-7c66-4412-9573-ca16dde9f900" width={128} />
+                        <EdgeImage
+                          src="ab3e161b-7c66-4412-9573-ca16dde9f900"
+                          className={classes.image}
+                          width={128}
+                        />
                       </Center>
-                      <Title order={2} align="center">
+                      <Title className={classes.cardTitle} order={2} align="center">
                         One-time Donation
                       </Title>
                     </Stack>
@@ -156,6 +164,30 @@ export default function Pricing() {
     </>
   );
 }
+
+const useStyles = createStyles((theme) => ({
+  title: {
+    [theme.fn.smallerThan('sm')]: {
+      fontSize: 24,
+    },
+  },
+  introText: {
+    [theme.fn.smallerThan('sm')]: {
+      fontSize: 14,
+    },
+  },
+  image: {
+    [theme.fn.smallerThan('sm')]: {
+      width: 96,
+      marginBottom: theme.spacing.xs,
+    },
+  },
+  cardTitle: {
+    [theme.fn.smallerThan('sm')]: {
+      fontSize: 20,
+    },
+  },
+}));
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,

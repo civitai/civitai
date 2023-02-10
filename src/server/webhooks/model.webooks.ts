@@ -59,4 +59,59 @@ export const modelWebhooks = createWebhookProcessor({
       return models;
     },
   },
+  'updated-model': {
+    displayName: 'Updated Models',
+    getData: async ({ lastSent, prisma }) => {
+      const models = (
+        await prisma.model.findMany({
+          where: {
+            lastVersionAt: {
+              gt: lastSent,
+            },
+            publishedAt: {
+              lt: lastSent,
+            },
+            deletedAt: null,
+          },
+          select: getAllModelsWithVersionsSelect,
+        })
+      )?.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
+        ...model,
+        creator: {
+          username: user.username,
+          image: user.image ? getEdgeUrl(user.image, { width: 96 }) : null,
+        },
+        tags: tagsOnModels.map(({ tag }) => tag.name),
+        modelVersions: modelVersions
+          .map(({ images, files, ...version }) => {
+            const primaryFile = getPrimaryFile(files);
+            if (!primaryFile) return null;
+
+            return {
+              ...version,
+              files: files.map((file) => ({
+                ...file,
+                downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
+                  versionId: version.id,
+                  type: file.type,
+                  format: file.format,
+                  primary: primaryFile.id === file.id,
+                })}`,
+              })),
+              images: images.map(({ image: { url, ...image } }) => ({
+                url: getEdgeUrl(url, { width: 450 }),
+                ...image,
+              })),
+              downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
+                versionId: version.id,
+                primary: true,
+              })}`,
+            };
+          })
+          .filter((x) => x),
+      }));
+
+      return models;
+    },
+  },
 });
