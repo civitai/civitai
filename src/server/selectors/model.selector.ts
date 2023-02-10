@@ -136,6 +136,7 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
                 data: true,
                 type: true,
                 source: true,
+                name: true,
               },
             },
           },

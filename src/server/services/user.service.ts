@@ -54,6 +54,7 @@ export const getUserCreator = async ({ username }: { username: string }) => {
               data: true,
               type: true,
               source: true,
+              name: true,
             },
           },
         },

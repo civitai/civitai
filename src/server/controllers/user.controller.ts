@@ -457,6 +457,7 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
                 data: true,
                 type: true,
                 source: true,
+                name: true,
               },
             },
           },
