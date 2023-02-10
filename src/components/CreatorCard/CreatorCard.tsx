@@ -66,7 +66,7 @@ export function CreatorCard({ user }: Props) {
             </Group>
           </Group>
           {stats && (
-            <Group position="apart">
+            <Group position="apart" spacing={0} noWrap>
               <IconBadge
                 sx={{ userSelect: 'none' }}
                 size={iconBadgeSize}
@@ -97,6 +97,11 @@ export function CreatorCard({ user }: Props) {
                   color="gray"
                   size={iconBadgeSize}
                   variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                  sx={(theme) => ({
+                    [theme.fn.smallerThan('xs')]: {
+                      display: 'none',
+                    },
+                  })}
                 >
                   <Text size="xs">{abbreviateNumber(uploads)}</Text>
                 </IconBadge>
