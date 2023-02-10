@@ -34,7 +34,7 @@ import {
   IconCheck,
   IconCopy,
 } from '@tabler/icons';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   civitaiLinkStatusColors,
   useCivitaiLink,
@@ -323,7 +323,7 @@ function LinkButton() {
 }
 
 function LinkActivity({ id, ...props }: { id: string } & GroupProps) {
-  const activity = useCivitaiLinkStore((state) => state.activities[id]);
+  const activity = useCivitaiLinkStore(useCallback((state) => state.activities[id], [id]));
   const { runCommand } = useCivitaiLink();
 
   const isAdd = activity.type === 'resources:add';
