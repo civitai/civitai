@@ -12,6 +12,9 @@ const useStyles = createStyles(() => ({
     '& p:last-of-type': {
       marginBottom: 0,
     },
+    p: {
+      wordBreak: 'break-word',
+    },
   },
 }));
 
