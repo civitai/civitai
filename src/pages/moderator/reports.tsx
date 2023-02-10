@@ -1,11 +1,11 @@
 import {
+  Box,
   Container,
   Table,
   Stack,
   Group,
   Pagination,
   Text,
-  Center,
   Loader,
   LoadingOverlay,
   Badge,
@@ -17,30 +17,42 @@ import {
   Button,
   ActionIcon,
   Tooltip,
+  Input,
+  MantineSize,
+  Anchor,
+  ScrollArea,
 } from '@mantine/core';
+import { ReportStatus } from '@prisma/client';
+import { IconExternalLink } from '@tabler/icons';
+import produce from 'immer';
+import upperFirst from 'lodash/upperFirst';
+import Link from 'next/link';
 import { GetServerSideProps } from 'next/types';
 import { useRouter } from 'next/router';
+import { useState, useMemo, useEffect } from 'react';
+import { z } from 'zod';
+
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { trpc } from '~/utils/trpc';
 import { QS } from '~/utils/qs';
 import { formatDate } from '~/utils/date-helpers';
-import Link from 'next/link';
 import {
   ReportEntity,
   reportStatusColorScheme,
   SetReportStatusInput,
 } from '~/server/schema/report.schema';
-import { Prisma, ReportStatus } from '@prisma/client';
-import { useState, useMemo } from 'react';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { GetReportsProps } from '~/server/controllers/report.controller';
-import produce from 'immer';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { splitUppercase } from '~/utils/string-helpers';
-import { IconExternalLink } from '@tabler/icons';
-import { upperFirst } from 'lodash';
+import { constants } from '~/server/common/constants';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { Meta } from '~/components/Meta/Meta';
+import { Form, InputTextArea, useForm } from '~/libs/form';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerAuthSession(context);
@@ -55,11 +67,12 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
   return { props: {} };
 };
 
+const limit = constants.reportingFilterDefaults.limit;
+
 type ReportDetail = GetReportsProps['items'][0];
 export default function Reports() {
   const router = useRouter();
   const page = router.query.page ? Number(router.query.page) : 1;
-  const limit = 50;
   const [type, setType] = useState(ReportEntity.Model);
   const [selected, setSelected] = useState<number>();
 
@@ -84,79 +97,99 @@ export default function Reports() {
   };
 
   return (
-    <Container pb="xl">
-      <Stack>
-        <Title>Reports</Title>
-        <SegmentedControl
-          data={Object.values(ReportEntity).map((x) => ({ label: upperFirst(x), value: x }))}
-          onChange={handleTypeChange}
-          value={type}
-        />
-        <div style={{ position: 'relative' }}>
-          <LoadingOverlay visible={isLoading || isFetching} />
-          <Table>
-            <thead>
-              <tr>
-                <th></th>
-                <th>Reason</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Reported by</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data &&
-                data.items.map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      <Group spacing="xs">
-                        <Button compact size="xs" onClick={() => setSelected(item.id)}>
-                          Details
-                        </Button>
-                        <Tooltip label="Open reported item" withArrow>
-                          <ActionIcon
-                            component="a"
-                            href={getReportLink(item)}
-                            target="_blank"
-                            variant="subtle"
-                            size="sm"
-                          >
-                            <IconExternalLink />
-                          </ActionIcon>
-                        </Tooltip>
-                      </Group>
-                    </td>
-                    <td>{splitUppercase(item.reason)}</td>
-                    <td>
-                      <ToggleReportStatus
-                        id={item.id}
-                        status={item.status}
-                        page={page}
-                        type={type}
-                        limit={limit}
-                      />
-                    </td>
-                    <td>{formatDate(item.createdAt)}</td>
-                    <td>
-                      <Link href={`/user/${item.user.username}`} passHref>
-                        <Text variant="link" component="a" target="_blank">
-                          {item.user.username}
-                        </Text>
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </Table>
-        </div>
-        {data && data.totalPages > 1 && (
-          <Group position="apart">
-            <Text>Total {data.totalItems} items</Text>
+    <>
+      <Meta title="Reports" />
+      <Container size="xl" pb="xl">
+        <Stack>
+          <Title>Reports</Title>
+          <SegmentedControl
+            data={Object.values(ReportEntity).map((x) => ({ label: upperFirst(x), value: x }))}
+            onChange={handleTypeChange}
+            value={type}
+          />
+          <ScrollArea style={{ position: 'relative' }}>
+            <LoadingOverlay visible={isLoading || isFetching} />
+            <Table striped>
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Reason</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th>Reported by</th>
+                  <th>Also reported by</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data &&
+                  data.items.map((item) => (
+                    <Box
+                      component="tr"
+                      key={item.id}
+                      sx={(theme) => ({
+                        backgroundColor:
+                          selected === item.id
+                            ? theme.colorScheme === 'dark'
+                              ? `${theme.colors.dark[4]} !important`
+                              : `${theme.colors.gray[2]} !important`
+                            : undefined,
+                      })}
+                    >
+                      <td>
+                        <Group spacing="xs" noWrap>
+                          <Button compact size="xs" onClick={() => setSelected(item.id)}>
+                            Details
+                          </Button>
+                          <Tooltip label="Open reported item" withArrow>
+                            <ActionIcon
+                              component="a"
+                              href={getReportLink(item)}
+                              target="_blank"
+                              variant="subtle"
+                              size="sm"
+                            >
+                              <IconExternalLink />
+                            </ActionIcon>
+                          </Tooltip>
+                        </Group>
+                      </td>
+                      <td>{splitUppercase(item.reason)}</td>
+                      <td>
+                        <ToggleReportStatus
+                          id={item.id}
+                          status={item.status}
+                          page={page}
+                          type={type}
+                          limit={limit}
+                        />
+                      </td>
+                      <td>{formatDate(item.createdAt)}</td>
+                      <td>
+                        <Link href={`/user/${item.user.username}`} passHref>
+                          <Text variant="link" component="a" target="_blank">
+                            {item.user.username}
+                          </Text>
+                        </Link>
+                      </td>
+                      <td>
+                        {item.alsoReportedBy.length > 0
+                          ? `${abbreviateNumber(item.alsoReportedBy.length)} Users`
+                          : null}
+                      </td>
+                    </Box>
+                  ))}
+              </tbody>
+            </Table>
+          </ScrollArea>
+          {data && data.totalPages > 1 && (
+            <Group position="apart">
+              <Text>Total {data.totalItems} items</Text>
 
-            <Pagination page={page} onChange={handlePageChange} total={data.totalPages} />
-          </Group>
-        )}
-      </Stack>
+              <Pagination page={page} onChange={handlePageChange} total={data.totalPages} />
+            </Group>
+          )}
+        </Stack>
+      </Container>
       {data && (
         <ReportDrawer
           report={data.items.find((x) => x.id === selected)}
@@ -166,9 +199,11 @@ export default function Reports() {
           limit={limit}
         />
       )}
-    </Container>
+    </>
   );
 }
+
+const schema = z.object({ internalNotes: z.string().nullish() });
 
 function ReportDrawer({
   report,
@@ -184,16 +219,55 @@ function ReportDrawer({
   limit: number;
 }) {
   const theme = useMantineTheme();
+  const mobile = useIsMobile();
   const href = useMemo(() => (report ? getReportLink(report) : null), [report]);
+  const queryUtils = trpc.useContext();
+
+  const form = useForm({
+    schema,
+    defaultValues: { internalNotes: report?.internalNotes ?? null },
+  });
+  const { isDirty } = form.formState;
+
+  const updateReportMutation = trpc.report.update.useMutation({
+    async onSuccess(results) {
+      await queryUtils.report.getAll.invalidate();
+      form.reset({
+        internalNotes: results.internalNotes,
+      });
+      showSuccessNotification({
+        title: 'Report updated successfully',
+        message: 'Internal notes have been saved',
+      });
+      if (mobile) onClose?.();
+    },
+    onError(error) {
+      showErrorNotification({ error: new Error(error.message) });
+    },
+  });
+  const handleSaveReport = (data: z.infer<typeof schema>) => {
+    if (report) updateReportMutation.mutate({ ...report, ...data });
+  };
+
+  useEffect(() => {
+    if (report)
+      form.reset({
+        internalNotes: report.internalNotes,
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [report]);
+
   return (
     <Drawer
       withOverlay={false}
       opened={!!report}
       onClose={onClose}
-      position="right"
-      size={500}
+      position={mobile ? 'bottom' : 'right'}
+      title={`${upperFirst(type)} Report Details`}
+      size={mobile ? '100%' : 'xl'}
       padding="md"
       shadow="sm"
+      zIndex={500}
       styles={{
         drawer: {
           borderLeft: `1px solid ${
@@ -204,21 +278,48 @@ function ReportDrawer({
     >
       {report && (
         <Stack>
-          <ToggleReportStatus
-            id={report.id}
-            status={report.status}
-            page={page}
-            type={type}
-            limit={limit}
-          />
           {href && (
             <Link href={href} passHref>
-              <Button component="a" target="_blank">
-                View {type}
-              </Button>
+              <Anchor size="sm" target="_blank">
+                <Group spacing={4}>
+                  <Text inherit>View {type}</Text>
+                  <IconExternalLink size={14} stroke={1.5} />
+                </Group>
+              </Anchor>
             </Link>
           )}
           <ReportDetails report={report} />
+          <Input.Wrapper
+            label="Status"
+            description="Use this input to set the status of the report"
+            descriptionProps={{ sx: { marginBottom: 5 } }}
+          >
+            <ToggleReportStatus
+              id={report.id}
+              status={report.status}
+              page={page}
+              type={type}
+              limit={limit}
+              size="md"
+            />
+          </Input.Wrapper>
+          <Form form={form} onSubmit={handleSaveReport}>
+            <Stack>
+              <InputTextArea
+                name="internalNotes"
+                label="Internal Notes"
+                description="Leave an internal note for future reference (optional)"
+                placeholder="Add note..."
+                minRows={2}
+                autosize
+              />
+              <Group position="right">
+                <Button type="submit" disabled={!isDirty} loading={updateReportMutation.isLoading}>
+                  Save
+                </Button>
+              </Group>
+            </Stack>
+          </Form>
         </Stack>
       )}
     </Drawer>
@@ -236,7 +337,7 @@ function ReportDetails({ report }: { report: ReportDetail }) {
   if (entries.length === 0) return null;
 
   const detailItems = entries
-    .filter(([key, value]) => value !== undefined && value !== null)
+    .filter(([, value]) => value !== undefined && value !== null)
     .map(([key, value]) => {
       const label = upperFirst(key);
       if (key === 'images' && Array.isArray(value))
@@ -330,14 +431,15 @@ function ToggleReportStatus({
   type,
   page,
   limit,
-}: SetReportStatusInput & { type: ReportEntity; page: number; limit: number }) {
+  size,
+}: SetReportStatusInput & { type: ReportEntity; page: number; limit: number; size?: MantineSize }) {
   const queryUtils = trpc.useContext();
   // const [status, setStatus] = useState(initialStatus);
 
   const { mutate, isLoading } = trpc.report.setStatus.useMutation({
-    async onSuccess(response, request) {
+    onSuccess(_, request) {
       // setStatus(request.status);
-      await queryUtils.report.getAll.setData(
+      queryUtils.report.getAll.setData(
         { type, page, limit },
         produce((old) => {
           if (old) {
@@ -352,7 +454,7 @@ function ToggleReportStatus({
   return (
     <Menu>
       <Menu.Target>
-        <Badge color={reportStatusColorScheme[status]} sx={{ cursor: 'pointer' }}>
+        <Badge color={reportStatusColorScheme[status]} size={size} sx={{ cursor: 'pointer' }}>
           {isLoading ? <Loader variant="dots" size="sm" /> : status}
         </Badge>
       </Menu.Target>

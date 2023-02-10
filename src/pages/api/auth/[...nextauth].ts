@@ -13,7 +13,7 @@ import { env } from '~/env/server.mjs';
 import { prisma } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
 import { sendVerificationRequest } from '~/server/auth/verificationEmail';
-import { refreshToken } from '~/server/utils/session-helpers';
+import { refreshToken, invalidateSession } from '~/server/utils/session-helpers';
 import { deleteCookie, getCookies, setCookie } from 'cookies-next';
 
 const setUserName = async (email: string) => {
@@ -57,25 +57,20 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   callbacks: {
     jwt: async ({ token, user }) => {
       if (req.url === '/api/auth/session?update') {
-        const user = await prisma.user.findUnique({ where: { id: Number(token.sub) } });
-        token.user = user;
-        token.signedAt = Date.now();
-      } else {
-        // have to do this to be able to connect to other providers
-        token.sub = Number(token.sub) as any; //eslint-disable-line
-        if (user) token.user = user;
+        invalidateSession(Number(token.sub));
       }
 
+      token.sub = Number(token.sub) as any; //eslint-disable-line
+      if (user) token.user = user;
       const { deletedAt, ...restUser } = token.user as User;
       token.user = { ...restUser };
 
       return token;
     },
     session: async ({ session, token }) => {
-      const localSession = { ...session };
       token = await refreshToken(token);
-      if (token.user) localSession.user = token.user as Session['user'];
-      return localSession;
+      session.user = (token.user ? token.user : session.user) as Session['user'];
+      return session;
     },
   },
   // Configure one or more authentication providers

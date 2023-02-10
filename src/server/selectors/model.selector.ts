@@ -114,6 +114,7 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
     allowDifferentLicense: true,
     licenses: true,
     publishedAt: true,
+    locked: true,
     reportStats: {
       select: {
         ownershipProcessing: true,
@@ -135,6 +136,7 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
                 data: true,
                 type: true,
                 source: true,
+                name: true,
               },
             },
           },
@@ -165,7 +167,7 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
               select: imageSelect,
             },
           },
-          where: includeNSFW ? undefined : { image: { nsfw: false } },
+          where: { image: { nsfw: includeNSFW ? undefined : false, tosViolation: false } },
         },
         rank: {
           select: {

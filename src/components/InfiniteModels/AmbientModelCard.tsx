@@ -113,6 +113,10 @@ const useStyles = createStyles((theme) => {
       background: theme.fn.rgba(theme.colors.yellow[theme.fn.primaryShade()], 0.4),
     },
 
+    earlyAccessBadge: {
+      background: theme.fn.rgba(theme.colors.green[theme.fn.primaryShade()], 0.4),
+    },
+
     floatingAvatar: {
       position: 'absolute',
       bottom: theme.spacing.xs,
@@ -157,7 +161,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
   const theme = useMantineTheme();
   const { push } = useRouter();
 
-  const { id, image, name, rank, nsfw, user } = data ?? {};
+  const { id, image, name, rank, nsfw, user, locked } = data ?? {};
 
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
@@ -182,12 +186,12 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
     if (!image.width || !image.height) return 300;
     const width = itemWidth > 0 ? itemWidth : 300;
     const aspectRatio = image.width / image.height;
-    const imageHeight = Math.floor(width / aspectRatio);
+    const imageHeight = Math.floor(width / aspectRatio) + (aspectRatio >= 1 ? 60 : 0);
     return Math.min(imageHeight, 600);
   }, [itemWidth, image.width, image.height]);
 
   const modelText = (
-    <Text size={14} weight={500} color="white" style={{ flex: 1 }}>
+    <Text size={14} weight={500} color="white" style={{ flex: 1, lineHeight: 1 }}>
       {name}
     </Text>
   );
@@ -202,10 +206,19 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
           {data.status}
         </Badge>
       )}
+      {data.status === ModelStatus.Published && data.earlyAccess && (
+        <Badge
+          className={cx(classes.floatingBadge, classes.earlyAccessBadge)}
+          radius="sm"
+          size="sm"
+        >
+          Early Access
+        </Badge>
+      )}
     </>
   );
 
-  const modelRating = (
+  const modelRating = !locked ? (
     <IconBadge
       className={cx(classes.floatingBadge, classes.statBadge)}
       sx={{ userSelect: 'none' }}
@@ -227,7 +240,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
         {abbreviateNumber(rank.ratingCount)}
       </Text>
     </IconBadge>
-  );
+  ) : null;
 
   const modelDownloads = (
     <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
@@ -423,7 +436,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                         zIndex: 10,
                         borderRadius: '50%',
                       }}
-                      onClick={(e: any) => {
+                      onClick={(e: React.MouseEvent<HTMLDivElement>) => {
                         e.preventDefault();
                         e.stopPropagation();
                         push(`/user/${data.user.username}`);

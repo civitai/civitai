@@ -1,6 +1,7 @@
 import { User } from '@prisma/client';
 import { JWT } from 'next-auth/jwt';
 import { prisma } from '~/server/db/client';
+import { getSessionUser } from '~/server/services/user.service';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('session-helpers', 'green');
@@ -53,7 +54,7 @@ export async function refreshToken(token: JWT) {
   )
     return token;
 
-  const refreshedUser = await prisma.user.findFirst({ where: { id: user.id, deletedAt: null } });
+  const refreshedUser = await getSessionUser({ userId: user.id });
   if (!refreshedUser) token.user = undefined;
   else {
     token.user = refreshedUser;

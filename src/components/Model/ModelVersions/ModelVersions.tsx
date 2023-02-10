@@ -11,6 +11,7 @@ import {
   Box,
   AspectRatio,
 } from '@mantine/core';
+import { ModelType } from '@prisma/client';
 import { useRouter } from 'next/router';
 import { startCase } from 'lodash';
 import React from 'react';
@@ -38,19 +39,19 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
-import { ModelType } from '@prisma/client';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
+import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 
 const VERSION_IMAGES_LIMIT = 8;
 
-export function ModelVersions({ items, initialTab, nsfw, type }: Props) {
-  const mobile = useIsMobile();
+export function ModelVersions({ items, initialTab, nsfw, type, locked = false }: Props) {
+  const mobile = useIsMobile({ breakpoint: 'md' });
 
   return (
     <Tabs defaultValue={initialTab} orientation={mobile ? 'horizontal' : 'vertical'}>
       <Grid gutter="lg" style={{ flex: 1 }}>
-        <Grid.Col xs={12} sm={3} md={2}>
+        <Grid.Col xs={12} md={2}>
           <Tabs.List>
             {items.map((version) => (
               <Tabs.Tab
@@ -63,10 +64,10 @@ export function ModelVersions({ items, initialTab, nsfw, type }: Props) {
             ))}
           </Tabs.List>
         </Grid.Col>
-        <Grid.Col xs={12} sm={9} md={10}>
+        <Grid.Col xs={12} md={10}>
           {items.map((version) => (
             <Tabs.Panel key={version.id} value={version.id.toString()}>
-              <TabContent version={version} nsfw={nsfw} type={type} />
+              <TabContent version={version} nsfw={nsfw} type={type} locked={locked} />
             </Tabs.Panel>
           ))}
         </Grid.Col>
@@ -80,9 +81,10 @@ type Props = {
   type: ModelType;
   initialTab?: string | null;
   nsfw?: boolean;
+  locked?: boolean;
 };
 
-function TabContent({ version, nsfw, type }: TabContentProps) {
+function TabContent({ version, nsfw, type, locked }: TabContentProps) {
   const router = useRouter();
   const mobile = useIsMobile();
   const currentUser = useCurrentUser();
@@ -97,6 +99,7 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
           <Text size="sm">({version.rank?.ratingCountAllTime.toLocaleString() ?? 0})</Text>
         </Group>
       ),
+      visible: !locked,
     },
     { label: 'Downloads', value: (version.rank?.downloadCountAllTime ?? 0).toLocaleString() },
     { label: 'Uploaded', value: formatDate(version.createdAt) },
@@ -142,52 +145,77 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
       <Grid.Col xs={12} md={4} orderMd={2}>
         <Stack spacing="xs">
           <Group spacing="xs" align="flex-start">
-            <Stack spacing={4} style={{ flex: 1 }}>
-              <MultiActionButton
-                variant="light"
-                component="a"
-                href={createModelFileDownloadUrl({ versionId: version.id, primary: true })}
-                disabled={!primaryFile}
-                menuItems={
-                  version.files.length === 1
-                    ? []
-                    : version.files.map((file, index) => (
-                        <Menu.Item
-                          key={index}
-                          component="a"
-                          py={4}
-                          icon={<VerifiedText file={file} iconOnly />}
-                          href={createModelFileDownloadUrl({
-                            versionId: version.id,
-                            type: file.type,
-                            format: file.format,
-                          })}
-                          download
-                        >
-                          {`${startCase(file.type)}${
-                            ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.format : ''
-                          } (${formatKBytes(file.sizeKB)})`}
-                        </Menu.Item>
-                      ))
-                }
-                download
-              >
-                {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
-              </MultiActionButton>
-              {primaryFile && (
-                <Group position="apart" noWrap spacing={0}>
-                  <VerifiedText file={primaryFile} />
-                  <Text size="xs" color="dimmed">
-                    {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                    {primaryFile.format}
-                  </Text>
-                </Group>
-              )}
-            </Stack>
+            {version.canDownload ? (
+              <Stack spacing={4} style={{ flex: 1 }}>
+                <MultiActionButton
+                  variant="light"
+                  component="a"
+                  href={createModelFileDownloadUrl({ versionId: version.id, primary: true })}
+                  disabled={!primaryFile}
+                  menuItems={
+                    version.files.length === 1
+                      ? []
+                      : version.files.map((file, index) => (
+                          <Menu.Item
+                            key={index}
+                            component="a"
+                            py={4}
+                            icon={<VerifiedText file={file} iconOnly />}
+                            href={createModelFileDownloadUrl({
+                              versionId: version.id,
+                              type: file.type,
+                              format: file.format,
+                            })}
+                            download
+                          >
+                            {`${startCase(file.type)}${
+                              ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.format : ''
+                            } (${formatKBytes(file.sizeKB)})`}
+                          </Menu.Item>
+                        ))
+                  }
+                  download
+                >
+                  {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+                </MultiActionButton>
+                {primaryFile && (
+                  <Group position="apart" noWrap spacing={0}>
+                    <VerifiedText file={primaryFile} />
+                    <Text size="xs" color="dimmed">
+                      {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+                      {primaryFile.format}
+                    </Text>
+                  </Group>
+                )}
+              </Stack>
+            ) : (
+              <Stack spacing={4} style={{ flex: 1 }}>
+                <JoinPopover>
+                  <Button variant="light">
+                    <Text align="center">
+                      {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+                    </Text>
+                  </Button>
+                </JoinPopover>
+                {primaryFile && (
+                  <Group position="apart" noWrap spacing={0}>
+                    <VerifiedText file={primaryFile} />
+                    <Text size="xs" color="dimmed">
+                      {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+                      {primaryFile.format}
+                    </Text>
+                  </Group>
+                )}
+              </Stack>
+            )}
             <RunButton modelVersionId={version.id} variant="light" />
           </Group>
 
-          <EarlyAccessAlert versionId={version.id} deadline={version.earlyAccessDeadline} />
+          <EarlyAccessAlert
+            versionId={version.id}
+            modelType={type}
+            deadline={version.earlyAccessDeadline}
+          />
           <ModelFileAlert versionId={version.id} modelType={type} files={version.files} />
 
           <DescriptionTable items={versionDetails} labelWidth="30%" />
@@ -283,15 +311,6 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
               variant="outline"
               sx={!mobile ? { height: '100%' } : undefined}
               onClick={() =>
-                // router.push({
-                //   pathname: `/gallery/${versionImages[imagesLimit].id}`,
-                //   query: {
-                //     modelId,
-                //     modelVersionId: version.id,
-                //     infinite: false,
-                //     returnUrl: router.asPath,
-                //   },
-                // })
                 openRoutedContext('galleryDetailModal', {
                   galleryImageId: versionImages[imagesLimit].id,
                   modelId: version.modelId,
@@ -310,7 +329,12 @@ function TabContent({ version, nsfw, type }: TabContentProps) {
   );
 }
 
-type TabContentProps = { version: Props['items'][number]; nsfw?: boolean; type: ModelType };
+type TabContentProps = {
+  version: Props['items'][number];
+  nsfw?: boolean;
+  type: ModelType;
+  locked: boolean;
+};
 
 // const useStyles = createStyles((theme, { index, mobile }: { index: number; mobile: boolean }) => ({
 //   image: {

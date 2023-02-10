@@ -2,6 +2,7 @@ import { Carousel } from '@mantine/carousel';
 import {
   ActionIcon,
   Badge,
+  Box,
   Button,
   Center,
   Container,
@@ -12,18 +13,18 @@ import {
   Stack,
   Text,
   Title,
-  useMantineTheme,
   Alert,
   ThemeIcon,
   Tooltip,
   Rating,
-  Anchor,
   AspectRatio,
+  Paper,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { ModelStatus } from '@prisma/client';
 import {
   IconBan,
+  IconClock,
   IconDotsVertical,
   IconDownload,
   IconEdit,
@@ -60,8 +61,6 @@ import { ModelDiscussion } from '~/components/Model/ModelDiscussion/ModelDiscuss
 import { ModelVersions } from '~/components/Model/ModelVersions/ModelVersions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
@@ -75,13 +74,11 @@ import { RunButton } from '~/components/RunStrategy/RunButton';
 import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
@@ -94,7 +91,9 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { Announcements } from '~/components/Announcements/Announcements';
-import { Username } from '~/components/User/Username';
+import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { ModelById } from '~/types/router';
+import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 
 //TODO - Break model query into multiple queries
 /*
@@ -131,9 +130,21 @@ const useStyles = createStyles((theme) => ({
     },
   },
 
+  titleWrapper: {
+    gap: theme.spacing.xs,
+
+    [theme.fn.smallerThan('md')]: {
+      gap: theme.spacing.xs * 0.4,
+    },
+  },
+
   title: {
-    [theme.fn.smallerThan('sm')]: {
+    paddingBottom: theme.spacing.xs * 0.8,
+
+    [theme.fn.smallerThan('md')]: {
       fontSize: theme.fontSizes.xs * 2.4, // 24px
+      width: '100%',
+      paddingBottom: 0,
     },
   },
 
@@ -142,15 +153,39 @@ const useStyles = createStyles((theme) => ({
       display: 'none',
     },
   },
+
+  mobileCarousel: {
+    display: 'none',
+    [theme.fn.smallerThan('md')]: {
+      display: 'block',
+    },
+  },
+  desktopCarousel: {
+    display: 'block',
+    [theme.fn.smallerThan('md')]: {
+      display: 'none',
+    },
+  },
+
+  modelBadgeText: {
+    fontSize: theme.fontSizes.md,
+    [theme.fn.smallerThan('md')]: {
+      fontSize: theme.fontSizes.sm,
+    },
+  },
+
+  discussionActionButton: {
+    [theme.fn.smallerThan('sm')]: {
+      width: '100%',
+    },
+  },
 }));
 
 export default function ModelDetail({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const theme = useMantineTheme();
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
-  const mobile = useIsMobile();
+  const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();
 
@@ -279,6 +314,9 @@ export default function ModelDetail({
   const isFavorite = favoriteModels.find((modelId) => modelId === id);
   const deleted = !!model.deletedAt && model.status === 'Deleted';
 
+  const published = model.status === ModelStatus.Published;
+  const isMuted = currentUser?.muted ?? false;
+
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model.modelVersions[0];
   const primaryFile = getPrimaryFile(latestVersion?.files, {
@@ -287,6 +325,8 @@ export default function ModelDetail({
   });
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
+  const onlyEarlyAccess = model.modelVersions.every((version) => version.earlyAccessDeadline);
+  const canDiscuss = !isMuted && (!onlyEarlyAccess || currentUser?.isMember);
 
   const meta = (
     <Meta
@@ -402,37 +442,7 @@ export default function ModelDetail({
         <TrainedWords trainedWords={latestVersion?.trainedWords} files={latestVersion?.files} />
       ),
     },
-    {
-      label: 'Uploaded By',
-      value:
-        model.user && !model.user.deletedAt ? (
-          <Group align="center" position="apart">
-            <Link href={`/user/${model.user.username}`} passHref>
-              <Anchor>
-                <Group spacing={4} noWrap sx={{ flex: 1, overflow: 'hidden' }}>
-                  <UserAvatar user={model.user} avatarProps={{ size: 'sm' }} />
-                  <Username
-                    username={model.user.username}
-                    cosmetics={model.user.cosmetics.filter(
-                      ({ cosmetic }) => cosmetic.type === 'NamePlate'
-                    )}
-                    inherit
-                  />
-                </Group>
-              </Anchor>
-            </Link>
-            <Group spacing={4} noWrap>
-              <RankBadge size="md" textSize="xs" rank={model.user.rank?.leaderboardRank} />
-              <FollowUserButton userId={model.user.id} size="xs" compact />
-            </Group>
-          </Group>
-        ) : (
-          '[deleted]'
-        ),
-    },
   ];
-  const published = model.status === ModelStatus.Published;
-  const isMuted = currentUser?.muted ?? false;
 
   return (
     <>
@@ -442,12 +452,8 @@ export default function ModelDetail({
           <Announcements sx={{ marginBottom: 5 }} />
           <Stack spacing="xs" mb="xl">
             <Group align="center" sx={{ justifyContent: 'space-between' }} noWrap>
-              <Group align="center" spacing={mobile ? 4 : 'xs'}>
-                <Title
-                  className={classes.title}
-                  order={1}
-                  sx={{ paddingBottom: mobile ? 0 : 8, width: mobile ? '100%' : undefined }}
-                >
+              <Group className={classes.titleWrapper} align="center">
+                <Title className={classes.title} order={1}>
                   {model?.name}
                 </Title>
                 <LoginRedirect reason="favorite-model">
@@ -465,26 +471,33 @@ export default function ModelDetail({
                     sx={{ cursor: 'pointer' }}
                     onClick={() => handleToggleFavorite()}
                   >
-                    <Text size={mobile ? 'sm' : 'md'}>
+                    <Text className={classes.modelBadgeText}>
                       {abbreviateNumber(model.rank?.favoriteCountAllTime ?? 0)}
                     </Text>
                   </IconBadge>
                 </LoginRedirect>
-                <IconBadge
-                  radius="sm"
-                  color="gray"
-                  size="lg"
-                  icon={<Rating value={model.rank?.ratingAllTime ?? 0} fractions={4} readOnly />}
-                  sx={{ cursor: 'pointer' }}
-                  onClick={() => {
-                    if (!discussionSectionRef.current) return;
-                    scrollToTop(discussionSectionRef.current);
-                  }}
-                >
-                  <Text size={mobile ? 'sm' : 'md'}>
-                    {abbreviateNumber(model.rank?.ratingCountAllTime ?? 0)}
-                  </Text>
-                </IconBadge>
+                {!model.locked && (
+                  <IconBadge
+                    radius="sm"
+                    color="gray"
+                    size="lg"
+                    icon={<Rating value={model.rank?.ratingAllTime ?? 0} fractions={4} readOnly />}
+                    sx={{ cursor: 'pointer' }}
+                    onClick={() => {
+                      if (!discussionSectionRef.current) return;
+                      scrollToTop(discussionSectionRef.current);
+                    }}
+                  >
+                    <Text className={classes.modelBadgeText}>
+                      {abbreviateNumber(model.rank?.ratingCountAllTime ?? 0)}
+                    </Text>
+                  </IconBadge>
+                )}
+                {latestVersion?.earlyAccessDeadline && (
+                  <IconBadge radius="sm" color="green" size="lg" icon={<IconClock size={18} />}>
+                    Early Access
+                  </IconBadge>
+                )}
               </Group>
               <Menu position="bottom-end" transition="pop-top-right">
                 <Menu.Target>
@@ -601,59 +614,83 @@ export default function ModelDetail({
             )}
           </Stack>
           <Grid gutter="xl">
-            <Grid.Col xs={12} sm={5} md={4} orderSm={2}>
+            <Grid.Col xs={12} md={4} orderMd={2}>
               <Stack>
+                <Box className={classes.mobileCarousel}>
+                  <ModelCarousel model={model} latestVersion={latestVersion} mobile />
+                </Box>
                 <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
-                  <Stack sx={{ flex: 1 }} spacing={4}>
-                    <MultiActionButton
-                      component="a"
-                      href={createModelFileDownloadUrl({
-                        versionId: latestVersion.id,
-                        primary: true,
-                      })}
-                      leftIcon={<IconDownload size={16} />}
-                      disabled={!primaryFile}
-                      menuItems={
-                        latestVersion?.files.length > 1
-                          ? latestVersion?.files.map((file, index) => (
-                              <Menu.Item
-                                key={index}
-                                component="a"
-                                py={4}
-                                icon={<VerifiedText file={file} iconOnly />}
-                                href={createModelFileDownloadUrl({
-                                  versionId: latestVersion.id,
-                                  type: file.type,
-                                  format: file.format,
-                                })}
-                                download
-                              >
-                                {`${startCase(file.type)}${
-                                  ['Model', 'Pruned Model'].includes(file.type)
-                                    ? ' ' + file.format
-                                    : ''
-                                } (${formatKBytes(file.sizeKB)})`}
-                              </Menu.Item>
-                            ))
-                          : []
-                      }
-                      menuTooltip="Other Downloads"
-                      download
-                    >
-                      <Text align="center">
-                        {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
-                      </Text>
-                    </MultiActionButton>
-                    {primaryFile && (
-                      <Group position="apart" noWrap spacing={0}>
-                        <VerifiedText file={primaryFile} />
-                        <Text size="xs" color="dimmed">
-                          {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                          {primaryFile.format}
+                  {latestVersion.canDownload ? (
+                    <Stack sx={{ flex: 1 }} spacing={4}>
+                      <MultiActionButton
+                        component="a"
+                        href={createModelFileDownloadUrl({
+                          versionId: latestVersion.id,
+                          primary: true,
+                        })}
+                        leftIcon={<IconDownload size={16} />}
+                        disabled={!primaryFile}
+                        menuItems={
+                          latestVersion?.files.length > 1
+                            ? latestVersion?.files.map((file, index) => (
+                                <Menu.Item
+                                  key={index}
+                                  component="a"
+                                  py={4}
+                                  icon={<VerifiedText file={file} iconOnly />}
+                                  href={createModelFileDownloadUrl({
+                                    versionId: latestVersion.id,
+                                    type: file.type,
+                                    format: file.format,
+                                  })}
+                                  download
+                                >
+                                  {`${startCase(file.type)}${
+                                    ['Model', 'Pruned Model'].includes(file.type)
+                                      ? ' ' + file.format
+                                      : ''
+                                  } (${formatKBytes(file.sizeKB)})`}
+                                </Menu.Item>
+                              ))
+                            : []
+                        }
+                        menuTooltip="Other Downloads"
+                        download
+                      >
+                        <Text align="center">
+                          {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
                         </Text>
-                      </Group>
-                    )}
-                  </Stack>
+                      </MultiActionButton>
+                      {primaryFile && (
+                        <Group position="apart" noWrap spacing={0}>
+                          <VerifiedText file={primaryFile} />
+                          <Text size="xs" color="dimmed">
+                            {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+                            {primaryFile.format}
+                          </Text>
+                        </Group>
+                      )}
+                    </Stack>
+                  ) : (
+                    <Stack sx={{ flex: 1 }} spacing={4}>
+                      <JoinPopover>
+                        <Button leftIcon={<IconDownload size={16} />}>
+                          <Text align="center">
+                            {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+                          </Text>
+                        </Button>
+                      </JoinPopover>
+                      {primaryFile && (
+                        <Group position="apart" noWrap spacing={0}>
+                          <VerifiedText file={primaryFile} />
+                          <Text size="xs" color="dimmed">
+                            {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+                            {primaryFile.format}
+                          </Text>
+                        </Group>
+                      )}
+                    </Stack>
+                  )}
 
                   <RunButton modelVersionId={latestVersion.id} />
                   <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
@@ -672,6 +709,7 @@ export default function ModelDetail({
                 </Group>
                 <EarlyAccessAlert
                   versionId={latestVersion.id}
+                  modelType={model.type}
                   deadline={latestVersion.earlyAccessDeadline}
                 />
                 <ModelFileAlert
@@ -680,8 +718,10 @@ export default function ModelDetail({
                   files={latestVersion.files}
                 />
                 <DescriptionTable items={modelDetails} labelWidth="30%" />
-                {model?.type === 'Checkpoint' && (
-                  <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>
+                <CreatorCard user={model.user} />
+
+                <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>
+                  {model?.type === 'Checkpoint' && (
                     <Group
                       spacing={4}
                       noWrap
@@ -731,9 +771,9 @@ export default function ModelDetail({
                         ))}
                       </Stack>
                     </Group>
-                    <PermissionIndicator spacing={5} size={28} permissions={model} />
-                  </Group>
-                )}
+                  )}
+                  <PermissionIndicator spacing={5} size={28} permissions={model} ml="auto" />
+                </Group>
                 {hasPendingClaimReport && (
                   <AlertWithIcon icon={<IconMessageCircle2 />}>
                     {`A verified artist believes this model was fine-tuned on their art. We're discussing this with the model creator and artist`}
@@ -743,9 +783,8 @@ export default function ModelDetail({
             </Grid.Col>
             <Grid.Col
               xs={12}
-              sm={7}
               md={8}
-              orderSm={1}
+              orderMd={1}
               sx={(theme) => ({
                 [theme.fn.largerThan('xs')]: {
                   padding: `0 ${theme.spacing.sm}px`,
@@ -754,72 +793,9 @@ export default function ModelDetail({
               })}
             >
               <Stack>
-                {latestVersion.images.length > 0 && (
-                  <Carousel
-                    key={model.id}
-                    slideSize="50%"
-                    breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
-                    slideGap="xl"
-                    align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
-                    slidesToScroll={mobile ? 1 : 2}
-                    withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
-                    loop
-                  >
-                    <ImageGuard
-                      images={latestVersion.images}
-                      nsfw={model.nsfw}
-                      connect={{ entityId: model.id, entityType: 'model' }}
-                      render={(image) => (
-                        <Carousel.Slide>
-                          <Center style={{ height: '100%', width: '100%' }}>
-                            <div style={{ width: '100%', position: 'relative' }}>
-                              <ImageGuard.ToggleConnect />
-                              <ImageGuard.Unsafe>
-                                <AspectRatio
-                                  ratio={(image.width ?? 1) / (image.height ?? 1)}
-                                  sx={(theme) => ({
-                                    width: '100%',
-                                    borderRadius: theme.radius.md,
-                                    overflow: 'hidden',
-                                  })}
-                                >
-                                  <MediaHash {...image} />
-                                </AspectRatio>
-                              </ImageGuard.Unsafe>
-                              <ImageGuard.Safe>
-                                <ImagePreview
-                                  image={image}
-                                  edgeImageProps={{ width: 400 }}
-                                  radius="md"
-                                  onClick={() =>
-                                    // Router.push({
-                                    //   pathname: `/gallery/${image.id}`,
-                                    //   query: {
-                                    //     modelId: model.id,
-                                    //     modelVersionId: latestVersion.id,
-                                    //     infinite: false,
-                                    //     returnUrl: Router.asPath,
-                                    //   },
-                                    // })
-                                    openRoutedContext('galleryDetailModal', {
-                                      galleryImageId: image.id,
-                                      modelId: model.id,
-                                      modelVersionId: latestVersion.id,
-                                      infinite: false,
-                                      returnUrl: Router.asPath,
-                                    })
-                                  }
-                                  style={{ width: '100%' }}
-                                  withMeta
-                                />
-                              </ImageGuard.Safe>
-                            </div>
-                          </Center>
-                        </Carousel.Slide>
-                      )}
-                    />
-                  </Carousel>
-                )}
+                <Box className={classes.desktopCarousel}>
+                  <ModelCarousel model={model} latestVersion={latestVersion} />
+                </Box>
                 {model.description ? (
                   <ContentClamp maxHeight={300}>
                     <RenderHtml html={model.description} withMentions />
@@ -827,7 +803,7 @@ export default function ModelDetail({
                 ) : null}
               </Stack>
             </Grid.Col>
-            <Grid.Col span={12} orderSm={3} my="xl">
+            <Grid.Col span={12} orderMd={3} my="xl">
               <Stack spacing="xl">
                 <Title className={classes.title} order={2}>
                   Versions
@@ -837,49 +813,142 @@ export default function ModelDetail({
                   items={model.modelVersions}
                   initialTab={latestVersion?.id.toString()}
                   nsfw={model.nsfw}
+                  locked={model.locked}
                 />
               </Stack>
             </Grid.Col>
-            <Grid.Col span={12} orderSm={4} my="xl">
-              <Stack spacing="xl">
-                <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
-                  <Group spacing="xs">
-                    <Title order={3}>Discussion</Title>
+            <Grid.Col span={12} orderMd={4} my="xl">
+              {!model.locked ? (
+                <Stack spacing="xl">
+                  <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
+                    <Group spacing="xs">
+                      <Title order={3}>Discussion</Title>
 
-                    {!isMuted ? (
-                      <>
-                        <LoginRedirect reason="create-review">
-                          <Button
-                            leftIcon={<IconStar size={16} />}
-                            variant="outline"
-                            fullWidth={mobile}
-                            size="xs"
-                            onClick={() => openRoutedContext('reviewEdit', {})}
-                          >
-                            Add Review
-                          </Button>
-                        </LoginRedirect>
-                        <LoginRedirect reason="create-comment">
-                          <Button
-                            leftIcon={<IconMessage size={16} />}
-                            variant="outline"
-                            fullWidth={mobile}
-                            onClick={() => openRoutedContext('commentEdit', {})}
-                            size="xs"
-                          >
-                            Add Comment
-                          </Button>
-                        </LoginRedirect>
-                      </>
-                    ) : null}
+                      {canDiscuss ? (
+                        <>
+                          <LoginRedirect reason="create-review">
+                            <Button
+                              className={classes.discussionActionButton}
+                              leftIcon={<IconStar size={16} />}
+                              variant="outline"
+                              size="xs"
+                              onClick={() => openRoutedContext('reviewEdit', {})}
+                            >
+                              Add Review
+                            </Button>
+                          </LoginRedirect>
+                          <LoginRedirect reason="create-comment">
+                            <Button
+                              className={classes.discussionActionButton}
+                              leftIcon={<IconMessage size={16} />}
+                              variant="outline"
+                              onClick={() => openRoutedContext('commentEdit', {})}
+                              size="xs"
+                            >
+                              Add Comment
+                            </Button>
+                          </LoginRedirect>
+                        </>
+                      ) : (
+                        !isMuted && (
+                          <JoinPopover message="You must be a Supporter Tier member to join this discussion">
+                            <Button
+                              className={classes.discussionActionButton}
+                              leftIcon={<IconClock size={16} />}
+                              variant="outline"
+                              size="xs"
+                              color="green"
+                            >
+                              Early Access
+                            </Button>
+                          </JoinPopover>
+                        )
+                      )}
+                    </Group>
                   </Group>
-                </Group>
-                <ModelDiscussion modelId={model.id} />
-              </Stack>
+                  <ModelDiscussion modelId={model.id} />
+                </Stack>
+              ) : (
+                <Paper p="lg">
+                  <Center>
+                    <Text size="sm">Discussions are turned off for this model.</Text>
+                  </Center>
+                </Paper>
+              )}
             </Grid.Col>
           </Grid>
         </Stack>
       </Container>
     </>
+  );
+}
+
+function ModelCarousel({
+  model,
+  latestVersion,
+  mobile = false,
+}: {
+  model: ModelById;
+  latestVersion: ModelById['modelVersions'][number];
+  mobile?: boolean;
+}) {
+  if (!latestVersion.images.length) return null;
+
+  return (
+    <Carousel
+      key={model.id}
+      slideSize="50%"
+      breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
+      slideGap="xl"
+      align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
+      slidesToScroll={mobile ? 1 : 2}
+      withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+      loop
+    >
+      <ImageGuard
+        images={latestVersion.images}
+        nsfw={model.nsfw}
+        connect={{ entityId: model.id, entityType: 'model' }}
+        render={(image) => (
+          <Carousel.Slide>
+            <Center style={{ height: '100%', width: '100%' }}>
+              <div style={{ width: '100%', position: 'relative' }}>
+                <ImageGuard.ToggleConnect />
+                <ImageGuard.Unsafe>
+                  <AspectRatio
+                    ratio={(image.width ?? 1) / (image.height ?? 1)}
+                    sx={(theme) => ({
+                      width: '100%',
+                      borderRadius: theme.radius.md,
+                      overflow: 'hidden',
+                    })}
+                  >
+                    <MediaHash {...image} />
+                  </AspectRatio>
+                </ImageGuard.Unsafe>
+                <ImageGuard.Safe>
+                  <ImagePreview
+                    image={image}
+                    edgeImageProps={{ width: 400 }}
+                    radius="md"
+                    onClick={() =>
+                      openRoutedContext('galleryDetailModal', {
+                        galleryImageId: image.id,
+                        modelId: model.id,
+                        modelVersionId: latestVersion.id,
+                        infinite: false,
+                        returnUrl: Router.asPath,
+                      })
+                    }
+                    style={{ width: '100%' }}
+                    withMeta
+                  />
+                </ImageGuard.Safe>
+              </div>
+            </Center>
+          </Carousel.Slide>
+        )}
+      />
+    </Carousel>
   );
 }

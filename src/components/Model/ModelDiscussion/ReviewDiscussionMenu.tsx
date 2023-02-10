@@ -1,6 +1,7 @@
 import { ActionIcon, MantineNumberSize, Menu, MenuProps, Text } from '@mantine/core';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
+import { closeAllModals, closeModal, openConfirmModal } from '@mantine/modals';
 import {
+  IconBan,
   IconCalculator,
   IconCalculatorOff,
   IconDotsVertical,
@@ -161,6 +162,32 @@ export function ReviewDiscussionMenu({
     toggleLockMutation.mutate({ id: review.id });
   };
 
+  const tosViolationMutation = trpc.review.setTosViolation.useMutation({
+    async onSuccess() {
+      await queryUtils.review.getDetail.invalidate({ id: review.id });
+      closeModal('confirm-tos-violation');
+      closeRoutedContext();
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Could not report review, please try again',
+      });
+    },
+  });
+  const handleTosViolation = () => {
+    openConfirmModal({
+      modalId: 'confirm-tos-violation',
+      title: 'Report ToS Violation',
+      children: `Are you sure you want to report this review for a Terms of Service violation? Once marked, it won't show up for other people`,
+      centered: true,
+      labels: { confirm: 'Yes', cancel: 'Cancel' },
+      confirmProps: { color: 'red', loading: tosViolationMutation.isLoading },
+      closeOnConfirm: false,
+      onConfirm: () => tosViolationMutation.mutate({ id: review.id }),
+    });
+  };
+
   return (
     <Menu position="bottom-end" withinPortal {...props}>
       <Menu.Target>
@@ -178,7 +205,7 @@ export function ReviewDiscussionMenu({
             >
               Delete review
             </Menu.Item>
-            {(!(review.locked && isMuted) || isMod) && (
+            {((!review.locked && !isMuted) || isMod) && (
               <Menu.Item
                 icon={<IconEdit size={14} stroke={1.5} />}
                 onClick={() => openRoutedContext('reviewEdit', { reviewId: review.id })}
@@ -209,12 +236,17 @@ export function ReviewDiscussionMenu({
               </Menu.Item>
             )}
             {isMod && (
-              <Menu.Item
-                icon={<IconSwitchHorizontal size={14} stroke={1.5} />}
-                onClick={handleConvertToComment}
-              >
-                Convert to comment
-              </Menu.Item>
+              <>
+                <Menu.Item
+                  icon={<IconSwitchHorizontal size={14} stroke={1.5} />}
+                  onClick={handleConvertToComment}
+                >
+                  Convert to comment
+                </Menu.Item>
+                <Menu.Item icon={<IconBan size={14} stroke={1.5} />} onClick={handleTosViolation}>
+                  Remove as TOS Violation
+                </Menu.Item>
+              </>
             )}
             {isMod && review.exclude && (
               <Menu.Item

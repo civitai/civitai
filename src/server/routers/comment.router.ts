@@ -7,13 +7,15 @@ import {
   getCommentHandler,
   getCommentReactionsHandler,
   getCommentsInfiniteHandler,
+  setTosViolationHandler,
+  toggleLockHandler,
   toggleReactionHandler,
   upsertCommentHandler,
-  toggleLockHandler,
 } from '~/server/controllers/comment.controller';
 import { prisma } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  CommentUpsertInput,
   commentUpsertInput,
   getAllCommentsSchema,
   getCommentReactionsSchema,
@@ -55,16 +57,26 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
 const isLocked = middleware(async ({ ctx, next, input }) => {
   if (!ctx?.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
 
-  const { id } = input as { id: number };
   const isModerator = ctx.user.isModerator;
-  const comment = await prisma.comment.findFirst({ where: { id } });
-  const locked = isModerator ? false : comment?.locked ?? false;
+  if (isModerator)
+    return next({
+      ctx: {
+        ...ctx,
+        user: ctx.user,
+        locked: false,
+      },
+    });
 
+  const { id, modelId } = input as CommentUpsertInput;
+  const model = await prisma.model.findUnique({ where: { id: modelId } });
+  if (model?.locked) throw new TRPCError({ code: 'FORBIDDEN', message: 'Model is locked' });
+
+  const comment = await prisma.comment.findFirst({ where: { id } });
   return next({
     ctx: {
       ...ctx,
       user: ctx.user,
-      locked,
+      locked: comment?.locked || false,
     },
   });
 });
@@ -89,4 +101,5 @@ export const commentRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(toggleLockHandler),
+  setTosViolation: protectedProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
 });

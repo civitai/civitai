@@ -8,4 +8,10 @@ export const systemNotifications = createNotificationProcessor({
       url: `/content/release/${details.releaseSlug}`,
     }),
   },
+  'tos-violation': {
+    displayName: 'Terms of Service Violation',
+    prepareMessage: ({ details }) => ({
+      message: `Your ${details.entity} at ${details.modelName} has been removed due to a Terms of Service violation.`,
+    }),
+  },
 });

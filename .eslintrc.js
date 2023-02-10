@@ -33,7 +33,7 @@ module.exports = {
     // allows ignoring ts checks
     "@typescript-eslint/ban-ts-comment": "off",
     // allows destructuring to ignore fields
-    "@typescript-eslint/no-unused-vars": ["warn", { "ignoreRestSiblings": true }]
+    "@typescript-eslint/no-unused-vars": ["warn", { "ignoreRestSiblings": true }],
   },
   // settings: {
   //   'import/parsers': {

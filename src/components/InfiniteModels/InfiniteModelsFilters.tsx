@@ -16,6 +16,8 @@ import {
   SegmentedControl,
   Button,
   Chip,
+  createStyles,
+  ChipProps,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter, IconFilterOff } from '@tabler/icons';
 import { z } from 'zod';
@@ -149,6 +151,7 @@ const availableStatus = Object.values(ModelStatus).filter((status) =>
 );
 
 export function InfiniteModelsFilter() {
+  const { classes } = useStyles();
   const cookies = useCookies().models;
   const user = useCurrentUser();
   const setTypes = useFilters((state) => state.setTypes);
@@ -178,6 +181,12 @@ export function InfiniteModelsFilter() {
     setCheckpointType(undefined);
   };
 
+  const chipProps: Partial<ChipProps> = {
+    radius: 'sm',
+    size: 'sm',
+    classNames: classes
+  }
+
   return (
     <Popover withArrow>
       <Popover.Target>
@@ -196,7 +205,7 @@ export function InfiniteModelsFilter() {
           </ActionIcon>
         </Indicator>
       </Popover.Target>
-      <Popover.Dropdown>
+      <Popover.Dropdown maw={350} w='100%'>
         <Stack spacing={0}>
           {showNSFWToggle && (
             <>
@@ -232,9 +241,10 @@ export function InfiniteModelsFilter() {
                 value={status}
                 onChange={(status: ModelStatus[]) => setStatus(status)}
                 multiple
+                my={4}
               >
                 {availableStatus.map((status) => (
-                  <Chip key={status} value={status} size="xs">
+                  <Chip key={status} value={status} {...chipProps}>
                     {status}
                   </Chip>
                 ))}
@@ -242,17 +252,15 @@ export function InfiniteModelsFilter() {
             </>
           )}
           <Divider label="Model types" labelProps={{ weight: 'bold' }} />
-          <Checkbox.Group
-            value={types}
-            orientation="vertical"
-            spacing="xs"
-            size="md"
-            onChange={(types: ModelType[]) => setTypes(types)}
-          >
+          <Chip.Group spacing={4}
+                value={types}
+                onChange={(types: ModelType[]) => setTypes(types)}
+                multiple
+                my={4}>
             {Object.values(ModelType).map((type, index) => (
-              <Checkbox key={index} value={type} label={splitUppercase(type)} />
+              <Chip key={index} value={type} {...chipProps}>{splitUppercase(type)}</Chip>
             ))}
-          </Checkbox.Group>
+          </Chip.Group>
           {showCheckpointType ? (
             <>
               <Divider label="Checkpoint type" labelProps={{ weight: 'bold' }} />
@@ -282,17 +290,15 @@ export function InfiniteModelsFilter() {
             </>
           ) : null}
           <Divider label="Base model" labelProps={{ weight: 'bold' }} />
-          <Checkbox.Group
-            value={baseModels}
-            orientation="vertical"
-            spacing="xs"
-            size="md"
-            onChange={(baseModels: BaseModel[]) => setBaseModels(baseModels)}
-          >
+          <Chip.Group spacing={4}
+                value={baseModels}
+                onChange={(baseModels: BaseModel[]) => setBaseModels(baseModels)}
+                multiple
+                my={4}>
             {constants.baseModels.map((baseModel, index) => (
-              <Checkbox key={index} value={baseModel} label={baseModel} />
+              <Chip key={index} value={baseModel} {...chipProps}>{baseModel}</Chip>
             ))}
-          </Checkbox.Group>
+          </Chip.Group>
           {filterLength > 0 && (
             <Button mt="xs" compact onClick={handleClear} leftIcon={<IconFilterOff size={20} />}>
               Clear Filters
@@ -303,3 +309,24 @@ export function InfiniteModelsFilter() {
     </Popover>
   );
 }
+
+const useStyles = createStyles((theme, _params, getRef) => ({
+  label: {
+    fontSize: 12,
+    fontWeight: 500,
+    '&[data-checked]': {
+      '&, &:hover': {
+        backgroundColor: theme.colors.blue[theme.fn.primaryShade()],
+        color: theme.white,
+      },
+
+      [`& .${getRef('iconWrapper')}`]: {
+        color: theme.white,
+      },
+    },
+  },
+
+  iconWrapper: {
+    ref: getRef('iconWrapper'),
+  },
+}));

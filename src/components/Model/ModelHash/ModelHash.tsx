@@ -50,7 +50,7 @@ export const ModelHash = ({ hashes, initialType = 'AutoV2', color = 'gray' }: Pr
               sx={{
                 cursor: 'pointer',
                 overflow: 'hidden',
-                width: 90,
+                width: 120,
                 borderTopLeftRadius: 0,
                 borderBottomLeftRadius: 0,
                 borderTopRightRadius: hasMore ? 0 : undefined,

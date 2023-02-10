@@ -1,7 +1,8 @@
+import { camelCase } from 'lodash';
 import { SessionUser } from 'next-auth';
 
 /** 'dev' AND ('mod' OR 'public' OR etc...)  */
-const featureAvailability = ['dev', 'mod', 'public', 'tier1'] as const;
+const featureAvailability = ['dev', 'mod', 'public', 'founder'] as const;
 type FeatureAvailability = typeof featureAvailability[number];
 
 const createTypedDictionary = <T extends Record<string, FeatureAvailability[]>>(dictionary: T) =>
@@ -10,12 +11,29 @@ const createTypedDictionary = <T extends Record<string, FeatureAvailability[]>>(
 type FeatureFlagKey = keyof typeof featureFlags;
 const featureFlags = createTypedDictionary({
   earlyAccessModel: ['dev'],
-  memberBadges: ['dev'],
+  memberBadges: ['public'],
   apiKeys: ['dev'],
   ambientCard: ['public'],
   gallery: ['mod'],
   civitaiLink: ['dev', 'mod'],
+  stripe: ['mod'],
 });
+
+// Set flags from ENV
+for (const [key, value] of Object.entries(process.env)) {
+  if (!key.startsWith('FEATURE_FLAG_')) continue;
+  const featureKey = camelCase(key.replace('FEATURE_FLAG_', ''));
+  if (featureKey in featureFlags) {
+    const availability: FeatureAvailability[] = [];
+
+    for (const x of value?.split(',') ?? []) {
+      if (featureAvailability.includes(x as FeatureAvailability))
+        availability.push(x as FeatureAvailability);
+    }
+
+    featureFlags[featureKey as FeatureFlagKey] = availability;
+  }
+}
 
 const isDev = process.env.NODE_ENV === 'development';
 

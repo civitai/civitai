@@ -2,6 +2,7 @@ import { Button, ButtonProps, createStyles, Footer, Group, Text } from '@mantine
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 interface ScrollPosition {
   x: number;
@@ -37,6 +38,16 @@ export function AppFooter() {
           &copy; Civitai {new Date().getFullYear()}
         </Text>
         <Group spacing={0} sx={{ flexWrap: 'nowrap' }}>
+          <Button
+            component={NextLink}
+            href="/pricing"
+            {...buttonProps}
+            variant="subtle"
+            color="pink"
+            px={mobile ? 5 : 'xs'}
+          >
+            Support Us ❤️
+          </Button>
           <Button component={NextLink} href="/content/tos" {...buttonProps} px={mobile ? 5 : 'xs'}>
             Terms of Service
           </Button>

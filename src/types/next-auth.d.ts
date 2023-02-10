@@ -12,6 +12,9 @@ interface ExtendedUser {
   isModerator?: boolean;
   preferredModelFormat?: ModelFileFormat;
   preferredPrunedModel?: boolean;
+  customerId?: string;
+  subscriptionId?: string;
+  tier?: string;
   muted?: boolean;
   bannedAt?: Date;
 }

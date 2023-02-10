@@ -30,8 +30,8 @@ import {
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { env } from '~/env/server.mjs';
-import { increaseDate, maxDate } from '~/utils/date-helpers';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -61,17 +61,21 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
                   return a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1;
                 })
             : version.images.flatMap((x) => x.image);
-        const earlyAccessDeadline = features.earlyAccessModel
-          ? increaseDate(
-              model.publishedAt ? maxDate(version.createdAt, model.publishedAt) : version.createdAt,
-              version.earlyAccessTimeFrame,
-              'days'
-            )
+        let earlyAccessDeadline = features.earlyAccessModel
+          ? getEarlyAccessDeadline({
+              versionCreatedAt: version.createdAt,
+              publishedAt: model.publishedAt,
+              earlyAccessTimeframe: version.earlyAccessTimeFrame,
+            })
           : undefined;
+        if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
+          earlyAccessDeadline = undefined;
+        const canDownload = !earlyAccessDeadline || ctx.user?.tier;
         return {
           ...version,
           images,
           earlyAccessDeadline,
+          canDownload,
         };
       }),
     };
@@ -105,11 +109,16 @@ export const getModelsInfiniteHandler = async ({
       status: true,
       createdAt: true,
       lastVersionAt: true,
+      publishedAt: true,
+      locked: true,
       modelVersions: {
         orderBy: { index: 'asc' },
         take: 1,
         select: {
+          earlyAccessTimeFrame: true,
+          createdAt: true,
           images: {
+            where: { image: { tosViolation: false } },
             orderBy: prioritizeSafeImages
               ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
               : [{ index: 'asc' }],
@@ -148,8 +157,16 @@ export const getModelsInfiniteHandler = async ({
 
   return {
     nextCursor,
-    items: items.map(({ modelVersions, reportStats, ...model }) => {
+    items: items.map(({ modelVersions, reportStats, publishedAt, ...model }) => {
       const rank = model.rank as Record<string, number>;
+      const latestVersion = modelVersions[0];
+      const earlyAccess =
+        !latestVersion ||
+        isEarlyAccess({
+          versionCreatedAt: latestVersion.createdAt,
+          publishedAt,
+          earlyAccessTimeframe: latestVersion.earlyAccessTimeFrame,
+        });
       return {
         ...model,
         rank: {
@@ -159,7 +176,8 @@ export const getModelsInfiniteHandler = async ({
           ratingCount: rank[`ratingCount${input.period}`],
           rating: rank[`rating${input.period}`],
         },
-        image: modelVersions[0]?.images[0]?.image ?? {},
+        image: latestVersion?.images[0]?.image ?? {},
+        earlyAccess,
       };
     }),
   };

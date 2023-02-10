@@ -14,6 +14,9 @@ import {
   HoverCard,
   ScrollArea,
   LoadingOverlay,
+  Tooltip,
+  Box,
+  Popover,
 } from '@mantine/core';
 import { IconInfoCircle, IconRosette } from '@tabler/icons';
 import { useEffect } from 'react';
@@ -124,21 +127,37 @@ export function ProfileCard() {
                 />
               </Grid.Col>
             )}
-            <Grid.Col xs={12} md={cosmeticsEnabled ? 8 : 12}>
+            <Grid.Col xs={12} md={cosmeticsEnabled ? 7 : 12}>
               <InputText name="username" label="Username" required />
             </Grid.Col>
             {cosmeticsEnabled && (
-              <Grid.Col xs={12} md={4}>
+              <Grid.Col xs={12} md={5}>
                 <InputSelect
                   name="nameplateId"
                   placeholder="Select style"
                   label={
                     <Group spacing={4} noWrap>
                       <Input.Label>Nameplate Style</Input.Label>
-                      <IconBadge
-                        tooltip="Select the style for your username"
-                        icon={<IconInfoCircle size={14} />}
-                      />
+                      <Popover withArrow width={300} withinPortal position="top">
+                        <Popover.Target>
+                          <Box
+                            display="inline-block"
+                            sx={{ lineHeight: 0.8, cursor: 'pointer', opacity: 0.5 }}
+                          >
+                            <IconInfoCircle size={16} />
+                          </Box>
+                        </Popover.Target>
+                        <Popover.Dropdown>
+                          <Text weight={500} size="sm">
+                            Nameplates
+                          </Text>
+                          <Text size="sm">
+                            Nameplates change the appearance of your username. They can include
+                            special colors or effects. You can earn nameplates by being a subscriber
+                            or earning trophies on the site.
+                          </Text>
+                        </Popover.Dropdown>
+                      </Popover>
                     </Group>
                   }
                   nothingFound="Your earned nameplate styles will appear here"
@@ -158,14 +177,30 @@ export function ProfileCard() {
             </Grid.Col>
             {cosmeticsEnabled && (
               <Grid.Col span={12}>
-                <Stack spacing={5}>
+                <Stack spacing={0}>
                   <Group position="apart">
                     <Group spacing={4}>
                       <Input.Label>Badge</Input.Label>
-                      <IconBadge
-                        tooltip="Select the badge you want to display next to your username"
-                        icon={<IconInfoCircle size={14} />}
-                      />
+                      <Popover withArrow width={300} withinPortal position="top">
+                        <Popover.Target>
+                          <Box
+                            display="inline-block"
+                            sx={{ lineHeight: 0.8, cursor: 'pointer', opacity: 0.5 }}
+                          >
+                            <IconInfoCircle size={16} />
+                          </Box>
+                        </Popover.Target>
+                        <Popover.Dropdown>
+                          <Text weight={500} size="sm">
+                            Badges
+                          </Text>
+                          <Text size="sm">
+                            Badges appear next your username and can even include special effects.
+                            You can earn badges by being a subscriber or earning trophies on the
+                            site.
+                          </Text>
+                        </Popover.Dropdown>
+                      </Popover>
                     </Group>
                     {selectedBadge && (
                       <Button
@@ -183,9 +218,18 @@ export function ProfileCard() {
                     {selectedBadge?.data.url ? (
                       <EdgeImage src={selectedBadge.data.url} width={96} />
                     ) : (
-                      <ThemeIcon size={96} variant="outline" color="gray">
-                        <IconRosette size={48} stroke={1.5} />
-                      </ThemeIcon>
+                      <Paper
+                        withBorder
+                        sx={{
+                          width: 96,
+                          height: 96,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <IconRosette style={{ opacity: 0.5 }} size={48} stroke={1.5} />
+                      </Paper>
                     )}
                     <Paper
                       component={ScrollArea}
@@ -205,7 +249,7 @@ export function ProfileCard() {
                             <HoverCard
                               key={cosmetic.id}
                               position="top"
-                              width={250}
+                              width={300}
                               openDelay={300}
                               withArrow
                               withinPortal
@@ -224,14 +268,16 @@ export function ProfileCard() {
                                 </Button>
                               </HoverCard.Target>
                               <HoverCard.Dropdown>
-                                <Stack spacing={4}>
-                                  <Text size="md" weight="bold">
+                                <Stack spacing={0}>
+                                  <Text size="sm" weight={500}>
                                     {cosmetic.name}
                                   </Text>
                                   {cosmetic.description && (
-                                    <Text size="sm">{cosmetic.description}</Text>
+                                    <Text size="sm" sx={{ lineHeight: 1.2 }}>
+                                      {cosmetic.description}
+                                    </Text>
                                   )}
-                                  <Text size="xs" color="dimmed">
+                                  <Text size="xs" color="dimmed" mt="xs">
                                     {`Acquired on ${formatDate(cosmetic.obtainedAt)}`}
                                   </Text>
                                 </Stack>
@@ -240,7 +286,7 @@ export function ProfileCard() {
                           ))}
                         </Group>
                       ) : (
-                        <Center sx={{ width: '100%' }}>
+                        <Center sx={{ width: '100%', height: 72 }}>
                           <Text size="sm" color="dimmed">
                             Your earned badges will appear here
                           </Text>

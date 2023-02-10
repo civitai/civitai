@@ -1,17 +1,45 @@
-import { getByIdSchema } from '~/server/schema/base.schema';
 import {
-  getGalleryImagesInfiniteHandler,
+  deleteImageHandler,
   getGalleryImageDetailHandler,
+  getGalleryImagesHandler,
+  getGalleryImagesInfiniteHandler,
   getModelVersionImagesHandler,
   getReviewImagesHandler,
-  getGalleryImagesHandler,
-} from './../controllers/image.controller';
+  setTosViolationHandler,
+} from '~/server/controllers/image.controller';
+import { prisma } from '~/server/db/client';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   getModelVersionImageSchema,
   getReviewImagesSchema,
   getGalleryImageSchema,
-} from './../schema/image.schema';
-import { publicProcedure, router } from '~/server/trpc';
+} from '~/server/schema/image.schema';
+import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
+
+const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
+  if (!ctx.user) throw throwAuthorizationError();
+
+  const { id } = input as { id: number };
+
+  const userId = ctx.user.id;
+  let ownerId = userId;
+  if (id) {
+    const isModerator = ctx?.user?.isModerator;
+    ownerId = (await prisma.image.findUnique({ where: { id } }))?.userId ?? 0;
+    if (!isModerator) {
+      if (ownerId !== userId) throw throwAuthorizationError();
+    }
+  }
+
+  return next({
+    ctx: {
+      // infers the `user` as non-nullable
+      user: ctx.user,
+      ownerId,
+    },
+  });
+});
 
 export const imageRouter = router({
   getModelVersionImages: publicProcedure
@@ -23,4 +51,9 @@ export const imageRouter = router({
     .query(getGalleryImagesInfiniteHandler),
   getGalleryImages: publicProcedure.input(getGalleryImageSchema).query(getGalleryImagesHandler),
   getGalleryImageDetail: publicProcedure.input(getByIdSchema).query(getGalleryImageDetailHandler),
+  delete: protectedProcedure
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .mutation(deleteImageHandler),
+  setTosViolation: protectedProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
 });

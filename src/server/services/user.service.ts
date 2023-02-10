@@ -11,6 +11,7 @@ import {
   ToggleBlockedTagSchema,
 } from '~/server/schema/user.schema';
 import { invalidateSession } from '~/server/utils/session-helpers';
+import { env } from '~/env/server.mjs';
 
 // const xprisma = prisma.$extends({
 //   result: {
@@ -27,6 +28,7 @@ export const getUserCreator = async ({ username }: { username: string }) => {
       username: true,
       muted: true,
       bannedAt: true,
+      createdAt: true,
       links: {
         select: {
           url: true,
@@ -52,13 +54,16 @@ export const getUserCreator = async ({ username }: { username: string }) => {
               data: true,
               type: true,
               source: true,
+              name: true,
             },
           },
         },
       },
       _count: {
         select: {
-          models: true,
+          models: {
+            where: { status: 'Published' },
+          },
         },
       },
     },
@@ -345,6 +350,25 @@ export const toggleBlockedTag = async ({
   }
 
   return prisma.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
+};
+
+export const getSessionUser = async ({ userId }: { userId: number }) => {
+  const user = await prisma.user.findFirst({
+    where: { id: userId, deletedAt: null },
+    include: {
+      subscription: { select: { status: true, product: { select: { metadata: true } } } },
+    },
+  });
+
+  if (!user) return undefined;
+
+  const { subscription, ...rest } = user;
+  const tier: string | undefined =
+    subscription && subscription.status === 'active'
+      ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]
+      : undefined;
+
+  return { ...rest, tier };
 };
 
 export const getUserCosmetics = ({

@@ -60,7 +60,7 @@ function MyApp(props: CustomAppProps) {
     Component,
     pageProps: { session, colorScheme: initialColorScheme, cookies, flags, ...pageProps },
   } = props;
-  const [colorScheme, setColorScheme] = useState<ColorScheme>(initialColorScheme);
+  const [colorScheme, setColorScheme] = useState<ColorScheme | undefined>(initialColorScheme);
   const toggleColorScheme = useCallback(
     (value?: ColorScheme) => {
       const nextColorScheme = value || (colorScheme === 'dark' ? 'light' : 'dark');
@@ -71,6 +71,13 @@ function MyApp(props: CustomAppProps) {
     },
     [colorScheme]
   );
+
+  useEffect(() => {
+    if (colorScheme === undefined && typeof window !== 'undefined') {
+      const osColor = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      setColorScheme(osColor);
+    }
+  }, [colorScheme]);
 
   const getLayout = useMemo(
     () => Component.getLayout ?? ((page: any) => <AppLayout>{page}</AppLayout>),
@@ -111,7 +118,10 @@ function MyApp(props: CustomAppProps) {
         <link rel="manifest" href="/site.webmanifest" />
       </Head>
 
-      <ColorSchemeProvider colorScheme={colorScheme} toggleColorScheme={toggleColorScheme}>
+      <ColorSchemeProvider
+        colorScheme={colorScheme ?? 'dark'}
+        toggleColorScheme={toggleColorScheme}
+      >
         <MantineProvider
           theme={{
             colorScheme,
@@ -155,7 +165,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   if (isClient) return initialProps;
 
   const { pageProps, ...appProps } = initialProps;
-  const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'light';
+  const colorScheme = getCookie('mantine-color-scheme', appContext.ctx);
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
 

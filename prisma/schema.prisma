@@ -52,22 +52,25 @@ model SessionInvalidation {
 }
 
 model User {
-  id                   Int              @id @default(autoincrement())
+  id                   Int                   @id @default(autoincrement())
   name                 String?
-  username             String?          @unique @db.Citext
+  username             String?               @unique @db.Citext
   // displayName       String?          @db.Citext // [deleted]
-  email                String?          @unique
+  email                String?               @unique
   emailVerified        DateTime?
   image                String?
-  showNsfw             Boolean?         @default(false)
-  blurNsfw             Boolean?         @default(true)
-  isModerator          Boolean?         @default(false)
-  tos                  Boolean?         @default(false)
-  createdAt            DateTime         @default(now())
+  showNsfw             Boolean?              @default(false)
+  blurNsfw             Boolean?              @default(true)
+  isModerator          Boolean?              @default(false)
+  tos                  Boolean?              @default(false)
+  createdAt            DateTime              @default(now())
   deletedAt            DateTime?
-  preferredModelFormat ModelFileFormat? @default(SafeTensor)
-  preferredPrunedModel Boolean?         @default(false)
-  muted                Boolean?         @default(false)
+  preferredModelFormat ModelFileFormat?      @default(SafeTensor)
+  preferredPrunedModel Boolean?              @default(false)
+  customerId           String?               @unique
+  subscriptionId       String?
+  subscription         CustomerSubscription?
+  muted                Boolean?              @default(false)
   bannedAt             DateTime?
 
   accounts             Account[]
@@ -108,7 +111,68 @@ model User {
   rank                UserRank?
   downloads           DownloadHistory[]
   imageConnections    ImageConnection[]
+  purchases           Purchase[]
   cosmetics           UserCosmetic[]
+}
+
+model CustomerSubscription {
+  id                 String    @id
+  userId             Int       @unique
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  metadata           Json
+  status             String
+  priceId            String
+  price              Price     @relation(fields: [priceId], references: [id])
+  productId          String
+  product            Product   @relation(fields: [productId], references: [id])
+  cancelAtPeriodEnd  Boolean
+  cancelAt           DateTime?
+  canceledAt         DateTime?
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  createdAt          DateTime
+  endedAt            DateTime?
+}
+
+model Product {
+  id             String  @id
+  active         Boolean
+  name           String
+  description    String?
+  metadata       Json
+  defaultPriceId String?
+
+  prices                Price[]
+  customerSubscriptions CustomerSubscription[]
+  purchases             Purchase[]
+}
+
+model Price {
+  id                    String                 @id
+  productId             String
+  product               Product                @relation(fields: [productId], references: [id])
+  active                Boolean
+  currency              String
+  description           String?
+  type                  String
+  unitAmount            Int?
+  interval              String?
+  intervalCount         Int?
+  metadata              Json
+  customerSubscriptions CustomerSubscription[]
+  purchases             Purchase[]
+}
+
+model Purchase {
+  id         Int      @id @default(autoincrement())
+  customerId String
+  customer   User     @relation(fields: [customerId], references: [customerId])
+  productId  String?
+  product    Product? @relation(fields: [productId], references: [id])
+  priceId    String?
+  price      Price?   @relation(fields: [priceId], references: [id])
+  status     String?
+  createdAt  DateTime @default(now())
 }
 
 enum UserEngagementType {
@@ -238,6 +302,7 @@ model Model {
   meta           Json            @default("{}")
   deletedAt      DateTime?
   checkpointType CheckpointType?
+  locked         Boolean         @default(false)
 
   // Licensing
   allowNoCredit         Boolean       @default(true)
@@ -457,22 +522,26 @@ enum ReportReason {
 enum ReportStatus {
   Pending
   Processing
-  Valid
-  Invalid
+  Actioned
+  Unactioned
 }
 
 model Report {
-  id        Int            @id @default(autoincrement())
-  userId    Int
-  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reason    ReportReason
-  createdAt DateTime       @default(now())
-  details   Json?
-  status    ReportStatus
-  model     ModelReport?
-  review    ReviewReport?
-  comment   CommentReport?
-  image     ImageReport?
+  id                      Int          @id @default(autoincrement())
+  userId                  Int
+  user                    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason                  ReportReason
+  createdAt               DateTime     @default(now())
+  details                 Json?
+  internalNotes           String?
+  previouslyReviewedCount Int          @default(0)
+  alsoReportedBy          Int[]        @default([]) // UserIds
+
+  status  ReportStatus
+  model   ModelReport?
+  review  ReviewReport?
+  comment CommentReport?
+  image   ImageReport?
 }
 
 model ModelReport {
@@ -806,6 +875,8 @@ model Notification {
   details   Json?
   createdAt DateTime  @default(now())
   viewedAt  DateTime?
+
+  @@index([userId])
 }
 
 model UserNotificationSettings {
@@ -1050,7 +1121,7 @@ enum CosmeticSource {
 }
 
 model Cosmetic {
-  id              Int            @id
+  id              Int            @id @default(autoincrement())
   name            String
   description     String?
   type            CosmeticType
@@ -1059,6 +1130,9 @@ model Cosmetic {
   data            Json
   createdAt       DateTime?      @default(now())
   updatedAt       DateTime?      @updatedAt
+  availableStart  DateTime?
+  availableEnd    DateTime?
+  productId       String?
   UserCosmetic    UserCosmetic[]
 }
 

@@ -1,4 +1,4 @@
-import { Group, MantineSize, Text } from '@mantine/core';
+import { Group, MantineSize, Text, Tooltip } from '@mantine/core';
 import React from 'react';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
@@ -28,7 +28,7 @@ export function Username({
     ?.cosmetic as Omit<NamePlateCosmetic, 'name' | 'description' | 'obtainedAt'>;
   const badge = cosmetics.find(({ cosmetic }) => cosmetic.type === 'Badge')?.cosmetic as Omit<
     BadgeCosmetic,
-    'name' | 'description' | 'obtainedAt'
+    'description' | 'obtainedAt'
   >;
   const additionalTextProps = features.memberBadges ? nameplate?.data : {};
   const badgeSize = mapSizeToImageWidth[size];
@@ -46,7 +46,11 @@ export function Username({
         {username}
       </Text>
       {features.memberBadges && badge?.data.url && (
-        <EdgeImage src={badge.data.url} width={badgeSize} />
+        <Tooltip label={badge.name} withArrow>
+          <div>
+            <EdgeImage src={badge.data.url} width={badgeSize} />
+          </div>
+        </Tooltip>
       )}
     </Group>
   );

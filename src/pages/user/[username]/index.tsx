@@ -302,12 +302,13 @@ export default function UserPage({
                     </Group>
                     {!!user.links?.length && (
                       <Group spacing={0}>
-                        {sortDomainLinks(user.links)?.map((link, index) => (
+                        {sortDomainLinks(user.links).map((link, index) => (
                           <ActionIcon
                             key={index}
                             component="a"
                             href={link.url}
                             target="_blank"
+                            rel="noopener noreferrer"
                             size="md"
                           >
                             <DomainIcon domain={link.domain} size={22} />

@@ -4,12 +4,13 @@ import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { ImageSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetGalleryImageInput } from '~/server/schema/image.schema';
 import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await prisma.imagesOnModels.findMany({
-    where: { modelVersionId },
+    where: { modelVersionId, image: { tosViolation: false } },
     select: { image: { select: imageSelect } },
   });
   return result.map((x) => x.image);
@@ -17,7 +18,7 @@ export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId
 
 export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
   const result = await prisma.imagesOnReviews.findMany({
-    where: { reviewId },
+    where: { reviewId, image: { tosViolation: false } },
     select: { image: { select: imageSelect } },
   });
   return result.map((x) => x.image);
@@ -61,6 +62,7 @@ export const getGalleryImages = async <
     where: {
       userId,
       nsfw: !canViewNsfw ? { equals: false } : undefined,
+      tosViolation: false,
       ...(infinite ? infiniteWhere : finiteWhere),
       // TODO.gallery - excludedTagIds (hidden tags)
     },
@@ -84,4 +86,20 @@ export const getGalleryImages = async <
       commentCount: stats?.commentCountAllTime,
     },
   }));
+};
+
+export const deleteImageById = ({ id }: GetByIdInput) => {
+  return prisma.image.delete({ where: { id } });
+};
+
+export const updateImageById = <TSelect extends Prisma.ImageSelect>({
+  id,
+  select,
+  data,
+}: {
+  id: number;
+  data: Prisma.ImageUpdateArgs['data'];
+  select: TSelect;
+}) => {
+  return prisma.image.update({ where: { id }, data, select });
 };
