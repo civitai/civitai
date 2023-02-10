@@ -48,11 +48,18 @@ export function AppFooter() {
           >
             Support Us ❤️
           </Button>
-          <Button component={NextLink} href="/content/tos" {...buttonProps} px={mobile ? 5 : 'xs'}>
+          <Button
+            component={NextLink}
+            prefetch={false}
+            href="/content/tos"
+            {...buttonProps}
+            px={mobile ? 5 : 'xs'}
+          >
             Terms of Service
           </Button>
           <Button
             component={NextLink}
+            prefetch={false}
             href="/content/privacy"
             {...buttonProps}
             px={mobile ? 5 : 'xs'}

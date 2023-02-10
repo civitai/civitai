@@ -1,8 +1,8 @@
 import { User } from '@prisma/client';
 import { JWT } from 'next-auth/jwt';
-import { prisma } from '~/server/db/client';
 import { getSessionUser } from '~/server/services/user.service';
 import { createLogger } from '~/utils/logging';
+import { redis } from '~/server/redis/client';
 
 const log = createLogger('session-helpers', 'green');
 declare global {
@@ -12,42 +12,12 @@ declare global {
   var sessionsFetch: Promise<Record<number, Date>> | null;
 }
 
-async function getSessionsToInvalidate() {
-  if (global.sessionsToInvalidate) return global.sessionsToInvalidate;
-  if (global.sessionsFetch) return global.sessionsFetch;
-  log('Fetching sessions to invalidate', global.sessionsFetch);
-  global.sessionsFetch = prisma.sessionInvalidation
-    .groupBy({
-      by: ['userId'],
-      _max: { invalidatedAt: true },
-    })
-    .then((x) => {
-      const toInvalidate: typeof sessionsToInvalidate = {};
-      for (const {
-        userId,
-        _max: { invalidatedAt },
-      } of x) {
-        toInvalidate[userId] = invalidatedAt ?? new Date();
-      }
-      global.sessionsToInvalidate = toInvalidate;
-      log(`Fetched ${x.length} sessions to invalidate`);
-      return global.sessionsToInvalidate;
-    })
-    .catch(() => {
-      global.sessionsToInvalidate = {};
-      log(`Failed to get sessions to invalidate`);
-      return global.sessionsToInvalidate;
-    });
-
-  return global.sessionsFetch;
-}
-
 export async function refreshToken(token: JWT) {
   if (!token.user) return token;
   const user = token.user as User;
   if (!user.id) return token;
-  const toInvalidate = await getSessionsToInvalidate();
-  const invalidationDate = toInvalidate[user.id];
+  const redisDate = await redis.get(`session:${user.id}`);
+  const invalidationDate = redisDate ? new Date(redisDate) : undefined;
   if (
     !invalidationDate ||
     (token.signedAt && new Date(token.signedAt as string) > invalidationDate)
@@ -66,17 +36,7 @@ export async function refreshToken(token: JWT) {
 }
 
 export function invalidateSession(userId: number) {
-  sessionsToInvalidate[userId] = new Date();
-
-  // Store in DB so that we can resume on reboot
-  return prisma.sessionInvalidation
-    .createMany({
-      data: { userId },
-    })
-    .then(() => {
-      log(`Invalidated session for user ${userId}`);
-    })
-    .catch(() => {
-      log(`Failed to invalidate session for user ${userId}`);
-    });
+  redis.set(`session:${userId}`, new Date().toISOString(), {
+    EX: 60 * 60 * 24 * 30, // 30 days
+  });
 }
