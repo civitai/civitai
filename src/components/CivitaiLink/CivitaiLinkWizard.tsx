@@ -41,12 +41,7 @@ const { openModal, Modal } = createContextModal({
       schema,
     });
 
-    const {
-      connected,
-      instance: selectedInstance,
-      createInstance,
-      renameInstance,
-    } = useCivitaiLink();
+    const { connected, instance, createInstance, renameInstance } = useCivitaiLink();
 
     const handleCreateInstance = () => {
       nextStep();
@@ -54,10 +49,14 @@ const { openModal, Modal } = createContextModal({
     };
 
     const handleSubmit = (data: z.infer<typeof schema>) => {
-      if (!selectedInstance?.id) return;
-      renameInstance(selectedInstance.id, data.name);
+      if (!instance?.id) return;
+      renameInstance(instance.id, data.name);
       context.close();
     };
+
+    console.log({ instance });
+
+    // TODO.civitai-link - if error, show error
 
     return (
       <>
@@ -117,8 +116,8 @@ const { openModal, Modal } = createContextModal({
                 </Text>
                 <Text> Paste this code into the Civitai Link settings and save.</Text>
                 <Center>
-                  {selectedInstance?.key ? (
-                    <CopyButton value={selectedInstance.key}>
+                  {instance?.key ? (
+                    <CopyButton value={instance.key}>
                       {({ copied, copy }) => (
                         <Tooltip label="copy">
                           <Button
@@ -126,13 +125,13 @@ const { openModal, Modal } = createContextModal({
                             onClick={copy}
                             rightIcon={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
                           >
-                            {!copied ? selectedInstance.key : 'Copied'}
+                            {!copied ? instance.key : 'Copied'}
                           </Button>
                         </Tooltip>
                       )}
                     </CopyButton>
                   ) : (
-                    <Button variant="default" px="xl" py="sm">
+                    <Button variant="default">
                       <Group spacing="xs" align="center">
                         <Loader size="xs" />
                         <span>generating key</span>

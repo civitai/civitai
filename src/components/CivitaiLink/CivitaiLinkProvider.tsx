@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-empty-function */
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { CivitaiLinkInstance } from '~/components/CivitaiLink/civitai-link-api';
 import {
   Command,
@@ -20,14 +20,36 @@ import {
   WorkerIncomingMessage,
   Instance,
 } from '~/workers/civitai-link-worker-types';
+import { MantineColor } from '@mantine/styles';
+
+type CivitaiLinkStatus = typeof statuses[number];
+const statuses = [
+  'not-connected',
+  'no-instances',
+  'no-selected-instance',
+  'no-socket-connection',
+  'link-pending',
+  'link-ready',
+] as const;
+
+export const civitaiLinkStatusColors: Record<CivitaiLinkStatus, MantineColor | undefined> = {
+  'not-connected': 'undefined',
+  'no-instances': undefined,
+  'no-selected-instance': 'yellow',
+  'no-socket-connection': 'red',
+  'link-pending': 'yellow',
+  'link-ready': 'green',
+};
 
 // #region context
 type CivitaiLinkState = {
-  instances: CivitaiLinkInstance[];
+  instances?: CivitaiLinkInstance[];
   instance?: Instance;
   socketConnected: boolean;
   connected: boolean;
   resources: ResponseResourcesList['resources'];
+  error?: string;
+  status: CivitaiLinkStatus;
   createInstance: (id?: number) => Promise<void>;
   deleteInstance: (id: number) => Promise<void>;
   renameInstance: (id: number, name: string) => Promise<void>;
@@ -36,19 +58,7 @@ type CivitaiLinkState = {
   runCommand: (command: CommandRequest) => Promise<unknown>;
 };
 
-const CivitaiLinkCtx = createContext<CivitaiLinkState>({
-  instances: [],
-  instance: undefined,
-  connected: false,
-  socketConnected: false,
-  resources: [],
-  createInstance: async () => {},
-  deleteInstance: async () => {},
-  renameInstance: async () => {},
-  selectInstance: async () => {},
-  deselectInstance: async () => {},
-  runCommand: async () => {},
-} as CivitaiLinkState);
+const CivitaiLinkCtx = createContext<CivitaiLinkState>({} as any);
 // #endregion
 
 // #region zu store
@@ -95,10 +105,11 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
   const workerRef = useRef<SharedWorker>();
   const workerPromise = useRef<Promise<SharedWorker>>();
   const [socketConnected, setSocketConnected] = useState(false);
-  const [instances, setInstances] = useState<CivitaiLinkInstance[]>([]);
+  const [instances, setInstances] = useState<CivitaiLinkInstance[]>();
   const [instance, setInstance] = useState<Instance>();
   const [resources, setResources] = useState<ResponseResourcesList['resources']>([]);
   const [connected, setConnected] = useState(false);
+  const [error, setError] = useState<string>();
   const setActivities = useCivitaiLinkStore((state) => state.setActivities);
 
   const getWorker = () => {
@@ -111,6 +122,7 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
 
     const handleError = (msg: string) => {
       console.error(msg);
+      setError(msg);
     };
 
     const handleMessage = (msg: string) => {
@@ -197,9 +209,18 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
     return promise;
   };
 
+  const status = useMemo((): CivitaiLinkStatus => {
+    if (!instances) return 'not-connected';
+    if (!instances.length) return 'no-instances';
+    if (!instance?.id) return 'no-selected-instance';
+    if (!socketConnected) return 'no-socket-connection';
+    if (!instance.connected) return 'link-pending';
+    return 'link-ready';
+  }, [instances, instance, socketConnected]);
+
   useEffect(() => {
     boot();
-  }, [boot]);
+  }, []); // eslint-disable-line
 
   return (
     <CivitaiLinkCtx.Provider
@@ -209,6 +230,8 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
         connected,
         socketConnected,
         resources,
+        error,
+        status,
         createInstance,
         deleteInstance,
         renameInstance,

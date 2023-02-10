@@ -21,7 +21,7 @@ export type WorkerOutgoingMessage =
   | { type: 'error'; msg: string }
   | { type: 'message'; msg: string }
   | { type: 'activitiesUpdate'; payload: ActivitiesResponse[] }
-  | { type: 'instancesUpdate'; payload: CivitaiLinkInstance[] }
+  | { type: 'instancesUpdate'; payload: CivitaiLinkInstance[] | undefined }
   | { type: 'resourcesUpdate'; payload: ResponseResourcesList['resources'] }
   | { type: 'commandComplete'; payload: Response }
   | { type: 'instance'; payload: Instance };

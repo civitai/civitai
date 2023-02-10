@@ -62,7 +62,7 @@ const defaultInstance: Instance = {
 };
 let initialized: number | null = null;
 let instance: Instance = { ...defaultInstance };
-let instances: CivitaiLinkInstance[] = [];
+let instances: CivitaiLinkInstance[] | undefined = undefined;
 let resources: ResponseResourcesList['resources'] = [];
 let activities: ActivitiesResponse[] = [];
 
@@ -83,7 +83,7 @@ const onUpdate = (type: UpdateSharedValueProps['type'], cb: () => void) => {
 type UpdateSharedValueProps =
   | { type: 'resources'; value: ResponseResourcesList['resources'] }
   | { type: 'activities'; value: ActivitiesResponse[] }
-  | { type: 'instances'; value: CivitaiLinkInstance[] }
+  | { type: 'instances'; value: CivitaiLinkInstance[] | undefined }
   | { type: 'instance'; value: Partial<Instance> };
 const updateSharedValue = ({ type, value }: UpdateSharedValueProps) => {
   console.log('updateSharedValue', { type, value });
@@ -158,10 +158,6 @@ const getStoredInstanceId = async () => {
 };
 
 // --------------------------------
-// Handle Instance Events
-// --------------------------------
-
-// --------------------------------
 // Handle Socket Events
 // --------------------------------
 socket.on('connect', () => {
@@ -175,6 +171,10 @@ socket.on('connect', () => {
 });
 socket.on('disconnect', () => {
   emitSocketConnection(false);
+  updateSharedValue({
+    type: 'instance',
+    value: { connected: false, sdConnected: false, clientsConnected: 0 },
+  });
 });
 
 const completedStatuses: ResponseStatus[] = ['canceled', 'error', 'success'];
@@ -210,10 +210,10 @@ socket.on('commandStatus', (payload: Response) => {
 });
 
 socket.on('upgradeKey', ({ key }) => {
-  const match = instances.find((x) => x.id === instance.id);
+  const match = instances?.find((x) => x.id === instance.id);
   if (match) match.key = key;
 
-  updateSharedValue({ type: 'instance', value: { key } });
+  updateSharedValue({ type: 'instance', value: { key: null } });
 });
 
 socket.on('kicked', () => {
@@ -245,8 +245,9 @@ socket.on('roomPresence', ({ client, sd }) => {
 const handleJoin = (id: number) => {
   if (instance.id === id && instance.connected) return;
 
-  const targetInstance = instances.find((i) => i.id === id);
+  const targetInstance = instances?.find((i) => i.id === id);
   if (!targetInstance) {
+    storeInstanceId();
     emitError('Could not find instance');
     return;
   }
@@ -258,8 +259,9 @@ const handleJoin = (id: number) => {
   }
 
   socket.emit('join', targetInstance.key, ({ success, msg }) => {
+    const isShortKey = key.length < 10;
     if (!success && msg) emitError(msg);
-    else updateSharedValue({ type: 'instance', value: { id, key, name } });
+    else updateSharedValue({ type: 'instance', value: { id, key: isShortKey ? key : null, name } });
   });
 };
 
@@ -274,8 +276,8 @@ const handleLeave = () => {
 };
 
 const handleCommand = (payload: Command) => {
-  if (!instance.key) {
-    emitError('You must join a session before sending commands');
+  if (!instance.connected) {
+    emitError('Your link is not ready for commands');
     return;
   }
   socket.emit('command', { ...payload, createdAt: new Date() });
@@ -286,6 +288,7 @@ const handleLoadInstances = async () => {
     const result = await getLinkInstances();
     updateSharedValue({ type: 'instances', value: result });
   } catch (err: any) {
+    updateSharedValue({ type: 'instances', value: undefined });
     emitError(`Error loading instances: ${err.message}`);
   }
 };
