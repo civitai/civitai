@@ -112,6 +112,8 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
   const [error, setError] = useState<string>();
   const setActivities = useCivitaiLinkStore((state) => state.setActivities);
 
+  //TODO.civitai-link - timeout when setting active instance
+
   const getWorker = () => {
     if (workerPromise.current) return workerPromise.current;
     if (workerRef.current) return Promise.resolve(workerRef.current);

@@ -1,6 +1,5 @@
 import { ContextModalProps, openContextModal } from '@mantine/modals';
 import { ModalProps } from '@mantine/core';
-import Router from 'next/router';
 
 type ContextProps<T extends Record<string, unknown>> = {
   context: {

@@ -14,6 +14,9 @@ const BlockModelTagsModal = dynamic(() => import('~/components/Modals/BlockModel
 const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'));
 const RunStrategyModal = dynamic(() => import('~/components/Modals/RunStrategyModal'));
 const CivitaiLinkWizard = dynamic(() => import('~/components/CivitaiLink/CivitaiLinkWizard'));
+const CivitaiLinkSuccessModal = dynamic(
+  () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
+);
 
 const registry = {
   blockModelTags: {
@@ -52,6 +55,7 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
         {
           onboarding: DynamicOnboardingModal,
           questionsInfo: QuestionsInfoModal,
+          'civitai-link-success': CivitaiLinkSuccessModal,
           ...(Object.keys(registry) as Array<keyof typeof registry>).reduce<any>((acc, key) => {
             acc[key] = registry[key].Component;
             return acc;

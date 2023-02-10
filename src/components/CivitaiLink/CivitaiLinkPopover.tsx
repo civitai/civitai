@@ -40,6 +40,7 @@ import {
   useCivitaiLink,
   useCivitaiLinkStore,
 } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { CivitaiLinkSvg } from '~/components/CivitaiLink/CivitaiLinkSvg';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
@@ -67,7 +68,7 @@ function LinkDropdown() {
     setManage((o) => !o);
   };
 
-  const canToggleManageInstances = !!instances?.length;
+  const canToggleManageInstances = !!instances?.length && status !== 'no-selected-instance';
 
   return (
     <Paper style={{ overflow: 'hidden' }}>
@@ -130,12 +131,13 @@ function InstancesManager() {
     instances,
     instance: selectedInstance,
     deselectInstance,
+    deleteInstance,
     selectInstance,
     status,
   } = useCivitaiLink();
 
   const handleAddClick = () => {
-    // deselectInstance();
+    deselectInstance();
     openContext('civitai-link-wizard', {});
   };
 
@@ -175,7 +177,7 @@ function InstancesManager() {
                       </Tooltip>
                     )}
                     <Tooltip label="delete" withinPortal>
-                      <ActionIcon color="red">
+                      <ActionIcon color="red" onClick={() => deleteInstance(instance.id)}>
                         <IconTrash size={20} />
                       </ActionIcon>
                     </Tooltip>
@@ -205,6 +207,9 @@ function GetStarted() {
   return (
     <>
       <Stack p="xs">
+        <Center p="md" pb={0}>
+          <CivitaiLinkSvg />
+        </Center>
         <Text size="sm">
           Manage your Automatic1111 Stable Diffusion instance right from Civitai. Add and remove
           resources while you browse the site. More to come soon!
