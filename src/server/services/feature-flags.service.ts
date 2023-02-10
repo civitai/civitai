@@ -1,3 +1,4 @@
+import { camelCase } from 'lodash';
 import { SessionUser } from 'next-auth';
 
 /** 'dev' AND ('mod' OR 'public' OR etc...)  */
@@ -16,6 +17,22 @@ const featureFlags = createTypedDictionary({
   gallery: ['mod'],
   stripe: ['mod'],
 });
+
+// Set flags from ENV
+for (const [key, value] of Object.entries(process.env)) {
+  if (!key.startsWith('FEATURE_FLAG_')) continue;
+  const featureKey = camelCase(key.replace('FEATURE_FLAG_', ''));
+  if (featureKey in featureFlags) {
+    const availability: FeatureAvailability[] = [];
+
+    for (const x of value?.split(',') ?? []) {
+      if (featureAvailability.includes(x as FeatureAvailability))
+        availability.push(x as FeatureAvailability);
+    }
+
+    featureFlags[featureKey as FeatureFlagKey] = availability;
+  }
+}
 
 const isDev = process.env.NODE_ENV === 'development';
 

@@ -119,6 +119,17 @@ export const createSubscribeSession = async ({
     customerId = await createCustomer(user);
   }
 
+  // Check to see if this user has a subscription with Stripe
+  const { data: subscriptions } = await stripe.subscriptions.list({
+    customer: customerId,
+  });
+
+  if (subscriptions.length > 0) {
+    const { url } = await createManageSubscriptionSession({ customerId });
+    invalidateSession(user.id);
+    return { sessionId: null, url };
+  }
+
   // array of items we are charging the customer
   const lineItems = [
     {
@@ -133,7 +144,7 @@ export const createSubscribeSession = async ({
     payment_method_types: ['card'],
     line_items: lineItems,
     success_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
-    cancel_url: `${baseUrl}/pricing`,
+    cancel_url: `${baseUrl}/pricing?canceled=true`,
   });
 
   return { sessionId: session.id, url: session.url };

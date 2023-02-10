@@ -16,7 +16,7 @@ export const getPlansHandler = async () => {
 };
 
 export const getUserSubscriptionHandler = async ({ ctx }: { ctx: Context }) => {
-  if (!ctx.user?.id || !ctx.user.subscriptionId) return undefined;
+  if (!ctx.user?.id || !ctx.user.subscriptionId) return null;
   return await getUserSubscription({ userId: ctx.user.id });
 };
 
