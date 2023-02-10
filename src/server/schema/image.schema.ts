@@ -2,6 +2,7 @@ import { ImageSort } from './../common/enums';
 import { MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
+import { tagSchema } from '~/server/schema/tag.schema';
 
 const stringToNumber = z.preprocess((value) => Number(value), z.number());
 
@@ -40,6 +41,7 @@ export const imageSchema = z.object({
   width: z.number().nullish(),
   nsfw: z.boolean().optional(),
   analysis: imageAnalysisSchema.optional(),
+  tags: z.array(tagSchema).optional(),
 });
 
 export type ImageUploadProps = z.infer<typeof imageSchema>;

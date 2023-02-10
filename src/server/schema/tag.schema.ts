@@ -11,6 +11,7 @@ type TagUpsertSchema = z.infer<typeof tagSchema>;
 export const tagSchema = z.object({
   id: z.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
+  isCategory: z.boolean().optional(),
   color: z.string().nullish(),
 });
 
@@ -30,6 +31,7 @@ export const getTagsInput = getAllQuerySchema.extend({
   modelId: z.number().optional(),
   not: z.number().array().optional(),
   unlisted: z.boolean().optional(),
+  categories: z.boolean().optional(),
 });
 export type GetTagsInput = z.infer<typeof getTagsInput>;
 

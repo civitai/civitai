@@ -28,6 +28,7 @@ export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => 
       select: {
         id: true,
         name: true,
+        isCategory: true,
         tagsOnModels: withModels ? { select: { modelId: true } } : undefined,
       },
       orderBy: { rank: { modelCountAllTimeRank: 'asc' } },

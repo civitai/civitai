@@ -28,6 +28,7 @@ export const DismissibleAlert = ({
       {...props}
       className={cx(className, classes.announcement)}
       onClose={() => setDismissed(true)}
+      closeButtonLabel="Close alert"
       withCloseButton
     >
       <Group spacing="xs" noWrap>

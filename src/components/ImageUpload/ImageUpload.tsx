@@ -11,14 +11,12 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext } from '@dnd-kit/sortable';
 import {
-  Alert,
   createStyles,
   Group,
   Input,
   InputWrapperProps,
   Text,
   Stack,
-  Title,
   Button,
   ActionIcon,
   Popover,
@@ -28,9 +26,11 @@ import {
   Select,
   Tooltip,
   Loader,
+  LoadingOverlay,
   Center,
   Overlay,
   Tabs,
+  MultiSelect,
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
@@ -50,6 +50,10 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 
 import { useImageUpload } from '~/hooks/useImageUpload';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { trpc } from '~/utils/trpc';
+import { TagTarget } from '@prisma/client';
+import { SimpleTag } from '~/server/selectors/tag.selector';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -68,7 +72,6 @@ export function ImageUpload({
   label,
   max = 10,
   hasPrimaryImage,
-  loading = false,
   withMeta = true,
   reset = 0,
   ...inputWrapperProps
@@ -232,8 +235,9 @@ export function ImageUpload({
                               {withMeta && (
                                 <ImageMetaPopover
                                   meta={image.meta}
-                                  onSubmit={(meta) =>
-                                    filesHandler.setItem(index, { ...image, meta })
+                                  tags={image.tags}
+                                  onSubmit={(data) =>
+                                    filesHandler.setItem(index, { ...image, ...data })
                                   }
                                 >
                                   <ActionIcon
@@ -308,11 +312,13 @@ export function ImageUpload({
 function ImageMetaPopover({
   children,
   meta,
+  tags = [],
   onSubmit,
 }: {
   children: React.ReactElement;
   meta?: ImageMetaProps | null;
-  onSubmit?: (meta: ImageMetaProps | null) => void;
+  onSubmit?: (data: { meta?: ImageMetaProps | null; tags?: SimpleTag[] }) => void;
+  tags?: SimpleTag[];
 }) {
   const [opened, setOpened] = useState(false);
 
@@ -333,14 +339,19 @@ function ImageMetaPopover({
     setOpened((v) => !v);
   };
 
-  const handleSubmit = () => {
+  const handleSubmitMetadata = () => {
     const newMeta = { ...meta, prompt, negativePrompt, cfgScale, steps, sampler, seed };
     const keys = Object.keys(newMeta) as Array<keyof typeof newMeta>;
     const toSubmit = keys.reduce<ImageMetaProps>((acc, key) => {
       if (newMeta[key]) return { ...acc, [key]: newMeta[key] };
       return acc;
     }, {});
-    onSubmit?.(Object.keys(toSubmit).length ? toSubmit : null);
+    onSubmit?.({ meta: Object.keys(toSubmit).length ? toSubmit : null });
+    setOpened(false);
+  };
+
+  const handleSubmitTags = (tags: SimpleTag[]) => {
+    onSubmit?.({ tags });
     setOpened(false);
   };
 
@@ -354,28 +365,7 @@ function ImageMetaPopover({
             <Tabs.Tab value="metadata">Generation Details</Tabs.Tab>
           </Tabs.List>
           <Tabs.Panel value="tags" p="xs">
-            <Stack>
-              <Alert withCloseButton closeButtonLabel="Close alert">
-                These tags are used to help showcase your work in the right communities. Good tags
-                will help your image get more love!
-              </Alert>
-              <Select
-                label="Main Category"
-                placeholder="Select a category"
-                data={['Anime', 'Landscapes', 'Portraits', 'Painting', 'Punk', 'Futuristic']}
-                searchable
-              />
-              <Select
-                label="Tags"
-                placeholder="Select tags"
-                data={['Anime', 'Landscapes', 'Portraits', 'Painting', 'Punk', 'Futuristic']}
-                searchable
-                multiple
-              />
-              <Button mt="xs" fullWidth onClick={() => handleSubmit()}>
-                Save
-              </Button>
-            </Stack>
+            <ImageTagTab imageTags={tags} onSave={handleSubmitTags} onCopyToAll={console.log} />
           </Tabs.Panel>
           <Tabs.Panel value="metadata" p="xs">
             <Grid gutter="xs">
@@ -443,13 +433,87 @@ function ImageMetaPopover({
                 <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
               </Grid.Col>
             </Grid>
-            <Button mt="xs" fullWidth onClick={() => handleSubmit()}>
+            <Button mt="xs" fullWidth onClick={() => handleSubmitMetadata()}>
               Save
             </Button>
           </Tabs.Panel>
         </Tabs>
       </Popover.Dropdown>
     </Popover>
+  );
+}
+
+function ImageTagTab({
+  imageTags = [],
+  onSave,
+}: {
+  imageTags: SimpleTag[];
+  onSave: (tags: SimpleTag[]) => void;
+  onCopyToAll: (tagData: { tags: string[]; category: string }) => void;
+}) {
+  const [category, ...restTags] = imageTags.reduce((acc, tag) => {
+    if (tag.isCategory) acc.unshift(tag.id.toString());
+    else acc.push(tag.id.toString());
+    return acc;
+  }, [] as string[]);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(category);
+  const [selectedTags, setSelectedTags] = useState<string[]>(restTags);
+
+  const { data: { items: categories } = { items: [] }, isLoading: loadingCategories } =
+    trpc.tag.getAll.useQuery(
+      { limit: 0, entityType: TagTarget.Model, categories: true },
+      { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
+    );
+  const { data: { items: tags } = { items: [] }, isLoading: loadingTags } =
+    trpc.tag.getAll.useQuery(
+      { limit: 0, entityType: TagTarget.Model, categories: false },
+      { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
+    );
+
+  const handleSave = () => {
+    const tagsData = tags.filter((tag) => selectedTags.includes(tag.id.toString()));
+    const category = categories.find((cat) => cat.id.toString() === selectedCategory);
+    const tagsToSave = [...(category ? [{ ...category }] : []), ...tagsData];
+    onSave(tagsToSave);
+  };
+
+  const loading = loadingCategories || loadingTags;
+
+  return (
+    <Stack sx={{ position: 'relative' }}>
+      <LoadingOverlay visible={loading} />
+      <DismissibleAlert
+        id="image-tagging"
+        content="These tags are used to help showcase your work in the right communities. Good tags will help your image get more love!"
+      />
+      <Select
+        label="Main Category"
+        placeholder="Select a category"
+        value={selectedCategory}
+        onChange={setSelectedCategory}
+        data={categories.map((category) => ({
+          label: category.name,
+          value: category.id.toString(),
+        }))}
+        searchable
+        clearable
+      />
+      <MultiSelect
+        label="Tags"
+        placeholder="Select tags"
+        value={selectedTags}
+        onChange={setSelectedTags}
+        data={tags.map((tag) => ({
+          label: tag.name,
+          value: tag.id.toString(),
+        }))}
+        searchable
+        clearable
+      />
+      <Button mt="xs" fullWidth onClick={handleSave}>
+        Save
+      </Button>
+    </Stack>
   );
 }
 

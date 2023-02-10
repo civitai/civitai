@@ -267,7 +267,7 @@ export const createModel = async ({
           status: data.status,
           files: files.length > 0 ? { create: files } : undefined,
           images: {
-            create: images.map((image, index) => ({
+            create: images.map(({ tags, ...image }, index) => ({
               index,
               image: {
                 create: {
@@ -392,7 +392,7 @@ export const updateModel = async ({
           ...version,
           files: { create: files },
           images: {
-            create: images.map(({ id, meta, ...image }, index) => ({
+            create: images.map(({ id, meta, tags, ...image }, index) => ({
               index,
               image: {
                 create: {
@@ -475,11 +475,11 @@ export const updateModel = async ({
                 deleteMany: {
                   NOT: images.map((image) => ({ imageId: image.id })),
                 },
-                create: imagesToCreate.map(({ index, ...image }) => ({
+                create: imagesToCreate.map(({ index, tags, ...image }) => ({
                   index,
                   image: { create: image },
                 })),
-                update: imagesToUpdate.map(({ index, meta, nsfw, ...image }) => ({
+                update: imagesToUpdate.map(({ index, meta, nsfw, tags, ...image }) => ({
                   where: {
                     imageId_modelVersionId: {
                       imageId: image.id as number,
@@ -492,6 +492,16 @@ export const updateModel = async ({
                       update: {
                         nsfw,
                         meta,
+                        tags: {
+                          create: tags?.map((tag) => ({
+                            tag: {
+                              create: {
+                                name: tag.name.toLowerCase().trim(),
+                                target: TagTarget.Image,
+                              },
+                            },
+                          })),
+                        },
                       },
                     },
                   },

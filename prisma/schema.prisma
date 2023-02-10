@@ -698,13 +698,14 @@ enum TagTarget {
 }
 
 model Tag {
-  id        Int       @id @default(autoincrement())
-  name      String
-  color     String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  target    TagTarget
-  unlisted  Boolean   @default(false)
+  id         Int       @id @default(autoincrement())
+  name       String
+  color      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  target     TagTarget
+  unlisted   Boolean   @default(false)
+  isCategory Boolean   @default(false)
 
   tagsOnModels   TagsOnModels[]
   tagsOnQuestion TagsOnQuestions[]

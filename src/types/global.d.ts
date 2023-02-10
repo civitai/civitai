@@ -26,6 +26,7 @@ declare global {
     width?: number | null;
     hash?: string;
     nsfw?: boolean;
+    tags?: Array<{ id: number; name: string; isCategory: boolean }>;
     // navigation properties
     uuid?: string;
     analysis?: ImageAnalysisInput;

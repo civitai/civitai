@@ -56,11 +56,14 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         const images =
           !isOwnerOrModerator && prioritizeSafeImages
             ? version.images
-                .flatMap((x) => x.image)
+                .flatMap((x) => ({ ...x.image, tags: x.image.tags.map(({ tag }) => tag) }))
                 .sort((a, b) => {
                   return a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1;
                 })
-            : version.images.flatMap((x) => x.image);
+            : version.images.flatMap((x) => ({
+                ...x.image,
+                tags: x.image.tags.map(({ tag }) => tag),
+              }));
         let earlyAccessDeadline = features.earlyAccessModel
           ? getEarlyAccessDeadline({
               versionCreatedAt: version.createdAt,
