@@ -191,10 +191,7 @@ const useStyles = createStyles((theme) => ({
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg, session }) => {
-    const features = getFeatureFlags({ user: session?.user });
-    if (!features.stripe) return { notFound: true };
-
+  resolver: async ({ ssg }) => {
     await ssg?.stripe.getPlans.prefetch();
     await ssg?.stripe.getUserSubscription.prefetch();
   },

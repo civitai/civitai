@@ -25,7 +25,6 @@ export function AppFooter() {
   const { classes, cx } = useStyles();
   const [showFooter, setShowFooter] = useDebouncedState(true, 200);
   const mobile = useIsMobile();
-  const features = useFeatureFlags();
 
   useWindowEvent('scroll', () => {
     const scroll = getScrollPosition();
@@ -39,18 +38,16 @@ export function AppFooter() {
           &copy; Civitai {new Date().getFullYear()}
         </Text>
         <Group spacing={0} sx={{ flexWrap: 'nowrap' }}>
-          {features.stripe && (
-            <Button
-              component={NextLink}
-              href="/pricing"
-              {...buttonProps}
-              variant="subtle"
-              color="pink"
-              px={mobile ? 5 : 'xs'}
-            >
-              Support Us ❤️
-            </Button>
-          )}
+          <Button
+            component={NextLink}
+            href="/pricing"
+            {...buttonProps}
+            variant="subtle"
+            color="pink"
+            px={mobile ? 5 : 'xs'}
+          >
+            Support Us ❤️
+          </Button>
           <Button component={NextLink} href="/content/tos" {...buttonProps} px={mobile ? 5 : 'xs'}>
             Terms of Service
           </Button>
