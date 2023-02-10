@@ -3,7 +3,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
-import { env } from '~/env/server.mjs';
+import { isProd } from '~/env/other';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { prisma } from '~/server/db/client';
@@ -41,9 +41,7 @@ export function resModelVersionDetails(
 ) {
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
 
-  const baseUrl = new URL(
-    env.NODE_ENV === 'production' ? `https://${req.headers.host}` : 'http://localhost:3000'
-  );
+  const baseUrl = new URL(isProd ? `https://${req.headers.host}` : 'http://localhost:3000');
 
   const { images, files, model, ...version } = modelVersion;
   const primaryFile = getPrimaryFile(files);

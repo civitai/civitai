@@ -67,7 +67,6 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string(),
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string(),
   NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
-  NEXT_PUBLIC_MAINTENANCE_MODE: z.preprocess((val) => val === true || val === 'true', z.boolean()),
 });
 
 /**
@@ -80,5 +79,4 @@ export const clientEnv = {
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: process.env.NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION,
   NEXT_PUBLIC_IMAGE_LOCATION: process.env.NEXT_PUBLIC_IMAGE_LOCATION,
-  NEXT_PUBLIC_MAINTENANCE_MODE: process.env.NEXT_PUBLIC_MAINTENANCE_MODE === 'true',
 };

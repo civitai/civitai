@@ -1,5 +1,6 @@
 import { camelCase } from 'lodash';
 import { SessionUser } from 'next-auth';
+import { isDev } from '~/env/other';
 
 /** 'dev' AND ('mod' OR 'public' OR etc...)  */
 const featureAvailability = ['dev', 'mod', 'public', 'founder'] as const;
@@ -33,8 +34,6 @@ for (const [key, value] of Object.entries(process.env)) {
     featureFlags[featureKey as FeatureFlagKey] = availability;
   }
 }
-
-const isDev = process.env.NODE_ENV === 'development';
 
 export type FeatureFlags = Record<FeatureFlagKey, boolean>;
 export const getFeatureFlags = ({ user }: { user?: SessionUser }) => {

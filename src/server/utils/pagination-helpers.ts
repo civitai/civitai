@@ -1,5 +1,5 @@
 import { NextApiRequest } from 'next';
-import { env } from '~/env/server.mjs';
+import { isProd } from '~/env/other';
 import { QS } from '~/utils/qs';
 
 export const DEFAULT_PAGE_SIZE = 20;
@@ -35,7 +35,7 @@ export function getPaginationLinks({
 }) {
   const baseUrl = new URL(
     req.url ?? '/',
-    env.NODE_ENV === 'production' ? `https://${req.headers.host}` : 'http://localhost:3000'
+    isProd ? `https://${req.headers.host}` : 'http://localhost:3000'
   );
   const hasNextPage = currentPage < totalPages;
   const hasPrevPage = totalPages > 1 && currentPage > 1;
