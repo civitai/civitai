@@ -132,6 +132,7 @@ model CustomerSubscription {
   currentPeriodEnd   DateTime
   createdAt          DateTime
   endedAt            DateTime?
+  updatedAt          DateTime?
 }
 
 model Product {
