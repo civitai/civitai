@@ -68,7 +68,6 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string(),
   NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
   NEXT_PUBLIC_CIVITAI_LINK: z.string().url(),
-  NEXT_PUBLIC_CIVITAI_LINK_MULTIPLE_INSTANCES: z.preprocess((val) => val === true || val === 'true', z.boolean()),
   NEXT_PUBLIC_MAINTENANCE_MODE: z.preprocess((val) => val === true || val === 'true', z.boolean()),
 });
 
@@ -84,5 +83,4 @@ export const clientEnv = {
   NEXT_PUBLIC_IMAGE_LOCATION: process.env.NEXT_PUBLIC_IMAGE_LOCATION,
   NEXT_PUBLIC_MAINTENANCE_MODE: process.env.NEXT_PUBLIC_MAINTENANCE_MODE === 'true',
   NEXT_PUBLIC_CIVITAI_LINK: process.env.NEXT_PUBLIC_CIVITAI_LINK,
-  NEXT_PUBLIC_CIVITAI_LINK_MULTIPLE_INSTANCES: process.env.NEXT_PUBLIC_CIVITAI_LINK_MULTIPLE_INSTANCES === 'true'
 };

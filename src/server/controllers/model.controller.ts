@@ -1,4 +1,5 @@
-import { ModelStatus } from '@prisma/client';
+import { modelHashSelect } from './../selectors/modelHash.selector';
+import { ModelStatus, ModelHashType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { prisma } from '~/server/db/client';
@@ -146,6 +147,10 @@ export const getModelsInfiniteHandler = async ({
         },
       },
       user: { select: simpleUserSelect },
+      hashes: {
+        select: modelHashSelect,
+        where: { hashType: ModelHashType.SHA256 },
+      },
     },
   });
 

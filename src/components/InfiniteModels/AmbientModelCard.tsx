@@ -31,6 +31,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import React, { useState, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
+import { CivitaiLinkQuickAdd } from '~/components/CivitaiLink/CivitaiLinkQuickAdd';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
@@ -340,7 +341,6 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
               <ImageGuard
                 images={[image]}
                 connect={{ entityId: id, entityType: 'model' }}
-                nsfw={nsfw ?? image.nsfw} // if the image is nsfw, then most/all of the model is nsfw
                 render={(image) => (
                   <Box sx={{ position: 'relative' }}>
                     {contextMenuItems.length > 0 && (
@@ -405,51 +405,59 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                 )}
               />
               <Stack className={classes.info} spacing={8}>
-                {data.user.image && (
-                  <Tooltip
-                    position="left"
-                    label={
-                      <Text size="xs" weight={500}>
-                        {data.user.username}
-                      </Text>
-                    }
-                    offset={5}
-                    radius="lg"
-                    transition="slide-left"
-                    transitionDuration={500}
-                    openDelay={100}
-                    closeDelay={250}
-                    styles={{
-                      tooltip: {
-                        maxWidth: 200,
-                        backgroundColor: 'rgba(0,0,0,.5)',
-                        padding: '1px 10px 2px',
-                        zIndex: 9,
-                      },
-                    }}
-                    multiline
-                  >
-                    <Box
-                      mx="xs"
-                      sx={{
-                        alignSelf: 'flex-end',
-                        zIndex: 10,
-                        borderRadius: '50%',
+                <Group
+                  mx="xs"
+                  position="apart"
+                  sx={{
+                    alignSelf: 'flex-end',
+                    zIndex: 10,
+                    borderRadius: '50%',
+                  }}
+                >
+                  <CivitaiLinkQuickAdd modelId={data.id} hashes={data.hashes} />
+                  {data.user.image && (
+                    <Tooltip
+                      position="left"
+                      label={
+                        <Text size="xs" weight={500}>
+                          {data.user.username}
+                        </Text>
+                      }
+                      offset={5}
+                      radius="lg"
+                      transition="slide-left"
+                      transitionDuration={500}
+                      openDelay={100}
+                      closeDelay={250}
+                      styles={{
+                        tooltip: {
+                          maxWidth: 200,
+                          backgroundColor: 'rgba(0,0,0,.5)',
+                          padding: '1px 10px 2px',
+                          zIndex: 9,
+                        },
                       }}
-                      onClick={(e: React.MouseEvent<HTMLDivElement>) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        push(`/user/${data.user.username}`);
-                      }}
+                      multiline
                     >
-                      <UserAvatar
-                        size="md"
-                        user={data.user}
-                        avatarProps={{ className: classes.userAvatar }}
-                      />
-                    </Box>
-                  </Tooltip>
-                )}
+                      <Box
+                        sx={{
+                          borderRadius: '50%',
+                        }}
+                        onClick={(e: React.MouseEvent<HTMLDivElement>) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          push(`/user/${data.user.username}`);
+                        }}
+                      >
+                        <UserAvatar
+                          size="md"
+                          user={data.user}
+                          avatarProps={{ className: classes.userAvatar }}
+                        />
+                      </Box>
+                    </Tooltip>
+                  )}
+                </Group>
 
                 <Stack className={classes.content} spacing={6} p="xs">
                   <Group position="left" spacing={4}>
