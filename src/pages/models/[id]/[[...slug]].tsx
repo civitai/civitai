@@ -326,7 +326,8 @@ export default function ModelDetail({
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
   const onlyEarlyAccess = model.modelVersions.every((version) => version.earlyAccessDeadline);
-  const canDiscuss = !isMuted && (!onlyEarlyAccess || currentUser?.isMember);
+  const canDiscuss =
+    !isMuted && (!onlyEarlyAccess || currentUser?.isMember || currentUser?.isModerator);
 
   const meta = (
     <Meta
