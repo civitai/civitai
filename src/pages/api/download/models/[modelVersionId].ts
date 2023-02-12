@@ -42,7 +42,7 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
   if (format) fileWhere.format = format;
 
   const modelVersion = await prisma.modelVersion.findFirst({
-    where: { id: modelVersionId },
+    where: { id: modelVersionId, model: { status: 'Published' } },
     select: {
       id: true,
       model: { select: { id: true, name: true, type: true, publishedAt: true } },
