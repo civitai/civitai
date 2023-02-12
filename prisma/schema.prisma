@@ -811,14 +811,13 @@ model KeyValue {
 }
 
 model ApiKey {
+  id        Int        @id @default(autoincrement())
   key       String     @unique
   name      String
   scope     KeyScope[]
   userId    Int
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime   @default(now())
-
-  @@unique([key, userId])
 }
 
 enum KeyScope {

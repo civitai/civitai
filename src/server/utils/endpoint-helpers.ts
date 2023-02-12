@@ -5,6 +5,7 @@ import { Partner } from '@prisma/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { isMaintenanceMode } from '~/env/other';
+import { Session } from 'next-auth';
 
 function handleMaintenanceMode(req: NextApiRequest, res: NextApiResponse) {
   if (isMaintenanceMode) {
@@ -61,6 +62,24 @@ export function PublicEndpoint(
     );
     if (req.method === 'OPTIONS') return res.status(200).json({});
     await handler(req, res);
+  };
+}
+
+export function AuthedEndpoint(
+  handler: (req: NextApiRequest, res: NextApiResponse, user: Session['user']) => Promise<void>,
+  allowedMethods: string[] = ['GET']
+) {
+  return async (req: NextApiRequest, res: NextApiResponse) => {
+    if (handleMaintenanceMode(req, res)) return;
+
+    if (!req.method || !allowedMethods.includes(req.method))
+      return res.status(405).json({ error: 'Method not allowed' });
+
+    if (!req.headers.authorization) return res.status(401).json({ error: 'Unauthorized' });
+
+    const session = await getServerAuthSession({ req, res });
+    if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });
+    await handler(req, res, session.user);
   };
 }
 

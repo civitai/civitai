@@ -3,6 +3,8 @@ import { JWT } from 'next-auth/jwt';
 import { getSessionUser } from '~/server/services/user.service';
 import { createLogger } from '~/utils/logging';
 import { redis } from '~/server/redis/client';
+import { generateSecretHash } from '~/server/utils/key-generator';
+import { Session } from 'next-auth';
 
 const log = createLogger('session-helpers', 'green');
 declare global {
@@ -39,4 +41,11 @@ export function invalidateSession(userId: number) {
   redis.set(`session:${userId}`, new Date().toISOString(), {
     EX: 60 * 60 * 24 * 30, // 30 days
   });
+}
+
+export async function getSessionFromBearerToken(key: string) {
+  const token = generateSecretHash(key.trim());
+  const user = (await getSessionUser({ token })) as Session['user'];
+  if (!user) return null;
+  return { user } as Session;
 }

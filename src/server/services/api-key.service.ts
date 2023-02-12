@@ -8,9 +8,9 @@ import {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 
-export function getApiKey({ key }: GetAPIKeyInput) {
+export function getApiKey({ id }: GetAPIKeyInput) {
   return prisma.apiKey.findUnique({
-    where: { key },
+    where: { id },
     select: {
       scope: true,
       user: { select: simpleUserSelect },
@@ -23,14 +23,20 @@ export function getUserApiKeys({ take, skip, userId }: GetUserAPIKeysInput & { u
     take,
     skip,
     where: { userId },
+    select: {
+      id: true,
+      scope: true,
+      name: true,
+      createdAt: true,
+    },
   });
 }
 
-export function addApiKey({ name, scope, userId }: AddAPIKeyInput & { userId: number }) {
+export async function addApiKey({ name, scope, userId }: AddAPIKeyInput & { userId: number }) {
   const key = generateKey();
   const secret = generateSecretHash(key);
 
-  return prisma.apiKey.create({
+  await prisma.apiKey.create({
     data: {
       scope,
       name,
@@ -38,13 +44,15 @@ export function addApiKey({ name, scope, userId }: AddAPIKeyInput & { userId: nu
       key: secret,
     },
   });
+
+  return key;
 }
 
-export function deleteApiKey({ key, userId }: DeleteAPIKeyInput & { userId: number }) {
+export function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId: number }) {
   return prisma.apiKey.deleteMany({
     where: {
       userId,
-      key,
+      id,
     },
   });
 }

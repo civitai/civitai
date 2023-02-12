@@ -13,7 +13,7 @@ type FeatureFlagKey = keyof typeof featureFlags;
 const featureFlags = createTypedDictionary({
   earlyAccessModel: ['dev'],
   memberBadges: ['public'],
-  apiKeys: ['dev'],
+  apiKeys: ['public'],
   ambientCard: ['public'],
   gallery: ['mod'],
   stripe: ['mod'],
