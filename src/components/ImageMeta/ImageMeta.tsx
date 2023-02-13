@@ -53,7 +53,8 @@ export function ImageMeta({ meta }: Props) {
 
   const type = useMemo(() => {
     const denoiseStrength = meta['Denoise strength'] ?? meta['Denoising strength'] != null;
-    const hiresFixed = meta['First pass strength'] ?? meta['Hires upscale'] != null;
+    const hiresFixed =
+      meta['First pass strength'] ?? (meta['Hires upscale'] ?? meta['Hires upscaler']) != null;
     if (meta['Mask blur'] != null) return 'inpainting';
     if (denoiseStrength && !hiresFixed) return 'img2img';
     if (denoiseStrength && hiresFixed) return 'txt2img + hi-res';
