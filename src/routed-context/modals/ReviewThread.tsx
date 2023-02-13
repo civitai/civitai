@@ -15,6 +15,7 @@ import {
 import { useRef } from 'react';
 import { z } from 'zod';
 
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CommentSection } from '~/components/CommentSection/CommentSection';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -29,6 +30,7 @@ import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import { ReviewDiscussionMenu } from '~/components/Model/ModelDiscussion/ReviewDiscussionMenu';
+import { IconExclamationCircle } from '@tabler/icons';
 
 const TRANSITION_DURATION = 200;
 
@@ -148,6 +150,12 @@ export default createRoutedContext({
                 <CloseButton onClick={context.close} />
               </Group>
             </Group>
+            {currentUser?.isModerator && review.tosViolation && (
+              <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconExclamationCircle />}>
+                This review has been marked with a TOS Violation. This is only visible for
+                moderators.
+              </AlertWithIcon>
+            )}
             <Grid gutter="xl">
               <Grid.Col span={12}>
                 {review?.text ? <RenderHtml html={review.text} /> : null}
