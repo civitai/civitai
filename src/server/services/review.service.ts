@@ -1,4 +1,4 @@
-import { Prisma, Review, ReviewReactions } from '@prisma/client';
+import { Prisma, Review, ReviewReactions, TagTarget } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
@@ -95,12 +95,12 @@ export const createOrUpdateReview = async ({
 }: ReviewUpsertInput & { ownerId: number; locked: boolean }) => {
   const { images = [], id, locked, ...reviewInput } = input;
 
-  // If we are editing, but the comment is locked
+  // If we are editing, but the review is locked
   // prevent from updating
   if (id && locked)
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'This comment is locked and cannot be updated',
+      message: 'This review is locked and cannot be updated',
     });
 
   const imagesWithIndex = images.map((image, index) => ({
@@ -113,58 +113,95 @@ export const createOrUpdateReview = async ({
   const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
   const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
 
-  return await prisma.$transaction(async (tx) => {
-    await Promise.all(
-      // extract index because index is not a part of the prisma schema for this model
-      imagesToUpdate.map(async ({ index, ...image }) =>
-        tx.image.updateMany({
-          where: { id: image.id },
-          data: {
-            ...image,
-            meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-          },
-        })
-      )
-    );
-
-    return prisma.review.upsert({
-      where: { id: id ?? -1 },
-      create: {
-        ...reviewInput,
-        userId: ownerId,
-        imagesOnReviews: {
-          create: imagesWithIndex.map(({ index, ...image }) => ({
-            index,
-            image: { create: image },
-          })),
-        },
-      },
-      update: {
-        ...reviewInput,
-        imagesOnReviews: {
-          deleteMany: {
-            NOT: imagesToUpdate.map((image) => ({ imageId: image.id })),
-          },
-          create: imagesToCreate.map(({ index, ...image }) => ({
-            index,
-            image: { create: image },
-          })),
-          update: imagesToUpdate.map(({ index, ...image }) => ({
-            where: {
-              imageId_reviewId: {
-                imageId: image.id as number,
-                reviewId: input.id as number,
+  return prisma.review.upsert({
+    where: { id: id ?? -1 },
+    create: {
+      ...reviewInput,
+      userId: ownerId,
+      imagesOnReviews: {
+        create: imagesWithIndex.map(({ index, tags = [], ...image }) => ({
+          index,
+          image: {
+            create: {
+              ...image,
+              tags: {
+                create: tags.map((tag) => ({
+                  tag: {
+                    connectOrCreate: {
+                      where: { id: tag.id },
+                      create: { ...tag, target: TagTarget.Image },
+                    },
+                  },
+                })),
               },
             },
-            data: { index },
-          })),
+          },
+        })),
+      },
+    },
+    update: {
+      ...reviewInput,
+      imagesOnReviews: {
+        deleteMany: {
+          NOT: imagesToUpdate.map((image) => ({ imageId: image.id })),
         },
+        create: imagesToCreate.map(({ index, tags = [], ...image }) => ({
+          index,
+          image: {
+            create: {
+              ...image,
+              tags: {
+                create: tags.map((tag) => ({
+                  tag: {
+                    connectOrCreate: {
+                      where: { id: tag.id },
+                      create: { ...tag, target: TagTarget.Image },
+                    },
+                  },
+                })),
+              },
+            },
+          },
+        })),
+        update: imagesToUpdate.map(({ index, tags = [], meta, nsfw, ...image }) => ({
+          where: {
+            imageId_reviewId: {
+              imageId: image.id as number,
+              reviewId: input.id as number,
+            },
+          },
+          data: {
+            index,
+            image: {
+              update: {
+                nsfw,
+                meta,
+                tags: {
+                  deleteMany: {},
+                  connectOrCreate: tags.map((tag) => ({
+                    where: {
+                      tagId_imageId: { tagId: tag.id as number, imageId: image.id as number },
+                    },
+                    create: {
+                      tag: {
+                        connectOrCreate: {
+                          where: { id: tag.id },
+                          create: { ...tag, target: TagTarget.Image },
+                        },
+                      },
+                    },
+                  })),
+                },
+              },
+            },
+          },
+        })),
       },
-      select: {
-        id: true,
-        modelId: true,
-      },
-    });
+    },
+    select: {
+      id: true,
+      modelId: true,
+    },
   });
 };
 

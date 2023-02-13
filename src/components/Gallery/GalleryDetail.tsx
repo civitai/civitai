@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Badge,
   Box,
   Card,
   CloseButton,
@@ -297,6 +298,11 @@ export function GalleryDetail() {
                   metrics={image.metrics}
                 />
               </Box>
+              <Group spacing={4} px="md">
+                {image.tags.map((tag) => (
+                  <Badge key={tag.id}>{tag.name}</Badge>
+                ))}
+              </Group>
               {/* TODO.gallery - REACTIONS */}
               {/* TODO.gallery - COMMENTS */}
               {/* TODO.gallery - TAGS */}

@@ -267,13 +267,23 @@ export const createModel = async ({
           status: data.status,
           files: files.length > 0 ? { create: files } : undefined,
           images: {
-            create: images.map(({ tags, ...image }, index) => ({
+            create: images.map(({ tags = [], ...image }, index) => ({
               index,
               image: {
                 create: {
                   ...image,
                   userId,
                   meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                  tags: {
+                    create: tags.map((tag) => ({
+                      tag: {
+                        connectOrCreate: {
+                          where: { id: tag.id },
+                          create: { ...tag, target: TagTarget.Image },
+                        },
+                      },
+                    })),
+                  },
                 },
               },
             })),
@@ -392,13 +402,23 @@ export const updateModel = async ({
           ...version,
           files: { create: files },
           images: {
-            create: images.map(({ id, meta, tags, ...image }, index) => ({
+            create: images.map(({ id, meta, tags = [], ...image }, index) => ({
               index,
               image: {
                 create: {
                   ...image,
                   userId,
                   meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                  tags: {
+                    create: tags.map((tag) => ({
+                      tag: {
+                        connectOrCreate: {
+                          where: { id: tag.id },
+                          create: { ...tag, target: TagTarget.Image },
+                        },
+                      },
+                    })),
+                  },
                 },
               },
             })),
@@ -475,11 +495,25 @@ export const updateModel = async ({
                 deleteMany: {
                   NOT: images.map((image) => ({ imageId: image.id })),
                 },
-                create: imagesToCreate.map(({ index, tags, ...image }) => ({
+                create: imagesToCreate.map(({ index, tags = [], ...image }) => ({
                   index,
-                  image: { create: image },
+                  image: {
+                    create: {
+                      ...image,
+                      tags: {
+                        create: tags.map((tag) => ({
+                          tag: {
+                            connectOrCreate: {
+                              where: { id: tag.id },
+                              create: { ...tag, target: TagTarget.Image },
+                            },
+                          },
+                        })),
+                      },
+                    },
+                  },
                 })),
-                update: imagesToUpdate.map(({ index, meta, nsfw, tags, ...image }) => ({
+                update: imagesToUpdate.map(({ index, meta, nsfw, tags = [], ...image }) => ({
                   where: {
                     imageId_modelVersionId: {
                       imageId: image.id as number,
@@ -493,11 +527,20 @@ export const updateModel = async ({
                         nsfw,
                         meta,
                         tags: {
-                          create: tags?.map((tag) => ({
-                            tag: {
-                              create: {
-                                name: tag.name.toLowerCase().trim(),
-                                target: TagTarget.Image,
+                          deleteMany: {},
+                          connectOrCreate: tags.map((tag) => ({
+                            where: {
+                              tagId_imageId: {
+                                tagId: tag.id as number,
+                                imageId: image.id as number,
+                              },
+                            },
+                            create: {
+                              tag: {
+                                connectOrCreate: {
+                                  where: { id: tag.id },
+                                  create: { ...tag, target: TagTarget.Image },
+                                },
                               },
                             },
                           })),

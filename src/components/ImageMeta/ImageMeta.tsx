@@ -65,14 +65,16 @@ export function ImageMeta({ meta }: Props) {
     <Stack spacing="xs">
       {metas.long.map(({ label, value }) => (
         <Stack key={label} spacing={0}>
-          <Text size="sm" weight={500}>
-            {label}{' '}
+          <Group spacing={4} align="center">
+            <Text size="sm" weight={500}>
+              {label}
+            </Text>
             {label === 'Prompt' && (
-              <Badge size="xs" radius="sm" ml={4}>
+              <Badge size="xs" radius="sm">
                 {type}
               </Badge>
             )}
-          </Text>
+          </Group>
           <Code block sx={{ whiteSpace: 'normal', maxHeight: 150, overflowY: 'auto' }}>
             {value}
           </Code>
