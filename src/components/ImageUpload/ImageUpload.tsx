@@ -239,6 +239,9 @@ export function ImageUpload({
                                   onSubmit={(data) =>
                                     filesHandler.setItem(index, { ...image, ...data })
                                   }
+                                  onCopyTags={(tags) => {
+                                    filesHandler.apply((item) => ({ ...item, tags }));
+                                  }}
                                 >
                                   <ActionIcon
                                     variant="outline"
@@ -314,11 +317,13 @@ function ImageMetaPopover({
   meta,
   tags = [],
   onSubmit,
+  onCopyTags,
 }: {
   children: React.ReactElement;
   meta?: ImageMetaProps | null;
   onSubmit?: (data: { meta?: ImageMetaProps | null; tags?: SimpleTag[] }) => void;
   tags?: SimpleTag[];
+  onCopyTags?: (tags: SimpleTag[]) => void;
 }) {
   const [opened, setOpened] = useState(false);
 
@@ -355,6 +360,11 @@ function ImageMetaPopover({
     setOpened(false);
   };
 
+  const handleCopyAndSubmit = (tags: SimpleTag[]) => {
+    onCopyTags?.(tags);
+    setOpened(false);
+  };
+
   return (
     <Popover opened={opened} onClose={handleClose} withArrow withinPortal width={400}>
       <Popover.Target>{cloneElement(children, { onClick: handleClose })}</Popover.Target>
@@ -365,7 +375,11 @@ function ImageMetaPopover({
             <Tabs.Tab value="metadata">Generation Details</Tabs.Tab>
           </Tabs.List>
           <Tabs.Panel value="tags" p="xs">
-            <ImageTagTab imageTags={tags} onSave={handleSubmitTags} onCopyToAll={console.log} />
+            <ImageTagTab
+              imageTags={tags}
+              onSave={handleSubmitTags}
+              onCopyToAll={handleCopyAndSubmit}
+            />
           </Tabs.Panel>
           <Tabs.Panel value="metadata" p="xs">
             <Grid gutter="xs">
@@ -446,10 +460,11 @@ function ImageMetaPopover({
 function ImageTagTab({
   imageTags = [],
   onSave,
+  onCopyToAll,
 }: {
   imageTags: SimpleTag[];
   onSave: (tags: SimpleTag[]) => void;
-  onCopyToAll: (tagData: { tags: string[]; category: string }) => void;
+  onCopyToAll: (tags: SimpleTag[]) => void;
 }) {
   const [category, ...restTags] = imageTags.reduce((acc, tag) => {
     if (tag.isCategory) acc.unshift(tag.id.toString());
@@ -510,9 +525,23 @@ function ImageTagTab({
         searchable
         clearable
       />
-      <Button mt="xs" fullWidth onClick={handleSave}>
-        Save
-      </Button>
+      <Group position="right" spacing={4}>
+        <Button fullWidth onClick={handleSave}>
+          Save
+        </Button>
+        <Button
+          variant="subtle"
+          size="xs"
+          onClick={() => {
+            const tagsData = tags.filter((tag) => selectedTags.includes(tag.id.toString()));
+            const category = categories.find((cat) => cat.id.toString() === selectedCategory);
+            const tagsToSave = [...(category ? [{ ...category }] : []), ...tagsData];
+            onCopyToAll(tagsToSave);
+          }}
+        >
+          Copy tags to all images
+        </Button>
+      </Group>
     </Stack>
   );
 }
