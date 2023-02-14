@@ -1,7 +1,7 @@
 /*
  Warnings:
  
- TODO.Justin - resolve warnings
+ TODO.Justin - resolve warnings, restore db `feature_gallery`
  - You are about to drop the column `locked` on the `CommentV2` table. All the data in the column will be lost.
  - You are about to drop the column `parentId` on the `CommentV2` table. All the data in the column will be lost.
  - You are about to drop the `AnswerComment` table. If the table is not empty, all the data it contains will be lost.
