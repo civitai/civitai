@@ -26,7 +26,7 @@ export function TagsCard() {
   });
   const { data, isLoading } = trpc.tag.getAll.useQuery(
     {
-      entityType: 'Model',
+      entityType: ['Model'],
       query: search.trim(),
     },
     { enabled: !loadingBlockedTags }

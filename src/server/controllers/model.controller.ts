@@ -172,6 +172,7 @@ export const getModelsInfiniteHandler = async ({
     items: items.map(({ modelVersions, reportStats, publishedAt, ...model }) => {
       const rank = model.rank as Record<string, number>;
       const latestVersion = modelVersions[0];
+      const { tags, ...image } = latestVersion.images[0].image;
       const earlyAccess =
         !latestVersion ||
         isEarlyAccess({
@@ -188,7 +189,7 @@ export const getModelsInfiniteHandler = async ({
           ratingCount: rank[`ratingCount${input.period}`],
           rating: rank[`rating${input.period}`],
         },
-        image: latestVersion?.images[0]?.image ?? {},
+        image,
         earlyAccess,
       };
     }),

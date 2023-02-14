@@ -1,4 +1,4 @@
-import { Prisma, ReportReason, ReportStatus } from '@prisma/client';
+import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
@@ -24,6 +24,12 @@ export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
   return result.map((x) => x.image);
 };
 
+/**
+ * TODO.gallery
+ * Filter images based on selected filters (image processing, resources, single image per model/album)
+ * Enable new filters in the image query schema
+ * Update the TrendingTags component to be reused between the gallery and the model feed (if possible)
+ */
 export const getGalleryImages = async <
   TOrderBy extends Prisma.Enumerable<Prisma.ImageOrderByWithRelationInput>
 >({
@@ -38,6 +44,8 @@ export const getGalleryImages = async <
   infinite,
   period,
   sort,
+  tags,
+  excludedTagIds,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
   const isMod = user?.isModerator ?? false;
@@ -48,6 +56,8 @@ export const getGalleryImages = async <
       modelVersionId,
       reviewId,
     },
+    // Only include images from published models
+    imagesOnModels: { modelVersion: { model: { status: ModelStatus.Published } } },
   };
   const finiteWhere: Prisma.ImageWhereInput = {
     imagesOnModels:
@@ -57,6 +67,12 @@ export const getGalleryImages = async <
     imagesOnReviews: reviewId ? { reviewId } : undefined,
   };
 
+  const tagsAndClause: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
+  if (excludedTagIds && excludedTagIds.length)
+    tagsAndClause.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
+
+  if (tags && tags.length) tagsAndClause.push({ tags: { some: { tagId: { in: tags } } } });
+
   const items = await prisma.image.findMany({
     cursor: cursor ? { id: cursor } : undefined,
     take: limit,
@@ -64,14 +80,16 @@ export const getGalleryImages = async <
       userId,
       nsfw: !canViewNsfw ? { equals: false } : undefined,
       tosViolation: !isMod ? false : undefined,
+      AND: tagsAndClause,
       ...(infinite ? infiniteWhere : finiteWhere),
-      // TODO.gallery - excludedTagIds (hidden tags)
     },
     select: imageGallerySelect({ user }),
     orderBy: orderBy ?? [
-      // ...(sort === ImageSort.MostComments
-      //   ? [{ ranks: { [`commentCount${period}Rank`]: 'asc' } }]
-      //   : []),
+      ...(sort === ImageSort.MostComments
+        ? [{ rank: { [`commentCount${period}Rank`]: 'asc' } }]
+        : sort === ImageSort.MostReactions
+        ? [{ rank: { [`likeCount${period}Rank`]: 'asc' } }]
+        : []),
       { createdAt: 'desc' },
     ],
   });

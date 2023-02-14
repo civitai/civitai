@@ -41,4 +41,16 @@ export enum QuestionStatus {
 export enum ImageSort {
   MostComments = 'Most Comments',
   Newest = 'Newest',
+  MostReactions = 'Most Reactions',
+}
+
+export enum ImageType {
+  txt2img = 'txt2img',
+  img2img = 'img2img',
+  inpainting = 'inpainting',
+}
+
+export enum ImageResource {
+  Manual = 'Manual',
+  Automatic = 'Automatic',
 }

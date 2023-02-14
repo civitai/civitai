@@ -69,4 +69,6 @@ export const getGalleryImageSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(constants.imageFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.imageFilterDefaults.sort),
   hideNSFW: z.boolean().optional(),
+  tags: z.array(z.number()).optional(),
+  excludedTagIds: z.array(z.number()).optional(),
 });

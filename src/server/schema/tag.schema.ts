@@ -37,7 +37,7 @@ export type GetTagsInput = z.infer<typeof getTagsInput>;
 
 export const getTrendingTagsSchema = z.object({
   limit: z.number().optional(),
-  entityType: z.nativeEnum(TagTarget),
+  entityType: z.nativeEnum(TagTarget).array(),
   includeNsfw: z.boolean().optional(),
   not: z.number().array().optional(),
   unlisted: z.boolean().optional(),

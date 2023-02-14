@@ -91,7 +91,7 @@ export function TrendingTags() {
     { enabled: currentUser != null }
   );
   const { data: trendingTags = [] } = trpc.tag.getTrending.useQuery(
-    { entityType: 'Model', not: hiddenTags?.map((x) => x.id), unlisted: false },
+    { entityType: ['Model'], not: hiddenTags?.map((x) => x.id), unlisted: false },
     { enabled: !currentUser || hiddenTags !== undefined }
   );
 

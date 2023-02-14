@@ -3,7 +3,14 @@ import { CheckpointType, MetricTimeframe, ModelStatus, ModelType } from '@prisma
 import React, { createContext, useContext } from 'react';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
-import { ImageSort, ModelSort, QuestionSort, QuestionStatus } from '~/server/common/enums';
+import {
+  ImageResource,
+  ImageSort,
+  ImageType,
+  ModelSort,
+  QuestionSort,
+  QuestionStatus,
+} from '~/server/common/enums';
 
 export const modelFilterSchema = z.object({
   sort: z.nativeEnum(ModelSort).optional(),
@@ -25,6 +32,10 @@ export const galleryFilterSchema = z.object({
   sort: z.nativeEnum(ImageSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
   hideNSFW: z.boolean().optional(),
+  singleImageModel: z.boolean().optional(),
+  singleImageAlbum: z.boolean().optional(),
+  types: z.nativeEnum(ImageType).array().optional(),
+  resources: z.nativeEnum(ImageResource).array().optional(),
 });
 
 const CookiesCtx = createContext<CookiesContext>({} as CookiesContext);
@@ -71,6 +82,10 @@ export function parseCookies(
       sort: cookies?.['g_sort'],
       period: cookies?.['g_period'],
       hideNSFW: cookies?.['g_hideNSFW'],
+      singleImageModel: cookies?.['g_singleImageModel'],
+      singleImageAlbum: cookies?.['g_singleImageAlbum'],
+      types: cookies?.['g_types'],
+      resources: cookies?.['g_resources'],
     },
   });
 }
@@ -102,6 +117,10 @@ const zodParse = z
           sort: z.string(),
           period: z.string(),
           hideNSFW: z.string(),
+          singleImageModel: z.string(),
+          singleImageAlbum: z.string(),
+          types: z.string(),
+          resources: z.string(),
         })
         .partial(),
     })
@@ -117,7 +136,14 @@ const zodParse = z
           status: !!models.status ? JSON.parse(decodeURIComponent(models.status)) : [],
         },
         questions,
-        gallery: { ...gallery, hideNSFW: gallery.hideNSFW === 'true' },
+        gallery: {
+          ...gallery,
+          hideNSFW: gallery.hideNSFW === 'true',
+          singleImageModel: gallery.singleImageModel === 'true',
+          singleImageAlbum: gallery.singleImageAlbum === 'true',
+          types: !!gallery.types ? JSON.parse(decodeURIComponent(gallery.types)) : [],
+          resources: !!gallery.resources ? JSON.parse(decodeURIComponent(gallery.resources)) : [],
+        },
       } as CookiesContext)
   );
 

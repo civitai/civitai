@@ -30,7 +30,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     }
 
     // Prefetch trending tags
-    await ssg.tag.getTrending.prefetch({ entityType: 'Model' });
+    await ssg.tag.getTrending.prefetch({ entityType: ['Model'] });
   }
 
   return {

@@ -27,7 +27,7 @@ import { ImageModel } from '~/server/selectors/image.selector';
 type LightboxProps = {
   nsfw?: boolean;
   initialSlide?: number;
-  images?: ImageModel[];
+  images?: Omit<ImageModel, 'tags'>[];
   connect: ImageGuardConnect;
 };
 
