@@ -1,3 +1,4 @@
+import { ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { prisma } from '~/server/db/client';
@@ -14,6 +15,7 @@ import {
   getGalleryImages,
   deleteImageById,
   updateImageById,
+  updateImageReportStatusByReason,
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
@@ -191,6 +193,12 @@ export const setTosViolationHandler = async ({
       },
     });
     if (!updatedImage) throw throwNotFoundError(`No comment with id ${id}`);
+
+    await updateImageReportStatusByReason({
+      id: updatedImage.id,
+      reason: ReportReason.TOSViolation,
+      status: ReportStatus.Actioned,
+    });
 
     // Create notifications in the background
     createNotification({

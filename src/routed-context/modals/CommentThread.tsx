@@ -1,5 +1,7 @@
 import { Badge, Modal, Group, CloseButton, Alert, Center, Loader, Stack } from '@mantine/core';
+import { IconExclamationCircle } from '@tabler/icons';
 import { z } from 'zod';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 import { CommentSection } from '~/components/CommentSection/CommentSection';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -109,6 +111,12 @@ export default createRoutedContext({
                 <CloseButton onClick={context.close} />
               </Group>
             </Group>
+            {currentUser?.isModerator && comment.tosViolation && (
+              <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconExclamationCircle />}>
+                This comment has been marked with a TOS Violation. This is only visible for
+                moderators.
+              </AlertWithIcon>
+            )}
             <Stack spacing="xl">
               <RenderHtml html={comment.content} withMentions />
               <ReactionPicker

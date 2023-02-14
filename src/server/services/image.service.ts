@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
@@ -40,6 +40,7 @@ export const getGalleryImages = async <
   sort,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+  const isMod = user?.isModerator ?? false;
 
   const infiniteWhere: Prisma.ImageFindManyArgs['where'] = {
     connections: {
@@ -62,7 +63,7 @@ export const getGalleryImages = async <
     where: {
       userId,
       nsfw: !canViewNsfw ? { equals: false } : undefined,
-      tosViolation: false,
+      tosViolation: !isMod ? false : undefined,
       ...(infinite ? infiniteWhere : finiteWhere),
       // TODO.gallery - excludedTagIds (hidden tags)
     },
@@ -102,4 +103,19 @@ export const updateImageById = <TSelect extends Prisma.ImageSelect>({
   select: TSelect;
 }) => {
   return prisma.image.update({ where: { id }, data, select });
+};
+
+export const updateImageReportStatusByReason = ({
+  id,
+  reason,
+  status,
+}: {
+  id: number;
+  reason: ReportReason;
+  status: ReportStatus;
+}) => {
+  return prisma.report.updateMany({
+    where: { reason, image: { imageId: id } },
+    data: { status },
+  });
 };

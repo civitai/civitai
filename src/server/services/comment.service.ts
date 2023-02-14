@@ -1,4 +1,4 @@
-import { Prisma, ReviewReactions } from '@prisma/client';
+import { Prisma, ReportReason, ReportStatus, ReviewReactions } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
@@ -18,12 +18,14 @@ import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 export const getComments = <TSelect extends Prisma.CommentSelect>({
   input: { limit = DEFAULT_PAGE_SIZE, page, cursor, modelId, userId, filterBy, sort },
   select,
+  user,
 }: {
   input: GetAllCommentsSchema;
   select: TSelect;
   user?: SessionUser;
 }) => {
   const skip = page ? (page - 1) * limit : undefined;
+  const isMod = user?.isModerator ?? false;
   // const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
@@ -37,7 +39,7 @@ export const getComments = <TSelect extends Prisma.CommentSelect>({
       userId,
       reviewId: { equals: null },
       parentId: { equals: null },
-      tosViolation: false,
+      tosViolation: !isMod ? false : undefined,
       // OR: [
       //   {
       //     userId: { not: user?.id },
@@ -59,9 +61,12 @@ export const getComments = <TSelect extends Prisma.CommentSelect>({
 export const getCommentById = <TSelect extends Prisma.CommentSelect>({
   id,
   select,
-}: GetByIdInput & { select: TSelect }) => {
+  user,
+}: GetByIdInput & { select: TSelect; user?: SessionUser }) => {
+  const isMod = user?.isModerator ?? false;
+
   return prisma.comment.findFirst({
-    where: { id, tosViolation: false },
+    where: { id, tosViolation: !isMod ? false : undefined },
     select,
   });
 };
@@ -132,4 +137,19 @@ export const updateCommentById = ({
   data: Prisma.CommentUpdateInput;
 }) => {
   return prisma.comment.update({ where: { id }, data, select: getAllCommentsSelect });
+};
+
+export const updateCommentReportStatusByReason = ({
+  id,
+  reason,
+  status,
+}: {
+  id: number;
+  reason: ReportReason;
+  status: ReportStatus;
+}) => {
+  return prisma.report.updateMany({
+    where: { reason, comment: { commentId: id } },
+    data: { status },
+  });
 };

@@ -178,14 +178,13 @@ ImageGuard.ToggleImage = function ToggleImage({
   className?: string;
 }) {
   const currentUser = useCurrentUser();
-  const { isModerator, blurNsfw: toggleable } = currentUser ?? {};
+  const { blurNsfw: toggleable } = currentUser ?? {};
   const { connect } = useImageGuardContext();
   const { image } = useImageGuardContentContext();
   const showImage = useStore((state) => state.showingImages[image.id.toString()]);
   const toggleImage = useStore((state) => state.toggleImage);
 
-  const showToModerator = image.imageNsfw && isModerator;
-  if ((!image.nsfw && !showToModerator) || !!connect) return null;
+  if (!!connect) return null;
   const showing = showImage;
 
   return (

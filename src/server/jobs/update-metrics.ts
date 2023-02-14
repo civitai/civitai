@@ -227,7 +227,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
                 MAX(r."createdAt") AS created_at
               FROM "Review" r
               JOIN "Model" m ON m.id = r."modelId" AND m."userId" != r."userId"
-              WHERE r.exclude = FALSE
+              WHERE r.exclude = FALSE AND r."tosViolation" = FALSE
               GROUP BY r."userId", r."${tableId}"
             ) r
             GROUP BY r.${viewId}
@@ -253,6 +253,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
               SUM(CASE WHEN "createdAt" >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_comment_count,
               SUM(CASE WHEN "createdAt" >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_comment_count
             FROM "Comment"
+            WHERE "tosViolation" = FALSE
             GROUP BY "modelId"
           ) cs ON m.model_id = cs.model_id
         ) m

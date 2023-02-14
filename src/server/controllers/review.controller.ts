@@ -1,3 +1,4 @@
+import { ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { env } from '~/env/server.mjs';
@@ -21,6 +22,7 @@ import {
   updateReviewById,
   getReviewById,
   convertReviewToComment,
+  updateReviewReportStatusByReason,
 } from '~/server/services/review.service';
 import {
   throwAuthorizationError,
@@ -179,6 +181,7 @@ export const getReviewDetailsHandler = async ({
     const result = await getReviewById({
       id,
       select: reviewDetailSelect(canViewNsfw),
+      user: ctx.user,
     });
     if (!result) throw throwNotFoundError(`No review with id ${id}`);
 
@@ -201,7 +204,13 @@ export const getReviewDetailsHandler = async ({
   }
 };
 
-export const getReviewCommentsHandler = async ({ input }: { input: GetByIdInput }) => {
+export const getReviewCommentsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
   try {
     const review = await getReviewById({
       ...input,
@@ -211,6 +220,7 @@ export const getReviewCommentsHandler = async ({ input }: { input: GetByIdInput 
           select: commentDetailSelect,
         },
       },
+      user: ctx.user,
     });
     if (!review) throw throwNotFoundError(`No review with id ${input.id}`);
 
@@ -220,13 +230,20 @@ export const getReviewCommentsHandler = async ({ input }: { input: GetByIdInput 
   }
 };
 
-export const getReviewCommentsCountHandler = async ({ input }: { input: GetByIdInput }) => {
+export const getReviewCommentsCountHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
   try {
     const review = await getReviewById({
       ...input,
       select: {
         _count: { select: { comments: true } },
       },
+      user: ctx.user,
     });
     if (!review) throw throwNotFoundError(`No review with id ${input.id}`);
 
@@ -297,6 +314,12 @@ export const setTosViolationHandler = async ({
 
     const updatedReview = await updateReviewById({ id, data: { tosViolation: true } });
     if (!updatedReview) throw throwNotFoundError(`No review with id ${id}`);
+
+    await updateReviewReportStatusByReason({
+      id: updatedReview.id,
+      reason: ReportReason.TOSViolation,
+      status: ReportStatus.Actioned,
+    });
 
     // Create notifications in the background
     createNotification({

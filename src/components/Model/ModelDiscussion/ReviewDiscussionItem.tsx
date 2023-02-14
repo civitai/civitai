@@ -9,9 +9,10 @@ import {
   Stack,
   Text,
   ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
 import { ReviewReactions } from '@prisma/client';
-import { IconLock, IconMessageCircle2 } from '@tabler/icons';
+import { IconExclamationCircle, IconLock, IconMessageCircle2 } from '@tabler/icons';
 import { useEffect, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 
@@ -161,6 +162,13 @@ export function ReviewDiscussionItem({ review, width }: Props) {
           disabled={toggleReactionMutation.isLoading}
         />
         <Group spacing={4} noWrap>
+          {currentUser?.isModerator && review.tosViolation && (
+            <Tooltip label="Has TOS Violation">
+              <ThemeIcon color="orange" size="xs">
+                <IconExclamationCircle />
+              </ThemeIcon>
+            </Tooltip>
+          )}
           {review.locked && (
             <ThemeIcon color="yellow" size="xs">
               <IconLock />
