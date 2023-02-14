@@ -36,7 +36,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
 
   const { data: count = 0 } = trpc.commentv2.getCount.useQuery(
     { entityId: question.id, entityType: 'question' },
-    { initialData: question._count.comments }
+    { initialData: question.thread?._count.comments }
   );
 
   const isModerator = user?.isModerator ?? false;
@@ -125,8 +125,8 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
             <QuestionAnswerComments
               entityId={question.id}
               entityType="question"
-              initialData={question.comments}
-              initialCount={question._count.comments}
+              initialData={question.thread?.comments}
+              initialCount={question.thread?._count.comments}
             />
           </Card.Section>
         )}

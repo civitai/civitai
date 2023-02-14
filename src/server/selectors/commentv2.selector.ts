@@ -16,7 +16,6 @@ export const commentV2Select = ({ user }: { user?: SessionUser }) =>
     nsfw: true,
     tosViolation: true,
     content: true,
-    parentId: true,
     user: {
       select: simpleUserSelect,
     },

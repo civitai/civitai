@@ -51,28 +51,27 @@ export const getAnswersHandler = async ({
           take: !userId ? 0 : 1,
           select: { vote: true, userId: true },
         },
-        comments: {
-          orderBy: { comment: { createdAt: 'asc' } },
-          take: 5,
+        thread: {
           select: {
-            comment: {
+            comments: {
+              orderBy: { createdAt: 'asc' },
+              take: 5,
               select: commentV2Select({ user: ctx.user }),
             },
-          },
-        },
-        _count: {
-          select: {
-            comments: true,
+            _count: {
+              select: {
+                comments: true,
+              },
+            },
           },
         },
       },
     });
     if (!items) throw throwNotFoundError();
-    return items.map(({ reactions, votes, comments, ...item }) => ({
+    return items.map(({ reactions, votes, ...item }) => ({
       ...item,
       userReactions: reactions,
       userVote: votes.length > 0 ? votes[0] : undefined,
-      comments: comments.map((x) => x.comment),
     }));
   } catch (error) {
     throw throwDbError(error);
