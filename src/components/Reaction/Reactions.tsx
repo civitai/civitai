@@ -6,7 +6,7 @@ import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { ReactionButton } from './ReactionButton';
 
-type ReactionMetrics = {
+export type ReactionMetrics = {
   likeCount?: number;
   dislikeCount?: number;
   heartCount?: number;

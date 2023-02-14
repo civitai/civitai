@@ -26,7 +26,11 @@ export const getInfiniteCommentsV2Handler = async ({
     input.limit = input.limit ?? 20;
     const limit = input.limit + 1;
 
-    const comments = await getComments({ ...input, limit, select: commentV2Select });
+    const comments = await getComments({
+      ...input,
+      limit,
+      select: commentV2Select({ user: ctx.user }),
+    });
 
     let nextCursor: number | undefined;
     if (comments.length > input.limit) {

@@ -56,7 +56,7 @@ export const getAnswersHandler = async ({
           take: 5,
           select: {
             comment: {
-              select: commentV2Select,
+              select: commentV2Select({ user: ctx.user }),
             },
           },
         },

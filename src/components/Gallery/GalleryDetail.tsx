@@ -297,7 +297,6 @@ export function GalleryDetail() {
                   metrics={image.metrics}
                 />
               </Box>
-              {/* TODO.gallery - REACTIONS */}
               {/* TODO.gallery - COMMENTS */}
               {/* TODO.gallery - TAGS */}
               {/* TODO.gallery - RESOURCES */}
