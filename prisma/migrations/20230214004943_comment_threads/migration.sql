@@ -1,15 +1,3 @@
-/*
- Warnings:
- 
- TODO.Justin - resolve warnings, restore db `feature_gallery`
- - You are about to drop the column `locked` on the `CommentV2` table. All the data in the column will be lost.
- - You are about to drop the column `parentId` on the `CommentV2` table. All the data in the column will be lost.
- - You are about to drop the `AnswerComment` table. If the table is not empty, all the data it contains will be lost.
- - You are about to drop the `ImageComment` table. If the table is not empty, all the data it contains will be lost.
- - You are about to drop the `QuestionComment` table. If the table is not empty, all the data it contains will be lost.
- - Added the required column `threadId` to the `CommentV2` table without a default value. This is not possible if the table is not empty.
- 
- */
 -- DropForeignKey
 ALTER TABLE
   "AnswerComment" DROP CONSTRAINT "AnswerComment_answerId_fkey";
@@ -43,16 +31,7 @@ ALTER TABLE
   "CommentV2" DROP COLUMN "locked",
   DROP COLUMN "parentId",
 ADD
-  COLUMN "threadId" INTEGER NOT NULL;
-
--- DropTable
-DROP TABLE "AnswerComment";
-
--- DropTable
-DROP TABLE "ImageComment";
-
--- DropTable
-DROP TABLE "QuestionComment";
+  COLUMN "threadId" INTEGER;
 
 -- CreateTable
 CREATE TABLE "Thread" (
@@ -63,6 +42,45 @@ CREATE TABLE "Thread" (
   "imageId" INTEGER,
   CONSTRAINT "Thread_pkey" PRIMARY KEY ("id")
 );
+
+-- Create threads from existing many-to-manys
+INSERT INTO "Thread"("answerId") SELECT DISTINCT "answerId" FROM "AnswerComment";
+INSERT INTO "Thread"("questionId") SELECT DISTINCT "questionId" FROM "QuestionComment";
+INSERT INTO "Thread"("imageId") SELECT DISTINCT "imageId" FROM "ImageComment";
+
+-- Migrate ImageComment to Thread
+UPDATE "CommentV2" c
+SET "threadId" = t.id
+FROM "AnswerComment" ac
+JOIN "Thread" t ON t."answerId" = ac."answerId"
+WHERE c.id = ac."commentId";
+
+-- DropTable
+DROP TABLE "AnswerComment";
+
+-- Migrate ImageComment to Thread
+UPDATE "CommentV2" c
+SET "threadId" = t.id
+FROM "ImageComment" ac
+JOIN "Thread" t ON t."imageId" = ac."imageId"
+WHERE c.id = ac."commentId";
+
+-- DropTable
+DROP TABLE "ImageComment";
+
+-- Migrate QuestionComment to Thread
+UPDATE "CommentV2" c
+SET "threadId" = t.id
+FROM "QuestionComment" ac
+JOIN "Thread" t ON t."questionId" = ac."questionId"
+WHERE c.id = ac."commentId";
+
+-- DropTable
+DROP TABLE "QuestionComment";
+
+-- Add NOT NULL constraint to threadId
+DELETE FROM "CommentV2" WHERE "threadId" IS NULL;
+ALTER TABLE "CommentV2" ALTER COLUMN "threadId" SET NOT NULL;
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Thread_questionId_key" ON "Thread"("questionId");
