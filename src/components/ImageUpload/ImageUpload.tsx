@@ -34,6 +34,7 @@ import {
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
+import { TagTarget } from '@prisma/client';
 import {
   IconExclamationCircle,
   IconPencil,
@@ -43,16 +44,16 @@ import {
   IconUpload,
   IconX,
 } from '@tabler/icons';
-import { cloneElement, useState } from 'react';
+import isEqual from 'lodash/isEqual';
+import { cloneElement, useEffect, useState } from 'react';
+
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-
 import { useImageUpload } from '~/hooks/useImageUpload';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { trpc } from '~/utils/trpc';
-import { TagTarget } from '@prisma/client';
 import { SimpleTag } from '~/server/selectors/tag.selector';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
@@ -333,6 +334,8 @@ function ImageMetaPopover({
   const [steps, setSteps] = useState<number | undefined>(meta?.steps);
   const [sampler, setSampler] = useState<string | undefined>(meta?.sampler);
   const [seed, setSeed] = useState<number | undefined>(meta?.seed);
+  const [imageTags, setImageTags] = useState<SimpleTag[]>(tags);
+  const [tab, setTab] = useState<string | null>('tags');
 
   const handleClose = () => {
     setPrompt(meta?.prompt);
@@ -341,27 +344,18 @@ function ImageMetaPopover({
     setSteps(meta?.steps);
     setSampler(meta?.sampler);
     setSeed(meta?.seed);
+    setImageTags(tags);
     setOpened((v) => !v);
   };
 
-  const handleSubmitMetadata = () => {
+  const handleSubmit = () => {
     const newMeta = { ...meta, prompt, negativePrompt, cfgScale, steps, sampler, seed };
     const keys = Object.keys(newMeta) as Array<keyof typeof newMeta>;
     const toSubmit = keys.reduce<ImageMetaProps>((acc, key) => {
       if (newMeta[key]) return { ...acc, [key]: newMeta[key] };
       return acc;
     }, {});
-    onSubmit?.({ meta: Object.keys(toSubmit).length ? toSubmit : null });
-    setOpened(false);
-  };
-
-  const handleSubmitTags = (tags: SimpleTag[]) => {
-    onSubmit?.({ tags });
-    setOpened(false);
-  };
-
-  const handleCopyAndSubmit = (tags: SimpleTag[]) => {
-    onCopyTags?.(tags);
+    onSubmit?.({ meta: Object.keys(toSubmit).length ? toSubmit : null, tags: imageTags });
     setOpened(false);
   };
 
@@ -369,19 +363,15 @@ function ImageMetaPopover({
     <Popover opened={opened} onClose={handleClose} withArrow withinPortal width={400}>
       <Popover.Target>{cloneElement(children, { onClick: handleClose })}</Popover.Target>
       <Popover.Dropdown p={0}>
-        <Tabs defaultValue="tags">
+        <Tabs value={tab} onTabChange={setTab}>
           <Tabs.List grow>
             <Tabs.Tab value="tags">Tags</Tabs.Tab>
-            <Tabs.Tab value="metadata">Generation Details</Tabs.Tab>
+            <Tabs.Tab value="meta">Generation Details</Tabs.Tab>
           </Tabs.List>
           <Tabs.Panel value="tags" p="xs">
-            <ImageTagTab
-              imageTags={tags}
-              onSave={handleSubmitTags}
-              onCopyToAll={handleCopyAndSubmit}
-            />
+            <ImageTagTab imageTags={imageTags} onChange={setImageTags} />
           </Tabs.Panel>
-          <Tabs.Panel value="metadata" p="xs">
+          <Tabs.Panel value="meta" p="xs">
             <Grid gutter="xs">
               <Grid.Col span={12}>
                 <Textarea
@@ -447,11 +437,25 @@ function ImageMetaPopover({
                 <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
               </Grid.Col>
             </Grid>
-            <Button mt="xs" fullWidth onClick={() => handleSubmitMetadata()}>
-              Save
-            </Button>
           </Tabs.Panel>
         </Tabs>
+        <Group position="right" spacing={4} p="xs">
+          <Button fullWidth onClick={handleSubmit}>
+            Save
+          </Button>
+          {tab === 'tags' && (
+            <Button
+              variant="subtle"
+              size="xs"
+              onClick={() => {
+                onCopyTags?.(imageTags);
+                handleSubmit();
+              }}
+            >
+              Copy tags to all images
+            </Button>
+          )}
+        </Group>
       </Popover.Dropdown>
     </Popover>
   );
@@ -459,12 +463,10 @@ function ImageMetaPopover({
 
 function ImageTagTab({
   imageTags = [],
-  onSave,
-  onCopyToAll,
+  onChange,
 }: {
   imageTags: SimpleTag[];
-  onSave: (tags: SimpleTag[]) => void;
-  onCopyToAll: (tags: SimpleTag[]) => void;
+  onChange: (tags: SimpleTag[]) => void;
 }) {
   const [category, ...restTags] = imageTags.reduce((acc, tag) => {
     if (tag.isCategory) acc.unshift(tag.id.toString());
@@ -476,21 +478,26 @@ function ImageTagTab({
 
   const { data: { items: categories } = { items: [] }, isLoading: loadingCategories } =
     trpc.tag.getAll.useQuery(
-      { limit: 0, entityType: TagTarget.Model, categories: true },
+      { limit: 0, entityType: [TagTarget.Image], categories: true },
       { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
     );
   const { data: { items: tags } = { items: [] }, isLoading: loadingTags } =
     trpc.tag.getAll.useQuery(
-      { limit: 0, entityType: TagTarget.Model, categories: false },
+      { limit: 0, entityType: [TagTarget.Image], categories: false },
       { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
     );
 
-  const handleSave = () => {
-    const tagsData = tags.filter((tag) => selectedTags.includes(tag.id.toString()));
-    const category = categories.find((cat) => cat.id.toString() === selectedCategory);
-    const tagsToSave = [...(category ? [{ ...category }] : []), ...tagsData];
-    onSave(tagsToSave);
-  };
+  useEffect(() => {
+    const allTags = [selectedCategory, ...selectedTags];
+    if (!isEqual(imageTags, allTags)) {
+      const tagsData = tags.filter((tag) => selectedTags.includes(tag.id.toString()));
+      const category = categories.find((cat) => cat.id.toString() === selectedCategory);
+      const tagsToSave = [...(category ? [{ ...category }] : []), ...tagsData];
+
+      onChange(tagsToSave);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categories, selectedCategory, selectedTags, tags]);
 
   const loading = loadingCategories || loadingTags;
 
@@ -525,23 +532,6 @@ function ImageTagTab({
         searchable
         clearable
       />
-      <Group position="right" spacing={4}>
-        <Button fullWidth onClick={handleSave}>
-          Save
-        </Button>
-        <Button
-          variant="subtle"
-          size="xs"
-          onClick={() => {
-            const tagsData = tags.filter((tag) => selectedTags.includes(tag.id.toString()));
-            const category = categories.find((cat) => cat.id.toString() === selectedCategory);
-            const tagsToSave = [...(category ? [{ ...category }] : []), ...tagsData];
-            onCopyToAll(tagsToSave);
-          }}
-        >
-          Copy tags to all images
-        </Button>
-      </Group>
     </Stack>
   );
 }

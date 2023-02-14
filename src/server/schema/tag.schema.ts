@@ -27,7 +27,7 @@ export const getTagsInput = getAllQuerySchema.extend({
       return val === 'true' || val === true;
     }, z.boolean().default(false))
     .optional(),
-  entityType: z.nativeEnum(TagTarget).optional(),
+  entityType: z.nativeEnum(TagTarget).array().optional(),
   modelId: z.number().optional(),
   not: z.number().array().optional(),
   unlisted: z.boolean().optional(),

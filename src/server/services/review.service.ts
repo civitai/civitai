@@ -129,7 +129,7 @@ export const createOrUpdateReview = async ({
                   tag: {
                     connectOrCreate: {
                       where: { id: tag.id },
-                      create: { ...tag, target: TagTarget.Image },
+                      create: { ...tag, target: [TagTarget.Image] },
                     },
                   },
                 })),
@@ -155,7 +155,7 @@ export const createOrUpdateReview = async ({
                   tag: {
                     connectOrCreate: {
                       where: { id: tag.id },
-                      create: { ...tag, target: TagTarget.Image },
+                      create: { ...tag, target: [TagTarget.Image] },
                     },
                   },
                 })),
@@ -186,7 +186,7 @@ export const createOrUpdateReview = async ({
                       tag: {
                         connectOrCreate: {
                           where: { id: tag.id },
-                          create: { ...tag, target: TagTarget.Image },
+                          create: { ...tag, target: [TagTarget.Image] },
                         },
                       },
                     },

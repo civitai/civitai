@@ -279,7 +279,7 @@ export const createModel = async ({
                       tag: {
                         connectOrCreate: {
                           where: { id: tag.id },
-                          create: { ...tag, target: TagTarget.Image },
+                          create: { ...tag, target: [TagTarget.Image] },
                         },
                       },
                     })),
@@ -296,8 +296,8 @@ export const createModel = async ({
           return {
             tag: {
               connectOrCreate: {
-                where: { name_target: { name, target: TagTarget.Model } },
-                create: { name, target: TagTarget.Model },
+                where: { name_target: { name, target: [TagTarget.Model] } },
+                create: { name, target: [TagTarget.Model] },
               },
             },
           };
@@ -414,7 +414,7 @@ export const updateModel = async ({
                       tag: {
                         connectOrCreate: {
                           where: { id: tag.id },
-                          create: { ...tag, target: TagTarget.Image },
+                          create: { ...tag, target: [TagTarget.Image] },
                         },
                       },
                     })),
@@ -505,7 +505,7 @@ export const updateModel = async ({
                           tag: {
                             connectOrCreate: {
                               where: { id: tag.id },
-                              create: { ...tag, target: TagTarget.Image },
+                              create: { ...tag, target: [TagTarget.Image] },
                             },
                           },
                         })),
@@ -539,7 +539,7 @@ export const updateModel = async ({
                               tag: {
                                 connectOrCreate: {
                                   where: { id: tag.id },
-                                  create: { ...tag, target: TagTarget.Image },
+                                  create: { ...tag, target: [TagTarget.Image] },
                                 },
                               },
                             },
@@ -569,7 +569,7 @@ export const updateModel = async ({
               const name = tag.name.toLowerCase().trim();
               return {
                 tag: {
-                  create: { name, target: TagTarget.Model },
+                  create: { name, target: [TagTarget.Model] },
                 },
               };
             }),

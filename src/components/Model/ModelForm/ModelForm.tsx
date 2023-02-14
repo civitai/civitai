@@ -141,7 +141,7 @@ export function ModelForm({ model }: Props) {
 
   const { data: { items: tags } = { items: [] }, isLoading: loadingTags } =
     trpc.tag.getAll.useQuery(
-      { limit: 0, entityType: TagTarget.Model },
+      { limit: 0, entityType: [TagTarget.Model] },
       { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
     );
   const addMutation = trpc.model.add.useMutation();
@@ -279,7 +279,7 @@ export function ModelForm({ model }: Props) {
             message: `Successfully ${editing ? 'updated' : 'created'} the model.`,
           });
           await queryUtils.model.invalidate();
-          await queryUtils.tag.getAll.invalidate({ limit: 0, entityType: TagTarget.Model });
+          await queryUtils.tag.getAll.invalidate({ limit: 0, entityType: [TagTarget.Model] });
           router.push({ pathname: modelLink, query: { showNsfw: true } }, modelLink, {
             shallow: !!input.id,
           });
