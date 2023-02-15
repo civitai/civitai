@@ -123,6 +123,7 @@ export function AnswerDetail({
               entityType="answer"
               initialData={answer.thread?.comments}
               initialCount={answer.thread?._count.comments}
+              userId={answer.user.id}
             />
           </Card.Section>
         )}

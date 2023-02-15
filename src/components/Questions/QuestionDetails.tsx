@@ -127,6 +127,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
               entityType="question"
               initialData={question.thread?.comments}
               initialCount={question.thread?._count.comments}
+              userId={question.user.id}
             />
           </Card.Section>
         )}
