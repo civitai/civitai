@@ -27,7 +27,7 @@ export function CreatorCard({ user }: Props) {
   const theme = useMantineTheme();
 
   const { data: creator } = trpc.user.getCreator.useQuery(
-    { username: user.username ?? '' },
+    { id: user.id },
     {
       initialData: {
         ...user,

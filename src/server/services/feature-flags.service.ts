@@ -12,7 +12,6 @@ const createTypedDictionary = <T extends Record<string, FeatureAvailability[]>>(
 type FeatureFlagKey = keyof typeof featureFlags;
 const featureFlags = createTypedDictionary({
   earlyAccessModel: ['dev'],
-  memberBadges: ['public'],
   apiKeys: ['public'],
   ambientCard: ['public'],
   gallery: ['mod'],

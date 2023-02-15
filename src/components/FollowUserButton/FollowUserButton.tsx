@@ -26,14 +26,29 @@ export function FollowUserButton({ userId, onToggleFollow, ...props }: Props) {
           : [...old, { id: userId, username: null, image: null, deletedAt: null }]
       );
 
-      return { prevFollowing };
+      const creatorCacheKey = { id: userId };
+      const prevCreator = queryUtils.user.getCreator.getData(creatorCacheKey);
+      queryUtils.user.getCreator.setData(creatorCacheKey, (old) => {
+        if (!old || !old.stats) return old;
+        return {
+          ...old,
+          stats: {
+            ...old.stats,
+            followerCountAllTime: alreadyFollowing
+              ? old.stats.followerCountAllTime - 1
+              : old.stats.followerCountAllTime + 1,
+          },
+        };
+      });
+
+      return { prevFollowing, prevCreator };
     },
     onError(_error, _variables, context) {
       queryUtils.user.getFollowingUsers.setData(undefined, context?.prevFollowing);
+      queryUtils.user.getCreator.setData({ id: userId }, context?.prevCreator);
     },
     async onSettled() {
       await queryUtils.user.getFollowingUsers.invalidate();
-      await queryUtils.user.getCreator.invalidate();
       await queryUtils.user.getLists.invalidate();
     },
   });
