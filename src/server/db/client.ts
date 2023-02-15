@@ -1,7 +1,7 @@
 // src/server/db/client.ts
 import { PrismaClient, Prisma } from '@prisma/client';
 import { env } from '~/env/server.mjs';
-import Stripe from 'stripe';
+import { isProd } from '~/env/other';
 
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
@@ -11,7 +11,7 @@ declare global {
 }
 
 export let prisma: PrismaClient;
-if (env.NODE_ENV === 'production') {
+if (isProd) {
   prisma = new PrismaClient({ log: ['error'] });
 } else {
   if (!global.prisma) {

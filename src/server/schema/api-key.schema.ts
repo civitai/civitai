@@ -1,7 +1,7 @@
 import { KeyScope } from '@prisma/client';
 import { TypeOf, z } from 'zod';
 
-export const getApiKeyInputSchema = z.object({ key: z.string() });
+export const getApiKeyInputSchema = z.object({ id: z.number() });
 export type GetAPIKeyInput = TypeOf<typeof getApiKeyInputSchema>;
 
 export const getUserApiKeysInputSchema = z.object({
@@ -16,5 +16,5 @@ export const addApiKeyInputSchema = z.object({
 });
 export type AddAPIKeyInput = z.input<typeof addApiKeyInputSchema>;
 
-export const deleteApiKeyInputSchema = z.object({ key: z.string() });
+export const deleteApiKeyInputSchema = z.object({ id: z.number() });
 export type DeleteAPIKeyInput = TypeOf<typeof deleteApiKeyInputSchema>;

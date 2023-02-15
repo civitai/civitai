@@ -1,3 +1,4 @@
+import { ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
@@ -17,6 +18,7 @@ import {
   getComments,
   getUserReactionByCommentId,
   updateCommentById,
+  updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
@@ -135,7 +137,7 @@ export const toggleReactionHandler = async ({
   }
 };
 
-export const getCommentHandler = async ({ input }: { input: GetByIdInput }) => {
+export const getCommentHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
     const comment = await getCommentById({
       ...input,
@@ -145,6 +147,7 @@ export const getCommentHandler = async ({ input }: { input: GetByIdInput }) => {
           select: commentDetailSelect,
         },
       },
+      user: ctx.user,
     });
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
 
@@ -155,7 +158,13 @@ export const getCommentHandler = async ({ input }: { input: GetByIdInput }) => {
   }
 };
 
-export const getCommentCommentsHandler = async ({ input }: { input: GetByIdInput }) => {
+export const getCommentCommentsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
   try {
     const comment = await getCommentById({
       ...input,
@@ -165,6 +174,7 @@ export const getCommentCommentsHandler = async ({ input }: { input: GetByIdInput
           select: commentDetailSelect,
         },
       },
+      user: ctx.user,
     });
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
 
@@ -174,13 +184,20 @@ export const getCommentCommentsHandler = async ({ input }: { input: GetByIdInput
   }
 };
 
-export const getCommentCommentsCountHandler = async ({ input }: { input: GetByIdInput }) => {
+export const getCommentCommentsCountHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
   try {
     const comment = await getCommentById({
       ...input,
       select: {
         _count: { select: { comments: true } },
       },
+      user: ctx.user,
     });
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
 
@@ -229,6 +246,12 @@ export const setTosViolationHandler = async ({
 
     const updatedComment = await updateCommentById({ id, data: { tosViolation: true } });
     if (!updatedComment) throw throwNotFoundError(`No comment with id ${id}`);
+
+    await updateCommentReportStatusByReason({
+      id: updatedComment.id,
+      reason: ReportReason.TOSViolation,
+      status: ReportStatus.Actioned,
+    });
 
     // Create notifications in the background
     createNotification({

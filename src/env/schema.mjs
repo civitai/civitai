@@ -7,6 +7,7 @@ import { z } from 'zod';
  */
 export const serverSchema = z.object({
   DATABASE_URL: z.string().url(),
+  REDIS_URL: z.string().url(),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(
@@ -68,7 +69,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string(),
   NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
   NEXT_PUBLIC_CIVITAI_LINK: z.string().url(),
-  NEXT_PUBLIC_MAINTENANCE_MODE: z.preprocess((val) => val === true || val === 'true', z.boolean()),
+  NEXT_PUBLIC_GIT_HASH: z.string().optional(),
 });
 
 /**
@@ -81,6 +82,6 @@ export const clientEnv = {
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: process.env.NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION,
   NEXT_PUBLIC_IMAGE_LOCATION: process.env.NEXT_PUBLIC_IMAGE_LOCATION,
-  NEXT_PUBLIC_MAINTENANCE_MODE: process.env.NEXT_PUBLIC_MAINTENANCE_MODE === 'true',
+  NEXT_PUBLIC_GIT_HASH: process.env.NEXT_PUBLIC_GIT_HASH,
   NEXT_PUBLIC_CIVITAI_LINK: process.env.NEXT_PUBLIC_CIVITAI_LINK,
 };

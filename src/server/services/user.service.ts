@@ -19,9 +19,13 @@ import { env } from '~/env/server.mjs';
 //   }
 // })
 
-export const getUserCreator = async ({ username }: { username: string }) => {
+export const getUserCreator = async (where: { username?: string; id?: number }) => {
+  if (!where.username && !where.id) {
+    throw new Error('Must provide username or id');
+  }
+
   return prisma.user.findFirst({
-    where: { username, deletedAt: null },
+    where: { ...where, deletedAt: null },
     select: {
       id: true,
       image: true,
@@ -352,9 +356,14 @@ export const toggleBlockedTag = async ({
   return prisma.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
 };
 
-export const getSessionUser = async ({ userId }: { userId: number }) => {
+export const getSessionUser = async ({ userId, token }: { userId?: number; token?: string }) => {
+  if (!userId && !token) return undefined;
+  const where: Prisma.UserWhereInput = { deletedAt: null };
+  if (userId) where.id = userId;
+  else if (token) where.keys = { some: { key: token } };
+
   const user = await prisma.user.findFirst({
-    where: { id: userId, deletedAt: null },
+    where,
     include: {
       subscription: { select: { status: true, product: { select: { metadata: true } } } },
     },

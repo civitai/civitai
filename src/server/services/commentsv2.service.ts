@@ -1,3 +1,5 @@
+import { commentV2Select } from '~/server/selectors/commentv2.selector';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
 import { prisma } from '~/server/db/client';
 import {
@@ -12,21 +14,31 @@ export const upsertComment = async ({
   entityId,
   ...data
 }: UpsertCommentV2Input & { userId: number }) => {
-  return !data.id
-    ? await prisma.commentV2.create({
+  // only check for threads on comment create
+  let thread = await prisma.thread.findUnique({
+    where: { [`${entityType}Id`]: entityId },
+    select: { id: true, locked: true },
+  });
+  if (!data.id) {
+    return await prisma.$transaction(async (tx) => {
+      if (!thread) {
+        thread = await tx.thread.create({
+          data: { [`${entityType}Id`]: entityId },
+          select: { id: true, locked: true },
+        });
+      }
+      return await tx.commentV2.create({
         data: {
           userId,
           ...data,
-          [entityType]: {
-            create: {
-              [entityType]: {
-                connect: { id: entityId },
-              },
-            },
-          },
+          threadId: thread.id,
         },
-      })
-    : await prisma.commentV2.update({ where: { id: data.id }, data });
+        select: commentV2Select,
+      });
+    });
+  }
+  if (thread?.locked) throw throwBadRequestError('comment thread locked');
+  return await prisma.commentV2.update({ where: { id: data.id }, data, select: commentV2Select });
 };
 
 export const getComments = async <TSelect extends Prisma.CommentV2Select>({
@@ -39,13 +51,12 @@ export const getComments = async <TSelect extends Prisma.CommentV2Select>({
   select: TSelect;
 }) => {
   const take = limit ?? 20;
+
   return await prisma.commentV2.findMany({
     take,
     cursor: cursor ? { id: cursor } : undefined,
     where: {
-      [entityType]: {
-        [`${entityType}Id`]: entityId,
-      },
+      thread: { [`${entityType}Id`]: entityId },
     },
     orderBy: {
       createdAt: 'asc',
@@ -61,9 +72,32 @@ export const deleteComment = async ({ id }: { id: number }) => {
 export const getCommentCount = async ({ entityId, entityType }: CommentConnectorInput) => {
   return await prisma.commentV2.count({
     where: {
-      [entityType]: {
+      thread: {
         [`${entityType}Id`]: entityId,
       },
     },
+  });
+};
+
+export const getCommentsThreadDetails = async ({ entityId, entityType }: CommentConnectorInput) => {
+  return await prisma.thread.findUnique({
+    where: { [`${entityType}Id`]: entityId },
+    select: {
+      id: true,
+      locked: true,
+    },
+  });
+};
+
+export const toggleLockCommentsThread = async ({ entityId, entityType }: CommentConnectorInput) => {
+  const thread = await prisma.thread.findUnique({
+    where: { [`${entityType}Id`]: entityId },
+    select: { id: true, locked: true },
+  });
+  if (!thread) throw throwNotFoundError();
+  return await prisma.thread.update({
+    where: { [`${entityType}Id`]: entityId },
+    data: { locked: !thread.locked },
+    select: { locked: true },
   });
 };

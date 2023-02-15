@@ -1,6 +1,7 @@
 import {
   manageCheckoutPayment,
   manageInvoicePaid,
+  toDateTime,
   upsertPriceRecord,
   upsertProductRecord,
   upsertSubscription,
@@ -79,7 +80,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           case 'customer.subscription.updated':
           case 'customer.subscription.deleted':
             const subscription = event.data.object as Stripe.Subscription;
-            await upsertSubscription(subscription, subscription.customer as string);
+            await upsertSubscription(
+              subscription,
+              subscription.customer as string,
+              toDateTime(event.created)
+            );
             break;
           case 'checkout.session.completed':
             const checkoutSession = event.data.object as Stripe.Checkout.Session;

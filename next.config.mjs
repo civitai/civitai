@@ -42,8 +42,8 @@ export default defineNextConfig({
         permanent: true,
       },
       {
-        source: '/github',
-        destination: 'https://github.com/civitai/civitai',
+        source: '/github/:path*',
+        destination: 'https://github.com/civitai/civitai/:path*',
         permanent: true,
       },
       {

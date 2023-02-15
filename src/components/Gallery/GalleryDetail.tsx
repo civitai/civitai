@@ -30,6 +30,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { GalleryCarousel } from '~/components/Gallery/GalleryCarousel';
 import { useGalleryFilters } from '~/components/Gallery/GalleryFilters';
+import { GalleryImageComments } from '~/components/Gallery/GalleryImageComments';
 import { ReportImageButton } from '~/components/Gallery/ReportImageButton';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -288,8 +289,8 @@ export function GalleryDetail() {
           </Card.Section>
           <Card.Section component={ScrollArea} style={{ flex: 1, position: 'relative' }}>
             <LoadingOverlay visible={deleteMutation.isLoading} />
-            <Stack spacing="md" pt="md">
-              <Box px="md">
+            <Stack spacing="md" py="md">
+              <Box px="sm">
                 <Reactions
                   entityId={image.id}
                   entityType="image"
@@ -297,8 +298,21 @@ export function GalleryDetail() {
                   metrics={image.metrics}
                 />
               </Box>
-              {/* TODO.gallery - REACTIONS */}
-              {/* TODO.gallery - COMMENTS */}
+              <div>
+                <Divider
+                  label="Comments"
+                  labelPosition="center"
+                  styles={{
+                    label: {
+                      marginTop: '-9px !important',
+                      marginBottom: -9,
+                    },
+                  }}
+                />
+                <Paper p="sm" pt="lg" radius={0}>
+                  <GalleryImageComments imageId={image.id} userId={image.user.id} />
+                </Paper>
+              </div>
               {/* TODO.gallery - TAGS */}
               {/* TODO.gallery - RESOURCES */}
               {/* TODO.gallery - META */}

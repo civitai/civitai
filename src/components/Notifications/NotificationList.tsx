@@ -1,5 +1,6 @@
 import { Stack, Text, List, MantineSize } from '@mantine/core';
 import { useRouter } from 'next/router';
+import { MouseEvent } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 
 import { getNotificationMessage } from '~/server/notifications/utils.notifications';
@@ -25,7 +26,9 @@ export function NotificationList({
 
         if (!details) return null;
 
-        const handleClick = () => {
+        const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
+          e.preventDefault();
+
           if (!details.url) return;
           if (details.target === '_blank') return window.open(details.url, '_blank');
           const [pathname] = router.asPath.split('?');
@@ -46,8 +49,9 @@ export function NotificationList({
         };
 
         return (
-          // <Link key={notification.id} href={details.url ?? ''} passHref>
           <Text
+            component="a"
+            href={details.url ?? ''}
             key={notification.id}
             variant="text"
             sx={{ opacity: read ? 0.6 : 1 }}
@@ -85,7 +89,6 @@ export function NotificationList({
               </Stack>
             </List.Item>
           </Text>
-          // </Link>
         );
       })}
     </List>

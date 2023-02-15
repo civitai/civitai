@@ -2,7 +2,7 @@
 import { ColorScheme, ColorSchemeProvider, MantineProvider } from '@mantine/core';
 import { NotificationsProvider } from '@mantine/notifications';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
-import { getCookie, getCookies, setCookie, deleteCookie } from 'cookies-next';
+import { getCookie, getCookies, setCookie } from 'cookies-next';
 import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
 import isBetween from 'dayjs/plugin/isBetween';
@@ -22,7 +22,6 @@ import '~/styles/globals.css';
 import { CustomModalsProvider } from './../providers/CustomModalsProvider';
 import { TosProvider } from '~/providers/TosProvider';
 import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
-import { env } from '~/env/client.mjs';
 import { MaintenanceMode } from '~/components/MaintenanceMode/MaintenanceMode';
 import { NsfwWorkerProvider } from '~/providers/NsfwWorkerProvider';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
@@ -30,6 +29,7 @@ import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { FeatureFlags } from '~/server/services/feature-flags.service';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
+import { isDev, isMaintenanceMode } from '~/env/other';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
 
 dayjs.extend(duration);
@@ -48,17 +48,20 @@ type CustomAppProps = {
   colorScheme: ColorScheme;
   cookies: CookiesContext;
   flags: FeatureFlags;
+  isMaintenanceMode: boolean | undefined;
 }>;
 
-// export function ConditionalProvider({ children, provider, condition }) {
-//   return condition ? provider({ children }) : children;
-// }
-
-const isDevelopment = process.env.NODE_ENV === 'development';
 function MyApp(props: CustomAppProps) {
   const {
     Component,
-    pageProps: { session, colorScheme: initialColorScheme, cookies, flags, ...pageProps },
+    pageProps: {
+      session,
+      colorScheme: initialColorScheme,
+      cookies,
+      flags,
+      isMaintenanceMode,
+      ...pageProps
+    },
   } = props;
   const [colorScheme, setColorScheme] = useState<ColorScheme | undefined>(initialColorScheme);
   const toggleColorScheme = useCallback(
@@ -84,7 +87,7 @@ function MyApp(props: CustomAppProps) {
     [Component.getLayout]
   );
 
-  const content = env.NEXT_PUBLIC_MAINTENANCE_MODE ? (
+  const content = isMaintenanceMode ? (
     <MaintenanceMode />
   ) : (
     <>
@@ -154,7 +157,7 @@ function MyApp(props: CustomAppProps) {
           {content}
         </MantineProvider>
       </ColorSchemeProvider>
-      {isDevelopment && <ReactQueryDevtools />}
+      {isDev && <ReactQueryDevtools />}
     </>
   );
 }
@@ -169,12 +172,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
 
-  if (env.NEXT_PUBLIC_MAINTENANCE_MODE) {
+  if (isMaintenanceMode) {
     return {
       pageProps: {
         ...pageProps,
         colorScheme,
         cookies: parsedCookies,
+        isMaintenanceMode,
       },
       ...appProps,
     };

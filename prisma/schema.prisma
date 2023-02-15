@@ -132,6 +132,7 @@ model CustomerSubscription {
   currentPeriodEnd   DateTime
   createdAt          DateTime
   endedAt            DateTime?
+  updatedAt          DateTime?
 }
 
 model Product {
@@ -645,7 +646,7 @@ model Image {
   imagesOnReviews ImagesOnReviews?
   reports         ImageReport[]
   reactions       ImageReaction[]
-  comments        ImageComment[]
+  thread          Thread?
   tags            TagsOnImage[]
   metrics         ImageMetric[]
   connections     ImageConnection?
@@ -812,14 +813,13 @@ model KeyValue {
 }
 
 model ApiKey {
+  id        Int        @id @default(autoincrement())
   key       String     @unique
   name      String
   scope     KeyScope[]
   userId    Int
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime   @default(now())
-
-  @@unique([key, userId])
 }
 
 enum KeyScope {
@@ -917,10 +917,10 @@ model Question {
 
   tags      TagsOnQuestions[]
   reactions QuestionReaction[]
-  comments  QuestionComment[]
   answers   Answer[]           @relation("Question")
   metrics   QuestionMetric[]
   rank      QuestionRank?
+  thread    Thread?
 }
 
 model QuestionMetric {
@@ -945,11 +945,11 @@ model Answer {
   updatedAt  DateTime @updatedAt
 
   reactions AnswerReaction[]
-  comments  AnswerComment[]
   metrics   AnswerMetric[]
   answerFor Question?        @relation("SelectedAnswer")
   votes     AnswerVote[]
   rank      AnswerRank?
+  thread    Thread?
 }
 
 model AnswerVote {
@@ -984,50 +984,32 @@ model AnswerMetric {
 }
 
 model CommentV2 {
-  id           Int         @id @default(autoincrement())
+  id           Int      @id @default(autoincrement())
   content      String
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  nsfw         Boolean     @default(false)
-  tosViolation Boolean     @default(false)
-  parentId     Int?
-  parent       CommentV2?  @relation("ParentComments", fields: [parentId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  nsfw         Boolean  @default(false)
+  tosViolation Boolean  @default(false)
   userId       Int
-  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  comments     CommentV2[] @relation("ParentComments")
-  locked       Boolean?    @default(false)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  threadId     Int
+  thread       Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
-  question  QuestionComment?
-  answer    AnswerComment?
   reactions CommentV2Reaction[]
-  image     ImageComment?
 }
 
-model QuestionComment {
-  questionId Int
-  question   Question  @relation(fields: [questionId], references: [id], onDelete: Cascade)
-  commentId  Int       @unique
-  comment    CommentV2 @relation(fields: [commentId], references: [id], onDelete: Cascade)
+model Thread {
+  id     Int     @id @default(autoincrement())
+  locked Boolean @default(false)
 
-  @@id([questionId, commentId])
-}
+  questionId Int?      @unique
+  question   Question? @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  answerId   Int?      @unique
+  answer     Answer?   @relation(fields: [answerId], references: [id], onDelete: SetNull)
+  imageId    Int?      @unique
+  image      Image?    @relation(fields: [imageId], references: [id], onDelete: SetNull)
 
-model AnswerComment {
-  answerId  Int
-  answer    Answer    @relation(fields: [answerId], references: [id], onDelete: Cascade)
-  commentId Int       @unique
-  comment   CommentV2 @relation(fields: [commentId], references: [id], onDelete: Cascade)
-
-  @@id([answerId, commentId])
-}
-
-model ImageComment {
-  imageId   Int
-  image     Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  commentId Int       @unique
-  comment   CommentV2 @relation(fields: [commentId], references: [id], onDelete: Cascade)
-
-  @@id([imageId, commentId])
+  comments CommentV2[]
 }
 
 model QuestionReaction {

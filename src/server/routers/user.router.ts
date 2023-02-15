@@ -57,7 +57,6 @@ export const userRouter = router({
   getLeaderboard: publicProcedure.input(getAllQuerySchema).query(getLeaderboardHandler),
   getCosmetics: protectedProcedure
     .input(getUserCosmeticsSchema.optional())
-    .use(isFlagProtected('memberBadges'))
     .query(getUserCosmeticsHandler),
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
   update: protectedProcedure.input(userUpdateSchema).mutation(updateUserHandler),

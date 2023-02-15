@@ -4,7 +4,7 @@ import { httpBatchLink, loggerLink } from '@trpc/client';
 import { createTRPCNext } from '@trpc/next';
 import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
-import { getBaseUrl } from '~/server/utils/url-helpers';
+import { isDev } from '~/env/other';
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -23,9 +23,7 @@ export const trpc = createTRPCNext<AppRouter>({
       transformer: superjson,
       links: [
         loggerLink({
-          enabled: (opts) =>
-            process.env.NODE_ENV === 'development' ||
-            (opts.direction === 'down' && opts.result instanceof Error),
+          enabled: (opts) => isDev || (opts.direction === 'down' && opts.result instanceof Error),
         }),
         httpBatchLink({
           url: `/api/trpc`,

@@ -15,11 +15,11 @@ import {
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export async function getApiKeyHandler({ input }: { input: GetAPIKeyInput }) {
-  const { key } = input;
+  const { id } = input;
 
   try {
-    const apiKey = await getApiKey({ key });
-    if (!apiKey) throw throwNotFoundError(`No api key with key ${key}`);
+    const apiKey = await getApiKey({ id });
+    if (!apiKey) throw throwNotFoundError(`No api key with id ${id}`);
 
     return { success: !!apiKey, data: apiKey };
   } catch (error) {
@@ -67,7 +67,7 @@ export async function deleteApiKeyHandler({
     const deleted = await deleteApiKey({ ...input, userId: user.id });
 
     if (!deleted)
-      throw throwNotFoundError(`No api key with ${input.key} associated with your user account`);
+      throw throwNotFoundError(`No api key with id ${input.id} associated with your user account`);
 
     return deleted;
   } catch (error) {

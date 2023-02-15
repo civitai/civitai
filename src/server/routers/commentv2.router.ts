@@ -2,7 +2,9 @@ import { getByIdSchema } from './../schema/base.schema';
 import {
   deleteCommentV2Handler,
   getCommentCountV2Handler,
+  getCommentsThreadDetailsHandler,
   getInfiniteCommentsV2Handler,
+  toggleLockThreadDetailsHandler,
   upsertCommentV2Handler,
 } from './../controllers/commentv2.controller';
 import {
@@ -44,6 +46,15 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   });
 });
 
+const isModerator = middleware(async ({ ctx, next }) => {
+  if (!ctx.user?.isModerator) throw throwAuthorizationError();
+  return next({
+    ctx: {
+      user: ctx.user,
+    },
+  });
+});
+
 export const commentv2Router = router({
   getInfinite: publicProcedure.input(getCommentsV2Schema).query(getInfiniteCommentsV2Handler),
   getCount: publicProcedure.input(commentConnectorSchema).query(getCommentCountV2Handler),
@@ -55,4 +66,11 @@ export const commentv2Router = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteCommentV2Handler),
+  getThreadDetails: publicProcedure
+    .input(commentConnectorSchema)
+    .query(getCommentsThreadDetailsHandler),
+  toggleLockThread: protectedProcedure
+    .input(commentConnectorSchema)
+    .use(isModerator)
+    .mutation(toggleLockThreadDetailsHandler),
 });

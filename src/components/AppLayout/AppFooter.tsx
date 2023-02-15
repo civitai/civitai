@@ -1,8 +1,19 @@
-import { Button, ButtonProps, createStyles, Footer, Group, Text } from '@mantine/core';
+import {
+  Anchor,
+  Button,
+  ButtonProps,
+  Code,
+  createStyles,
+  Footer,
+  Group,
+  Stack,
+  Text,
+} from '@mantine/core';
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
+import { useState } from 'react';
+import { env } from '~/env/client.mjs';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 interface ScrollPosition {
   x: number;
@@ -21,8 +32,11 @@ const buttonProps: ButtonProps = {
   color: 'gray',
 };
 
+const hash = env.NEXT_PUBLIC_GIT_HASH;
+
 export function AppFooter() {
   const { classes, cx } = useStyles();
+  const [showHash, setShowHash] = useState(false);
   const [showFooter, setShowFooter] = useDebouncedState(true, 200);
   const mobile = useIsMobile();
 
@@ -34,9 +48,32 @@ export function AppFooter() {
   return (
     <Footer className={cx(classes.root, { [classes.down]: !showFooter })} height="auto" p="sm">
       <Group spacing={mobile ? 'sm' : 'lg'} sx={{ flexWrap: 'nowrap' }}>
-        <Text weight={700} sx={{ whiteSpace: 'nowrap' }}>
+        <Text
+          weight={700}
+          sx={{ whiteSpace: 'nowrap', userSelect: 'none' }}
+          onDoubleClick={() => {
+            if (hash) setShowHash((x) => !x);
+          }}
+        >
           &copy; Civitai {new Date().getFullYear()}
         </Text>
+        {showHash && hash && (
+          <Stack spacing={2}>
+            <Text weight={500} size="xs" sx={{ lineHeight: 1.1 }}>
+              Site Version
+            </Text>
+            <Anchor
+              target="_blank"
+              href={`/github/commit/${hash}`}
+              w="100%"
+              sx={{ '&:hover': { textDecoration: 'none' } }}
+            >
+              <Code sx={{ textAlign: 'center', lineHeight: 1.1, display: 'block' }}>
+                {hash.substring(0, 7)}
+              </Code>
+            </Anchor>
+          </Stack>
+        )}
         <Group spacing={0} sx={{ flexWrap: 'nowrap' }}>
           <Button
             component={NextLink}
@@ -48,11 +85,18 @@ export function AppFooter() {
           >
             Support Us ❤️
           </Button>
-          <Button component={NextLink} href="/content/tos" {...buttonProps} px={mobile ? 5 : 'xs'}>
+          <Button
+            component={NextLink}
+            prefetch={false}
+            href="/content/tos"
+            {...buttonProps}
+            px={mobile ? 5 : 'xs'}
+          >
             Terms of Service
           </Button>
           <Button
             component={NextLink}
+            prefetch={false}
             href="/content/privacy"
             {...buttonProps}
             px={mobile ? 5 : 'xs'}

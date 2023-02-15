@@ -100,30 +100,29 @@ export const getQuestionDetailHandler = async ({
             reaction: true,
           },
         },
-        comments: {
-          orderBy: { comment: { createdAt: 'asc' } },
-          take: 5,
+        thread: {
           select: {
-            comment: {
+            comments: {
+              orderBy: { createdAt: 'asc' },
+              take: 5,
               select: commentV2Select,
             },
-          },
-        },
-        _count: {
-          select: {
-            comments: true,
+            _count: {
+              select: {
+                comments: true,
+              },
+            },
           },
         },
       },
     });
     if (!item) throw throwNotFoundError();
-    const { reactions, tags, comments, ...question } = item;
+    const { reactions, tags, ...question } = item;
 
     return {
       ...question,
       tags: tags.map((x) => x.tag),
       userReactions: reactions,
-      comments: comments.map((x) => x.comment),
     };
   } catch (error) {
     throw throwDbError(error);

@@ -110,21 +110,6 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
       sendVerificationRequest,
       from: env.EMAIL_FROM,
     }),
-    CredentialsProvider({
-      name: 'Credentials',
-      credentials: {
-        username: { label: 'Username', type: 'text' },
-        password: { label: 'Password', type: 'password' },
-      },
-      async authorize(credentials, req) {
-        const { username = 'bot' } = credentials || {};
-        const reqToken = (req.headers?.['x-civitai-api-key'] as string) ?? '';
-
-        // TODO: verify token here
-
-        return { id: reqToken, username, showNsfw: false, blurNsfw: false };
-      },
-    }),
   ],
   cookies: {
     sessionToken: {

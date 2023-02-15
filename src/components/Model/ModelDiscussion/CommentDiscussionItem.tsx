@@ -1,6 +1,6 @@
-import { Badge, Button, Card, Group, Text, ThemeIcon } from '@mantine/core';
+import { Badge, Button, Card, Group, Text, ThemeIcon, Tooltip } from '@mantine/core';
 import { ReviewReactions } from '@prisma/client';
-import { IconLock, IconMessageCircle2 } from '@tabler/icons';
+import { IconExclamationCircle, IconLock, IconMessageCircle2 } from '@tabler/icons';
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -107,6 +107,13 @@ export function CommentDiscussionItem({ comment }: Props) {
           disabled={toggleReactionMutation.isLoading}
         />
         <Group spacing={4} noWrap>
+          {currentUser?.isModerator && comment.tosViolation && (
+            <Tooltip label="Has TOS Violation">
+              <ThemeIcon color="orange" size="xs">
+                <IconExclamationCircle />
+              </ThemeIcon>
+            </Tooltip>
+          )}
           {comment.locked && (
             <ThemeIcon color="yellow" size="xs">
               <IconLock />

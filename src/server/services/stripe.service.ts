@@ -7,8 +7,10 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { Stripe } from 'stripe';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { env } from '~/env/server.mjs';
+import { createLogger } from '~/utils/logging';
 
 const baseUrl = getBaseUrl();
+const log = createLogger('stripe', 'blue');
 
 export const getPlans = async () => {
   const products = await prisma.product.findMany({
@@ -198,13 +200,26 @@ export const createManageSubscriptionSession = async ({ customerId }: { customer
   return { url: session.url };
 };
 
-export const upsertSubscription = async (subscription: Stripe.Subscription, customerId: string) => {
+export const upsertSubscription = async (
+  subscription: Stripe.Subscription,
+  customerId: string,
+  eventDate: Date
+) => {
   const user = await prisma.user.findFirst({
     where: { customerId: customerId },
-    select: { id: true, customerId: true, subscriptionId: true },
+    select: {
+      id: true,
+      customerId: true,
+      subscriptionId: true,
+      subscription: { select: { updatedAt: true } },
+    },
   });
 
   if (!user) throw throwNotFoundError(`User with customerId: ${customerId} not found`);
+  if (user.subscription?.updatedAt && user.subscription.updatedAt >= eventDate) {
+    log('Subscription already up to date');
+    return;
+  }
 
   const data = {
     id: subscription.id,
@@ -221,6 +236,7 @@ export const upsertSubscription = async (subscription: Stripe.Subscription, cust
     currentPeriodEnd: toDateTime(subscription.current_period_end),
     createdAt: toDateTime(subscription.created),
     endedAt: subscription.ended_at ? toDateTime(subscription.ended_at) : null,
+    updatedAt: eventDate,
   };
 
   await prisma.$transaction([

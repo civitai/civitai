@@ -10,7 +10,7 @@ export function NotFound() {
       <Container size="xl" p="xl">
         <Stack align="center">
           <Title order={1}>404</Title>
-          <Text size="xl">The page you are looking for doesn&apos;t exists</Text>
+          <Text size="xl">The page you are looking for doesn&apos;t exist</Text>
           <Button component={NextLink} href="/">
             Go back home
           </Button>

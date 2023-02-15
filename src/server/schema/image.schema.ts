@@ -29,7 +29,10 @@ export const imageAnalysisSchema = z.object({
 export const imageSchema = z.object({
   id: z.number().optional(),
   name: z.string().nullish(),
-  url: z.string().uuid('One of the files did not upload properly, please try again'),
+  url: z
+    .string()
+    .url()
+    .or(z.string().uuid('One of the files did not upload properly, please try again')),
   meta: z.preprocess((value) => {
     if (typeof value !== 'object') return null;
     if (value && !Object.keys(value).length) return null;

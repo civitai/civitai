@@ -38,6 +38,7 @@ export function UserAvatar({
   linkToProfile = false,
   textSize,
   subTextSize,
+  includeAvatar = true,
 }: Props) {
   const { classes } = useStyles();
 
@@ -48,19 +49,21 @@ export function UserAvatar({
   subTextSize ??= mapAvatarTextSize[size].subTextSize;
   const avatar = (
     <Group align="center" spacing={spacing} noWrap>
-      <Avatar
-        src={user.image && !userDeleted ? getEdgeUrl(user.image, { width: 96 }) : undefined}
-        alt={user.username && !userDeleted ? `${user.username}'s Avatar` : undefined}
-        radius="xl"
-        size={size}
-        {...avatarProps}
-      >
-        {user.username && !userDeleted ? getInitials(user.username) : null}
-      </Avatar>
+      {includeAvatar && (
+        <Avatar
+          src={user.image && !userDeleted ? getEdgeUrl(user.image, { width: 96 }) : undefined}
+          alt={user.username && !userDeleted ? `${user.username}'s Avatar` : undefined}
+          radius="xl"
+          size={size}
+          {...avatarProps}
+        >
+          {user.username && !userDeleted ? getInitials(user.username) : null}
+        </Avatar>
+      )}
       {withUsername || subText ? (
         <Stack spacing={0}>
           {withUsername && (
-            <Group spacing={4}>
+            <Group spacing={4} align="center">
               <Username {...user} size={textSize} />
               {badge}
             </Group>
@@ -105,6 +108,7 @@ type Props = {
   linkToProfile?: boolean;
   textSize?: MantineSize;
   subTextSize?: MantineSize;
+  includeAvatar?: boolean;
 };
 
 const useStyles = createStyles(() => ({

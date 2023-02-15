@@ -1,4 +1,4 @@
-import { Prisma, Review, ReviewReactions } from '@prisma/client';
+import { Prisma, ReportReason, ReportStatus, Review, ReviewReactions } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
@@ -18,12 +18,14 @@ import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 export const getReviews = <TSelect extends Prisma.ReviewSelect>({
   input: { limit = DEFAULT_PAGE_SIZE, page, cursor, modelId, modelVersionId, userId, sort },
   select,
+  user,
 }: {
   input: GetAllReviewsInput;
   select: TSelect;
   user?: SessionUser;
 }) => {
   const skip = page ? (page - 1) * limit : undefined;
+  const isMod = user?.isModerator ?? false;
   // const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
 
   return prisma.review.findMany({
@@ -34,7 +36,7 @@ export const getReviews = <TSelect extends Prisma.ReviewSelect>({
       modelId,
       modelVersionId,
       userId,
-      tosViolation: false,
+      tosViolation: !isMod ? false : undefined,
       // imagesOnReviews: filterBy?.includes(ReviewFilter.IncludesImages) ? { some: {} } : undefined,
       // OR: user
       //   ? [
@@ -63,9 +65,12 @@ export const getReviews = <TSelect extends Prisma.ReviewSelect>({
 export const getReviewById = <TSelect extends Prisma.ReviewSelect>({
   id,
   select,
-}: GetByIdInput & { select: TSelect }) => {
+  user,
+}: GetByIdInput & { select: TSelect; user?: SessionUser }) => {
+  const isMod = user?.isModerator ?? false;
+
   return prisma.review.findFirst({
-    where: { id, tosViolation: false },
+    where: { id, tosViolation: !isMod ? false : undefined },
     select,
   });
 };
@@ -214,5 +219,20 @@ export const convertReviewToComment = ({
     await tx.review.delete({ where: { id } });
 
     return comment;
+  });
+};
+
+export const updateReviewReportStatusByReason = ({
+  id,
+  reason,
+  status,
+}: {
+  id: number;
+  reason: ReportReason;
+  status: ReportStatus;
+}) => {
+  return prisma.report.updateMany({
+    where: { reason, review: { reviewId: id } },
+    data: { status },
   });
 };

@@ -14,9 +14,7 @@ import {
   Table,
   ActionIcon,
   Center,
-  CopyButton,
   Paper,
-  Tooltip,
 } from '@mantine/core';
 import { IconPlus, IconCopy, IconTrash } from '@tabler/icons';
 import { formatDate } from '~/utils/date-helpers';
@@ -35,18 +33,14 @@ export function ApiKeysCard() {
     },
   });
 
-  const handleDeleteApiKey = (apiKey: ApiKey) => {
+  const handleDeleteApiKey = (id: number) => {
     openConfirmModal({
       title: 'Delete API Key',
-      children: (
-        <Text size="sm">
-          Are you sure you want to delete this API Key? This action is destructive.
-        </Text>
-      ),
+      children: <Text size="sm">Are you sure you want to delete this API Key?</Text>,
       centered: true,
       labels: { confirm: 'Delete API Key', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
-      onConfirm: () => deleteApiKeyMutation.mutateAsync({ key: apiKey.key }),
+      onConfirm: () => deleteApiKeyMutation.mutateAsync({ id }),
     });
   };
 
@@ -66,7 +60,8 @@ export function ApiKeysCard() {
             </Button>
           </Group>
           <Text color="dimmed" size="sm">
-            You can use API keys to create apps that interact with our services
+            You can use API keys to interact with the site through the API as your user. These
+            should not be shared with anyone.
           </Text>
         </Stack>
         <Box mt="md" sx={{ position: 'relative' }}>
@@ -86,25 +81,12 @@ export function ApiKeysCard() {
                     <td>
                       <Group spacing={4}>
                         <Text>{apiKey.name}</Text>
-                        <CopyButton value={apiKey.key}>
-                          {({ copied, copy }) => (
-                            <Tooltip
-                              label="Copied token to clipboard"
-                              opened={copied}
-                              position="right"
-                            >
-                              <ActionIcon onClick={() => copy()}>
-                                <IconCopy size={14} stroke={1.5} />
-                              </ActionIcon>
-                            </Tooltip>
-                          )}
-                        </CopyButton>
                       </Group>
                     </td>
                     <td>{formatDate(apiKey.createdAt)}</td>
                     <td>
                       <Group position="right">
-                        <ActionIcon color="red" onClick={() => handleDeleteApiKey(apiKey)}>
+                        <ActionIcon color="red" onClick={() => handleDeleteApiKey(apiKey.id)}>
                           <IconTrash size="16" stroke={1.5} />
                         </ActionIcon>
                       </Group>
