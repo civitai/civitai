@@ -2,7 +2,8 @@ import { ModelFileFormat, TagEngagementType } from '@prisma/client';
 import { z } from 'zod';
 
 export const getUserByUsernameSchema = z.object({
-  username: z.string(),
+  username: z.string().optional(),
+  id: z.number().optional(),
 });
 
 export type GetUserByUsernameSchema = z.infer<typeof getUserByUsernameSchema>;

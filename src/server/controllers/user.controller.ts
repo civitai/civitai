@@ -58,12 +58,12 @@ export const getAllUsersHandler = ({ input }: { input: GetAllUsersInput }) => {
 };
 
 export const getUserCreatorHandler = async ({
-  input: { username },
+  input: { username, id },
 }: {
   input: GetUserByUsernameSchema;
 }) => {
   try {
-    return await getUserCreator({ username });
+    return await getUserCreator({ username, id });
   } catch (error) {
     throwDbError(error);
   }
