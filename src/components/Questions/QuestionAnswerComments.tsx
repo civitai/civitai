@@ -34,8 +34,8 @@ export function QuestionAnswerComments({
     >
       {({ data, created, isInitialLoading, isFetching, hasNextPage }) =>
         isInitialLoading ? (
-          <Center p="xl">
-            <Loader />
+          <Center>
+            <Loader variant="bars" />
           </Center>
         ) : (
           <Box className={classes.list}>
