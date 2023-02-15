@@ -1,10 +1,15 @@
 import { GetServerSideProps } from 'next/types';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { isNumber } from '~/utils/type-guards';
-import { GalleryDetail } from '~/components/Gallery/GalleryDetail';
+import { GalleryDetail2 } from '~/components/Gallery/GalleryDetail2';
+import { GalleryDetailProvider } from '~/components/Gallery/GalleryDetailProvider';
 
 export default function GalleryImageDetail() {
-  return <GalleryDetail />;
+  return (
+    <GalleryDetailProvider>
+      <GalleryDetail2 />
+    </GalleryDetailProvider>
+  );
 }
 
 GalleryImageDetail.getLayout = (page: any) => <>{page}</>;

@@ -22,11 +22,13 @@ import {
   IconDotsVertical,
   IconTrash,
   IconBan,
+  IconLock,
 } from '@tabler/icons';
 import Router, { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { ToggleLockComments } from '~/components/CommentsV2';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { GalleryCarousel } from '~/components/Gallery/GalleryCarousel';
 import { useGalleryFilters } from '~/components/Gallery/GalleryFilters';
@@ -71,7 +73,6 @@ export function GalleryDetail() {
   );
   const isLoading = infinite ? infiniteLoading : finiteLoading;
 
-  // const {data: }
   const galleryImages = useMemo(
     () => infiniteGallery?.pages.flatMap((x) => x.items) ?? finiteGallery ?? [],
     [infiniteGallery, finiteGallery]
@@ -272,12 +273,26 @@ export function GalleryDetail() {
                           Delete
                         </Menu.Item>
                         {isMod && (
-                          <Menu.Item
-                            icon={<IconBan size={14} stroke={1.5} />}
-                            onClick={handleTosViolation}
-                          >
-                            Remove as TOS Violation
-                          </Menu.Item>
+                          <>
+                            <Menu.Item
+                              icon={<IconBan size={14} stroke={1.5} />}
+                              onClick={handleTosViolation}
+                            >
+                              Remove as TOS Violation
+                            </Menu.Item>
+                            <ToggleLockComments entityId={image.id} entityType="image">
+                              {({ toggle, locked }) => {
+                                return (
+                                  <Menu.Item
+                                    icon={<IconLock size={14} stroke={1.5} />}
+                                    onClick={toggle}
+                                  >
+                                    {locked ? 'Unlock' : 'Lock'} Comments
+                                  </Menu.Item>
+                                );
+                              }}
+                            </ToggleLockComments>
+                          </>
                         )}
                       </Menu.Dropdown>
                     </Menu>

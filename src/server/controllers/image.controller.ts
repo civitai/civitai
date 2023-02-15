@@ -48,7 +48,7 @@ export const getReviewImagesHandler = ({
   }
 };
 
-export type GetGalleryImageDetailReturnType = AsyncReturnType<typeof getGalleryImageDetailHandler>;
+export type GalleryImageDetail = AsyncReturnType<typeof getGalleryImageDetailHandler>;
 export const getGalleryImageDetailHandler = async ({
   input: { id },
   ctx,

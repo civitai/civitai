@@ -1,6 +1,7 @@
 import { Modal } from '@mantine/core';
 import { z } from 'zod';
-import { GalleryDetail } from '~/components/Gallery/GalleryDetail';
+import { GalleryDetail2 } from '~/components/Gallery/GalleryDetail2';
+import { GalleryDetailProvider } from '~/components/Gallery/GalleryDetailProvider';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
 
 export default createRoutedContext({
@@ -23,7 +24,9 @@ export default createRoutedContext({
         padding={0}
         style={{ maxHeight: '100vh', maxWidth: '100vw' }}
       >
-        <GalleryDetail />
+        <GalleryDetailProvider>
+          <GalleryDetail2 />
+        </GalleryDetailProvider>
       </Modal>
     );
   },
