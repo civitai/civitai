@@ -8,6 +8,7 @@ type Props = {
 export function LoadNextPage({ children }: Props) {
   const { data, count, isFetching, hasNextPage, fetchNextPage } = useCommentsContext();
   const remaining = count - (data?.length ?? 0);
+  console.log({ count, remaining, hasNextPage });
 
   const handleClick = () => {
     if (!isFetching) fetchNextPage();

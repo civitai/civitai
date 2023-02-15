@@ -9,10 +9,6 @@ type GalleryImageCommentsProps = {
 };
 
 export function GalleryImageComments({ imageId, userId }: GalleryImageCommentsProps) {
-  useEffect(() => {
-    console.log('mount  gallery comments');
-  }, []);
-
   return (
     <CommentsProvider
       entityType="image"

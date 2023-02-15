@@ -1,22 +1,71 @@
-import { Stack, Box, createStyles } from '@mantine/core';
-import { Comments, CommentsProps } from '~/components/Comments/Comments.Provider';
+import { Stack, Box, createStyles, Group, Text, Center, Loader } from '@mantine/core';
+import { CommentsProvider, LoadNextPage, CreateComment, Comment } from '~/components/CommentsV2';
+import { InfiniteCommentResults } from '~/server/controllers/commentv2.controller';
+import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 
-export function QuestionAnswerComments(props: Omit<CommentsProps, 'children'>) {
+type CommentsResult = InfiniteCommentResults['comments'];
+type Props = CommentConnectorInput & {
+  initialData?: CommentsResult;
+  initialLimit?: number;
+  initialCount?: number;
+  limit?: number;
+  userId: number;
+};
+export function QuestionAnswerComments({
+  initialData,
+  initialLimit = 4,
+  initialCount,
+  limit,
+  userId,
+  entityId,
+  entityType,
+}: Props) {
   const { classes } = useStyles();
+
   return (
-    <Stack>
-      <Comments {...props}>
-        <Comments.List className={classes.list} spacing={0}>
-          {({ comment }) => (
-            <Comments.ListItem comment={comment} px="md" className={classes.listItem} />
-          )}
-        </Comments.List>
-        <Box px="md">
-          <Comments.More />
-          <Comments.AddComment />
-        </Box>
-      </Comments>
-    </Stack>
+    <CommentsProvider
+      initialCount={initialCount}
+      initialData={initialData}
+      initialLimit={initialLimit}
+      limit={limit}
+      badges={[{ label: 'op', color: 'violet', userId }]}
+      entityId={entityId}
+      entityType={entityType}
+    >
+      {({ data, created, isInitialLoading, isFetching, hasNextPage }) =>
+        isInitialLoading ? (
+          <Center p="xl">
+            <Loader />
+          </Center>
+        ) : (
+          <Box className={classes.list}>
+            {data?.map((comment) => (
+              <Comment key={comment.id} comment={comment} className={classes.listItem} />
+            ))}
+            <LoadNextPage>
+              {({ remaining, onClick }) => (
+                <Group spacing="xs" align="center" p="sm" pb={0}>
+                  {isFetching && <Loader size="xs" />}
+                  <Text variant="link" sx={{ cursor: 'pointer' }} onClick={onClick}>
+                    {remaining > 0
+                      ? `Show ${remaining} more ${remaining > 1 ? 'comments' : 'comment'}`
+                      : 'Show more'}
+                  </Text>
+                </Group>
+              )}
+            </LoadNextPage>
+            {created.map((comment) => (
+              <Comment key={comment.id} comment={comment} className={classes.listItem} />
+            ))}
+            {!hasNextPage && (
+              <Box p="sm" pb={0}>
+                <CreateComment />
+              </Box>
+            )}
+          </Box>
+        )
+      }
+    </CommentsProvider>
   );
 }
 
