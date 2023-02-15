@@ -105,7 +105,7 @@ export const getQuestionDetailHandler = async ({
             comments: {
               orderBy: { createdAt: 'asc' },
               take: 5,
-              select: commentV2Select({ user: ctx.user }),
+              select: commentV2Select,
             },
             _count: {
               select: {

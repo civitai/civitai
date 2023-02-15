@@ -4,6 +4,8 @@ import {
   getComments,
   deleteComment,
   getCommentCount,
+  getCommentsThreadDetails,
+  toggleLockCommentsThread,
 } from './../services/commentsv2.service';
 import {
   UpsertCommentV2Input,
@@ -29,7 +31,7 @@ export const getInfiniteCommentsV2Handler = async ({
     const comments = await getComments({
       ...input,
       limit,
-      select: commentV2Select({ user: ctx.user }),
+      select: commentV2Select,
     });
 
     let nextCursor: number | undefined;
@@ -55,7 +57,7 @@ export const upsertCommentV2Handler = async ({
   input: UpsertCommentV2Input;
 }) => {
   try {
-    await upsertComment({ ...input, userId: ctx.user.id });
+    return await upsertComment({ ...input, userId: ctx.user.id });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -84,6 +86,34 @@ export const getCommentCountV2Handler = async ({
 }) => {
   try {
     return await getCommentCount(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getCommentsThreadDetailsHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: Context;
+  input: CommentConnectorInput;
+}) => {
+  try {
+    return await getCommentsThreadDetails(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const toggleLockThreadDetailsHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: CommentConnectorInput;
+}) => {
+  try {
+    await toggleLockCommentsThread(input);
   } catch (error) {
     throw throwDbError(error);
   }

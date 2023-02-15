@@ -2,7 +2,7 @@ import { cloneElement } from 'react';
 import { useCommentsContext } from './CommentsProvider';
 
 type Props = {
-  children: ({ remaining }: { remaining: number }) => React.ReactElement;
+  children: ({ remaining }: { remaining: number; onClick: () => void }) => React.ReactElement;
 };
 
 export function LoadNextPage({ children }: Props) {
@@ -14,6 +14,6 @@ export function LoadNextPage({ children }: Props) {
   };
 
   return hasNextPage && remaining > 0
-    ? cloneElement(children({ remaining }), { onClick: handleClick })
+    ? cloneElement(children({ remaining, onClick: handleClick }))
     : null;
 }

@@ -8,12 +8,22 @@ export function CommentsCount({
   children,
 }: CommentConnectorInput & {
   initialCount?: number;
-  children: ({ count }: { count: number }) => React.ReactNode;
+  children: ({
+    count,
+    locked,
+    isLoading,
+  }: {
+    count?: number;
+    locked?: boolean;
+    isLoading: boolean;
+  }) => React.ReactNode;
 }) {
-  const { data: count = 0 } = trpc.commentv2.getCount.useQuery(
+  const { data: count, isLoading } = trpc.commentv2.getCount.useQuery(
     { entityId, entityType },
     { initialData: initialCount }
   );
 
-  return <>{children({ count })}</>;
+  const { data: thread } = trpc.commentv2.getThreadDetails.useQuery({ entityId, entityType });
+
+  return <>{children({ count, locked: thread?.locked, isLoading })}</>;
 }

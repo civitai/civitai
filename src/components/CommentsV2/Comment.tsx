@@ -1,13 +1,22 @@
-import { GroupProps, Group, ActionIcon, Anchor, Menu, Stack, Text, Button } from '@mantine/core';
+import {
+  GroupProps,
+  Group,
+  ActionIcon,
+  Menu,
+  Stack,
+  Text,
+  Button,
+  Box,
+  Badge,
+} from '@mantine/core';
 import { useMemo, useState } from 'react';
 import { useCommentsContext } from './CommentsProvider';
+import { CreateComment } from './CreateComment';
+import { CommentForm } from './CommentForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { InfiniteCommentResults } from '~/server/controllers/commentv2.controller';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconArrowBackUp } from '@tabler/icons';
-import Link from 'next/link';
-import { CommentForm } from '~/components/Comments/CommentForm';
-import { DeleteComment } from '~/components/Comments/DeleteComment';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -16,6 +25,11 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import create from 'zustand';
 import { Reactions, ReactionMetrics } from '~/components/Reaction/Reactions';
 import { ReviewReactions } from '@prisma/client';
+import { closeAllModals, openConfirmModal } from '@mantine/modals';
+import React from 'react';
+import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
+import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 type Store = {
   id?: number;
@@ -31,28 +45,42 @@ type CommentProps = Omit<GroupProps, 'children'> & {
 };
 
 export function Comment({ comment, ...groupProps }: CommentProps) {
-  const { entityId, entityType } = useCommentsContext();
+  const { entityId, entityType, isLocked, isMuted, badges } = useCommentsContext();
   const currentUser = useCurrentUser();
   const id = useStore((state) => state.id);
   const setId = useStore((state) => state.setId);
   const isOwner = currentUser?.id === comment.user.id;
   const isMod = currentUser?.isModerator ?? false;
-  const isMuted = currentUser?.muted ?? false;
   const editing = id === comment.id;
   const [replying, setReplying] = useState(false);
 
+  const canDelete = isOwner || currentUser?.isModerator;
+  const canEdit = (!isLocked && !isMuted) || isMod;
+  // const canReply = currentUser && !isOwner && !locked && !isMuted;
+  const canReply = true; //TODO.comments - switch back
+  const badge = badges?.find((x) => x.userId === comment.user.id);
+
   return (
-    <Group align="flex-start" noWrap {...groupProps}>
+    <Group align="flex-start" noWrap {...groupProps} spacing="sm">
       <UserAvatar user={comment.user} size="md" linkToProfile />
       <Stack spacing={0} style={{ flex: 1 }}>
         <Group position="apart">
           {/* AVATAR */}
           <Group spacing={8} align="center">
-            <Link href={`/user/${comment.user.username}`} passHref>
-              <Anchor variant="text" size="sm" weight="bold">
-                {comment.user.username}
-              </Anchor>
-            </Link>
+            <UserAvatar
+              user={comment.user}
+              size="md"
+              linkToProfile
+              includeAvatar={false}
+              withUsername
+              badge={
+                badge ? (
+                  <Badge size="xs" color={badge.color}>
+                    {badge.label}
+                  </Badge>
+                ) : null
+              }
+            />
             <Text color="dimmed" size="xs">
               <DaysFromNow date={comment.createdAt} />
             </Text>
@@ -65,14 +93,14 @@ export function Comment({ comment, ...groupProps }: CommentProps) {
               </ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
-              {(isOwner || currentUser?.isModerator) && (
+              {canDelete && (
                 <>
                   <DeleteComment id={comment.id} entityId={entityId} entityType={entityType}>
                     <Menu.Item icon={<IconTrash size={14} stroke={1.5} />} color="red">
                       Delete comment
                     </Menu.Item>
                   </DeleteComment>
-                  {(!currentUser?.muted || currentUser?.isModerator) && (
+                  {canEdit && (
                     <Menu.Item
                       icon={<IconEdit size={14} stroke={1.5} />}
                       onClick={() => setId(comment.id)}
@@ -111,8 +139,7 @@ export function Comment({ comment, ...groupProps }: CommentProps) {
               {/* COMMENT INTERACTION */}
               <Group spacing={4}>
                 <CommentReactions comment={comment} />
-                {/* TODO.comments - locked threads? */}
-                {currentUser && !isOwner && !isMuted && (
+                {canReply && (
                   <Button
                     variant="subtle"
                     size="xs"
@@ -129,15 +156,14 @@ export function Comment({ comment, ...groupProps }: CommentProps) {
               </Group>
             </>
           ) : (
-            <CommentForm
-              comment={comment}
-              entityId={entityId}
-              entityType={entityType}
-              onCancel={() => setId(undefined)}
-              autoFocus
-            />
+            <CommentForm comment={comment} onCancel={() => setId(undefined)} autoFocus />
           )}
         </Stack>
+        {canReply && replying && (
+          <Box pt="sm">
+            <CreateComment autoFocus replyTo={comment.user} onCancel={() => setReplying(false)} />
+          </Box>
+        )}
       </Stack>
     </Group>
   );
@@ -165,4 +191,46 @@ function CommentReactions({ comment }: { comment: InfiniteCommentResults['commen
       metrics={metrics}
     />
   );
+}
+
+export function DeleteComment({
+  children,
+  id,
+  entityId,
+  entityType,
+}: { children: React.ReactElement; id: number } & CommentConnectorInput) {
+  const queryUtils = trpc.useContext();
+  const { mutate, isLoading } = trpc.commentv2.delete.useMutation({
+    async onSuccess() {
+      showSuccessNotification({
+        title: 'Your comment has been deleted',
+        message: 'Successfully deleted the comment',
+      });
+      closeAllModals();
+      //TODO.comments - possiby add optimistic updates
+      queryUtils.commentv2.getCount.setData({ entityId, entityType }, (old = 1) => old - 1);
+      await queryUtils.commentv2.getInfinite.invalidate({ entityId, entityType });
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Could not delete comment',
+        reason: 'An unexpected error occurred, please try again',
+      });
+    },
+  });
+
+  const handleDeleteComment = () => {
+    openConfirmModal({
+      title: 'Delete comment',
+      children: <Text size="sm">Are you sure you want to delete this comment?</Text>,
+      centered: true,
+      labels: { confirm: 'Delete comment', cancel: "No, don't delete it" },
+      confirmProps: { color: 'red', loading: isLoading },
+      closeOnConfirm: false,
+      onConfirm: () => mutate({ id }),
+    });
+  };
+
+  return React.cloneElement(children, { onClick: handleDeleteComment });
 }
