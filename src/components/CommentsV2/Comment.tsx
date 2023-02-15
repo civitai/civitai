@@ -56,8 +56,7 @@ export function Comment({ comment, ...groupProps }: CommentProps) {
 
   const canDelete = isOwner || currentUser?.isModerator;
   const canEdit = (!isLocked && !isMuted) || isMod;
-  // const canReply = currentUser && !isOwner && !locked && !isMuted;
-  const canReply = true; //TODO.comments - switch back
+  const canReply = currentUser && !isOwner && !locked && !isMuted;
   const badge = badges?.find((x) => x.userId === comment.user.id);
 
   return (
