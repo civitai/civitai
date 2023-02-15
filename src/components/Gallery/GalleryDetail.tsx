@@ -290,7 +290,7 @@ export function GalleryDetail() {
           <Card.Section component={ScrollArea} style={{ flex: 1, position: 'relative' }}>
             <LoadingOverlay visible={deleteMutation.isLoading} />
             <Stack spacing="md" py="md">
-              <Box px="md">
+              <Box px="sm">
                 <Reactions
                   entityId={image.id}
                   entityType="image"
@@ -309,9 +309,9 @@ export function GalleryDetail() {
                     },
                   }}
                 />
-                <Paper p="sm" pt="lg" radius={0}>
+                <Box p="sm" pt="lg" radius={0}>
                   <GalleryImageComments imageId={image.id} userId={image.user.id} />
-                </Paper>
+                </Box>
               </div>
               {/* TODO.gallery - TAGS */}
               {/* TODO.gallery - RESOURCES */}

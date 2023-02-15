@@ -161,11 +161,13 @@ export const CommentForm = ({
 
 const useStyles = createStyles((theme) => ({
   content: {
-    padding: 10,
+    padding: 0,
     fontSize: 14,
 
     '.ProseMirror': {
+      padding: 10,
       minHeight: 22,
+      cursor: 'text',
     },
   },
 }));

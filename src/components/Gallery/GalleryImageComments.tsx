@@ -1,6 +1,7 @@
-import { Stack, Group, Text, Loader, Center } from '@mantine/core';
+import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
 import { CommentsProvider, LoadNextPage, CreateComment, Comment } from '~/components/CommentsV2';
 import { useEffect } from 'react';
+import { IconPlus } from '@tabler/icons';
 
 type GalleryImageCommentsProps = {
   imageId: number;
@@ -32,14 +33,20 @@ export function GalleryImageComments({ imageId, userId }: GalleryImageCommentsPr
             ))}
             <LoadNextPage>
               {({ remaining, onClick }) => (
-                <Group spacing="xs" align="center">
-                  {isFetching && <Loader size="xs" />}
-                  <Text variant="link" sx={{ cursor: 'pointer' }} onClick={onClick}>
-                    {remaining > 0
-                      ? `Show ${remaining} more ${remaining > 1 ? 'comments' : 'comment'}`
-                      : 'Show more'}
-                  </Text>
-                </Group>
+                <Divider
+                  label={
+                    <Group spacing="xs" align="center">
+                      {isFetching && <Loader size="xs" />}
+                      <Text variant="link" sx={{ cursor: 'pointer' }} onClick={onClick}>
+                        {remaining > 0
+                          ? `Show ${remaining} more ${remaining > 1 ? 'comments' : 'comment'}`
+                          : 'Show more'}
+                      </Text>
+                    </Group>
+                  }
+                  labelPosition="center"
+                  variant="dashed"
+                />
               )}
             </LoadNextPage>
             {created.map((comment) => (

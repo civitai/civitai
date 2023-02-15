@@ -80,7 +80,7 @@ export function Comment({ comment, ...groupProps }: CommentProps) {
                 ) : null
               }
             />
-            <Text color="dimmed" size="xs">
+            <Text color="dimmed" size="xs" mt={2}>
               <DaysFromNow date={comment.createdAt} />
             </Text>
           </Group>
@@ -128,7 +128,7 @@ export function Comment({ comment, ...groupProps }: CommentProps) {
           </Menu>
         </Group>
         {/* COMMENT / EDIT COMMENT */}
-        <Stack style={{ flex: 1 }}>
+        <Stack style={{ flex: 1 }} spacing={4}>
           {!editing ? (
             <>
               <RenderHtml

@@ -63,7 +63,7 @@ export function UserAvatar({
       {withUsername || subText ? (
         <Stack spacing={0}>
           {withUsername && (
-            <Group spacing={4}>
+            <Group spacing={4} align="center">
               <Username {...user} size={textSize} />
               {badge}
             </Group>
