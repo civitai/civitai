@@ -31,6 +31,7 @@ import {
   Overlay,
   Tabs,
   MultiSelect,
+  Box,
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
@@ -64,6 +65,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   loading?: boolean;
   withMeta?: boolean;
   reset?: number;
+  extra?: React.ReactNode;
 };
 
 //TODO File Safety: Limit to the specific file extensions we want to allow
@@ -71,6 +73,7 @@ export function ImageUpload({
   value = [],
   onChange,
   label,
+  extra,
   max = 10,
   hasPrimaryImage,
   withMeta = true,
@@ -113,7 +116,12 @@ export function ImageUpload({
   return (
     <Input.Wrapper
       label={label}
-      description={`${files.length}/${max} uploaded files`}
+      description={
+        <Group>
+          <Text>{`${files.length}/${max} uploaded files`}</Text>
+          {extra && <Box ml="auto">{extra}</Box>}
+        </Group>
+      }
       {...inputWrapperProps}
     >
       <Stack my={5}>

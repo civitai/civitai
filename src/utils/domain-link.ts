@@ -11,7 +11,7 @@ export const domainLinks = {
   patreon: ['patreon.com', 'www.patreon.com'],
   koFi: ['ko-fi.com'],
   coindrop: ['coindrop.to'],
-  discord: ['discord.gg'],
+  discord: ['discord.gg', 'discord.com'],
   github: ['github.com'],
   linktree: ['linktr.ee'],
   deviantArt: ['www.deviantart.com', 'deviantart.com'],

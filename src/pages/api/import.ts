@@ -6,7 +6,10 @@ import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 
 const importSchema = z.object({
   source: z.string().trim().url(),
-  wait: z.boolean().optional().default(false),
+  wait: z
+    .preprocess((x) => x == 'true', z.boolean())
+    .optional()
+    .default(false),
   data: z.any().optional(),
 });
 

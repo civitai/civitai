@@ -15,6 +15,9 @@ const useStyles = createStyles(() => ({
     p: {
       wordBreak: 'break-word',
     },
+    iframe: {
+      border: 'none',
+    },
   },
 }));
 

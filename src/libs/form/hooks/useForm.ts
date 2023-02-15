@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useForm as useReactHookForm, UseFormProps, UseFormReset } from 'react-hook-form';
 import { z } from 'zod';
 
@@ -18,14 +18,23 @@ export const useForm = <TSchema extends z.AnyZodObject | z.Schema, TContext>(
     ...props,
   });
 
-  const reset: UseFormReset<z.infer<TSchema>> = (options) => {
-    form.reset(options);
-    setResetCount((c) => c + 1);
-  };
+  const reset: UseFormReset<z.infer<TSchema>> = useCallback(
+    (options) => {
+      form.reset(options);
+      setResetCount((c) => c + 1);
+    },
+    [form]
+  );
 
-  return {
-    ...form,
-    resetCount,
-    reset,
-  };
+  const refresh = useCallback(() => setResetCount((c) => c + 1), []);
+
+  return useMemo(
+    () => ({
+      ...form,
+      resetCount,
+      reset,
+      refresh,
+    }),
+    [form, resetCount, reset, refresh]
+  );
 };

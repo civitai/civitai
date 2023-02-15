@@ -57,7 +57,6 @@ export async function importModelFromHuggingFace(
   // for each file in the model, create a modelVersion on the model
   const modelVersions: Prisma.ModelVersionUncheckedCreateInput[] = [];
   let type: ModelType = ModelType.Checkpoint;
-  let primary;
   for (const { name, url } of files) {
     // TODO Import: Improve this to handle models that aren't saved as `.ckpt` or `.safetensors`
     // Example: https://huggingface.co/sd-dreambooth-library/the-witcher-game-ciri/tree/main
@@ -83,13 +82,10 @@ export async function importModelFromHuggingFace(
             name,
             type: 'Model',
             format: getModelFileFormat(name),
-            primary,
           } as Prisma.ModelFileCreateWithoutModelVersionInput,
         ],
       },
     });
-
-    primary = false;
   }
 
   // If there aren't versions, there's nothing for us to do...
@@ -167,8 +163,8 @@ export async function importModelFromHuggingFace(
       }
     },
     {
-      maxWait: 5000,
-      timeout: 10000,
+      maxWait: 10000,
+      timeout: 30000,
     }
   );
 }
@@ -197,7 +193,8 @@ function isImage(filename: string) {
 
 const modelFileRegex = /\.(ckpt|pt|bin|safetensors)$/;
 function isModelFile(filename: string) {
-  return !filename.includes('/') && modelFileRegex.test(filename);
+  if (filename.endsWith('pytorch_model.bin')) return false;
+  return modelFileRegex.test(filename);
 }
 
 function fileToModelType(filename: string, sizeKB: number) {

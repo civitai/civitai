@@ -12,6 +12,7 @@ import {
   ThemeIcon,
   Divider,
   Input,
+  Menu,
 } from '@mantine/core';
 import {
   CheckpointType,
@@ -209,7 +210,12 @@ export function ModelForm({ model }: Props) {
     mode: 'onChange',
     defaultValues,
   });
-  const { fields, prepend, remove, swap } = useFieldArray({
+  const {
+    fields: modelVersions,
+    prepend,
+    remove,
+    swap,
+  } = useFieldArray({
     control: form.control,
     name: 'modelVersions',
     rules: { minLength: 1, required: true },
@@ -265,6 +271,18 @@ export function ModelForm({ model }: Props) {
 
   const acceptsTrainedWords = ['Checkpoint', 'TextualInversion', 'LORA'].includes(type);
   const isTextualInversion = type === 'TextualInversion';
+
+  const copyImages = ({ from, to }: { from: number; to: number }) => {
+    const fromImages = modelVersions[from].images.map((x) => ({ ...x, id: undefined }));
+    const toImages = modelVersions[to].images;
+    // combine image arrays and filter out duplicate based on image url
+    const combinedImages = [...toImages, ...fromImages].filter(
+      (image, index, self) => index === self.findIndex((t) => t.url === image.url)
+    );
+
+    form.setValue(`modelVersions.${to}.images`, combinedImages);
+    form.refresh();
+  };
 
   const handleSubmit = (values: FormSchema) => {
     function runMutation(options = { asDraft: false }) {
@@ -364,7 +382,7 @@ export function ModelForm({ model }: Props) {
         form.setValue('checkpointType', CheckpointType.Merge);
         break;
       case 'TextualInversion':
-        fields.forEach((_, index) => {
+        modelVersions.forEach((_, index) => {
           const modelVersion = form.getValues(`modelVersions.${index}`);
           const trainedWords = modelVersion.trainedWords ?? [];
           const [firstWord] = trainedWords;
@@ -374,7 +392,7 @@ export function ModelForm({ model }: Props) {
         break;
       case 'Hypernetwork':
       case 'AestheticGradient':
-        fields.forEach((_, index) => {
+        modelVersions.forEach((_, index) => {
           form.setValue(`modelVersions.${index}.trainedWords`, []);
           form.setValue(`modelVersions.${index}.skipTrainedWords`, true);
         });
@@ -415,12 +433,13 @@ export function ModelForm({ model }: Props) {
       <Form
         form={form}
         onSubmit={handleSubmit}
-        onError={() =>
+        onError={(err) => {
+          console.error(err);
           showErrorNotification({
             error: new Error('Please check the fields marked with red to fix the issues.'),
             title: 'Form Validation Failed',
-          })
-        }
+          });
+        }}
       >
         <Grid gutter="xl">
           <Grid.Col lg={8}>
@@ -516,7 +535,7 @@ export function ModelForm({ model }: Props) {
                 </Button>
               </Group>
               {/* Model Versions */}
-              {fields.map((version, index) => {
+              {modelVersions.map((version, index) => {
                 const trainedWords = form.watch(`modelVersions.${index}.trainedWords`) ?? [];
                 const skipTrainedWords =
                   !isTextualInversion &&
@@ -546,9 +565,9 @@ export function ModelForm({ model }: Props) {
                                 withAsterisk
                                 style={{ flex: 1 }}
                               />
-                              {fields.length > 1 && (
+                              {modelVersions.length > 1 && (
                                 <>
-                                  {index < fields.length - 1 && (
+                                  {index < modelVersions.length - 1 && (
                                     <ActionIcon
                                       variant="default"
                                       onClick={() => swap(index, index + 1)}
@@ -738,6 +757,34 @@ export function ModelForm({ model }: Props) {
                           <InputImageUpload
                             name={`modelVersions.${index}.images`}
                             label="Example Images"
+                            extra={
+                              <Menu
+                                styles={{ item: { padding: '4px 12px', textAlign: 'center' } }}
+                                withArrow
+                              >
+                                <Menu.Target>
+                                  <Text variant="link" sx={{ cursor: 'pointer' }}>
+                                    Copy to another version
+                                  </Text>
+                                </Menu.Target>
+                                <Menu.Dropdown>
+                                  <Menu.Label>Versions</Menu.Label>
+                                  {modelVersions.map((version, i) => {
+                                    if (i === index) return null;
+                                    const versionName =
+                                      form.getValues(`modelVersions.${i}.name`) ?? `Version ${i}`;
+                                    return (
+                                      <Menu.Item
+                                        key={i}
+                                        onClick={() => copyImages({ from: index, to: i })}
+                                      >
+                                        {versionName}
+                                      </Menu.Item>
+                                    );
+                                  })}
+                                </Menu.Dropdown>
+                              </Menu>
+                            }
                             max={20}
                             hasPrimaryImage
                             withAsterisk

@@ -1,0 +1,20 @@
+import { cloneElement } from 'react';
+import { useCommentsContext } from './CommentsProvider';
+
+type Props = {
+  children: ({ remaining }: { remaining: number; onClick: () => void }) => React.ReactElement;
+};
+
+export function LoadNextPage({ children }: Props) {
+  const { data, count, isFetching, hasNextPage, fetchNextPage } = useCommentsContext();
+  const remaining = count - (data?.length ?? 0);
+  console.log({ count, remaining, hasNextPage });
+
+  const handleClick = () => {
+    if (!isFetching) fetchNextPage();
+  };
+
+  return hasNextPage && remaining > 0
+    ? cloneElement(children({ remaining, onClick: handleClick }))
+    : null;
+}
