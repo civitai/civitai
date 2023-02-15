@@ -519,11 +519,10 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
 
         UNION
 
-        SELECT
-          a."questionId" AS id
-        FROM "QuestionComment" a
-        JOIN "CommentV2" c ON a."commentId" = c.id
-        WHERE (c."createdAt" > '${lastUpdate}')
+        SELECT t."questionId" as id
+        FROM "Thread" t
+        JOIN "CommentV2" c ON c."threadId" = t.id
+        WHERE t."questionId" IS NOT NULL AND c."createdAt" > '${lastUpdate}'
 
         UNION
 
@@ -607,8 +606,9 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
             SUM(IIF(v."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_comment_count,
             SUM(IIF(v."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_comment_count,
             SUM(IIF(v."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_comment_count
-          FROM "QuestionComment" qc
-          JOIN "CommentV2" v ON qc."commentId" = v.id
+          FROM "Thread" qc
+          JOIN "CommentV2" v ON qc."id" = v."threadId"
+          WHERE qc."questionId" IS NOT NULL
           GROUP BY qc."questionId"
         ) c ON q.id = c.id
         LEFT JOIN (
@@ -643,11 +643,11 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
 
         UNION
 
-        SELECT
-          a."answerId" AS id
-        FROM "AnswerComment" a
-        JOIN "CommentV2" c ON a."commentId" = c.id
-        WHERE c."createdAt" > '${lastUpdate}'
+        SELECT t."answerId" as id
+        FROM "Thread" t
+        JOIN "CommentV2" c ON c."threadId" = t.id
+        WHERE t."answerId" IS NOT NULL
+        AND c."createdAt" > '${lastUpdate}'
 
         UNION
 
@@ -739,8 +739,9 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
             SUM(IIF(v."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_comment_count,
             SUM(IIF(v."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_comment_count,
             SUM(IIF(v."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_comment_count
-          FROM "AnswerComment" ac
-          JOIN "CommentV2" v ON ac."commentId" = v.id
+          FROM "Thread" ac
+          JOIN "CommentV2" v ON ac."id" = v."threadId"
+          WHERE ac."answerId" IS NOT NULL
           GROUP BY ac."answerId"
         ) c ON q.id = c.id
         LEFT JOIN (
@@ -915,11 +916,10 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
 
         UNION
 
-        SELECT
-          a."imageId" AS id
-        FROM "ImageComment" a
-        JOIN "CommentV2" c ON a."commentId" = c.id
-        WHERE (c."createdAt" > '${lastUpdate}')
+        SELECT t."imageId" as id
+        FROM "Thread" t
+        JOIN "CommentV2" c ON c."threadId" = t.id
+        WHERE t."imageId" IS NOT NULL AND c."createdAt" > '${lastUpdate}'
 
         UNION
 
@@ -1028,8 +1028,9 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
             SUM(IIF(v."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_comment_count,
             SUM(IIF(v."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_comment_count,
             SUM(IIF(v."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_comment_count
-          FROM "ImageComment" ic
-          JOIN "CommentV2" v ON ic."commentId" = v.id
+          FROM "Thread" ic
+          JOIN "CommentV2" v ON ic."id" = v."threadId"
+          WHERE ic."imageId" IS NOT NULL
           GROUP BY ic."imageId"
         ) c ON q.id = c.id
         LEFT JOIN (

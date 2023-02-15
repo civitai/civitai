@@ -415,12 +415,13 @@ export function ModelForm({ model }: Props) {
       <Form
         form={form}
         onSubmit={handleSubmit}
-        onError={() =>
+        onError={(err) => {
+          console.error(err);
           showErrorNotification({
             error: new Error('Please check the fields marked with red to fix the issues.'),
             title: 'Form Validation Failed',
-          })
-        }
+          });
+        }}
       >
         <Grid gutter="xl">
           <Grid.Col lg={8}>
