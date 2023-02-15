@@ -21,7 +21,6 @@ export function Username({
   size = 'sm',
   inherit = false,
 }: Props) {
-  const features = useFeatureFlags();
   if (deletedAt) return <Text size={size}>[deleted]</Text>;
 
   const nameplate = cosmetics.find(({ cosmetic }) => cosmetic.type === 'NamePlate')
@@ -30,7 +29,7 @@ export function Username({
     BadgeCosmetic,
     'description' | 'obtainedAt'
   >;
-  const additionalTextProps = features.memberBadges ? nameplate?.data : {};
+  const additionalTextProps = nameplate?.data;
   const badgeSize = mapSizeToImageWidth[size];
 
   return (
@@ -45,7 +44,7 @@ export function Username({
       >
         {username}
       </Text>
-      {features.memberBadges && badge?.data.url && (
+      {badge?.data.url && (
         <Tooltip label={badge.name} withArrow>
           <div>
             <EdgeImage src={badge.data.url} width={badgeSize} />

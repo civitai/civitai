@@ -131,28 +131,29 @@ export const updateUserHandler = async ({
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
 
+  const isSettingCosmetics = badgeId !== undefined && nameplateId !== undefined;
+
   try {
-    const { memberBadges } = getFeatureFlags({ user: currentUser });
     const payloadCosmeticIds: number[] = [];
-    if (memberBadges) {
-      if (badgeId) payloadCosmeticIds.push(badgeId);
-      if (nameplateId) payloadCosmeticIds.push(nameplateId);
-    }
+    if (badgeId) payloadCosmeticIds.push(badgeId);
+    if (nameplateId) payloadCosmeticIds.push(nameplateId);
 
     const updatedUser = await updateUserById({
       id,
       data: {
         ...data,
-        cosmetics: {
-          updateMany: {
-            where: { equippedAt: { not: null } },
-            data: { equippedAt: null },
-          },
-          update: payloadCosmeticIds.map((cosmeticId) => ({
-            where: { userId_cosmeticId: { userId: id, cosmeticId } },
-            data: { equippedAt: new Date() },
-          })),
-        },
+        cosmetics: !isSettingCosmetics
+          ? undefined
+          : {
+              updateMany: {
+                where: { equippedAt: { not: null } },
+                data: { equippedAt: null },
+              },
+              update: payloadCosmeticIds.map((cosmeticId) => ({
+                where: { userId_cosmeticId: { userId: id, cosmeticId } },
+                data: { equippedAt: new Date() },
+              })),
+            },
       },
     });
     if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
