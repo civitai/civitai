@@ -90,7 +90,7 @@ export function ImageUpload({
     // isProcessing,
     // hasErrors,
     // hasBlocked,
-  } = useImageUpload({ max, value: Array.isArray(value) ? value : [], reset });
+  } = useImageUpload({ max, value: Array.isArray(value) ? value : [] });
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
 
   useDidUpdate(() => {
