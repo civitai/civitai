@@ -5,7 +5,7 @@ import Mention from '@tiptap/extension-mention';
 import Placeholder from '@tiptap/extension-placeholder';
 import Underline from '@tiptap/extension-underline';
 import Youtube from '@tiptap/extension-youtube';
-import { BubbleMenu, Editor, Extension, Extensions, useEditor } from '@tiptap/react';
+import { BubbleMenu, Editor, Extension, Extensions, nodePasteRule, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useEffect, useImperativeHandle, useRef } from 'react';
 
@@ -86,7 +86,26 @@ export function RichTextEditor({
     // since the tiptap extension API doesn't allow
     // strings for its value
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ...(addMedia ? [Image, Youtube.configure({ width: '100%' as any })] : []),
+    ...(addMedia
+      ? [
+          Image,
+          Youtube.configure({
+            width: '100%' as any,
+            addPasteHandler: false,
+            modestBranding: false,
+          }).extend({
+            addPasteRules() {
+              return [
+                nodePasteRule({
+                  find: /^(https?:\/\/)?(www\.|music\.)?(youtube\.com|youtu\.be)(?!.*\/channel\/)(?!\/@)(.+)?$/g,
+                  type: this.type,
+                  getAttributes: (match) => ({ src: match.input }),
+                }),
+              ];
+            },
+          }),
+        ]
+      : []),
     ...(addMentions
       ? [
           Mention.configure({
