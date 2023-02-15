@@ -59,16 +59,19 @@ export const getReviewImagesSchema = z.object({
 
 export type GetGalleryImageInput = z.infer<typeof getGalleryImageSchema>;
 export const getGalleryImageSchema = z.object({
-  limit: z.number().min(0).max(200).default(constants.imageFilterDefaults.limit),
+  limit: z.number().min(0).max(200).default(constants.galleryFilterDefaults.limit),
   cursor: z.number().optional(),
   modelId: z.number().optional(),
   reviewId: z.number().optional(),
   modelVersionId: z.number().optional(),
   userId: z.number().optional(),
   infinite: z.boolean().default(true),
-  period: z.nativeEnum(MetricTimeframe).default(constants.imageFilterDefaults.period),
-  sort: z.nativeEnum(ImageSort).default(constants.imageFilterDefaults.sort),
+  period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
+  sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
   hideNSFW: z.boolean().optional(),
   tags: z.array(z.number()).optional(),
   excludedTagIds: z.array(z.number()).optional(),
+  excludedUserIds: z.array(z.number()).optional(),
+  singleImageModel: z.boolean().optional(),
+  singleImageAlbum: z.boolean().optional(),
 });

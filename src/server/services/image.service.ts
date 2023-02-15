@@ -27,8 +27,7 @@ export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
 /**
  * TODO.gallery
  * Filter images based on selected filters (image processing, resources, single image per model/album)
- * Enable new filters in the image query schema
- * Update the TrendingTags component to be reused between the gallery and the model feed (if possible)
+ * @justin Add "featured" filter when no category has been selected
  */
 export const getGalleryImages = async <
   TOrderBy extends Prisma.Enumerable<Prisma.ImageOrderByWithRelationInput>
@@ -46,6 +45,9 @@ export const getGalleryImages = async <
   sort,
   tags,
   excludedTagIds,
+  excludedUserIds,
+  singleImageAlbum,
+  singleImageModel,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
   const isMod = user?.isModerator ?? false;
@@ -56,8 +58,10 @@ export const getGalleryImages = async <
       modelVersionId,
       reviewId,
     },
-    // Only include images from published models
-    imagesOnModels: { modelVersion: { model: { status: ModelStatus.Published } } },
+    // Only include images from published models and without tosViolation
+    imagesOnModels: {
+      modelVersion: { model: { status: ModelStatus.Published, tosViolation: false } },
+    },
   };
   const finiteWhere: Prisma.ImageWhereInput = {
     imagesOnModels:
@@ -67,11 +71,14 @@ export const getGalleryImages = async <
     imagesOnReviews: reviewId ? { reviewId } : undefined,
   };
 
-  const tagsAndClause: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
+  const conditionalFilters: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   if (excludedTagIds && excludedTagIds.length)
-    tagsAndClause.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
+    conditionalFilters.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
 
-  if (tags && tags.length) tagsAndClause.push({ tags: { some: { tagId: { in: tags } } } });
+  if (tags && tags.length) conditionalFilters.push({ tags: { some: { tagId: { in: tags } } } });
+
+  if (excludedUserIds && excludedUserIds.length)
+    conditionalFilters.push({ userId: { notIn: excludedUserIds } });
 
   const items = await prisma.image.findMany({
     cursor: cursor ? { id: cursor } : undefined,
@@ -80,14 +87,14 @@ export const getGalleryImages = async <
       userId,
       nsfw: !canViewNsfw ? { equals: false } : undefined,
       tosViolation: !isMod ? false : undefined,
-      AND: tagsAndClause,
+      AND: conditionalFilters,
       ...(infinite ? infiniteWhere : finiteWhere),
     },
     select: imageGallerySelect({ user }),
     orderBy: orderBy ?? [
       ...(sort === ImageSort.MostComments
         ? [{ rank: { [`commentCount${period}Rank`]: 'asc' } }]
-        : sort === ImageSort.MostReactions
+        : sort === ImageSort.MostReactions // TODO.gallery: @justin Add metric to sort by most reactions
         ? [{ rank: { [`likeCount${period}Rank`]: 'asc' } }]
         : []),
       { createdAt: 'desc' },

@@ -1,5 +1,7 @@
 import {
   ActionIcon,
+  Box,
+  Button,
   Chip,
   ChipProps,
   createStyles,
@@ -7,22 +9,32 @@ import {
   Group,
   Indicator,
   Popover,
+  ScrollArea,
   Stack,
 } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
-import { IconFilter, IconChevronDown } from '@tabler/icons';
+import {
+  IconChevronDown,
+  IconChevronLeft,
+  IconChevronRight,
+  IconFilter,
+  IconFilterOff,
+} from '@tabler/icons';
 import { deleteCookie } from 'cookies-next';
 import { useRouter } from 'next/router';
+import { useRef, useState } from 'react';
 import z from 'zod';
 import create from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { galleryFilterSchema, useCookies } from '~/providers/CookiesProvider';
 import { constants } from '~/server/common/constants';
 import { ImageResource, ImageSort, ImageType } from '~/server/common/enums';
 import { setCookie } from '~/utils/cookies-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 
 const numberType = z.preprocess((arg) => {
   return !!arg ? Number(arg) : undefined;
@@ -49,6 +61,7 @@ type Store = {
   setHideNsfw: (hide?: boolean) => void;
   setTypes: (types?: ImageType[]) => void;
   setResources: (resources?: ImageResource[]) => void;
+  setTags: (tags?: number[]) => void;
   setSingleImageModel: (single?: boolean) => void;
   setSingleImageAlbum: (single?: boolean) => void;
 };
@@ -80,6 +93,12 @@ const useFiltersStore = create<Store>()(
         !!types?.length ? setCookie('g_types', types) : deleteCookie('g_types');
       });
     },
+    setTags: (tags) => {
+      set((state) => {
+        state.filters.tags = tags;
+        !!tags?.length ? setCookie('g_tags', tags) : deleteCookie('g_tags');
+      });
+    },
     setResources: (resources) => {
       set((state) => {
         state.filters.resources = resources;
@@ -101,13 +120,39 @@ const useFiltersStore = create<Store>()(
   }))
 );
 
-export const useGalleryFilters = (): Partial<QueryFilterProps> & FilterProps => {
+export const useGalleryFilters = (): {
+  filters: Partial<QueryFilterProps> & FilterProps;
+  clearFilters: VoidFunction;
+} => {
   const router = useRouter();
-  const limit = constants.imageFilterDefaults.limit;
+  const cookies = useCookies().gallery;
+  const limit = constants.galleryFilterDefaults.limit;
   const storeFilters = useFiltersStore((state) => state.filters);
   const filters = { ...storeFilters, limit };
   const result = queryStringSchema.safeParse(router.query);
-  return result.success ? { ...result.data, ...filters } : filters;
+
+  const setTypes = useFiltersStore((state) => state.setTypes);
+  const setTags = useFiltersStore((state) => state.setTags);
+  const setResources = useFiltersStore((state) => state.setResources);
+  const setSingleImageModel = useFiltersStore((state) => state.setSingleImageModel);
+  const setSingleImageAlbum = useFiltersStore((state) => state.setSingleImageAlbum);
+
+  const clearFilters = () => {
+    setTypes([]);
+    setTags([]);
+    setResources([]);
+    setSingleImageModel(false);
+    setSingleImageAlbum(false);
+  };
+
+  const combinedFilters = result.success
+    ? { ...result.data, ...cookies, ...filters }
+    : { ...cookies, ...filters };
+
+  return {
+    filters: combinedFilters,
+    clearFilters,
+  };
 };
 
 const sortOptions = Object.values(ImageSort);
@@ -115,7 +160,7 @@ export function GallerySort() {
   const cookies = useCookies().gallery;
   const setSort = useFiltersStore((state) => state.setSort);
   const sort = useFiltersStore(
-    (state) => state.filters.sort ?? cookies.sort ?? constants.imageFilterDefaults.sort
+    (state) => state.filters.sort ?? cookies.sort ?? constants.galleryFilterDefaults.sort
   );
 
   return (
@@ -133,7 +178,7 @@ export function GalleryPeriod() {
   const cookies = useCookies().gallery;
   const setPeriod = useFiltersStore((state) => state.setPeriod);
   const period = useFiltersStore(
-    (state) => state.filters.period ?? cookies.period ?? constants.imageFilterDefaults.period
+    (state) => state.filters.period ?? cookies.period ?? constants.galleryFilterDefaults.period
   );
 
   return (
@@ -148,6 +193,7 @@ export function GalleryPeriod() {
 
 export function GalleryFilters() {
   const { classes } = useStyles();
+  const { clearFilters } = useGalleryFilters();
   const cookies = useCookies().gallery;
   const setTypes = useFiltersStore((state) => state.setTypes);
   const types = useFiltersStore((state) => state.filters.types ?? cookies.types ?? []);
@@ -227,9 +273,98 @@ export function GalleryFilters() {
               Per album
             </Chip>
           </Group>
+          {filterLength > 0 && (
+            <Button mt="xs" compact onClick={clearFilters} leftIcon={<IconFilterOff size={20} />}>
+              Clear Filters
+            </Button>
+          )}
         </Stack>
       </Popover.Dropdown>
     </Popover>
+  );
+}
+
+export function GalleryCategories() {
+  const { classes, cx, theme } = useStyles();
+  const currentUser = useCurrentUser();
+
+  const cookies = useCookies().gallery;
+  const setTags = useFiltersStore((state) => state.setTags);
+  const tags = useFiltersStore((state) => state.filters.tags ?? cookies.tags ?? []);
+
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [scrollPosition, setScrollPosition] = useState({ x: 0, y: 0 });
+
+  const { data: hiddenTags } = trpc.user.getTags.useQuery(
+    { type: 'Hide' },
+    { enabled: !!currentUser }
+  );
+  const { data: { items: categories } = { items: [] } } = trpc.tag.getAll.useQuery(
+    { entityType: ['Image'], not: hiddenTags?.map((x) => x.id), unlisted: false, categories: true },
+    { enabled: !currentUser || hiddenTags !== undefined }
+  );
+
+  if (!categories.length) return null;
+
+  const largerThanViewport =
+    viewportRef.current && viewportRef.current.scrollWidth > viewportRef.current.offsetWidth;
+  const atStart = scrollPosition.x === 0;
+  const atEnd =
+    viewportRef.current &&
+    scrollPosition.x >= viewportRef.current.scrollWidth - viewportRef.current.offsetWidth - 1;
+
+  const scrollLeft = () => viewportRef.current?.scrollBy({ left: -200, behavior: 'smooth' });
+  const scrollRight = () => viewportRef.current?.scrollBy({ left: 200, behavior: 'smooth' });
+
+  const handleCategoryClick = (id: number) => {
+    setTags(tags.includes(id) ? tags.filter((x) => x !== id) : [...tags, id]);
+  };
+
+  return (
+    <ScrollArea
+      viewportRef={viewportRef}
+      className={classes.tagsContainer}
+      type="never"
+      onScrollPositionChange={setScrollPosition}
+    >
+      <Box className={cx(classes.leftArrow, atStart && classes.hidden)}>
+        <ActionIcon
+          className={classes.arrowButton}
+          variant="transparent"
+          radius="xl"
+          onClick={scrollLeft}
+        >
+          <IconChevronLeft />
+        </ActionIcon>
+      </Box>
+      <Group className={classes.tagsGroup} spacing={8} noWrap>
+        {categories.map((tag) => {
+          const active = tags.includes(tag.id);
+          return (
+            <Button
+              key={tag.id}
+              className={classes.tag}
+              variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+              color={active ? 'blue' : 'gray'}
+              onClick={() => handleCategoryClick(tag.id)}
+              compact
+            >
+              {tag.name}
+            </Button>
+          );
+        })}
+      </Group>
+      <Box className={cx(classes.rightArrow, (atEnd || !largerThanViewport) && classes.hidden)}>
+        <ActionIcon
+          className={classes.arrowButton}
+          variant="transparent"
+          radius="xl"
+          onClick={scrollRight}
+        >
+          <IconChevronRight />
+        </ActionIcon>
+      </Box>
+    </ScrollArea>
   );
 }
 
@@ -254,6 +389,74 @@ const useStyles = createStyles((theme, _params, getRef) => {
 
     iconWrapper: {
       ref,
+    },
+    tagsContainer: {
+      position: 'relative',
+
+      [theme.fn.largerThan('lg')]: {
+        // marginLeft: theme.spacing.xl * -1.5, // -36px
+        // marginRight: theme.spacing.xl * -1.5, // -36px
+      },
+    },
+    tagsGroup: {
+      [theme.fn.largerThan('lg')]: {
+        // marginLeft: theme.spacing.xl * 1.5, // 36px
+        // marginRight: theme.spacing.xl * 1.5, // 36px
+      },
+    },
+    tag: {
+      textTransform: 'uppercase',
+    },
+    title: {
+      display: 'none',
+
+      [theme.fn.largerThan('sm')]: {
+        display: 'block',
+      },
+    },
+    arrowButton: {
+      '&:active': {
+        transform: 'none',
+      },
+    },
+    hidden: {
+      display: 'none !important',
+    },
+    leftArrow: {
+      display: 'none',
+      position: 'absolute',
+      left: 0,
+      top: '50%',
+      transform: 'translateY(-50%)',
+      paddingRight: theme.spacing.xl,
+      zIndex: 12,
+      backgroundImage: theme.fn.gradient({
+        from: theme.colorScheme === 'dark' ? theme.colors.dark[7] : 'white',
+        to: 'transparent',
+        deg: 90,
+      }),
+
+      [theme.fn.largerThan('md')]: {
+        display: 'block',
+      },
+    },
+    rightArrow: {
+      display: 'none',
+      position: 'absolute',
+      right: 0,
+      top: '50%',
+      transform: 'translateY(-50%)',
+      paddingLeft: theme.spacing.xl,
+      zIndex: 12,
+      backgroundImage: theme.fn.gradient({
+        from: theme.colorScheme === 'dark' ? theme.colors.dark[7] : 'white',
+        to: 'transparent',
+        deg: 270,
+      }),
+
+      [theme.fn.largerThan('md')]: {
+        display: 'block',
+      },
     },
   };
 });

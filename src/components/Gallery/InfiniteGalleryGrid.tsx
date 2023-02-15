@@ -69,7 +69,7 @@ export function InfiniteGalleryGrid({ columnWidth, data, filters }: Props) {
 type Props = {
   columnWidth: number;
   data: ImageGetAllInfinite;
-  filters: ReturnType<typeof useGalleryFilters>;
+  filters: ReturnType<typeof useGalleryFilters>['filters'];
 };
 
 const useStyles = createStyles((theme) => {

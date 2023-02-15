@@ -47,7 +47,7 @@ import { trpc } from '~/utils/trpc';
 export function GalleryDetail() {
   const router = useRouter();
   const id = Number(router.query.galleryImageId);
-  const filters = useGalleryFilters();
+  const { filters } = useGalleryFilters();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   const closingRef = useRef(false);

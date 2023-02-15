@@ -624,21 +624,29 @@ model ReviewReaction {
   @@unique([reviewId, userId, reaction])
 }
 
+enum ImageGenerationProcess {
+  txt2img
+  img2img
+  inpainting
+}
+
 model Image {
-  id           Int      @id @default(autoincrement())
-  name         String?
-  url          String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId       Int
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  meta         Json?
-  hash         String?
-  height       Int?
-  width        Int?
-  nsfw         Boolean  @default(false)
-  tosViolation Boolean  @default(false)
-  analysis     Json?
+  id                Int                     @id @default(autoincrement())
+  name              String?
+  url               String
+  user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId            Int
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  meta              Json?
+  hash              String?
+  height            Int?
+  width             Int?
+  nsfw              Boolean                 @default(false)
+  tosViolation      Boolean                 @default(false)
+  analysis          Json?
+  // TODO.gallery: @justin populate this column with the actual value
+  generationProcess ImageGenerationProcess?
 
   imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?
