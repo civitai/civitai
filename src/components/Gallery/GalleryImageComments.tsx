@@ -18,8 +18,8 @@ export function GalleryImageComments({ imageId, userId }: GalleryImageCommentsPr
     >
       {({ data, created, isInitialLoading, isFetching }) =>
         isInitialLoading ? (
-          <Center p="xl">
-            <Loader />
+          <Center>
+            <Loader variant="bars" />
           </Center>
         ) : (
           <Stack>

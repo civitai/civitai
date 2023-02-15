@@ -309,9 +309,9 @@ export function GalleryDetail() {
                     },
                   }}
                 />
-                <Box p="sm" pt="lg" radius={0}>
+                <Paper p="sm" pt="lg" radius={0}>
                   <GalleryImageComments imageId={image.id} userId={image.user.id} />
-                </Box>
+                </Paper>
               </div>
               {/* TODO.gallery - TAGS */}
               {/* TODO.gallery - RESOURCES */}
