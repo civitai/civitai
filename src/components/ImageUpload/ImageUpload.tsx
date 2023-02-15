@@ -29,6 +29,7 @@ import {
   Loader,
   Center,
   Overlay,
+  Box,
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
@@ -41,7 +42,7 @@ import {
   IconUpload,
   IconX,
 } from '@tabler/icons';
-import { cloneElement, useState } from 'react';
+import { cloneElement, useEffect, useState } from 'react';
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/schema/image.schema';
@@ -57,6 +58,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   loading?: boolean;
   withMeta?: boolean;
   reset?: number;
+  extra?: React.ReactNode;
 };
 
 //TODO File Safety: Limit to the specific file extensions we want to allow
@@ -64,6 +66,7 @@ export function ImageUpload({
   value = [],
   onChange,
   label,
+  extra,
   max = 10,
   hasPrimaryImage,
   loading = false,
@@ -87,7 +90,7 @@ export function ImageUpload({
     // isProcessing,
     // hasErrors,
     // hasBlocked,
-  } = useImageUpload({ max, value: Array.isArray(value) ? value : [] });
+  } = useImageUpload({ max, value: Array.isArray(value) ? value : [], reset });
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
 
   useDidUpdate(() => {
@@ -107,7 +110,12 @@ export function ImageUpload({
   return (
     <Input.Wrapper
       label={label}
-      description={`${files.length}/${max} uploaded files`}
+      description={
+        <Group>
+          <Text>{`${files.length}/${max} uploaded files`}</Text>
+          {extra && <Box ml="auto">{extra}</Box>}
+        </Group>
+      }
       {...inputWrapperProps}
     >
       <Stack my={5}>
