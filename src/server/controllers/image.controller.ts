@@ -1,5 +1,6 @@
 import { ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { env } from '~/env/server.mjs';
 import { Context } from '~/server/createContext';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -147,7 +148,8 @@ export const getGalleryImagesHandler = async ({
 
     const isOwnerOrModerator =
       parsedItems.every((x) => x.user.id === ctx.user?.id) || ctx.user?.isModerator;
-    const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
+    const prioritizeSafeImages =
+      env.SHOW_SFW_IN_NSFW && (!ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw));
 
     return prioritizeSafeImages && !isOwnerOrModerator
       ? parsedItems.sort((a, b) => (a.nsfw === b.nsfw ? sortByIndex(a, b) : a.nsfw ? 1 : -1))

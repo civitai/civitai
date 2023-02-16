@@ -45,7 +45,7 @@ export const getGalleryImages = async <
   isFeatured,
   types,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
-  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const isMod = user?.isModerator ?? false;
 
   const conditionalFilters: Prisma.Enumerable<Prisma.ImageWhereInput> = [];

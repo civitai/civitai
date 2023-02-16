@@ -34,7 +34,7 @@ export const getReviews = <TSelect extends Prisma.ReviewSelect>({
 }) => {
   const skip = page ? (page - 1) * limit : undefined;
   const isMod = user?.isModerator ?? false;
-  // const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+  // const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
 
   return prisma.review.findMany({
     take: limit,
