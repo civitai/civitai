@@ -62,6 +62,8 @@ export const getGalleryImages = async <
 
   if (!!excludedUserIds?.length) conditionalFilters.push({ userId: { notIn: excludedUserIds } });
 
+  if (types && types.length) conditionalFilters.push({ generationProcess: { in: types } });
+
   const infiniteWhere: Prisma.ImageFindManyArgs['where'] = {
     connections: {
       modelId,
@@ -72,7 +74,6 @@ export const getGalleryImages = async <
     imagesOnModels: {
       modelVersion: { model: { status: ModelStatus.Published, tosViolation: false } },
     },
-    ...(types && types.length ? { generationProcess: { in: types } } : {}),
     AND: conditionalFilters.length ? conditionalFilters : undefined,
   };
   const finiteWhere: Prisma.ImageWhereInput = {

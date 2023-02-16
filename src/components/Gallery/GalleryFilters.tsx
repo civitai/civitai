@@ -213,7 +213,7 @@ export function GalleryFilters() {
 
   const chipProps: Partial<ChipProps> = {
     radius: 'sm',
-    classNames: { label: classes.label, iconWrapper: classes.iconWrapper, root: classes.root },
+    classNames: { label: classes.label, iconWrapper: classes.iconWrapper },
   };
 
   return (
@@ -242,7 +242,6 @@ export function GalleryFilters() {
             value={types}
             onChange={(types: ImageGenerationProcess[]) => setTypes(types)}
             multiple
-            grow
           >
             {Object.values(ImageGenerationProcess).map((type, index) => (
               <Chip key={index} value={type} {...chipProps}>
@@ -379,8 +378,6 @@ const useStyles = createStyles((theme, _params, getRef) => {
 
   return {
     label: {
-      width: '100%',
-      textAlign: 'center',
       fontSize: 12,
       fontWeight: 500,
       '&[data-checked]': {
@@ -397,10 +394,6 @@ const useStyles = createStyles((theme, _params, getRef) => {
 
     iconWrapper: {
       ref,
-    },
-
-    root: {
-      maxWidth: 'unset',
     },
 
     tagsContainer: {

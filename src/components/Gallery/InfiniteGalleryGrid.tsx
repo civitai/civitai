@@ -139,7 +139,7 @@ function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
           <>
             <ImageGuard
               images={[image]}
-              connect={{ entityId: image.id, entityType: 'model' }}
+              // connect={{ entityId: image.id, entityType: 'model' }}
               render={(image) => (
                 <Box sx={{ position: 'relative' }}>
                   <Menu position="left">
@@ -172,7 +172,7 @@ function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
                       </ReportImageButton>
                     </Menu.Dropdown>
                   </Menu>
-                  <ImageGuard.ToggleConnect
+                  <ImageGuard.ToggleImage
                     sx={(theme) => ({
                       backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
                       color: 'white',

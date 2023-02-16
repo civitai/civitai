@@ -39,9 +39,9 @@ export enum QuestionStatus {
 }
 
 export enum ImageSort {
+  MostReactions = 'Most Reactions',
   MostComments = 'Most Comments',
   Newest = 'Newest',
-  MostReactions = 'Most Reactions',
 }
 
 export enum ImageType {
