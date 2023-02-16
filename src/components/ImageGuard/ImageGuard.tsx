@@ -185,6 +185,7 @@ ImageGuard.ToggleImage = function ToggleImage({
   const toggleImage = useStore((state) => state.toggleImage);
 
   if (!!connect) return null;
+  if (!image.imageNsfw) return null;
   const showing = showImage;
 
   return (

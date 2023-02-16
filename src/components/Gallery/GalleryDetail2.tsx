@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Badge,
   Box,
   Card,
   CloseButton,
@@ -127,6 +128,11 @@ export function GalleryDetail2() {
                   metrics={image.metrics}
                 />
               </Box>
+              <Group spacing={4} px="md">
+                {image.tags.map((tag) => (
+                  <Badge key={tag.id}>{tag.name}</Badge>
+                ))}
+              </Group>
               <div>
                 <Divider
                   label="Comments"

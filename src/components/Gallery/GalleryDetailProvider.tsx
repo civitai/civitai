@@ -48,7 +48,7 @@ export function GalleryDetailProvider({ children }: GalleryDetailProviderProps) 
   const closingRef = useRef(false);
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
-  const filters = useGalleryFilters();
+  const { filters } = useGalleryFilters();
   const { modelId, reviewId, userId, infinite } = filters;
 
   const imageId = Number(router.query.galleryImageId);

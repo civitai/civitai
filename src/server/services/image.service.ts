@@ -25,10 +25,6 @@ export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
   return result.map((x) => x.image);
 };
 
-/**
- * TODO.gallery
- * Filter images based on selected filters (image processing, resources, single image per model/album)
- */
 export const getGalleryImages = async <
   TOrderBy extends Prisma.Enumerable<Prisma.ImageOrderByWithRelationInput>
 >({
@@ -52,6 +48,20 @@ export const getGalleryImages = async <
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
   const isMod = user?.isModerator ?? false;
 
+  const conditionalFilters: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
+  if (!!excludedTagIds?.length)
+    conditionalFilters.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
+
+  if (!!tags?.length) conditionalFilters.push({ tags: { some: { tagId: { in: tags } } } });
+  else {
+    const periodStart = decreaseDate(new Date(), 3, 'days');
+    conditionalFilters.push({ featuredAt: { gt: periodStart } });
+  }
+
+  if (isFeatured) conditionalFilters.push({ featuredAt: { not: null } });
+
+  if (!!excludedUserIds?.length) conditionalFilters.push({ userId: { notIn: excludedUserIds } });
+
   const infiniteWhere: Prisma.ImageFindManyArgs['where'] = {
     connections: {
       modelId,
@@ -63,6 +73,7 @@ export const getGalleryImages = async <
       modelVersion: { model: { status: ModelStatus.Published, tosViolation: false } },
     },
     ...(types && types.length ? { generationProcess: { in: types } } : {}),
+    AND: conditionalFilters.length ? conditionalFilters : undefined,
   };
   const finiteWhere: Prisma.ImageWhereInput = {
     imagesOnModels:
@@ -72,21 +83,6 @@ export const getGalleryImages = async <
     imagesOnReviews: reviewId ? { reviewId } : undefined,
   };
 
-  const conditionalFilters: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
-  if (excludedTagIds && excludedTagIds.length)
-    conditionalFilters.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
-
-  if (tags && tags.length) conditionalFilters.push({ tags: { some: { tagId: { in: tags } } } });
-  else {
-    const periodStart = decreaseDate(new Date(), 3, 'days');
-    conditionalFilters.push({ featuredAt: { gt: periodStart } });
-  }
-
-  if (isFeatured) conditionalFilters.push({ featuredAt: { not: null } });
-
-  if (excludedUserIds && excludedUserIds.length)
-    conditionalFilters.push({ userId: { notIn: excludedUserIds } });
-
   const items = await prisma.image.findMany({
     cursor: cursor ? { id: cursor } : undefined,
     take: limit,
@@ -94,7 +90,6 @@ export const getGalleryImages = async <
       userId,
       nsfw: !canViewNsfw ? { equals: false } : undefined,
       tosViolation: !isMod ? false : undefined,
-      AND: conditionalFilters,
       ...(infinite ? infiniteWhere : finiteWhere),
     },
     select: imageGallerySelect({ user }),
