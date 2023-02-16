@@ -143,7 +143,6 @@ export const createSubscribeSession = async ({
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'subscription',
-    payment_method_types: ['card'],
     line_items: lineItems,
     success_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
     cancel_url: `${baseUrl}/pricing?canceled=true`,
@@ -182,7 +181,6 @@ export const createDonateSession = async ({
     cancel_url: returnUrl,
     line_items: [{ price: env.STRIPE_DONATE_ID, quantity: 1 }],
     mode: 'payment',
-    payment_method_types: ['card'],
     success_url: `${baseUrl}/payment/success?type=donation&cid=${customerId.slice(-8)}`,
   });
 
