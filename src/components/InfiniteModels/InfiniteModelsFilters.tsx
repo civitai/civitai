@@ -146,7 +146,7 @@ export function InfiniteModelsPeriod() {
 }
 
 const availableStatus = Object.values(ModelStatus).filter((status) =>
-  ['Draft', 'Deleted'].includes(status)
+  ['Draft', 'Deleted', 'Unpublished'].includes(status)
 );
 
 export function InfiniteModelsFilter() {
