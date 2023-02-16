@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Badge,
   Box,
   Card,
   CloseButton,
@@ -49,7 +50,7 @@ import { trpc } from '~/utils/trpc';
 export function GalleryDetail() {
   const router = useRouter();
   const id = Number(router.query.galleryImageId);
-  const filters = useGalleryFilters();
+  const { filters } = useGalleryFilters();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   const closingRef = useRef(false);
@@ -313,6 +314,11 @@ export function GalleryDetail() {
                   metrics={image.metrics}
                 />
               </Box>
+              <Group spacing={4} px="md">
+                {image.tags.map((tag) => (
+                  <Badge key={tag.id}>{tag.name}</Badge>
+                ))}
+              </Group>
               <div>
                 <Divider
                   label="Comments"
@@ -335,7 +341,10 @@ export function GalleryDetail() {
                 <>
                   <Divider label="Generation Data" labelPosition="center" mb={-15} />
                   <Box px="md">
-                    <ImageMeta meta={image.meta as ImageMetaProps} />
+                    <ImageMeta
+                      meta={image.meta as ImageMetaProps}
+                      generationProcess={image.generationProcess ?? 'txt2img'}
+                    />
                   </Box>
                 </>
               )}

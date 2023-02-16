@@ -3,10 +3,10 @@ import dayjs from 'dayjs';
 import { z } from 'zod';
 
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
-import { cleanOldSessionInvalidation } from '~/server/jobs/clean-old-session-invalidation';
 import { deliverCosmetics } from '~/server/jobs/deliver-cosmetics';
 import { processImportsJob } from '~/server/jobs/process-imports';
 import { scanFilesJob } from '~/server/jobs/scan-files';
+import { selectFeaturedImages } from '~/server/jobs/select-featured-images';
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { updateMetricsJob } from '~/server/jobs/update-metrics';
@@ -19,8 +19,8 @@ const jobs = [
   sendNotificationsJob,
   sendWebhooksJob,
   addOnDemandRunStrategiesJob,
-  cleanOldSessionInvalidation,
   deliverCosmetics,
+  selectFeaturedImages,
 ];
 
 export default WebhookEndpoint(async (req, res) => {

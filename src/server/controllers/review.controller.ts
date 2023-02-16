@@ -67,8 +67,8 @@ export const getReviewsInfiniteHandler = async ({
               .sort((a, b) => {
                 return a.image.nsfw === b.image.nsfw ? 0 : a.image.nsfw ? 1 : -1;
               })
-              .map((x) => x.image)
-          : imagesOnReviews.map((x) => x.image);
+              .map((x) => ({ ...x.image, tags: x.image.tags.map(({ tag }) => tag) }))
+          : imagesOnReviews.map((x) => ({ ...x.image, tags: x.image.tags.map(({ tag }) => tag) }));
       return { ...review, images };
     }),
   };
@@ -197,8 +197,8 @@ export const getReviewDetailsHandler = async ({
               .sort((a, b) => {
                 return a.image.nsfw === b.image.nsfw ? 0 : a.image.nsfw ? 1 : -1;
               })
-              .map((x) => x.image)
-          : imagesOnReviews.map((x) => x.image),
+              .map((x) => ({ ...x.image, tags: x.image.tags.map(({ tag }) => tag) }))
+          : imagesOnReviews.map((x) => ({ ...x.image, tags: x.image.tags.map(({ tag }) => tag) })),
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

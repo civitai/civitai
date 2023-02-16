@@ -12,8 +12,8 @@ export const constants = {
     period: MetricTimeframe.AllTime,
     limit: 50,
   },
-  imageFilterDefaults: {
-    sort: ImageSort.MostComments,
+  galleryFilterDefaults: {
+    sort: ImageSort.MostReactions,
     period: MetricTimeframe.AllTime,
     limit: 50,
   },

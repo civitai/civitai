@@ -11,13 +11,13 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext } from '@dnd-kit/sortable';
 import {
+  Checkbox,
   createStyles,
   Group,
   Input,
   InputWrapperProps,
   Text,
   Stack,
-  Title,
   Button,
   ActionIcon,
   Popover,
@@ -27,12 +27,16 @@ import {
   Select,
   Tooltip,
   Loader,
+  LoadingOverlay,
   Center,
   Overlay,
+  Tabs,
+  MultiSelect,
   Box,
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
+import { TagTarget } from '@prisma/client';
 import {
   IconExclamationCircle,
   IconPencil,
@@ -42,13 +46,18 @@ import {
   IconUpload,
   IconX,
 } from '@tabler/icons';
+import isEqual from 'lodash/isEqual';
 import { cloneElement, useEffect, useState } from 'react';
+
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-
 import { useImageUpload } from '~/hooks/useImageUpload';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { trpc } from '~/utils/trpc';
+import { SimpleTag } from '~/server/selectors/tag.selector';
+import { TagSort } from '~/server/common/enums';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -69,7 +78,6 @@ export function ImageUpload({
   extra,
   max = 10,
   hasPrimaryImage,
-  loading = false,
   withMeta = true,
   reset = 0,
   ...inputWrapperProps
@@ -238,9 +246,14 @@ export function ImageUpload({
                               {withMeta && (
                                 <ImageMetaPopover
                                   meta={image.meta}
-                                  onSubmit={(meta) =>
-                                    filesHandler.setItem(index, { ...image, meta })
+                                  tags={image.tags ?? []}
+                                  nsfw={image.nsfw ?? false}
+                                  onSubmit={(data) =>
+                                    filesHandler.setItem(index, { ...image, ...data })
                                   }
+                                  onCopyTags={(tags) => {
+                                    filesHandler.apply((item) => ({ ...item, tags }));
+                                  }}
                                 >
                                   <ActionIcon
                                     variant="outline"
@@ -314,11 +327,17 @@ export function ImageUpload({
 function ImageMetaPopover({
   children,
   meta,
+  tags,
+  nsfw,
   onSubmit,
+  onCopyTags,
 }: {
   children: React.ReactElement;
   meta?: ImageMetaProps | null;
-  onSubmit?: (meta: ImageMetaProps | null) => void;
+  onSubmit?: (data: { meta: ImageMetaProps | null; tags: SimpleTag[]; nsfw: boolean }) => void;
+  tags: SimpleTag[];
+  nsfw: boolean;
+  onCopyTags?: (tags: SimpleTag[]) => void;
 }) {
   const [opened, setOpened] = useState(false);
 
@@ -328,6 +347,9 @@ function ImageMetaPopover({
   const [steps, setSteps] = useState<number | undefined>(meta?.steps);
   const [sampler, setSampler] = useState<string | undefined>(meta?.sampler);
   const [seed, setSeed] = useState<number | undefined>(meta?.seed);
+  const [imageTags, setImageTags] = useState<SimpleTag[]>(tags);
+  const [tab, setTab] = useState<string | null>('tags');
+  const [imageNsfw, setImageNsfw] = useState(nsfw);
 
   const handleClose = () => {
     setPrompt(meta?.prompt);
@@ -336,6 +358,8 @@ function ImageMetaPopover({
     setSteps(meta?.steps);
     setSampler(meta?.sampler);
     setSeed(meta?.seed);
+    setImageTags(tags);
+    setImageNsfw(nsfw);
     setOpened((v) => !v);
   };
 
@@ -346,85 +370,203 @@ function ImageMetaPopover({
       if (newMeta[key]) return { ...acc, [key]: newMeta[key] };
       return acc;
     }, {});
-    onSubmit?.(Object.keys(toSubmit).length ? toSubmit : null);
+    onSubmit?.({
+      meta: Object.keys(toSubmit).length ? toSubmit : null,
+      tags: imageTags,
+      nsfw: imageNsfw,
+    });
     setOpened(false);
   };
 
   return (
     <Popover opened={opened} onClose={handleClose} withArrow withinPortal width={400}>
       <Popover.Target>{cloneElement(children, { onClick: handleClose })}</Popover.Target>
-      <Popover.Dropdown>
-        <Title order={4}>Generation details</Title>
-        <Grid gutter="xs">
-          <Grid.Col span={12}>
-            <Textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              label="Prompt"
-              autosize
-              maxRows={3}
+      <Popover.Dropdown p={0}>
+        <Tabs value={tab} onTabChange={setTab}>
+          <Tabs.List grow>
+            <Tabs.Tab value="tags">Tags</Tabs.Tab>
+            <Tabs.Tab value="meta">Generation Details</Tabs.Tab>
+          </Tabs.List>
+          <Tabs.Panel value="tags" p="xs">
+            <ImageTagTab
+              imageTags={imageTags}
+              imageNsfw={imageNsfw}
+              onChange={({ tags, nsfw }) => {
+                setImageTags(tags);
+                setImageNsfw(nsfw);
+              }}
             />
-          </Grid.Col>
-          <Grid.Col span={12}>
-            <Textarea
-              value={negativePrompt}
-              onChange={(e) => setNegativePrompt(e.target.value)}
-              label="Negative prompt"
-              autosize
-              maxRows={3}
-            />
-          </Grid.Col>
-          <Grid.Col span={6}>
-            <NumberInput
-              value={cfgScale}
-              onChange={(number) => setCfgScale(number)}
-              label="Guidance scale"
-              min={0}
-              max={30}
-            />
-          </Grid.Col>
-          <Grid.Col span={6}>
-            <NumberInput value={steps} onChange={(value) => setSteps(value)} label="Steps" />
-          </Grid.Col>
-          <Grid.Col span={6}>
-            <Select
-              clearable
-              searchable
-              data={[
-                'Euler a',
-                'Euler',
-                'LMS',
-                'Heun',
-                'DPM2',
-                'DPM2 a',
-                'DPM++ 2S a',
-                'DPM++ 2M',
-                'DPM++ SDE',
-                'DPM fast',
-                'DPM adaptive',
-                'LMS Karras',
-                'DPM2 Karras',
-                'DPM2 a Karras',
-                'DPM++ 2S a Karras',
-                'DPM++ 2M Karras',
-                'DPM++ SDE Karras',
-                'DDIM',
-                'PLMS',
-              ]}
-              value={sampler}
-              onChange={(value) => setSampler(value ?? undefined)}
-              label="Sampler"
-            />
-          </Grid.Col>
-          <Grid.Col span={6}>
-            <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
-          </Grid.Col>
-        </Grid>
-        <Button mt="xs" fullWidth onClick={() => handleSubmit()}>
-          Save
-        </Button>
+          </Tabs.Panel>
+          <Tabs.Panel value="meta" p="xs">
+            <Grid gutter="xs">
+              <Grid.Col span={12}>
+                <Textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  label="Prompt"
+                  autosize
+                  maxRows={3}
+                />
+              </Grid.Col>
+              <Grid.Col span={12}>
+                <Textarea
+                  value={negativePrompt}
+                  onChange={(e) => setNegativePrompt(e.target.value)}
+                  label="Negative prompt"
+                  autosize
+                  maxRows={3}
+                />
+              </Grid.Col>
+              <Grid.Col span={6}>
+                <NumberInput
+                  value={cfgScale}
+                  onChange={(number) => setCfgScale(number)}
+                  label="Guidance scale"
+                  min={0}
+                  max={30}
+                />
+              </Grid.Col>
+              <Grid.Col span={6}>
+                <NumberInput value={steps} onChange={(value) => setSteps(value)} label="Steps" />
+              </Grid.Col>
+              <Grid.Col span={6}>
+                <Select
+                  clearable
+                  searchable
+                  data={[
+                    'Euler a',
+                    'Euler',
+                    'LMS',
+                    'Heun',
+                    'DPM2',
+                    'DPM2 a',
+                    'DPM++ 2S a',
+                    'DPM++ 2M',
+                    'DPM++ SDE',
+                    'DPM fast',
+                    'DPM adaptive',
+                    'LMS Karras',
+                    'DPM2 Karras',
+                    'DPM2 a Karras',
+                    'DPM++ 2S a Karras',
+                    'DPM++ 2M Karras',
+                    'DPM++ SDE Karras',
+                    'DDIM',
+                    'PLMS',
+                  ]}
+                  value={sampler}
+                  onChange={(value) => setSampler(value ?? undefined)}
+                  label="Sampler"
+                />
+              </Grid.Col>
+              <Grid.Col span={6}>
+                <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
+              </Grid.Col>
+            </Grid>
+          </Tabs.Panel>
+        </Tabs>
+        <Group position="right" spacing={4} p="xs">
+          <Button fullWidth onClick={handleSubmit}>
+            Save
+          </Button>
+          {tab === 'tags' && (
+            <Button
+              variant="subtle"
+              size="xs"
+              onClick={() => {
+                onCopyTags?.(imageTags);
+                handleSubmit();
+              }}
+            >
+              Copy tags to all images
+            </Button>
+          )}
+        </Group>
       </Popover.Dropdown>
     </Popover>
+  );
+}
+
+function ImageTagTab({
+  imageTags = [],
+  imageNsfw,
+  onChange,
+}: {
+  imageTags: SimpleTag[];
+  imageNsfw: boolean;
+  onChange: (data: { tags: SimpleTag[]; nsfw: boolean }) => void;
+}) {
+  const [category, ...restTags] = imageTags.reduce((acc, tag) => {
+    if (tag.isCategory) acc.unshift(tag.id.toString());
+    else acc.push(tag.id.toString());
+    return acc;
+  }, [] as string[]);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(category);
+  const [selectedTags, setSelectedTags] = useState<string[]>(restTags);
+  const [nsfw, setNsfw] = useState<boolean>(imageNsfw);
+
+  const { data: { items: categories } = { items: [] }, isLoading: loadingCategories } =
+    trpc.tag.getAll.useQuery(
+      { limit: 0, entityType: [TagTarget.Image], categories: true, sort: TagSort.MostImages },
+      { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
+    );
+  const { data: { items: tags } = { items: [] }, isLoading: loadingTags } =
+    trpc.tag.getAll.useQuery(
+      { limit: 0, entityType: [TagTarget.Image], categories: false },
+      { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
+    );
+
+  useEffect(() => {
+    const allTags = [selectedCategory, ...selectedTags];
+    if (!isEqual(imageTags, allTags) || imageNsfw !== nsfw) {
+      const tagsData = tags.filter((tag) => selectedTags.includes(tag.id.toString()));
+      const category = categories.find((cat) => cat.id.toString() === selectedCategory);
+      const tagsToSave = [...(category ? [{ ...category }] : []), ...tagsData];
+
+      onChange({ tags: tagsToSave, nsfw });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categories, selectedCategory, selectedTags, tags, nsfw]);
+
+  const loading = loadingCategories || loadingTags;
+
+  return (
+    <Stack sx={{ position: 'relative' }}>
+      <LoadingOverlay visible={loading} />
+      <DismissibleAlert
+        id="image-tagging"
+        content="These tags are used to help showcase your work in the right communities. Good tags will help your image get more love!"
+      />
+      <Checkbox
+        label="This image is for an adult audience (NSFW)"
+        checked={nsfw}
+        onChange={(e) => setNsfw(e.currentTarget.checked)}
+      />
+      <Select
+        label="Main Category"
+        placeholder="Select a category"
+        value={selectedCategory}
+        onChange={setSelectedCategory}
+        data={categories.map((category) => ({
+          label: category.name,
+          value: category.id.toString(),
+        }))}
+        searchable
+        clearable
+      />
+      <MultiSelect
+        label="Tags"
+        placeholder="Select tags"
+        value={selectedTags}
+        onChange={setSelectedTags}
+        data={tags.map((tag) => ({
+          label: tag.name,
+          value: tag.id.toString(),
+        }))}
+        searchable
+        clearable
+      />
+    </Stack>
   );
 }
 

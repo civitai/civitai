@@ -18,6 +18,10 @@ export function increaseDate(value: Date, duration: number, unit: dayjs.Manipula
   return dayjs(value).add(duration, unit).toDate();
 }
 
+export function decreaseDate(value: Date, duration: number, unit: dayjs.ManipulateType) {
+  return dayjs(value).subtract(duration, unit).toDate();
+}
+
 export function isFutureDate(value: Date) {
   return dayjs().isBefore(value);
 }

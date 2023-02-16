@@ -27,7 +27,7 @@ import { ImageModel } from '~/server/selectors/image.selector';
 type LightboxProps = {
   nsfw?: boolean;
   initialSlide?: number;
-  images?: ImageModel[];
+  images?: Omit<ImageModel, 'tags'>[];
   connect: ImageGuardConnect;
 };
 
@@ -171,7 +171,10 @@ export function Lightbox({
                     >
                       {show ? <IconMinus /> : <IconInfoCircle />}
                     </ActionIcon>
-                    <ImageMeta meta={images[index].meta as ImageMetaProps} />
+                    <ImageMeta
+                      meta={images[index].meta as ImageMetaProps}
+                      generationProcess={images[index].generationProcess ?? 'txt2img'}
+                    />
                   </Stack>
                 </Paper>
               )}

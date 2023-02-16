@@ -64,7 +64,7 @@ export const getGalleryImageDetailHandler = async ({
       select: imageGallerySelect({ user: ctx.user }),
     });
     if (!item) throw throwNotFoundError(`No image with id ${id} found`);
-    const { stats, ...image } = item;
+    const { stats, tags, ...image } = item;
     return {
       ...image,
       metrics: {
@@ -75,9 +75,11 @@ export const getGalleryImageDetailHandler = async ({
         heartCount: stats?.heartCountAllTime,
         commentCount: stats?.commentCountAllTime,
       },
+      tags: tags.map(({ tag }) => tag),
     };
   } catch (error) {
-    throw throwDbError(error);
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };
 
@@ -105,7 +107,7 @@ export const getGalleryImagesInfiniteHandler = async ({
 
     return {
       nextCursor,
-      items,
+      items: items.map(({ tags, ...item }) => ({ ...item, tags: tags.map(({ tag }) => tag) })),
     };
   } catch (error) {
     throw throwDbError(error);
@@ -139,15 +141,19 @@ export const getGalleryImagesHandler = async ({
       user: ctx.user,
       // orderBy: [{ connections: { index: 'asc' } }, { createdAt: 'desc' }], // Disabled for performance reasons
     });
+    const parsedItems = items.map(({ tags, ...item }) => ({
+      ...item,
+      tags: tags.map(({ tag }) => tag),
+    }));
 
     const isOwnerOrModerator =
-      items.every((x) => x.user.id === ctx.user?.id) || ctx.user?.isModerator;
+      parsedItems.every((x) => x.user.id === ctx.user?.id) || ctx.user?.isModerator;
     const prioritizeSafeImages =
       env.SHOW_SFW_IN_NSFW && (!ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw));
 
     return prioritizeSafeImages && !isOwnerOrModerator
-      ? items.sort((a, b) => (a.nsfw === b.nsfw ? sortByIndex(a, b) : a.nsfw ? 1 : -1))
-      : items.sort(sortByIndex);
+      ? parsedItems.sort((a, b) => (a.nsfw === b.nsfw ? sortByIndex(a, b) : a.nsfw ? 1 : -1))
+      : parsedItems.sort(sortByIndex);
   } catch (error) {
     throw throwDbError(error);
   }

@@ -8,6 +8,7 @@ import { immer } from 'zustand/middleware/immer';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageModel } from '~/server/selectors/image.selector';
+import { SimpleTag } from '~/server/selectors/tag.selector';
 import { isDefined } from '~/utils/type-guards';
 
 export type ImageGuardConnect = {
@@ -51,7 +52,7 @@ const useStore = create<SfwStore>()(
 
 // #region [ImageGuardContext]
 type ImageGuardState = {
-  images: Array<ImageModel & { imageNsfw: boolean }>;
+  images: CustomImageModel[];
   connect?: ImageGuardConnect;
 };
 const ImageGuardCtx = createContext<ImageGuardState>({} as any);
@@ -67,12 +68,12 @@ const useImageGuardContext = () => {
     - use case: home page, model card, toggle image - since I don't have all the images yet, I need to be able to still manage nsfw state for all the images without having the knowledge of which images are nsfw
 */
 
-type CustomImageModel = ImageModel & { imageNsfw?: boolean };
+type CustomImageModel = Omit<ImageModel, 'tags'> & { imageNsfw?: boolean; tags?: SimpleTag[] };
 
 type ImageGuardProps = {
   images: CustomImageModel[];
   connect?: ImageGuardConnect;
-  render: (image: ImageModel, index: number) => React.ReactNode;
+  render: (image: CustomImageModel, index: number) => React.ReactNode;
   /** Make all images nsfw by default */
   nsfw?: boolean;
 };
@@ -114,7 +115,7 @@ function ImageGuardContentProvider({
   image,
 }: {
   children: React.ReactNode;
-  image: ImageModel;
+  image: CustomImageModel;
 }) {
   return (
     <ImageGuardContentCtx.Provider value={{ image }}>{children}</ImageGuardContentCtx.Provider>
@@ -184,6 +185,7 @@ ImageGuard.ToggleImage = function ToggleImage({
   const toggleImage = useStore((state) => state.toggleImage);
 
   if (!!connect) return null;
+  if (!image.imageNsfw) return null;
   const showing = showImage;
 
   return (

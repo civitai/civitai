@@ -171,11 +171,13 @@ export function InfiniteModelsFilter() {
   const filterLength =
     types.length +
     baseModels.length +
+    status.length +
     (showNSFWToggle && hideNSFW ? 1 : 0) +
     (showCheckpointType && checkpointType !== 'all' ? 1 : 0);
   const handleClear = () => {
     setTypes([]);
     setBaseModels([]);
+    setStatus([]);
     setHideNSFW(false);
     setCheckpointType(undefined);
   };

@@ -81,7 +81,7 @@ export const upsertQuestion = async ({
                     tag: {
                       connectOrCreate: {
                         where: { name_target: { name, target: TagTarget.Question } },
-                        create: { name, target: TagTarget.Question },
+                        create: { name, target: [TagTarget.Question] },
                       },
                     },
                   };
@@ -111,7 +111,7 @@ export const upsertQuestion = async ({
                   const name = tag.name.toLowerCase().trim();
                   return {
                     tag: {
-                      create: { name, target: TagTarget.Question },
+                      create: { name, target: [TagTarget.Question] },
                     },
                   };
                 }),

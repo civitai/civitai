@@ -39,7 +39,7 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
   });
 
   const { data: { items: tags } = { items: [] } } = trpc.tag.getAll.useQuery(
-    { limit: 0, entityType: TagTarget.Question },
+    { limit: 0, entityType: [TagTarget.Question] },
     { cacheTime: Infinity, staleTime: Infinity }
   );
   const questionTags = form.watch('tags');

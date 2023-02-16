@@ -1,4 +1,4 @@
-import { Prisma, ReportReason, ReportStatus } from '@prisma/client';
+import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
@@ -7,6 +7,7 @@ import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetGalleryImageInput } from '~/server/schema/image.schema';
 import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
+import { decreaseDate } from '~/utils/date-helpers';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await prisma.imagesOnModels.findMany({
@@ -38,9 +39,30 @@ export const getGalleryImages = async <
   infinite,
   period,
   sort,
+  tags,
+  excludedTagIds,
+  excludedUserIds,
+  isFeatured,
+  types,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const isMod = user?.isModerator ?? false;
+
+  const conditionalFilters: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
+  if (!!excludedTagIds?.length)
+    conditionalFilters.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
+
+  if (!!tags?.length) conditionalFilters.push({ tags: { some: { tagId: { in: tags } } } });
+  else {
+    const periodStart = decreaseDate(new Date(), 3, 'days');
+    conditionalFilters.push({ featuredAt: { gt: periodStart } });
+  }
+
+  if (isFeatured) conditionalFilters.push({ featuredAt: { not: null } });
+
+  if (!!excludedUserIds?.length) conditionalFilters.push({ userId: { notIn: excludedUserIds } });
+
+  if (types && types.length) conditionalFilters.push({ generationProcess: { in: types } });
 
   const infiniteWhere: Prisma.ImageFindManyArgs['where'] = {
     connections: {
@@ -48,6 +70,11 @@ export const getGalleryImages = async <
       modelVersionId,
       reviewId,
     },
+    // Only include images from published models and without tosViolation
+    imagesOnModels: {
+      modelVersion: { model: { status: ModelStatus.Published, tosViolation: false } },
+    },
+    AND: conditionalFilters.length ? conditionalFilters : undefined,
   };
   const finiteWhere: Prisma.ImageWhereInput = {
     imagesOnModels:
@@ -65,13 +92,14 @@ export const getGalleryImages = async <
       nsfw: !canViewNsfw ? { equals: false } : undefined,
       tosViolation: !isMod ? false : undefined,
       ...(infinite ? infiniteWhere : finiteWhere),
-      // TODO.gallery - excludedTagIds (hidden tags)
     },
     select: imageGallerySelect({ user }),
     orderBy: orderBy ?? [
-      // ...(sort === ImageSort.MostComments
-      //   ? [{ ranks: { [`commentCount${period}Rank`]: 'asc' } }]
-      //   : []),
+      ...(sort === ImageSort.MostComments
+        ? [{ rank: { [`commentCount${period}Rank`]: 'asc' } }]
+        : sort === ImageSort.MostReactions
+        ? [{ rank: { [`reactionCount${period}Rank`]: 'asc' } }]
+        : []),
       { createdAt: 'desc' },
     ],
   });

@@ -3,6 +3,7 @@ import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
 
 import { ModelSort } from '~/server/common/enums';
+import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
@@ -71,12 +72,12 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       OR: [
         { status: ModelStatus.Published },
         ...(sessionUser
-          ? [{ AND: [{ user: { id: sessionUser?.id } }, { status: ModelStatus.Draft }] }]
+          ? [{ AND: [{ user: { id: sessionUser.id } }, { status: ModelStatus.Draft }] }]
           : []),
       ],
     });
   }
-  if (sessionUser?.isModerator) {
+  if (sessionUser?.isModerator && !(username || user)) {
     AND.push({ status: status && status.length > 0 ? { in: status } : ModelStatus.Published });
   }
   if (query) {
@@ -128,7 +129,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       tagname ?? tag
         ? { some: { tag: { name: { equals: tagname ?? tag, mode: 'insensitive' } } } }
         : undefined,
-    user: username ?? user ? { username: username ?? user } : undefined,
+    user: username || user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
     nsfw: !canViewNsfw || hideNSFW ? { equals: false } : undefined,
     rank: rating
@@ -267,13 +268,26 @@ export const createModel = async ({
           status: data.status,
           files: files.length > 0 ? { create: files } : undefined,
           images: {
-            create: images.map((image, index) => ({
+            create: images.map(({ tags = [], ...image }, index) => ({
               index,
               image: {
                 create: {
                   ...image,
                   userId,
                   meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                  generationProcess: image.meta
+                    ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
+                    : null,
+                  tags: {
+                    create: tags.map((tag) => ({
+                      tag: {
+                        connectOrCreate: {
+                          where: { id: tag.id },
+                          create: { ...tag, target: [TagTarget.Image] },
+                        },
+                      },
+                    })),
+                  },
                 },
               },
             })),
@@ -286,8 +300,8 @@ export const createModel = async ({
           return {
             tag: {
               connectOrCreate: {
-                where: { name_target: { name, target: TagTarget.Model } },
-                create: { name, target: TagTarget.Model },
+                where: { name_target: { name, target: [TagTarget.Model] } },
+                create: { name, target: [TagTarget.Model] },
               },
             },
           };
@@ -329,6 +343,7 @@ export const updateModel = async ({
             select: {
               id: true,
               meta: true,
+              generationProcess: true,
               name: true,
               width: true,
               height: true,
@@ -392,13 +407,26 @@ export const updateModel = async ({
           ...version,
           files: { create: files },
           images: {
-            create: images.map(({ id, meta, ...image }, index) => ({
+            create: images.map(({ id, meta, tags = [], ...image }, index) => ({
               index,
               image: {
                 create: {
                   ...image,
                   userId,
                   meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                  generationProcess: meta
+                    ? getImageGenerationProcess(meta as Prisma.JsonObject)
+                    : null,
+                  tags: {
+                    create: tags.map((tag) => ({
+                      tag: {
+                        connectOrCreate: {
+                          where: { id: tag.id },
+                          create: { ...tag, target: [TagTarget.Image] },
+                        },
+                      },
+                    })),
+                  },
                 },
               },
             })),
@@ -475,11 +503,28 @@ export const updateModel = async ({
                 deleteMany: {
                   NOT: images.map((image) => ({ imageId: image.id })),
                 },
-                create: imagesToCreate.map(({ index, ...image }) => ({
+                create: imagesToCreate.map(({ index, tags = [], ...image }) => ({
                   index,
-                  image: { create: image },
+                  image: {
+                    create: {
+                      ...image,
+                      generationProcess: image.meta
+                        ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
+                        : null,
+                      tags: {
+                        create: tags.map((tag) => ({
+                          tag: {
+                            connectOrCreate: {
+                              where: { id: tag.id },
+                              create: { ...tag, target: [TagTarget.Image] },
+                            },
+                          },
+                        })),
+                      },
+                    },
+                  },
                 })),
-                update: imagesToUpdate.map(({ index, meta, nsfw, ...image }) => ({
+                update: imagesToUpdate.map(({ index, meta, nsfw, tags = [], ...image }) => ({
                   where: {
                     imageId_modelVersionId: {
                       imageId: image.id as number,
@@ -492,6 +537,25 @@ export const updateModel = async ({
                       update: {
                         nsfw,
                         meta,
+                        tags: {
+                          deleteMany: {},
+                          connectOrCreate: tags.map((tag) => ({
+                            where: {
+                              tagId_imageId: {
+                                tagId: tag.id as number,
+                                imageId: image.id as number,
+                              },
+                            },
+                            create: {
+                              tag: {
+                                connectOrCreate: {
+                                  where: { id: tag.id },
+                                  create: { ...tag, target: [TagTarget.Image] },
+                                },
+                              },
+                            },
+                          })),
+                        },
                       },
                     },
                   },
@@ -516,7 +580,7 @@ export const updateModel = async ({
               const name = tag.name.toLowerCase().trim();
               return {
                 tag: {
-                  create: { name, target: TagTarget.Model },
+                  create: { name, target: [TagTarget.Model] },
                 },
               };
             }),

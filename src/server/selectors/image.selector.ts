@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
+import { simpleTagSelect } from '~/server/selectors/tag.selector';
 
 import { userWithCosmeticsSelect } from './user.selector';
 
@@ -14,6 +15,8 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   height: true,
   hash: true,
   meta: true,
+  generationProcess: true,
+  tags: { select: { tag: { select: simpleTagSelect } } },
 });
 
 const { id, name, ...imageSelectWithoutId } = imageSelect;
