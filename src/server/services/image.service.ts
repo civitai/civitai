@@ -39,7 +39,7 @@ export const getGalleryImages = async <
   period,
   sort,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
-  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const isMod = user?.isModerator ?? false;
 
   const infiniteWhere: Prisma.ImageFindManyArgs['where'] = {

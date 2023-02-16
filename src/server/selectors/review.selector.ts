@@ -26,9 +26,6 @@ export const reviewDetailSelect = (includeNSFW = true) =>
       select: userWithCosmeticsSelect,
     },
     imagesOnReviews: {
-      // orderBy: prioritizeSafeImages
-      //   ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
-      //   : [{ index: 'asc' }],
       orderBy: { index: 'asc' },
       select: {
         index: true,

@@ -36,8 +36,9 @@ import { constants, ModelFileType } from '~/server/common/constants';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
-  const showNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
-  const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
+  const showNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
+  const prioritizeSafeImages =
+    env.SHOW_SFW_IN_NSFW && (!ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw));
   try {
     const model = await getModel({
       input,
@@ -107,7 +108,8 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   const prioritizeSafeImages =
-    input.hideNSFW || (ctx.user?.showNsfw ?? false) === false || ctx.user?.blurNsfw;
+    env.SHOW_SFW_IN_NSFW &&
+    (input.hideNSFW || (ctx.user?.showNsfw ?? false) === false || ctx.user?.blurNsfw);
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
 
@@ -180,6 +182,8 @@ export const getModelsInfiniteHandler = async ({
           publishedAt,
           earlyAccessTimeframe: latestVersion.earlyAccessTimeFrame,
         });
+      const image = latestVersion?.images[0]?.image ?? {};
+      if (model.nsfw && !env.SHOW_SFW_IN_NSFW) image.nsfw = true;
       return {
         ...model,
         rank: {
@@ -189,7 +193,7 @@ export const getModelsInfiniteHandler = async ({
           ratingCount: rank[`ratingCount${input.period}`],
           rating: rank[`rating${input.period}`],
         },
-        image: latestVersion?.images[0]?.image ?? {},
+        image,
         earlyAccess,
       };
     }),

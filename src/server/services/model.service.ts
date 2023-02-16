@@ -63,7 +63,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   count?: boolean;
 }) => {
-  const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+  const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   const lowerQuery = query?.toLowerCase();
   if (!sessionUser?.isModerator) {
