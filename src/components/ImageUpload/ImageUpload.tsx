@@ -35,7 +35,7 @@ import {
   Box,
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
-import { useDidUpdate } from '@mantine/hooks';
+import { useDidUpdate, useLocalStorage } from '@mantine/hooks';
 import { TagTarget } from '@prisma/client';
 import {
   IconExclamationCircle,
@@ -348,7 +348,10 @@ function ImageMetaPopover({
   const [sampler, setSampler] = useState<string | undefined>(meta?.sampler);
   const [seed, setSeed] = useState<number | undefined>(meta?.seed);
   const [imageTags, setImageTags] = useState<SimpleTag[]>(tags);
-  const [tab, setTab] = useState<string | null>('tags');
+  const [tab, setTab] = useLocalStorage<string | null>({
+    key: 'image-meta-tab',
+    defaultValue: 'tags',
+  });
   const [imageNsfw, setImageNsfw] = useState(nsfw);
 
   const handleClose = () => {
@@ -379,7 +382,14 @@ function ImageMetaPopover({
   };
 
   return (
-    <Popover opened={opened} onClose={handleClose} withArrow withinPortal width={400}>
+    <Popover
+      opened={opened}
+      onClose={handleClose}
+      position="bottom"
+      withArrow
+      withinPortal
+      width={400}
+    >
       <Popover.Target>{cloneElement(children, { onClick: handleClose })}</Popover.Target>
       <Popover.Dropdown p={0}>
         <Tabs value={tab} onTabChange={setTab}>
@@ -475,7 +485,7 @@ function ImageMetaPopover({
               size="xs"
               onClick={() => {
                 onCopyTags?.(imageTags);
-                handleSubmit();
+                // handleSubmit();
               }}
             >
               Copy tags to all images
@@ -535,6 +545,7 @@ function ImageTagTab({
       <LoadingOverlay visible={loading} />
       <DismissibleAlert
         id="image-tagging"
+        title="What is image tagging?"
         content="These tags are used to help showcase your work in the right communities. Good tags will help your image get more love!"
       />
       <Checkbox
