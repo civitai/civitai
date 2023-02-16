@@ -10,7 +10,6 @@ import {
   Popover,
   ActionIcon,
   Stack,
-  Checkbox,
   Indicator,
   Divider,
   SegmentedControl,
@@ -184,8 +183,8 @@ export function InfiniteModelsFilter() {
   const chipProps: Partial<ChipProps> = {
     radius: 'sm',
     size: 'sm',
-    classNames: classes
-  }
+    classNames: classes,
+  };
 
   return (
     <Popover withArrow>
@@ -205,7 +204,7 @@ export function InfiniteModelsFilter() {
           </ActionIcon>
         </Indicator>
       </Popover.Target>
-      <Popover.Dropdown maw={350} w='100%'>
+      <Popover.Dropdown maw={350} w="100%">
         <Stack spacing={0}>
           {showNSFWToggle && (
             <>
@@ -252,13 +251,17 @@ export function InfiniteModelsFilter() {
             </>
           )}
           <Divider label="Model types" labelProps={{ weight: 'bold' }} />
-          <Chip.Group spacing={4}
-                value={types}
-                onChange={(types: ModelType[]) => setTypes(types)}
-                multiple
-                my={4}>
+          <Chip.Group
+            spacing={4}
+            value={types}
+            onChange={(types: ModelType[]) => setTypes(types)}
+            multiple
+            my={4}
+          >
             {Object.values(ModelType).map((type, index) => (
-              <Chip key={index} value={type} {...chipProps}>{splitUppercase(type)}</Chip>
+              <Chip key={index} value={type} {...chipProps}>
+                {splitUppercase(type)}
+              </Chip>
             ))}
           </Chip.Group>
           {showCheckpointType ? (
@@ -290,13 +293,17 @@ export function InfiniteModelsFilter() {
             </>
           ) : null}
           <Divider label="Base model" labelProps={{ weight: 'bold' }} />
-          <Chip.Group spacing={4}
-                value={baseModels}
-                onChange={(baseModels: BaseModel[]) => setBaseModels(baseModels)}
-                multiple
-                my={4}>
+          <Chip.Group
+            spacing={4}
+            value={baseModels}
+            onChange={(baseModels: BaseModel[]) => setBaseModels(baseModels)}
+            multiple
+            my={4}
+          >
             {constants.baseModels.map((baseModel, index) => (
-              <Chip key={index} value={baseModel} {...chipProps}>{baseModel}</Chip>
+              <Chip key={index} value={baseModel} {...chipProps}>
+                {baseModel}
+              </Chip>
             ))}
           </Chip.Group>
           {filterLength > 0 && (
