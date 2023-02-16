@@ -326,7 +326,10 @@ export function GalleryDetail() {
                 <>
                   <Divider label="Generation Data" labelPosition="center" mb={-15} />
                   <Box px="md">
-                    <ImageMeta meta={image.meta as ImageMetaProps} />
+                    <ImageMeta
+                      meta={image.meta as ImageMetaProps}
+                      generationProcess={image.generationProcess ?? 'txt2img'}
+                    />
                   </Box>
                 </>
               )}

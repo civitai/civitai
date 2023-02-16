@@ -47,8 +47,7 @@ export const getGalleryImages = async <
   excludedTagIds,
   excludedUserIds,
   isFeatured,
-  singleImageAlbum,
-  singleImageModel,
+  types,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
   const isMod = user?.isModerator ?? false;
@@ -63,6 +62,7 @@ export const getGalleryImages = async <
     imagesOnModels: {
       modelVersion: { model: { status: ModelStatus.Published, tosViolation: false } },
     },
+    ...(types && types.length ? { generationProcess: { in: types } } : {}),
   };
   const finiteWhere: Prisma.ImageWhereInput = {
     imagesOnModels:

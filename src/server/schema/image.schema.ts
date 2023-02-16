@@ -1,5 +1,5 @@
 import { ImageSort } from './../common/enums';
-import { MetricTimeframe } from '@prisma/client';
+import { ImageGenerationProcess, MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { tagSchema } from '~/server/schema/tag.schema';
@@ -78,4 +78,5 @@ export const getGalleryImageSchema = z.object({
   singleImageModel: z.boolean().optional(),
   singleImageAlbum: z.boolean().optional(),
   isFeatured: z.boolean().optional(),
+  types: z.nativeEnum(ImageGenerationProcess).array().optional(),
 });

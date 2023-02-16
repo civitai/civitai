@@ -11,6 +11,7 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext } from '@dnd-kit/sortable';
 import {
+  Checkbox,
   createStyles,
   Group,
   Input,
@@ -56,6 +57,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { trpc } from '~/utils/trpc';
 import { SimpleTag } from '~/server/selectors/tag.selector';
+import { TagSort } from '~/server/common/enums';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -244,7 +246,8 @@ export function ImageUpload({
                               {withMeta && (
                                 <ImageMetaPopover
                                   meta={image.meta}
-                                  tags={image.tags}
+                                  tags={image.tags ?? []}
+                                  nsfw={image.nsfw ?? false}
                                   onSubmit={(data) =>
                                     filesHandler.setItem(index, { ...image, ...data })
                                   }
@@ -324,14 +327,16 @@ export function ImageUpload({
 function ImageMetaPopover({
   children,
   meta,
-  tags = [],
+  tags,
+  nsfw,
   onSubmit,
   onCopyTags,
 }: {
   children: React.ReactElement;
   meta?: ImageMetaProps | null;
-  onSubmit?: (data: { meta?: ImageMetaProps | null; tags?: SimpleTag[] }) => void;
-  tags?: SimpleTag[];
+  onSubmit?: (data: { meta: ImageMetaProps | null; tags: SimpleTag[]; nsfw: boolean }) => void;
+  tags: SimpleTag[];
+  nsfw: boolean;
   onCopyTags?: (tags: SimpleTag[]) => void;
 }) {
   const [opened, setOpened] = useState(false);
@@ -344,6 +349,7 @@ function ImageMetaPopover({
   const [seed, setSeed] = useState<number | undefined>(meta?.seed);
   const [imageTags, setImageTags] = useState<SimpleTag[]>(tags);
   const [tab, setTab] = useState<string | null>('tags');
+  const [imageNsfw, setImageNsfw] = useState(nsfw);
 
   const handleClose = () => {
     setPrompt(meta?.prompt);
@@ -353,6 +359,7 @@ function ImageMetaPopover({
     setSampler(meta?.sampler);
     setSeed(meta?.seed);
     setImageTags(tags);
+    setImageNsfw(nsfw);
     setOpened((v) => !v);
   };
 
@@ -363,7 +370,11 @@ function ImageMetaPopover({
       if (newMeta[key]) return { ...acc, [key]: newMeta[key] };
       return acc;
     }, {});
-    onSubmit?.({ meta: Object.keys(toSubmit).length ? toSubmit : null, tags: imageTags });
+    onSubmit?.({
+      meta: Object.keys(toSubmit).length ? toSubmit : null,
+      tags: imageTags,
+      nsfw: imageNsfw,
+    });
     setOpened(false);
   };
 
@@ -377,7 +388,14 @@ function ImageMetaPopover({
             <Tabs.Tab value="meta">Generation Details</Tabs.Tab>
           </Tabs.List>
           <Tabs.Panel value="tags" p="xs">
-            <ImageTagTab imageTags={imageTags} onChange={setImageTags} />
+            <ImageTagTab
+              imageTags={imageTags}
+              imageNsfw={imageNsfw}
+              onChange={({ tags, nsfw }) => {
+                setImageTags(tags);
+                setImageNsfw(nsfw);
+              }}
+            />
           </Tabs.Panel>
           <Tabs.Panel value="meta" p="xs">
             <Grid gutter="xs">
@@ -471,10 +489,12 @@ function ImageMetaPopover({
 
 function ImageTagTab({
   imageTags = [],
+  imageNsfw,
   onChange,
 }: {
   imageTags: SimpleTag[];
-  onChange: (tags: SimpleTag[]) => void;
+  imageNsfw: boolean;
+  onChange: (data: { tags: SimpleTag[]; nsfw: boolean }) => void;
 }) {
   const [category, ...restTags] = imageTags.reduce((acc, tag) => {
     if (tag.isCategory) acc.unshift(tag.id.toString());
@@ -483,10 +503,11 @@ function ImageTagTab({
   }, [] as string[]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(category);
   const [selectedTags, setSelectedTags] = useState<string[]>(restTags);
+  const [nsfw, setNsfw] = useState<boolean>(imageNsfw);
 
   const { data: { items: categories } = { items: [] }, isLoading: loadingCategories } =
     trpc.tag.getAll.useQuery(
-      { limit: 0, entityType: [TagTarget.Image], categories: true },
+      { limit: 0, entityType: [TagTarget.Image], categories: true, sort: TagSort.MostImages },
       { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
     );
   const { data: { items: tags } = { items: [] }, isLoading: loadingTags } =
@@ -497,25 +518,29 @@ function ImageTagTab({
 
   useEffect(() => {
     const allTags = [selectedCategory, ...selectedTags];
-    if (!isEqual(imageTags, allTags)) {
+    if (!isEqual(imageTags, allTags) || imageNsfw !== nsfw) {
       const tagsData = tags.filter((tag) => selectedTags.includes(tag.id.toString()));
       const category = categories.find((cat) => cat.id.toString() === selectedCategory);
       const tagsToSave = [...(category ? [{ ...category }] : []), ...tagsData];
 
-      onChange(tagsToSave);
+      onChange({ tags: tagsToSave, nsfw });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categories, selectedCategory, selectedTags, tags]);
+  }, [categories, selectedCategory, selectedTags, tags, nsfw]);
 
   const loading = loadingCategories || loadingTags;
 
-  // TODO @manuel: Add NSFW toggle at the top of this tab
   return (
     <Stack sx={{ position: 'relative' }}>
       <LoadingOverlay visible={loading} />
       <DismissibleAlert
         id="image-tagging"
         content="These tags are used to help showcase your work in the right communities. Good tags will help your image get more love!"
+      />
+      <Checkbox
+        label="This image is for an adult audience (NSFW)"
+        checked={nsfw}
+        onChange={(e) => setNsfw(e.currentTarget.checked)}
       />
       <Select
         label="Main Category"

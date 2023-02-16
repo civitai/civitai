@@ -1,5 +1,6 @@
 import { TagTarget } from '@prisma/client';
 import { z } from 'zod';
+import { TagSort } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 
 export type GetTagByNameInput = z.infer<typeof getTagByNameSchema>;
@@ -32,6 +33,7 @@ export const getTagsInput = getAllQuerySchema.extend({
   not: z.number().array().optional(),
   unlisted: z.boolean().optional(),
   categories: z.boolean().optional(),
+  sort: z.nativeEnum(TagSort).optional(),
 });
 export type GetTagsInput = z.infer<typeof getTagsInput>;
 

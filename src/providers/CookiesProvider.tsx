@@ -1,12 +1,18 @@
 import { useSetState } from '@mantine/hooks';
-import { CheckpointType, MetricTimeframe, ModelStatus, ModelType } from '@prisma/client';
+import {
+  CheckpointType,
+  ImageGenerationProcess,
+  MetricTimeframe,
+  ModelStatus,
+  ModelType,
+} from '@prisma/client';
 import React, { createContext, useContext } from 'react';
 import { z } from 'zod';
+
 import { constants } from '~/server/common/constants';
 import {
   ImageResource,
   ImageSort,
-  ImageType,
   ModelSort,
   QuestionSort,
   QuestionStatus,
@@ -34,7 +40,7 @@ export const galleryFilterSchema = z.object({
   hideNSFW: z.boolean().optional(),
   singleImageModel: z.boolean().optional(),
   singleImageAlbum: z.boolean().optional(),
-  types: z.nativeEnum(ImageType).array().optional(),
+  types: z.nativeEnum(ImageGenerationProcess).array().optional(),
   resources: z.nativeEnum(ImageResource).array().optional(),
   tags: z.number().array().optional(),
 });

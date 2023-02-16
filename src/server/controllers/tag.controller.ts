@@ -31,8 +31,6 @@ export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => 
         isCategory: true,
         tagsOnModels: withModels ? { select: { modelId: true } } : undefined,
       },
-      // TODO @manuel: Make this support imageCountAllTimeRank as well
-      orderBy: { rank: { modelCountAllTimeRank: 'asc' } },
     });
 
     return getPagingData(results, take, page);
@@ -46,7 +44,6 @@ export const getTrendingTagsHandler = async ({ input }: { input: GetTrendingTags
     ...input,
     take: input.limit ?? constants.tagFilterDefaults.trendingTagsLimit,
     select: { id: true, name: true },
-    orderBy: { rank: { modelCountAllTimeRank: 'asc' } },
   });
 
   return items;

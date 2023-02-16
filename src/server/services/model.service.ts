@@ -3,6 +3,7 @@ import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
 
 import { ModelSort } from '~/server/common/enums';
+import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
@@ -71,12 +72,12 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       OR: [
         { status: ModelStatus.Published },
         ...(sessionUser
-          ? [{ AND: [{ user: { id: sessionUser?.id } }, { status: ModelStatus.Draft }] }]
+          ? [{ AND: [{ user: { id: sessionUser.id } }, { status: ModelStatus.Draft }] }]
           : []),
       ],
     });
   }
-  if (sessionUser?.isModerator) {
+  if (sessionUser?.isModerator && !(username || user)) {
     AND.push({ status: status && status.length > 0 ? { in: status } : ModelStatus.Published });
   }
   if (query) {
@@ -128,7 +129,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       tagname ?? tag
         ? { some: { tag: { name: { equals: tagname ?? tag, mode: 'insensitive' } } } }
         : undefined,
-    user: username ?? user ? { username: username ?? user } : undefined,
+    user: username || user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
     nsfw: !canViewNsfw || hideNSFW ? { equals: false } : undefined,
     rank: rating
@@ -274,6 +275,9 @@ export const createModel = async ({
                   ...image,
                   userId,
                   meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                  generationProcess: image.meta
+                    ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
+                    : null,
                   tags: {
                     create: tags.map((tag) => ({
                       tag: {
@@ -339,6 +343,7 @@ export const updateModel = async ({
             select: {
               id: true,
               meta: true,
+              generationProcess: true,
               name: true,
               width: true,
               height: true,
@@ -409,6 +414,9 @@ export const updateModel = async ({
                   ...image,
                   userId,
                   meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                  generationProcess: meta
+                    ? getImageGenerationProcess(meta as Prisma.JsonObject)
+                    : null,
                   tags: {
                     create: tags.map((tag) => ({
                       tag: {
@@ -500,6 +508,9 @@ export const updateModel = async ({
                   image: {
                     create: {
                       ...image,
+                      generationProcess: image.meta
+                        ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
+                        : null,
                       tags: {
                         create: tags.map((tag) => ({
                           tag: {

@@ -10,6 +10,7 @@ import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
 import { ReviewSort } from '~/server/common/enums';
+import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { prisma } from '~/server/db/client';
 import { queueMetricUpdate } from '~/server/jobs/update-metrics';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -136,6 +137,9 @@ export const createOrUpdateReview = async ({
           image: {
             create: {
               ...image,
+              generationProcess: image.meta
+                ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
+                : null,
               tags: {
                 create: tags.map((tag) => ({
                   tag: {
@@ -162,6 +166,9 @@ export const createOrUpdateReview = async ({
           image: {
             create: {
               ...image,
+              generationProcess: image.meta
+                ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
+                : null,
               tags: {
                 create: tags.map((tag) => ({
                   tag: {
@@ -275,8 +282,23 @@ export const updateReviewReportStatusByReason = ({
   reason: ReportReason;
   status: ReportStatus;
 }) => {
-  return prisma.report.updateMany({
-    where: { reason, review: { reviewId: id } },
-    data: { status },
+  return prisma.$transaction(async (tx) => {
+    await prisma.report.updateMany({
+      where: { reason, review: { reviewId: id } },
+      data: { status },
+    });
+
+    if (status === ReportStatus.Actioned) {
+      if (reason === ReportReason.TOSViolation)
+        await tx.image.updateMany({
+          where: { imagesOnReviews: { reviewId: id } },
+          data: { tosViolation: true },
+        });
+      else if (reason === ReportReason.NSFW)
+        await tx.image.updateMany({
+          where: { imagesOnReviews: { reviewId: id } },
+          data: { nsfw: true },
+        });
+    }
   });
 };

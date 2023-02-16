@@ -30,7 +30,7 @@ type ImagePreviewProps = {
 } & Omit<BoxProps, 'component'>;
 
 export function ImagePreview({
-  image: { url, name, width, height, hash, meta },
+  image: { url, name, width, height, hash, meta, generationProcess },
   edgeImageProps = {},
   nsfw,
   aspectRatio,
@@ -59,7 +59,10 @@ export function ImagePreview({
   );
 
   const Meta = !nsfw && withMeta && meta && (
-    <ImageMetaPopover meta={meta as ImageMetaProps}>
+    <ImageMetaPopover
+      meta={meta as ImageMetaProps}
+      generationProcess={generationProcess ?? 'txt2img'}
+    >
       <ActionIcon
         variant="transparent"
         style={{ position: 'absolute', bottom: '5px', right: '5px' }}

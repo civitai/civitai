@@ -12,7 +12,7 @@ import {
   ScrollArea,
   Stack,
 } from '@mantine/core';
-import { MetricTimeframe } from '@prisma/client';
+import { ImageGenerationProcess, MetricTimeframe } from '@prisma/client';
 import {
   IconChevronDown,
   IconChevronLeft,
@@ -31,7 +31,7 @@ import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { galleryFilterSchema, useCookies } from '~/providers/CookiesProvider';
 import { constants } from '~/server/common/constants';
-import { ImageResource, ImageSort, ImageType } from '~/server/common/enums';
+import { ImageResource, ImageSort, TagSort } from '~/server/common/enums';
 import { setCookie } from '~/utils/cookies-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -59,7 +59,7 @@ type Store = {
   setSort: (sort?: ImageSort) => void;
   setPeriod: (period?: MetricTimeframe) => void;
   setHideNsfw: (hide?: boolean) => void;
-  setTypes: (types?: ImageType[]) => void;
+  setTypes: (types?: ImageGenerationProcess[]) => void;
   setResources: (resources?: ImageResource[]) => void;
   setTags: (tags?: number[]) => void;
   setSingleImageModel: (single?: boolean) => void;
@@ -197,13 +197,13 @@ export function GalleryFilters() {
   const cookies = useCookies().gallery;
   const setTypes = useFiltersStore((state) => state.setTypes);
   const types = useFiltersStore((state) => state.filters.types ?? cookies.types ?? []);
-  const setResources = useFiltersStore((state) => state.setResources);
+  // const setResources = useFiltersStore((state) => state.setResources);
   const resources = useFiltersStore((state) => state.filters.resources ?? cookies.resources ?? []);
-  const setSingleImageModel = useFiltersStore((state) => state.setSingleImageModel);
+  // const setSingleImageModel = useFiltersStore((state) => state.setSingleImageModel);
   const singleImageModel = useFiltersStore(
     (state) => state.filters.singleImageModel ?? cookies.singleImageModel ?? false
   );
-  const setSingleImageAlbum = useFiltersStore((state) => state.setSingleImageAlbum);
+  // const setSingleImageAlbum = useFiltersStore((state) => state.setSingleImageAlbum);
   const singleImageAlbum = useFiltersStore(
     (state) => state.filters.singleImageAlbum ?? cookies.singleImageAlbum ?? false
   );
@@ -213,8 +213,7 @@ export function GalleryFilters() {
 
   const chipProps: Partial<ChipProps> = {
     radius: 'sm',
-    size: 'sm',
-    classNames: classes,
+    classNames: { label: classes.label, iconWrapper: classes.iconWrapper, root: classes.root },
   };
 
   return (
@@ -241,17 +240,17 @@ export function GalleryFilters() {
           <Chip.Group
             spacing={4}
             value={types}
-            onChange={(types: ImageType[]) => setTypes(types)}
+            onChange={(types: ImageGenerationProcess[]) => setTypes(types)}
             multiple
-            my={4}
+            grow
           >
-            {Object.values(ImageType).map((type, index) => (
+            {Object.values(ImageGenerationProcess).map((type, index) => (
               <Chip key={index} value={type} {...chipProps}>
-                {type}
+                {type === 'txt2imgHiRes' ? 'txt2img + hi-res' : type}
               </Chip>
             ))}
           </Chip.Group>
-          <Divider label="Include resources" labelProps={{ weight: 'bold' }} />
+          {/* <Divider label="Include resources" labelProps={{ weight: 'bold' }} />
           <Chip.Group
             spacing={4}
             value={resources}
@@ -272,7 +271,7 @@ export function GalleryFilters() {
             <Chip {...chipProps} checked={singleImageAlbum} onChange={setSingleImageAlbum}>
               Per album
             </Chip>
-          </Group>
+          </Group> */}
           {filterLength > 0 && (
             <Button mt="xs" compact onClick={clearFilters} leftIcon={<IconFilterOff size={20} />}>
               Clear Filters
@@ -299,9 +298,15 @@ export function GalleryCategories() {
     { type: 'Hide' },
     { enabled: !!currentUser }
   );
-  // TODO @manuel: Update this to sort by imageCountAllTimeRank
+
   const { data: { items: categories } = { items: [] } } = trpc.tag.getAll.useQuery(
-    { entityType: ['Image'], not: hiddenTags?.map((x) => x.id), unlisted: false, categories: true },
+    {
+      entityType: ['Image'],
+      sort: TagSort.MostImages,
+      not: hiddenTags?.map((x) => x.id),
+      unlisted: false,
+      categories: true,
+    },
     { enabled: !currentUser || hiddenTags !== undefined }
   );
 
@@ -374,6 +379,8 @@ const useStyles = createStyles((theme, _params, getRef) => {
 
   return {
     label: {
+      width: '100%',
+      textAlign: 'center',
       fontSize: 12,
       fontWeight: 500,
       '&[data-checked]': {
@@ -391,6 +398,11 @@ const useStyles = createStyles((theme, _params, getRef) => {
     iconWrapper: {
       ref,
     },
+
+    root: {
+      maxWidth: 'unset',
+    },
+
     tagsContainer: {
       position: 'relative',
 

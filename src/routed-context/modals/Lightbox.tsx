@@ -171,7 +171,10 @@ export function Lightbox({
                     >
                       {show ? <IconMinus /> : <IconInfoCircle />}
                     </ActionIcon>
-                    <ImageMeta meta={images[index].meta as ImageMetaProps} />
+                    <ImageMeta
+                      meta={images[index].meta as ImageMetaProps}
+                      generationProcess={images[index].generationProcess ?? 'txt2img'}
+                    />
                   </Stack>
                 </Paper>
               )}

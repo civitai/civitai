@@ -54,3 +54,8 @@ export enum ImageResource {
   Manual = 'Manual',
   Automatic = 'Automatic',
 }
+
+export enum TagSort {
+  MostModels = 'Most Models',
+  MostImages = 'Most Images',
+}
