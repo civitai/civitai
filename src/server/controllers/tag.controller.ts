@@ -31,6 +31,7 @@ export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => 
         isCategory: true,
         tagsOnModels: withModels ? { select: { modelId: true } } : undefined,
       },
+      // TODO @manuel: Make this support imageCountAllTimeRank as well
       orderBy: { rank: { modelCountAllTimeRank: 'asc' } },
     });
 

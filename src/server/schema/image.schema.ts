@@ -77,4 +77,5 @@ export const getGalleryImageSchema = z.object({
   excludedUserIds: z.array(z.number()).optional(),
   singleImageModel: z.boolean().optional(),
   singleImageAlbum: z.boolean().optional(),
+  isFeatured: z.boolean().optional(),
 });

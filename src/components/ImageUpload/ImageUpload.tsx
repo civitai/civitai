@@ -509,6 +509,7 @@ function ImageTagTab({
 
   const loading = loadingCategories || loadingTags;
 
+  // TODO @manuel: Add NSFW toggle at the top of this tab
   return (
     <Stack sx={{ position: 'relative' }}>
       <LoadingOverlay visible={loading} />

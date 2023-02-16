@@ -7,6 +7,7 @@ import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetGalleryImageInput } from '~/server/schema/image.schema';
 import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
+import { decreaseDate } from '~/utils/date-helpers';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await prisma.imagesOnModels.findMany({
@@ -27,7 +28,6 @@ export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
 /**
  * TODO.gallery
  * Filter images based on selected filters (image processing, resources, single image per model/album)
- * @justin Add "featured" filter when no category has been selected
  */
 export const getGalleryImages = async <
   TOrderBy extends Prisma.Enumerable<Prisma.ImageOrderByWithRelationInput>
@@ -46,6 +46,7 @@ export const getGalleryImages = async <
   tags,
   excludedTagIds,
   excludedUserIds,
+  isFeatured,
   singleImageAlbum,
   singleImageModel,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
@@ -76,6 +77,12 @@ export const getGalleryImages = async <
     conditionalFilters.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
 
   if (tags && tags.length) conditionalFilters.push({ tags: { some: { tagId: { in: tags } } } });
+  else {
+    const periodStart = decreaseDate(new Date(), 3, 'days');
+    conditionalFilters.push({ featuredAt: { gt: periodStart } });
+  }
+
+  if (isFeatured) conditionalFilters.push({ featuredAt: { not: null } });
 
   if (excludedUserIds && excludedUserIds.length)
     conditionalFilters.push({ userId: { notIn: excludedUserIds } });
@@ -94,8 +101,8 @@ export const getGalleryImages = async <
     orderBy: orderBy ?? [
       ...(sort === ImageSort.MostComments
         ? [{ rank: { [`commentCount${period}Rank`]: 'asc' } }]
-        : sort === ImageSort.MostReactions // TODO.gallery: @justin Add metric to sort by most reactions
-        ? [{ rank: { [`likeCount${period}Rank`]: 'asc' } }]
+        : sort === ImageSort.MostReactions
+        ? [{ rank: { [`reactionCount${period}Rank`]: 'asc' } }]
         : []),
       { createdAt: 'desc' },
     ],

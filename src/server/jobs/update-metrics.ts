@@ -807,9 +807,10 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         UNION
 
         SELECT
-          "id"
-        FROM "MetricUpdateQueue"
-        WHERE type = 'Tag'
+          "tagId" AS id
+        FROM "Image" i
+        JOIN "TagsOnImage" toi ON toi."imageId" = i.id
+        WHERE (i."createdAt" > '${lastUpdate}')
       ),
       -- Get all affected
       affected AS
@@ -822,7 +823,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
 
       -- upsert metrics for all affected
       -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "TagMetric" ("tagId", timeframe, "followerCount", "hiddenCount", "modelCount")
+      INSERT INTO "TagMetric" ("tagId", timeframe, "followerCount", "hiddenCount", "modelCount", "imageCount")
       SELECT
         m.id,
         tf.timeframe,
@@ -846,7 +847,14 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           WHEN tf.timeframe = 'Month' THEN month_model_count
           WHEN tf.timeframe = 'Week' THEN week_model_count
           WHEN tf.timeframe = 'Day' THEN day_model_count
-        END AS model_count
+        END AS model_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN image_count
+          WHEN tf.timeframe = 'Year' THEN year_image_count
+          WHEN tf.timeframe = 'Month' THEN month_image_count
+          WHEN tf.timeframe = 'Week' THEN week_image_count
+          WHEN tf.timeframe = 'Day' THEN day_image_count
+        END AS image_count
       FROM
       (
         SELECT
@@ -865,7 +873,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           COALESCE(r.year_model_count, 0) AS year_model_count,
           COALESCE(r.month_model_count, 0) AS month_model_count,
           COALESCE(r.week_model_count, 0) AS week_model_count,
-          COALESCE(r.day_model_count, 0) AS day_model_count
+          COALESCE(r.day_model_count, 0) AS day_model_count,
+          COALESCE(i.image_count, 0) AS image_count,
+          COALESCE(i.year_image_count, 0) AS year_image_count,
+          COALESCE(i.month_image_count, 0) AS month_image_count,
+          COALESCE(i.week_image_count, 0) AS week_image_count,
+          COALESCE(i.day_image_count, 0) AS day_image_count
         FROM affected a
         LEFT JOIN (
           SELECT
@@ -879,6 +892,18 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           JOIN "Model" m ON m.id = tom."modelId"
           GROUP BY "tagId"
         ) r ON r.id = a.id
+        LEFT JOIN (
+          SELECT
+            "tagId" id,
+            COUNT("imageId") image_count,
+            SUM(IIF(i."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_image_count,
+            SUM(IIF(i."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_image_count,
+            SUM(IIF(i."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_image_count,
+            SUM(IIF(i."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_image_count
+          FROM "TagsOnImage" toi
+          JOIN "Image" i ON i.id = toi."imageId"
+          GROUP BY "tagId"
+        ) i ON i.id = a.id
         LEFT JOIN (
           SELECT
             "tagId"                                                                      AS id,

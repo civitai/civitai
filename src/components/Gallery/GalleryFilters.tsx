@@ -299,6 +299,7 @@ export function GalleryCategories() {
     { type: 'Hide' },
     { enabled: !!currentUser }
   );
+  // TODO @manuel: Update this to sort by imageCountAllTimeRank
   const { data: { items: categories } = { items: [] } } = trpc.tag.getAll.useQuery(
     { entityType: ['Image'], not: hiddenTags?.map((x) => x.id), unlisted: false, categories: true },
     { enabled: !currentUser || hiddenTags !== undefined }
