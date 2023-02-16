@@ -42,10 +42,12 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
   if (format) fileWhere.format = format;
 
   const modelVersion = await prisma.modelVersion.findFirst({
-    where: { id: modelVersionId, model: { status: 'Published' } },
+    where: { id: modelVersionId },
     select: {
       id: true,
-      model: { select: { id: true, name: true, type: true, publishedAt: true } },
+      model: {
+        select: { id: true, name: true, type: true, publishedAt: true, status: true, userId: true },
+      },
       name: true,
       trainedWords: true,
       earlyAccessTimeFrame: true,
@@ -65,8 +67,16 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
         });
   if (!file) return res.status(404).json({ error: 'Model file not found' });
 
-  // Handle unauthenticated downloads
+  // Handle non-published models
+  const isMod = session?.user?.isModerator;
   const userId = session?.user?.id;
+  const canDownload =
+    isMod ||
+    modelVersion?.model?.status === 'Published' ||
+    (userId && modelVersion?.model?.userId === userId);
+  if (!canDownload) return res.status(404).json({ error: 'Model not found' });
+
+  // Handle unauthenticated downloads
   if (!env.UNAUTHENTICATED_DOWNLOAD && !userId) {
     if (req.headers['content-type'] === 'application/json')
       return res.status(401).json({ error: 'Unauthorized' });

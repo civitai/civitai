@@ -33,6 +33,15 @@ export const constants = {
   reportingFilterDefaults: {
     limit: 50,
   },
+  modelFileOrder: {
+    Model: 0,
+    'Pruned Model': 1,
+    'Training Data': 2,
+    Config: 3,
+    'Text Encoder': 4,
+    VAE: 5,
+    Negative: 6,
+  },
 } as const;
 
 export type BaseModel = typeof constants.baseModels[number];

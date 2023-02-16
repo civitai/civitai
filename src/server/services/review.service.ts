@@ -268,6 +268,7 @@ export const convertReviewToComment = ({
     });
 
     await tx.review.delete({ where: { id } });
+    await queueMetricUpdate('Model', modelId);
 
     return comment;
   });

@@ -32,6 +32,7 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import { env } from '~/env/server.mjs';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
+import { constants, ModelFileType } from '~/server/common/constants';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -77,9 +78,12 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
 
         // sort version files by file type, 'Model' type goes first
         const files = [...version.files].sort((a, b) => {
-          if (a.type === 'Model' && b.type !== 'Model') return -1;
-          if (a.type !== 'Model' && b.type === 'Model') return 1;
-          return 0;
+          const aType = a.type as ModelFileType;
+          const bType = b.type as ModelFileType;
+
+          if (constants.modelFileOrder[aType] < constants.modelFileOrder[bType]) return -1;
+          else if (constants.modelFileOrder[aType] > constants.modelFileOrder[bType]) return 1;
+          else return 0;
         });
 
         return {

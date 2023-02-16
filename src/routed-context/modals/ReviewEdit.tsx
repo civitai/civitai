@@ -51,23 +51,19 @@ export default createRoutedContext({
 
     const { mutate, isLoading } = trpc.review.upsert.useMutation();
     const handleSubmit = (data: ReviewUpsertInput) => {
-      if (form.formState.isDirty) {
-        mutate(data, {
-          onSuccess: async (_, { modelId }) => {
-            context.close();
-            await queryUtils.review.getAll.invalidate({ modelId });
-            if (reviewId) await queryUtils.review.getDetail.invalidate({ id: reviewId });
-          },
-          onError: (error) => {
-            showErrorNotification({
-              error: new Error(error.message),
-              title: 'Could not save the review',
-            });
-          },
-        });
-      } else {
-        context.close();
-      }
+      mutate(data, {
+        onSuccess: async (_, { modelId }) => {
+          context.close();
+          await queryUtils.review.getAll.invalidate({ modelId });
+          if (reviewId) await queryUtils.review.getDetail.invalidate({ id: reviewId });
+        },
+        onError: (error) => {
+          showErrorNotification({
+            error: new Error(error.message),
+            title: 'Could not save the review',
+          });
+        },
+      });
     };
 
     const loadingReview = (reviewLoading || reviewRefetching) && !!reviewId;
