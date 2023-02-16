@@ -28,13 +28,10 @@ export const useForm = <TSchema extends z.AnyZodObject | z.Schema, TContext>(
 
   const refresh = useCallback(() => setResetCount((c) => c + 1), []);
 
-  return useMemo(
-    () => ({
-      ...form,
-      resetCount,
-      reset,
-      refresh,
-    }),
-    [form, resetCount, reset, refresh]
-  );
+  return {
+    ...form,
+    resetCount,
+    reset,
+    refresh,
+  };
 };
