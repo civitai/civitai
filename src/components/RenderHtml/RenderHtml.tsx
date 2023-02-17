@@ -18,6 +18,9 @@ const useStyles = createStyles(() => ({
     iframe: {
       border: 'none',
     },
+    code: {
+      whiteSpace: 'pre-line',
+    },
   },
 }));
 
