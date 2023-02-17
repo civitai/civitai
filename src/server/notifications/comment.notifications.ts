@@ -231,4 +231,62 @@ export const commentNotifications = createNotificationProcessor({
         );
     `,
   },
+  'new-image-comment': {
+    displayName: 'New comments on your images',
+    prepareMessage: ({ details }) => {
+      // Prep message
+      const message = `${details.username} commented on your ${
+        details.reviewId ? 'review image' : 'example image'
+      } posted to the ${details.modelName} model`;
+
+      // Prep URL
+      const searchParams: Record<string, string> = {
+        model: details.modelId,
+        modelVersionId: details.modelVersionId,
+        highlight: details.commentId,
+        infinite: 'false',
+      };
+      if (details.reviewId) {
+        searchParams.review = details.reviewId;
+        searchParams.returnUrl = `/models/${details.modelId}?modal=reviewThread&reviewId=${details.reviewId}`;
+      } else {
+        searchParams.returnUrl = `/models/${details.modelId}`;
+      }
+      const url = `/gallery/${details.imageId}?${new URLSearchParams(searchParams).toString()}`;
+
+      return { message, url };
+    },
+    prepareQuery: ({ lastSent }) => `
+      WITH new_image_comment AS (
+        SELECT DISTINCT
+          ic."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'imageId', t."imageId",
+            'modelId', ic."modelId",
+            'modelVersionId', ic."modelVersionId",
+            'commentId', c.id,
+            'reviewId', ic."reviewId",
+            'modelName', m.name,
+            'username', u.username
+          ) "details"
+        FROM "CommentV2" c
+        JOIN "Thread" t ON t.id = c."threadId" AND t."imageId" IS NOT NULL
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "ImageConnection" ic ON ic."imageId" = t."imageId"
+        JOIN "Model" m ON m.id = ic."modelId"
+        WHERE m."userId" > 0
+          AND c."createdAt" > '${lastSent}'
+          AND c."userId" != ic."userId"
+      )
+      INSERT INTO "Notification"("id", "userId", "type", "details")
+      SELECT
+        REPLACE(gen_random_uuid()::text, '-', ''),
+        "ownerId"    "userId",
+        'new-image-comment' "type",
+        details
+      FROM new_image_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-image-comment');
+    `,
+  },
 });
