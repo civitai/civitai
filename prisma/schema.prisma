@@ -726,7 +726,7 @@ model Tag {
   stats          TagStat?
   rank           TagRank?
 
-  @@unique([name, target])
+  @@unique([name])
 }
 
 model TagsOnModels {

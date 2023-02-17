@@ -252,62 +252,75 @@ export const createModel = async ({
     .flatMap((version) => version.images)
     .every((image) => image.nsfw);
 
-  return prisma.model.create({
-    data: {
-      ...data,
-      checkpointType: data.type === ModelType.Checkpoint ? data.checkpointType : null,
-      publishedAt: data.status === ModelStatus.Published ? new Date() : null,
-      lastVersionAt: new Date(),
-      nsfw: data.nsfw || (allImagesNSFW && data.status === ModelStatus.Published),
-      userId,
-      modelVersions: {
-        create: parsedModelVersions.map(({ images, files, ...version }, versionIndex) => ({
-          ...version,
-          trainedWords: version.trainedWords?.map((x) => x.toLowerCase()),
-          index: versionIndex,
-          status: data.status,
-          files: files.length > 0 ? { create: files } : undefined,
-          images: {
-            create: images.map(({ tags = [], ...image }, index) => ({
-              index,
-              image: {
-                create: {
-                  ...image,
-                  userId,
-                  meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                  generationProcess: image.meta
-                    ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
-                    : null,
-                  tags: {
-                    create: tags.map((tag) => ({
-                      tag: {
-                        connectOrCreate: {
-                          where: { id: tag.id },
-                          create: { ...tag, target: [TagTarget.Image] },
+  return prisma.$transaction(async (tx) => {
+    if (tagsOnModels)
+      await tx.tag.updateMany({
+        where: {
+          name: { in: tagsOnModels.map((x) => x.name.toLowerCase().trim()) },
+          NOT: { target: { has: TagTarget.Model } },
+        },
+        data: { target: { push: TagTarget.Model } },
+      });
+
+    return tx.model.create({
+      data: {
+        ...data,
+        checkpointType: data.type === ModelType.Checkpoint ? data.checkpointType : null,
+        publishedAt: data.status === ModelStatus.Published ? new Date() : null,
+        lastVersionAt: new Date(),
+        nsfw: data.nsfw || (allImagesNSFW && data.status === ModelStatus.Published),
+        userId,
+        modelVersions: {
+          create: parsedModelVersions.map(({ images, files, ...version }, versionIndex) => ({
+            ...version,
+            trainedWords: version.trainedWords?.map((x) => x.toLowerCase()),
+            index: versionIndex,
+            status: data.status,
+            files: files.length > 0 ? { create: files } : undefined,
+            images: {
+              create: images.map(({ tags = [], ...image }, index) => ({
+                index,
+                image: {
+                  create: {
+                    ...image,
+                    userId,
+                    meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                    generationProcess: image.meta
+                      ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
+                      : null,
+                    tags: {
+                      create: tags.map((tag) => ({
+                        tag: {
+                          connectOrCreate: {
+                            where: { id: tag.id },
+                            create: { ...tag, target: [TagTarget.Image] },
+                          },
                         },
-                      },
-                    })),
+                      })),
+                    },
                   },
                 },
-              },
-            })),
-          },
-        })),
-      },
-      tagsOnModels: {
-        create: tagsOnModels?.map((tag) => {
-          const name = tag.name.toLowerCase().trim();
-          return {
-            tag: {
-              connectOrCreate: {
-                where: { id: tag.id },
-                create: { name, target: [TagTarget.Model] },
-              },
+              })),
             },
-          };
-        }),
+          })),
+        },
+        tagsOnModels: tagsOnModels
+          ? {
+              create: tagsOnModels.map((tag) => {
+                const name = tag.name.toLowerCase().trim();
+                return {
+                  tag: {
+                    connectOrCreate: {
+                      where: { name },
+                      create: { name, target: [TagTarget.Model] },
+                    },
+                  },
+                };
+              }),
+            }
+          : undefined,
       },
-    },
+    });
   });
 };
 
@@ -389,127 +402,47 @@ export const updateModel = async ({
     .flatMap((version) => version.images)
     .every((image) => image.nsfw);
 
-  const model = await prisma.model.update({
-    where: { id },
-    data: {
-      ...data,
-      checkpointType: data.type === ModelType.Checkpoint ? data.checkpointType : null,
-      nsfw: data.nsfw || (allImagesNSFW && data.status === ModelStatus.Published),
-      status: data.status,
-      publishedAt:
-        data.status === ModelStatus.Published && currentModel.status !== ModelStatus.Published
-          ? new Date()
-          : currentModel.publishedAt,
-      lastVersionAt: hasNewVersions ? new Date() : undefined,
-      modelVersions: {
-        deleteMany: versionIds.length > 0 ? { id: { notIn: versionIds } } : undefined,
-        create: versionsToCreate.map(({ images, files, ...version }) => ({
-          ...version,
-          files: { create: files },
-          images: {
-            create: images.map(({ id, meta, tags = [], ...image }, index) => ({
-              index,
-              image: {
-                create: {
-                  ...image,
-                  userId,
-                  meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                  generationProcess: meta
-                    ? getImageGenerationProcess(meta as Prisma.JsonObject)
-                    : null,
-                  tags: {
-                    create: tags.map((tag) => ({
-                      tag: {
-                        connectOrCreate: {
-                          where: { id: tag.id },
-                          create: { ...tag, target: [TagTarget.Image] },
-                        },
-                      },
-                    })),
-                  },
-                },
-              },
-            })),
+  const tagsToCreate = tagsOnModels?.filter(isNotTag) ?? [];
+  const tagsToUpdate = tagsOnModels?.filter(isTag) ?? [];
+
+  return await prisma.$transaction(
+    async (tx) => {
+      if (tagsOnModels)
+        await tx.tag.updateMany({
+          where: {
+            name: { in: tagsOnModels.map((x) => x.name.toLowerCase().trim()) },
+            NOT: { target: { has: TagTarget.Model } },
           },
-        })),
-        update: versionsToUpdate.map(({ id = -1, images, files, ...version }) => {
-          const fileIds = files.map((file) => file.id).filter(Boolean) as number[];
-          const currentVersion = existingVersions.find((x) => x.id === id);
+          data: { target: { push: TagTarget.Model } },
+        });
 
-          // Determine which files to create/update
-          const { filesToCreate, filesToUpdate } = files.reduce(
-            (acc, current) => {
-              if (!current.id) acc.filesToCreate.push(current);
-              else {
-                const existingFiles = currentVersion?.files ?? [];
-                const matched = existingFiles.findIndex((file) => file.id === current.id);
-                const different = !isEqual(existingFiles[matched], files[matched]);
-                if (different) acc.filesToUpdate.push(current);
-              }
-
-              return acc;
-            },
-            { filesToCreate: [] as typeof files, filesToUpdate: [] as typeof files }
-          );
-
-          // Determine which images to create/update
-          type PayloadImage = typeof images[number] & {
-            index: number;
-            userId: number;
-            meta: Prisma.JsonObject;
-          };
-          const { imagesToCreate, imagesToUpdate } = images.reduce(
-            (acc, current, index) => {
-              if (!current.id)
-                acc.imagesToCreate.push({
-                  ...current,
-                  index,
-                  userId,
-                  meta: (current.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                });
-              else {
-                const existingImages = currentVersion?.images ?? [];
-                const matched = existingImages.findIndex((image) => image.id === current.id);
-                const different = !isEqual(existingImages[matched], images[matched]);
-                if (different)
-                  acc.imagesToUpdate.push({
-                    ...current,
-                    index,
-                    userId,
-                    meta: (current.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                  });
-              }
-
-              return acc;
-            },
-            { imagesToCreate: [] as PayloadImage[], imagesToUpdate: [] as PayloadImage[] }
-          );
-
-          return {
-            where: { id },
-            data: {
+      return prisma.model.update({
+        where: { id },
+        data: {
+          ...data,
+          checkpointType: data.type === ModelType.Checkpoint ? data.checkpointType : null,
+          nsfw: data.nsfw || (allImagesNSFW && data.status === ModelStatus.Published),
+          status: data.status,
+          publishedAt:
+            data.status === ModelStatus.Published && currentModel.status !== ModelStatus.Published
+              ? new Date()
+              : currentModel.publishedAt,
+          lastVersionAt: hasNewVersions ? new Date() : undefined,
+          modelVersions: {
+            deleteMany: versionIds.length > 0 ? { id: { notIn: versionIds } } : undefined,
+            create: versionsToCreate.map(({ images, files, ...version }) => ({
               ...version,
-              trainedWords: version.trainedWords?.map((x) => x.toLowerCase()),
-              status: data.status,
-              files: {
-                deleteMany: { id: { notIn: fileIds } },
-                create: filesToCreate,
-                update: filesToUpdate.map(({ id, ...fileData }) => ({
-                  where: { id: id ?? -1 },
-                  data: { ...fileData },
-                })),
-              },
+              files: { create: files },
               images: {
-                deleteMany: {
-                  NOT: images.map((image) => ({ imageId: image.id })),
-                },
-                create: imagesToCreate.map(({ index, tags = [], ...image }) => ({
+                create: images.map(({ id, meta, tags = [], ...image }, index) => ({
                   index,
                   image: {
                     create: {
                       ...image,
-                      generationProcess: image.meta
-                        ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
+                      userId,
+                      meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                      generationProcess: meta
+                        ? getImageGenerationProcess(meta as Prisma.JsonObject)
                         : null,
                       tags: {
                         create: tags.map((tag) => ({
@@ -524,70 +457,171 @@ export const updateModel = async ({
                     },
                   },
                 })),
-                update: imagesToUpdate.map(({ index, meta, nsfw, tags = [], ...image }) => ({
-                  where: {
-                    imageId_modelVersionId: {
-                      imageId: image.id as number,
-                      modelVersionId: id,
-                    },
+              },
+            })),
+            update: versionsToUpdate.map(({ id = -1, images, files, ...version }) => {
+              const fileIds = files.map((file) => file.id).filter(Boolean) as number[];
+              const currentVersion = existingVersions.find((x) => x.id === id);
+
+              // Determine which files to create/update
+              const { filesToCreate, filesToUpdate } = files.reduce(
+                (acc, current) => {
+                  if (!current.id) acc.filesToCreate.push(current);
+                  else {
+                    const existingFiles = currentVersion?.files ?? [];
+                    const matched = existingFiles.findIndex((file) => file.id === current.id);
+                    const different = !isEqual(existingFiles[matched], files[matched]);
+                    if (different) acc.filesToUpdate.push(current);
+                  }
+
+                  return acc;
+                },
+                { filesToCreate: [] as typeof files, filesToUpdate: [] as typeof files }
+              );
+
+              // Determine which images to create/update
+              type PayloadImage = typeof images[number] & {
+                index: number;
+                userId: number;
+                meta: Prisma.JsonObject;
+              };
+              const { imagesToCreate, imagesToUpdate } = images.reduce(
+                (acc, current, index) => {
+                  if (!current.id)
+                    acc.imagesToCreate.push({
+                      ...current,
+                      index,
+                      userId,
+                      meta: (current.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                    });
+                  else {
+                    const existingImages = currentVersion?.images ?? [];
+                    const matched = existingImages.findIndex((image) => image.id === current.id);
+                    const different = !isEqual(existingImages[matched], images[matched]);
+                    if (different)
+                      acc.imagesToUpdate.push({
+                        ...current,
+                        index,
+                        userId,
+                        meta: (current.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                      });
+                  }
+
+                  return acc;
+                },
+                { imagesToCreate: [] as PayloadImage[], imagesToUpdate: [] as PayloadImage[] }
+              );
+
+              return {
+                where: { id },
+                data: {
+                  ...version,
+                  trainedWords: version.trainedWords?.map((x) => x.toLowerCase()),
+                  status: data.status,
+                  files: {
+                    deleteMany: { id: { notIn: fileIds } },
+                    create: filesToCreate,
+                    update: filesToUpdate.map(({ id, ...fileData }) => ({
+                      where: { id: id ?? -1 },
+                      data: { ...fileData },
+                    })),
                   },
-                  data: {
-                    index,
-                    image: {
-                      update: {
-                        nsfw,
-                        meta,
-                        tags: {
-                          deleteMany: {},
-                          connectOrCreate: tags.map((tag) => ({
-                            where: {
-                              tagId_imageId: {
-                                tagId: tag.id as number,
-                                imageId: image.id as number,
-                              },
-                            },
-                            create: {
+                  images: {
+                    deleteMany: {
+                      NOT: images.map((image) => ({ imageId: image.id })),
+                    },
+                    create: imagesToCreate.map(({ index, tags = [], ...image }) => ({
+                      index,
+                      image: {
+                        create: {
+                          ...image,
+                          generationProcess: image.meta
+                            ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
+                            : null,
+                          tags: {
+                            create: tags.map((tag) => ({
                               tag: {
                                 connectOrCreate: {
                                   where: { id: tag.id },
                                   create: { ...tag, target: [TagTarget.Image] },
                                 },
                               },
-                            },
-                          })),
+                            })),
+                          },
                         },
                       },
-                    },
+                    })),
+                    update: imagesToUpdate.map(({ index, meta, nsfw, tags = [], ...image }) => ({
+                      where: {
+                        imageId_modelVersionId: {
+                          imageId: image.id as number,
+                          modelVersionId: id,
+                        },
+                      },
+                      data: {
+                        index,
+                        image: {
+                          update: {
+                            nsfw,
+                            meta,
+                            tags: {
+                              deleteMany: {},
+                              connectOrCreate: tags.map((tag) => ({
+                                where: {
+                                  tagId_imageId: {
+                                    tagId: tag.id as number,
+                                    imageId: image.id as number,
+                                  },
+                                },
+                                create: {
+                                  tag: {
+                                    connectOrCreate: {
+                                      where: { id: tag.id },
+                                      create: { ...tag, target: [TagTarget.Image] },
+                                    },
+                                  },
+                                },
+                              })),
+                            },
+                          },
+                        },
+                      },
+                    })),
                   },
-                })),
-              },
-            },
-          };
-        }),
-      },
-      tagsOnModels: tagsOnModels
-        ? {
-            deleteMany: {
-              tagId: {
-                notIn: tagsOnModels.filter(isTag).map((x) => x.id),
-              },
-            },
-            connectOrCreate: tagsOnModels.filter(isTag).map((tag) => ({
-              where: { modelId_tagId: { tagId: tag.id, modelId: id } },
-              create: { tagId: tag.id },
-            })),
-            create: tagsOnModels.filter(isNotTag).map((tag) => {
-              const name = tag.name.toLowerCase().trim();
-              return {
-                tag: {
-                  create: { name, target: [TagTarget.Model] },
                 },
               };
             }),
-          }
-        : undefined,
+          },
+          tagsOnModels: tagsOnModels
+            ? {
+                deleteMany: {
+                  tagId: {
+                    notIn: tagsToUpdate.map((x) => x.id),
+                  },
+                },
+                connectOrCreate: tagsToUpdate.map((tag) => ({
+                  where: { modelId_tagId: { tagId: tag.id, modelId: id } },
+                  create: { tagId: tag.id },
+                })),
+                create: tagsToCreate.map((tag) => {
+                  const name = tag.name.toLowerCase().trim();
+                  return {
+                    tag: {
+                      connectOrCreate: {
+                        where: { name },
+                        create: { name, target: [TagTarget.Model] },
+                      },
+                    },
+                  };
+                }),
+              }
+            : undefined,
+        },
+      });
     },
-  });
-
-  return model;
+    {
+      maxWait: 10000,
+      timeout: 30000,
+    }
+  );
 };
