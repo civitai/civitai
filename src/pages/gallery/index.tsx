@@ -13,6 +13,7 @@ import {
 } from '~/components/Gallery/GalleryFilters';
 import { InfiniteGalleryGrid } from '~/components/Gallery/InfiniteGalleryGrid';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
+import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
@@ -61,48 +62,56 @@ export default function Gallery() {
   if (!gallery) return null;
 
   return (
-    <Container size={1920}>
-      <Stack spacing="xs">
-        <Announcements
-          sx={(theme) => ({
-            marginBottom: -35,
-            [theme.fn.smallerThan('md')]: {
-              marginBottom: -5,
-            },
-          })}
-        />
-        <HomeContentToggle sx={showMobile} />
-        <Group position="apart">
-          <Group>
-            <HomeContentToggle sx={hideMobile} />
-            <GallerySort />
+    <>
+      <Meta
+        title={`Civitai${
+          !currentUser ? ` | Stable Diffusion models, embeddings, hypernetworks and more` : ''
+        }`}
+        description="Civitai is a platform for Stable Diffusion AI Art models. We have a collection of over 1,700 models from 250+ creators. We also have a collection of 1200 reviews from the community along with 12,000+ images with prompts to get you started."
+      />
+      <Container size="xl">
+        <Stack spacing="xs">
+          <Announcements
+            sx={(theme) => ({
+              marginBottom: -35,
+              [theme.fn.smallerThan('md')]: {
+                marginBottom: -5,
+              },
+            })}
+          />
+          <HomeContentToggle sx={showMobile} />
+          <Group position="apart">
+            <Group>
+              <HomeContentToggle sx={hideMobile} />
+              <GallerySort />
+            </Group>
+            <Group spacing={4}>
+              <GalleryPeriod />
+              <GalleryFilters />
+              {!!filters.tags?.length ? (
+                <ActionIcon variant="subtle" color="red" size="md" onClick={clearFilters}>
+                  <IconFilterOff size={20} />
+                </ActionIcon>
+              ) : null}
+            </Group>
           </Group>
-          <Group spacing={4}>
-            <GalleryPeriod />
-            <GalleryFilters />
-            {!!filters.tags?.length ? (
-              <ActionIcon variant="subtle" color="red" size="md" onClick={clearFilters}>
-                <IconFilterOff size={20} />
-              </ActionIcon>
-            ) : null}
-          </Group>
-        </Group>
-        <GalleryCategories />
-        {isLoading ? (
-          <Center py="xl">
-            <Loader size="xl" />
-          </Center>
-        ) : images.length ? (
-          <InfiniteGalleryGrid data={images} filters={filters} columnWidth={300} />
-        ) : (
-          <NoContent mt="lg" />
-        )}
-        {!isLoading && hasNextPage && (
-          <Group position="center" ref={ref}>
-            <Loader />
-          </Group>
-        )}
-      </Stack>
-    </Container>
+          <GalleryCategories />
+          {isLoading ? (
+            <Center py="xl">
+              <Loader size="xl" />
+            </Center>
+          ) : images.length ? (
+            <InfiniteGalleryGrid data={images} filters={filters} columnWidth={300} />
+          ) : (
+            <NoContent mt="lg" />
+          )}
+          {!isLoading && hasNextPage && (
+            <Group position="center" ref={ref}>
+              <Loader />
+            </Group>
+          )}
+        </Stack>
+      </Container>
+    </>
   );
 }
