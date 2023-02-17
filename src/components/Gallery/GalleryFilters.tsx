@@ -357,8 +357,11 @@ export function GalleryCategories() {
   const scrollLeft = () => viewportRef.current?.scrollBy({ left: -200, behavior: 'smooth' });
   const scrollRight = () => viewportRef.current?.scrollBy({ left: 200, behavior: 'smooth' });
 
-  const handleCategoryClick = (id: number) => {
-    setTags(tags.includes(id) ? tags.filter((x) => x !== id) : [...tags, id]);
+  const handleCategoryClick = (id: number, shouldAdd: boolean) => {
+    const hasTag = tags.includes(id);
+    if (hasTag) setTags(tags.filter((x) => x !== id));
+    else if (!shouldAdd && !hasTag) setTags([id]);
+    else setTags([...tags, id]);
   };
 
   return (
@@ -387,7 +390,10 @@ export function GalleryCategories() {
               className={classes.tag}
               variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
               color={active ? 'blue' : 'gray'}
-              onClick={() => handleCategoryClick(tag.id)}
+              onClick={(e) => {
+                const shouldAdd = e.ctrlKey;
+                handleCategoryClick(tag.id, shouldAdd);
+              }}
               compact
             >
               {tag.name}
