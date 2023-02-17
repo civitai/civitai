@@ -3,24 +3,26 @@ export const domainLinks = {
   huggingFace: ['huggingface.co'],
   twitter: ['twitter.com'],
   twitch: ['twitch.tv'],
-  reddit: ['reddit.com', 'www.reddit.com'],
-  youtube: ['youtube.com', 'www.youtube.com'],
-  facebook: ['www.facebook.com'],
-  instagram: ['www.instagram.com'],
-  buyMeACoffee: ['www.buymeacoffee.com'],
-  patreon: ['patreon.com', 'www.patreon.com'],
+  reddit: ['reddit.com'],
+  youtube: ['youtube.com'],
+  facebook: ['facebook.com'],
+  instagram: ['instagram.com'],
+  buyMeACoffee: ['buymeacoffee.com'],
+  patreon: ['patreon.com'],
   koFi: ['ko-fi.com'],
   coindrop: ['coindrop.to'],
   discord: ['discord.gg', 'discord.com'],
   github: ['github.com'],
   linktree: ['linktr.ee'],
-  deviantArt: ['www.deviantart.com', 'deviantart.com'],
+  deviantArt: ['deviantart.com'],
+  tumblr: ['tumblr.com'],
 };
 
 const sortArray = (Object.keys(domainLinks) as (string | undefined)[]).concat(undefined);
 
 export function getDomainLinkType(url: string) {
-  const { hostname } = new URL(url);
+  let { hostname } = new URL(url);
+  hostname = hostname.split('.').slice(-2).join('.');
   const key = Object.entries(domainLinks).find(([key, value]) => value.includes(hostname))?.[0] as  //eslint-disable-line
     | DomainLink
     | undefined;
