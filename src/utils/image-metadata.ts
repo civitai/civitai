@@ -1,10 +1,9 @@
-import { FileWithPath } from '@mantine/dropzone';
 import exifr from 'exifr';
 import { unescape } from 'lodash';
-import { ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
+import { ImageAnalysisInput, ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
 import blocked from './blocklist.json';
 
-export async function getMetadata(file: FileWithPath) {
+export async function getMetadata(file: File) {
   let exif: any; //eslint-disable-line
   try {
     exif = await exifr.parse(file, {
@@ -187,5 +186,13 @@ export const auditMetaData = (meta: AsyncReturnType<typeof getMetadata>) => {
     .filter(({ regex }) => meta?.prompt && regex.test(meta.prompt))
     .map((x) => x.word);
   return { blockedFor, success: !blockedFor.length };
+};
+
+export const detectNsfwImage = (analysis: ImageAnalysisInput) => {
+  const topResult = Object.entries(analysis)
+    .sort((a, b) => b[1] - a[1])
+    .map(([key]) => key)[0];
+  const nsfw = ['porn', 'hentai', 'sexy'].includes(topResult);
+  return nsfw;
 };
 // #endregion

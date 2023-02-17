@@ -2,80 +2,57 @@ import { FileWithPath } from '@mantine/dropzone';
 import { useListState } from '@mantine/hooks';
 import produce from 'immer';
 import { useEffect, useRef, useState } from 'react';
-import { v4 as uuidv4 } from 'uuid';
 
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import { useNsfwWorkerContext } from '~/providers/NsfwWorkerProvider';
-import { loadImage, blurHashImage } from '~/utils/blurhash';
-import { auditMetaData, getMetadata } from '~/utils/image-metadata';
+import { useImageProcessingContext } from '~/components/ImageProcessing';
 
 type ImageUpload = CustomFile;
 
 type QueueItem = { uuid: string; file: FileWithPath };
 
 export const useImageUpload = ({ max = 10, value }: { max?: number; value: CustomFile[] }) => {
-  const { scanImages, canUseScanner } = useNsfwWorkerContext();
+  const { scanImages, canUseScanner } = useImageProcessingContext();
 
   // const [canUpload, setCanUpload] = useState(!supportsWebWorker);
   const [files, filesHandler] = useListState<ImageUpload>(value);
   const { uploadToCF } = useCFImageUpload();
 
-  const startProcessing = async (filesToProcess: FileWithPath[]) => {
-    // start processing and handle `max`
-    const toProcess = await Promise.all(
-      filesToProcess.slice(0, max - files.length).map(async (file) => {
-        const src = URL.createObjectURL(file);
-        const meta = await getMetadata(file);
-        const img = await loadImage(src);
-        const hashResult = blurHashImage(img);
-        return {
-          name: file.name,
-          url: src,
-          previewUrl: src,
-          file,
-          meta,
-          uuid: uuidv4(),
-          status: 'processing' as const,
-          nsfw: undefined,
-          ...hashResult,
-        };
-      })
-    );
-    filesHandler.setState((files) => [...files, ...toProcess]);
-    scanImages(
-      toProcess.map(({ uuid, file, meta }) => ({ uuid, file, meta })),
-      ({ data: result }) => {
-        if (result.type === 'error') {
-          console.error(result.data.error);
-          if (result.data.error) {
-            filesHandler.setState(
-              produce((state) => {
-                const index = state.findIndex((x) => x.uuid === result.data.uuid);
-                state[index].status = 'error';
-              })
-            );
-          }
-        } else if (result.type === 'result') {
-          const auditResult =
-            result.data.nsfw && result.data.meta ? auditMetaData(result.data.meta) : undefined;
-          const status = auditResult && !auditResult?.success ? 'blocked' : 'uploading';
+  const startProcessing = async (filesToProcess: File[]) => {
+    scanImages(filesToProcess.slice(0, max - files.length), (data) => {
+      console.log({ data });
+      switch (data.type) {
+        case 'error':
           filesHandler.setState(
             produce((state) => {
-              const index = state.findIndex((x) => x.uuid === result.data.uuid);
-              if (index > -1) {
-                state[index].analysis = result.data.analysis;
-                state[index].nsfw = result.data.nsfw;
-                state[index].status = status;
-                state[index].blockedFor = auditResult?.blockedFor;
+              const index = state.findIndex((x) => x.uuid === payload.uuid);
+              if (!index) throw new Error('missing index');
+              state[index].status = 'error';
+            })
+          );
+          break;
+        case 'processing': // this would be better if we split it into separate events
+          const { payload } = data;
+          let status = 'processing';
+          if (payload.blockedFor) status = 'blocked';
+          else if (payload.status === 'finished') status = 'uploading';
 
-                if (status === 'blocked') {
-                  state[index].file = null;
-                }
-              }
+          filesHandler.setState(
+            produce((state) => {
+              const index = state.findIndex((x) => x.uuid === payload.uuid);
+              const data = {
+                ...payload,
+                status,
+                url: payload.src,
+                previewUrl: payload.src,
+                file: status !== 'blocked' ? payload.file : undefined,
+              } as CustomFile;
+
+              if (index === -1) state.push(data);
+              state[index] = data;
             })
           );
           if (status === 'uploading') {
-            pending.current.push({ uuid: result.data.uuid, file: result.data.file });
+            pending.current.push({ uuid: payload.uuid, file: payload.file });
             setStats((stats) => {
               return {
                 ...stats,
@@ -83,9 +60,11 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
               };
             });
           }
-        }
+          break;
+        default:
+          throw new Error('unhandled scan event type');
       }
-    );
+    });
   };
 
   // #region [upload queue]
@@ -124,7 +103,7 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
                 const previewUrl = state[index].previewUrl;
                 if (previewUrl) state[index].onLoad = () => URL.revokeObjectURL(previewUrl);
                 state[index].url = id;
-                state[index].file = null;
+                state[index].file = undefined;
                 state[index].status = 'complete';
               }
             })
