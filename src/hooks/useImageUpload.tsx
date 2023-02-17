@@ -19,7 +19,6 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
 
   const startProcessing = async (filesToProcess: File[]) => {
     scanImages(filesToProcess.slice(0, max - files.length), (data) => {
-      console.log({ data });
       switch (data.type) {
         case 'error':
           filesHandler.setState(
@@ -32,6 +31,7 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
           break;
         case 'processing': // this would be better if we split it into separate events
           const { payload } = data;
+          if (payload.analysis?.faces) console.log({ faces: payload.analysis?.faces });
           let status = 'processing';
           if (payload.blockedFor) status = 'blocked';
           else if (payload.status === 'finished') status = 'uploading';
@@ -91,18 +91,20 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
         };
       });
 
+      //TODO.image-processing - uncomment uploadToCF
       Promise.resolve(
         (async function () {
           const existingFile = files.find((x) => x.uuid === item.uuid);
           if (!existingFile) return;
-          const { id } = await uploadToCF(item.file);
+          // const { id } = await uploadToCF(item.file);
+          console.log('need to uncomment some code');
           filesHandler.setState(
             produce((state) => {
               const index = state.findIndex((x) => x.uuid === item.uuid);
               if (index > -1) {
                 const previewUrl = state[index].previewUrl;
                 if (previewUrl) state[index].onLoad = () => URL.revokeObjectURL(previewUrl);
-                state[index].url = id;
+                // state[index].url = id;
                 state[index].file = undefined;
                 state[index].status = 'complete';
               }

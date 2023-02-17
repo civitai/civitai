@@ -1,5 +1,3 @@
-import { FileWithPath } from '@mantine/dropzone';
-
 export type ImageProcessingStatus = 'processing' | 'nsfw' | 'faces' | 'finished';
 
 export type ImageProcessing = {

@@ -63,39 +63,19 @@ function nsfwProcess(values: Int32Array | Uint8Array | Float32Array) {
   return results;
 }
 
-// async function test(file: File) {
-//   const bitmap = await createImageBitmap(file);
-//   const { width: w, height: h } = bitmap;
-//   const offScreen = new OffscreenCanvas(w, h);
-//   const ctx = offScreen.getContext('2d') as OffscreenCanvasRenderingContext2D;
-//   ctx.drawImage(bitmap, 0, 0, w, h);
-//   const canvasData = ctx.getImageData(0, 0, w, h).data;
-//   const img = new ImageData(canvasData, w, h);
-// }
-
-// async function analyzeImage(bitmap: ImageBitmap) {
-//   const { width: w, height: h } = bitmap;
-//   const offScreen = new OffscreenCanvas(w, h);
-//   const ctx = offScreen.getContext('2d') as OffscreenCanvasRenderingContext2D;
-//   ctx.drawImage(bitmap, 0, 0, w, h);
-
-//   const canvasData = ctx.getImageData(0, 0, w, h).data;
-//   const img = new ImageData(canvasData, w, h);
-//   const pixels = tf.browser.fromPixels(img);
-//   const normalized = pixels.toFloat().div(tf.scalar(255)) as tf.Tensor3D;
-
-//   let resized = normalized;
-//   if (pixels.shape[0] !== SIZE || pixels.shape[1] !== SIZE) {
-//     resized = tf.image.resizeBilinear(normalized, [SIZE, SIZE], true);
-//   }
-
-//   const batched = resized.reshape([1, SIZE, SIZE, 3]);
-//   const predictions = (await model.predict(batched)) as tf.Tensor;
-//   const values = await predictions.data();
-//   const result = nsfwProcess(values);
-//   predictions.dispose();
-//   return result;
-// }
+const inintializeNsfwModel = async () => {
+  try {
+    model = await tf.loadLayersModel('indexeddb://model');
+    console.log('Load NSFW Model!');
+  } catch (e) {
+    model = await tf.loadLayersModel(env.NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION);
+    model.save('indexeddb://model');
+    console.log('Save NSFW Model!');
+  }
+  // const result = tf.tidy(() => model.predict(tf.zeros([1, SIZE, SIZE, 3]))) as tf.Tensor;
+  // await result.data();
+  // result.dispose();
+};
 
 const analyzeImage = async (img: ImageData) => {
   const pixels = tf.browser.fromPixels(img);
@@ -116,29 +96,18 @@ const analyzeImage = async (img: ImageData) => {
 
 let human: H.Human;
 const humanConfig: Partial<H.Config> = {
-  // modelBasePath: 'https://publicstore.civitai.com/face_detection/',
-  // async: true,
-  // face: {
-  //   enabled: true,
-  //   detector: { enabled: true, maxDetected: 10, return: false, rotation: false, minConfidence: 0.2 },
-  //   iris: { enabled: false },
-  //   description: { enabled: true },
-  //   emotion: { enabled: true },
-  //   antispoof: { enabled: true },
-  //   liveness: { enabled: true },
-  // },
-  // body: { enabled: false },
-  // hand: { enabled: false },
-  // object: { enabled: false },
-  // gesture: { enabled: false },
-  // segmentation: { enabled: false },
-  debug: true,
-  modelBasePath: 'https://vladmandic.github.io/human-models/models/',
-  filter: { enabled: true, equalization: false, flip: false },
+  modelBasePath: 'https://publicstore.civitai.com/face_detection/',
+  async: true,
   face: {
     enabled: true,
-    detector: { rotation: false, maxDetected: 100, minConfidence: 0.2, return: true },
-    iris: { enabled: true },
+    detector: {
+      enabled: true,
+      maxDetected: 10,
+      return: false,
+      rotation: false,
+      minConfidence: 0.2,
+    },
+    iris: { enabled: false },
     description: { enabled: true },
     emotion: { enabled: true },
     antispoof: { enabled: true },
@@ -149,6 +118,23 @@ const humanConfig: Partial<H.Config> = {
   object: { enabled: false },
   gesture: { enabled: false },
   segmentation: { enabled: false },
+  // debug: true,
+  // modelBasePath: 'https://vladmandic.github.io/human-models/models/',
+  // filter: { enabled: true, equalization: false, flip: false },
+  // face: {
+  //   enabled: true,
+  //   detector: { rotation: false, maxDetected: 100, minConfidence: 0.2, return: true },
+  //   iris: { enabled: true },
+  //   description: { enabled: true },
+  //   emotion: { enabled: true },
+  //   antispoof: { enabled: true },
+  //   liveness: { enabled: true },
+  // },
+  // body: { enabled: false },
+  // hand: { enabled: false },
+  // object: { enabled: false },
+  // gesture: { enabled: false },
+  // segmentation: { enabled: false },
 };
 const detectFaces = async (img: ImageData) => {
   if (!human) human = new H.Human(humanConfig);
@@ -211,17 +197,7 @@ const start = async (port: MessagePort) => {
     if (!initializing) {
       initializing = true;
       await tf.setBackend('wasm');
-      try {
-        model = await tf.loadLayersModel('indexeddb://model');
-        console.log('Load NSFW Model!');
-      } catch (e) {
-        model = await tf.loadLayersModel(env.NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION);
-        model.save('indexeddb://model');
-        console.log('Save NSFW Model!');
-      }
-      const result = tf.tidy(() => model.predict(tf.zeros([1, SIZE, SIZE, 3]))) as tf.Tensor;
-      await result.data();
-      result.dispose();
+      await inintializeNsfwModel();
       portReq({ type: 'ready' });
       initializing = false;
     }
