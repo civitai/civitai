@@ -154,7 +154,7 @@ export function GalleryDetail2() {
           >
             {/* TODO.gallery - do I need this? */}
             {/* <LoadingOverlay visible={deleteMutation.isLoading} /> */}
-            <Stack spacing="md" py="md">
+            <Stack spacing="md" py="md" style={{ flex: 1 }}>
               <Group spacing={4} px="md">
                 {image.tags.map((tag) => (
                   <Badge key={tag.id}>{tag.name}</Badge>
