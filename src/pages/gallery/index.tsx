@@ -2,6 +2,7 @@ import { ActionIcon, Center, Container, Group, Loader, Stack } from '@mantine/co
 import { IconFilterOff } from '@tabler/icons';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
+import { Announcements } from '~/components/Announcements/Announcements';
 
 import {
   GalleryCategories,
@@ -11,8 +12,10 @@ import {
   useGalleryFilters,
 } from '~/components/Gallery/GalleryFilters';
 import { InfiniteGalleryGrid } from '~/components/Gallery/InfiniteGalleryGrid';
+import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
@@ -59,9 +62,21 @@ export default function Gallery() {
 
   return (
     <Container size={1920}>
-      <Stack>
+      <Stack spacing="xs">
+        <Announcements
+          sx={(theme) => ({
+            marginBottom: -35,
+            [theme.fn.smallerThan('md')]: {
+              marginBottom: -5,
+            },
+          })}
+        />
+        <HomeContentToggle sx={showMobile} />
         <Group position="apart">
-          <GallerySort />
+          <Group>
+            <HomeContentToggle sx={hideMobile} />
+            <GallerySort />
+          </Group>
           <Group spacing={4}>
             <GalleryPeriod />
             <GalleryFilters />
@@ -80,7 +95,7 @@ export default function Gallery() {
         ) : images.length ? (
           <InfiniteGalleryGrid data={images} filters={filters} columnWidth={300} />
         ) : (
-          <NoContent />
+          <NoContent mt="lg" />
         )}
         {!isLoading && hasNextPage && (
           <Group position="center" ref={ref}>
