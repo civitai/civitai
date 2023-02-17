@@ -300,7 +300,7 @@ export const createModel = async ({
           return {
             tag: {
               connectOrCreate: {
-                where: { name_target: { name, target: [TagTarget.Model] } },
+                where: { id: tag.id },
                 create: { name, target: [TagTarget.Model] },
               },
             },
