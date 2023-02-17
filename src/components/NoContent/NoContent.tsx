@@ -1,7 +1,7 @@
 import { Stack, StackProps, Text, ThemeIcon } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons';
 
-export function NoContent({ ...props }: Omit<StackProps, 'children', 'align'>) {
+export function NoContent({ ...props }: Omit<StackProps, 'children' | 'align'>) {
   return (
     <Stack {...props} align="center">
       <ThemeIcon size={128} radius={100}>
