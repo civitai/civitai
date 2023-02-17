@@ -8,6 +8,7 @@ import {
   GetModelVersionImagesSchema,
   GetReviewImagesSchema,
   GetGalleryImageInput,
+  GetImageConnectionsSchema,
 } from '~/server/schema/image.schema';
 import { imageGallerySelect } from '~/server/selectors/image.selector';
 import {
@@ -17,6 +18,7 @@ import {
   deleteImageById,
   updateImageById,
   updateImageReportStatusByReason,
+  getImageConnectionsById,
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
@@ -217,6 +219,23 @@ export const setTosViolationHandler = async ({
     });
 
     return updatedImage;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getImageConnectionDataHandler = async ({
+  input,
+}: {
+  input: GetImageConnectionsSchema;
+}) => {
+  try {
+    const image = await getImageConnectionsById(input);
+    if (!image) throw throwNotFoundError(`No image with id ${input.id}`);
+
+    const { connections } = image;
+    return connections;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
