@@ -648,6 +648,7 @@ model Image {
   analysis          Json?
   generationProcess ImageGenerationProcess?
   featuredAt        DateTime?
+  needsReview       Boolean                 @default(false)
 
   imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?

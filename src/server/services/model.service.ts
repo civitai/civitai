@@ -11,6 +11,7 @@ import { prepareFile } from '~/utils/file-helpers';
 import { env } from '~/env/server.mjs';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { TRPCError } from '@trpc/server';
+import { prepareCreateImage } from '~/server/selectors/image.selector';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   input: { id },
@@ -507,6 +508,7 @@ export const updateModel = async ({
                   index,
                   image: {
                     create: {
+                      // ...prepareCreateImage(image)
                       ...image,
                       generationProcess: image.meta
                         ? getImageGenerationProcess(image.meta as Prisma.JsonObject)

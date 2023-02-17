@@ -175,6 +175,7 @@ const handleFaces = (data: AnalysisMessage) => {
       analysis: { ...processing.analysis, ...data.analysis },
       status: 'finished',
     } as ImageProcessing;
+
     processingQueue[data.uuid] = payload;
     cb({ type: 'processing', payload });
     delete callbackQueue[data.uuid];

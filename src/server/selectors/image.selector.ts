@@ -1,8 +1,11 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, TagTarget } from '@prisma/client';
 import { SessionUser } from 'next-auth';
+import { getImageGenerationProcess } from '~/server/common/model-helpers';
+import { ImageUploadProps } from '~/server/schema/image.schema';
 
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
+import { detectNsfwImage } from '~/utils/image-metadata';
 
 import { userWithCosmeticsSelect } from './user.selector';
 
@@ -54,3 +57,32 @@ export const imageGallerySelect = ({ user }: { user?: SessionUser }) =>
       select: getReactionsSelect,
     },
   });
+
+const MINOR_DETECTION_AGE = 20;
+export const prepareCreateImage = (image: ImageUploadProps) => {
+  const assessedNSFW = image.analysis ? detectNsfwImage(image.analysis) : true; // Err on side of caution
+  const assessedMinor =
+    image.analysis?.faces && image.analysis.faces.some((x) => x.age <= MINOR_DETECTION_AGE);
+  const needsReview = (image.nsfw === true || assessedNSFW) && assessedMinor;
+
+  const payload: Omit<Prisma.ImageCreateInput, 'user'> = {
+    ...image,
+    needsReview,
+    meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+    generationProcess: image.meta
+      ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
+      : null,
+    tags: {
+      create: image.tags?.map((tag) => ({
+        tag: {
+          connectOrCreate: {
+            where: { id: tag.id },
+            create: { ...tag, target: [TagTarget.Image] },
+          },
+        },
+      })),
+    },
+  };
+
+  return payload;
+};
