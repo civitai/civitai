@@ -305,6 +305,7 @@ export function GalleryCategories() {
       not: hiddenTags?.map((x) => x.id),
       unlisted: false,
       categories: true,
+      limit: 100,
     },
     { enabled: !currentUser || hiddenTags !== undefined }
   );
