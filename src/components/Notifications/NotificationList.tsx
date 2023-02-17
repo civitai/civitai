@@ -31,20 +31,26 @@ export function NotificationList({
 
           if (!details.url) return;
           if (details.target === '_blank') return window.open(details.url, '_blank');
-          const [pathname] = router.asPath.split('?');
-          const [notificationPathname, query] = details.url.split('?');
-          if (pathname !== notificationPathname) {
-            router.push(notificationPathname).then(() =>
-              router.push(
-                { pathname: notificationPathname, query: QS.parse(query) as any }, //eslint-disable-line
-                undefined,
-                {
-                  shallow: true,
-                }
-              )
-            );
+
+          const toModal = details.url.includes('?modal=');
+          if (toModal) {
+            const [pathname] = router.asPath.split('?');
+            const [notificationPathname, query] = details.url.split('?');
+            if (pathname !== notificationPathname) {
+              router.push(notificationPathname).then(() =>
+                router.push(
+                  { pathname: notificationPathname, query: QS.parse(query) as any }, //eslint-disable-line
+                  undefined,
+                  {
+                    shallow: true,
+                  }
+                )
+              );
+            } else {
+              router.push(details.url, undefined, { shallow: true });
+            }
           } else {
-            router.push(details.url, undefined, { shallow: true });
+            router.push(details.url);
           }
         };
 

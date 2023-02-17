@@ -80,3 +80,10 @@ export const getGalleryImageSchema = z.object({
   isFeatured: z.boolean().optional(),
   types: z.nativeEnum(ImageGenerationProcess).array().optional(),
 });
+
+export const getImageConnectionsSchema = z.object({
+  id: z.number(),
+  modelId: z.number().nullish(),
+  reviewId: z.number().nullish(),
+});
+export type GetImageConnectionsSchema = z.infer<typeof getImageConnectionsSchema>;

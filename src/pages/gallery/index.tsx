@@ -26,7 +26,7 @@ export default function Gallery() {
     { type: 'Hide' },
     { enabled: !!currentUser, cacheTime: Infinity, staleTime: Infinity }
   );
-  const excludedTagIds = blockedTags?.map((tag) => tag.id);
+  const blockedTagIds = blockedTags?.map((tag) => tag.id) ?? [];
 
   const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
     enabled: !!currentUser,
@@ -35,9 +35,13 @@ export default function Gallery() {
   });
   const excludedUserIds = useMemo(() => hidden.map((item) => item.id), [hidden]);
 
+  const { excludedTags = [], ...restFilters } = filters;
+  // remove duplicate tags
+  const excludedTagIds = [...new Set([...blockedTagIds, ...excludedTags])];
+
   const { data, isLoading, fetchNextPage, hasNextPage } =
     trpc.image.getGalleryImagesInfinite.useInfiniteQuery(
-      { ...filters, excludedTagIds, excludedUserIds },
+      { ...restFilters, excludedTagIds, excludedUserIds },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
       }

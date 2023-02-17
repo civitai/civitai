@@ -715,6 +715,7 @@ model Tag {
   updatedAt  DateTime    @updatedAt
   target     TagTarget[]
   unlisted   Boolean     @default(false)
+  unfeatured Boolean     @default(false)
   isCategory Boolean     @default(false)
 
   tagsOnModels   TagsOnModels[]

@@ -8,6 +8,7 @@ import {
   Divider,
   Group,
   Indicator,
+  MultiSelect,
   Popover,
   ScrollArea,
   Stack,
@@ -62,6 +63,7 @@ type Store = {
   setTypes: (types?: ImageGenerationProcess[]) => void;
   setResources: (resources?: ImageResource[]) => void;
   setTags: (tags?: number[]) => void;
+  setExcludedTags: (tags?: number[]) => void;
   setSingleImageModel: (single?: boolean) => void;
   setSingleImageAlbum: (single?: boolean) => void;
 };
@@ -99,6 +101,14 @@ const useFiltersStore = create<Store>()(
         !!tags?.length ? setCookie('g_tags', tags) : deleteCookie('g_tags');
       });
     },
+    setExcludedTags: (excludedTags) => {
+      set((state) => {
+        state.filters.excludedTags = excludedTags;
+        !!excludedTags?.length
+          ? setCookie('g_excludedTags', excludedTags)
+          : deleteCookie('g_excludedTags');
+      });
+    },
     setResources: (resources) => {
       set((state) => {
         state.filters.resources = resources;
@@ -133,6 +143,7 @@ export const useGalleryFilters = (): {
 
   const setTypes = useFiltersStore((state) => state.setTypes);
   const setTags = useFiltersStore((state) => state.setTags);
+  const setExcludedTags = useFiltersStore((state) => state.setExcludedTags);
   const setResources = useFiltersStore((state) => state.setResources);
   const setSingleImageModel = useFiltersStore((state) => state.setSingleImageModel);
   const setSingleImageAlbum = useFiltersStore((state) => state.setSingleImageAlbum);
@@ -140,6 +151,7 @@ export const useGalleryFilters = (): {
   const clearFilters = () => {
     setTypes([]);
     setTags([]);
+    setExcludedTags([]);
     setResources([]);
     setSingleImageModel(false);
     setSingleImageAlbum(false);
@@ -197,6 +209,10 @@ export function GalleryFilters() {
   const cookies = useCookies().gallery;
   const setTypes = useFiltersStore((state) => state.setTypes);
   const types = useFiltersStore((state) => state.filters.types ?? cookies.types ?? []);
+  const setExcludedTags = useFiltersStore((state) => state.setExcludedTags);
+  const excludedTags = useFiltersStore(
+    (state) => state.filters.excludedTags ?? cookies.excludedTags ?? []
+  );
   // const setResources = useFiltersStore((state) => state.setResources);
   const resources = useFiltersStore((state) => state.filters.resources ?? cookies.resources ?? []);
   // const setSingleImageModel = useFiltersStore((state) => state.setSingleImageModel);
@@ -209,12 +225,21 @@ export function GalleryFilters() {
   );
 
   const filterLength =
-    types.length + resources.length + (singleImageModel ? 1 : 0) + (singleImageAlbum ? 1 : 0);
+    types.length +
+    resources.length +
+    (excludedTags.length > 0 ? 1 : 0) +
+    (singleImageModel ? 1 : 0) +
+    (singleImageAlbum ? 1 : 0);
 
   const chipProps: Partial<ChipProps> = {
     radius: 'sm',
     classNames: { label: classes.label, iconWrapper: classes.iconWrapper },
   };
+
+  const { data: { items: tags } = { items: [] } } = trpc.tag.getAll.useQuery(
+    { entityType: ['Image'], categories: false, unlisted: false },
+    { cacheTime: Infinity, staleTime: Infinity }
+  );
 
   return (
     <Popover withArrow>
@@ -249,6 +274,16 @@ export function GalleryFilters() {
               </Chip>
             ))}
           </Chip.Group>
+          <Divider label="Excluded tags" labelProps={{ weight: 'bold' }} />
+          <MultiSelect
+            placeholder="Select tags"
+            defaultValue={excludedTags.map(String)}
+            data={tags.map((tag) => ({ value: tag.id.toString(), label: tag.name }))}
+            onChange={(tags) => setExcludedTags(tags.map(Number))}
+            nothingFound="No tags found"
+            clearable
+            searchable
+          />
           {/* <Divider label="Include resources" labelProps={{ weight: 'bold' }} />
           <Chip.Group
             spacing={4}
@@ -305,6 +340,7 @@ export function GalleryCategories() {
       not: hiddenTags?.map((x) => x.id),
       unlisted: false,
       categories: true,
+      limit: 100,
     },
     { enabled: !currentUser || hiddenTags !== undefined }
   );
