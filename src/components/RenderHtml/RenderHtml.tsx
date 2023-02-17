@@ -24,7 +24,8 @@ const useStyles = createStyles(() => ({
     //   overflowX: 'auto',
     // },
     code: {
-      whiteSpace: 'pre-line',
+      // whiteSpace: 'pre-line',
+      whiteSpace: 'break-spaces',
     },
   },
 }));

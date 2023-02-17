@@ -4,6 +4,7 @@ import {
   Badge,
   Box,
   Card,
+  Center,
   CloseButton,
   createStyles,
   Divider,
@@ -20,6 +21,7 @@ import {
   IconShare,
   IconDotsVertical,
   IconExternalLink,
+  IconPlus,
 } from '@tabler/icons';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -159,6 +161,16 @@ export function GalleryDetail2() {
                 {image.tags.map((tag) => (
                   <Badge key={tag.id}>{tag.name}</Badge>
                 ))}
+                {/* <Badge
+                  style={{ cursor: 'pointer' }}
+                  leftSection={
+                    <Center>
+                      <IconPlus size={14} />
+                    </Center>
+                  }
+                >
+                  Add Tags
+                </Badge> */}
               </Group>
               <div>
                 <Divider
