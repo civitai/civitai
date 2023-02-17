@@ -199,16 +199,21 @@ export function DeleteComment({
   entityType,
 }: { children: React.ReactElement; id: number } & CommentConnectorInput) {
   const queryUtils = trpc.useContext();
+  const { created, setCreated } = useCommentsContext();
   const { mutate, isLoading } = trpc.commentv2.delete.useMutation({
-    async onSuccess() {
+    async onSuccess(response, request) {
       showSuccessNotification({
         title: 'Your comment has been deleted',
         message: 'Successfully deleted the comment',
       });
-      closeAllModals();
-      //TODO.comments - possiby add optimistic updates
+      if (created.some((x) => x.id === request.id)) {
+        setCreated((state) => state.filter((x) => x.id !== request.id));
+      } else {
+        //TODO.comments - possiby add optimistic updates
+        await queryUtils.commentv2.getInfinite.invalidate({ entityId, entityType });
+      }
       queryUtils.commentv2.getCount.setData({ entityId, entityType }, (old = 1) => old - 1);
-      await queryUtils.commentv2.getInfinite.invalidate({ entityId, entityType });
+      closeAllModals();
     },
     onError(error) {
       showErrorNotification({

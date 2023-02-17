@@ -1,7 +1,5 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
 import { CommentsProvider, LoadNextPage, CreateComment, Comment } from '~/components/CommentsV2';
-import { useEffect } from 'react';
-import { IconPlus } from '@tabler/icons';
 
 type GalleryImageCommentsProps = {
   imageId: number;
