@@ -5,7 +5,7 @@ import { env } from '~/env/server.mjs';
 import { ImageSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetGalleryImageInput } from '~/server/schema/image.schema';
+import { GetGalleryImageInput, GetImageConnectionsSchema } from '~/server/schema/image.schema';
 import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
 import { decreaseDate } from '~/utils/date-helpers';
 
@@ -70,10 +70,17 @@ export const getGalleryImages = async <
       modelVersionId,
       reviewId,
     },
-    // Only include images from published models and without tosViolation
-    imagesOnModels: {
-      modelVersion: { model: { status: ModelStatus.Published, tosViolation: false } },
-    },
+    OR: [
+      {
+        // Only include images from published models and without tosViolation
+        imagesOnModels: {
+          modelVersion: { model: { status: ModelStatus.Published, tosViolation: false } },
+        },
+      },
+      {
+        imagesOnReviews: { review: { tosViolation: false } },
+      },
+    ],
     AND: conditionalFilters.length ? conditionalFilters : undefined,
   };
   const finiteWhere: Prisma.ImageWhereInput = {
@@ -145,5 +152,36 @@ export const updateImageReportStatusByReason = ({
   return prisma.report.updateMany({
     where: { reason, image: { imageId: id } },
     data: { status },
+  });
+};
+
+export const getImageConnectionsById = ({ id, modelId, reviewId }: GetImageConnectionsSchema) => {
+  return prisma.image.findUnique({
+    where: { id },
+    select: {
+      connections: {
+        select: {
+          model: modelId
+            ? {
+                select: {
+                  id: true,
+                  name: true,
+                  type: true,
+                  rank: {
+                    select: {
+                      downloadCountAllTime: true,
+                      favoriteCountAllTime: true,
+                      commentCountAllTime: true,
+                      ratingCountAllTime: true,
+                      ratingAllTime: true,
+                    },
+                  },
+                },
+              }
+            : undefined,
+          review: reviewId ? { select: { id: true } } : undefined,
+        },
+      },
+    },
   });
 };

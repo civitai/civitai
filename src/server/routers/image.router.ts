@@ -3,6 +3,7 @@ import {
   getGalleryImageDetailHandler,
   getGalleryImagesHandler,
   getGalleryImagesInfiniteHandler,
+  getImageConnectionDataHandler,
   getModelVersionImagesHandler,
   getReviewImagesHandler,
   setTosViolationHandler,
@@ -10,9 +11,10 @@ import {
 import { prisma } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  getGalleryImageSchema,
+  getImageConnectionsSchema,
   getModelVersionImageSchema,
   getReviewImagesSchema,
-  getGalleryImageSchema,
 } from '~/server/schema/image.schema';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -51,6 +53,9 @@ export const imageRouter = router({
     .query(getGalleryImagesInfiniteHandler),
   getGalleryImages: publicProcedure.input(getGalleryImageSchema).query(getGalleryImagesHandler),
   getGalleryImageDetail: publicProcedure.input(getByIdSchema).query(getGalleryImageDetailHandler),
+  getConnectionData: publicProcedure
+    .input(getImageConnectionsSchema)
+    .query(getImageConnectionDataHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)

@@ -43,6 +43,7 @@ export const galleryFilterSchema = z.object({
   types: z.nativeEnum(ImageGenerationProcess).array().optional(),
   resources: z.nativeEnum(ImageResource).array().optional(),
   tags: z.number().array().optional(),
+  excludedTags: z.number().array().optional(),
 });
 
 const CookiesCtx = createContext<CookiesContext>({} as CookiesContext);
@@ -94,6 +95,7 @@ export function parseCookies(
       types: cookies?.['g_types'],
       resources: cookies?.['g_resources'],
       tags: cookies?.['g_tags'],
+      excludedTags: cookies?.['g_excludedTags'],
     },
   });
 }
@@ -130,6 +132,7 @@ const zodParse = z
           types: z.string(),
           resources: z.string(),
           tags: z.string(),
+          excludedTags: z.string(),
         })
         .partial(),
     })
@@ -153,6 +156,9 @@ const zodParse = z
           types: !!gallery.types ? JSON.parse(decodeURIComponent(gallery.types)) : [],
           resources: !!gallery.resources ? JSON.parse(decodeURIComponent(gallery.resources)) : [],
           tags: !!gallery.tags ? JSON.parse(decodeURIComponent(gallery.tags)) : [],
+          excludedTags: !!gallery.excludedTags
+            ? JSON.parse(decodeURIComponent(gallery.excludedTags))
+            : [],
         },
       } as CookiesContext)
   );
