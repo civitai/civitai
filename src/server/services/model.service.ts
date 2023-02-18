@@ -475,6 +475,7 @@ export const updateModel = async ({
                   else {
                     const existingImages = currentVersion?.images ?? [];
                     const matched = existingImages.findIndex((image) => image.id === current.id);
+                    // !This will always be different now that we have image tags
                     const different = !isEqual(existingImages[matched], images[matched]);
                     if (different) acc.imagesToUpdate.push({ ...current, index });
                   }
@@ -511,7 +512,7 @@ export const updateModel = async ({
                         },
                       },
                     })),
-                    update: imagesToUpdate.map(({ index, meta, nsfw, tags = [], ...image }) => ({
+                    update: imagesToUpdate.map(({ index, ...image }) => ({
                       where: {
                         imageId_modelVersionId: {
                           imageId: image.id as number,

@@ -1,18 +1,10 @@
 import { prepareUpdateImage } from './../selectors/image.selector';
 import { prepareCreateImage } from '~/server/selectors/image.selector';
-import {
-  Prisma,
-  ReportReason,
-  ReportStatus,
-  Review,
-  ReviewReactions,
-  TagTarget,
-} from '@prisma/client';
+import { Prisma, ReportReason, ReportStatus, Review, ReviewReactions } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
 import { ReviewSort } from '~/server/common/enums';
-import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { prisma } from '~/server/db/client';
 import { queueMetricUpdate } from '~/server/jobs/update-metrics';
 import { GetByIdInput } from '~/server/schema/base.schema';

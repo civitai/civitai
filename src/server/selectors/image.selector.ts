@@ -99,14 +99,16 @@ export const prepareUpdateImage = (image: ImageUploadProps) => {
           deleteMany: {
             NOT: tags.filter(isTag).map(({ id }) => ({ tagId: id })),
           },
-          connect: tags.filter(isTag).map((tag) => ({
-            tagId_imageId: { tagId: tag.id, imageId: image.id as number },
+          connectOrCreate: tags.filter(isTag).map((tag) => ({
+            where: { tagId_imageId: { tagId: tag.id, imageId: image.id as number } },
+            create: { tagId: tag.id },
           })),
-          create: tags.filter(isNotTag).map((tag) => ({
-            tag: {
-              create: { ...tag, target: [TagTarget.Image] },
-            },
-          })),
+          // user's can't create image tags right now
+          // create: tags.filter(isNotTag).map((tag) => ({
+          //   tag: {
+          //     create: { ...tag, target: [TagTarget.Image] },
+          //   },
+          // })),
         }
       : undefined,
   };
