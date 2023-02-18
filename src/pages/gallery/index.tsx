@@ -3,6 +3,7 @@ import { IconFilterOff } from '@tabler/icons';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { Announcements } from '~/components/Announcements/Announcements';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 import {
   GalleryCategories,
@@ -96,6 +97,13 @@ export default function Gallery() {
             </Group>
           </Group>
           <GalleryCategories />
+          <DismissibleAlert
+            color="green"
+            id="gallery-early-access"
+            emoji="🤩"
+            title="Early Access"
+            content="This is an early preview of the upcoming image gallery that you have access to as part of your supporter benefits. We're continuing to refine the experience to ensure that users have a good experience and appreciate your feedback."
+          />
           {isLoading ? (
             <Center py="xl">
               <Loader size="xl" />
