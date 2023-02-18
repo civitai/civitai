@@ -98,11 +98,13 @@ export default function Gallery() {
           </Group>
           <GalleryCategories />
           <DismissibleAlert
+            mx="auto"
+            maw={600}
             color="green"
             id="gallery-early-access"
             emoji="🤩"
             title="Early Access"
-            content="This is an early preview of the upcoming image gallery that you have access to as part of your supporter benefits. We're continuing to refine the experience to ensure that users have a good experience and appreciate your feedback."
+            content="This is an early preview of the upcoming image gallery that you have access to as part of your supporter benefits. We're continuing to refine the feature to ensure that users have a good experience. Let us know what you think."
           />
           {isLoading ? (
             <Center py="xl">
