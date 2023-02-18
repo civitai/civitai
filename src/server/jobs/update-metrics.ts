@@ -205,11 +205,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
               FROM (
                 SELECT
                   COALESCE(CAST(a."userId" as text), a.details->>'ip') user_id,
-                  CAST(a.details ->> '${tableId}' AS INT) AS ${viewId},
+                  CAST(a.details ->> 'modelId' AS INT) AS model_id,
+	                CAST(a.details ->> 'modelVersionId' AS INT) AS model_version_id,
                   a."createdAt" AS created_at
                 FROM "UserActivity" a
               ) t
-              GROUP BY user_id, ${viewId}
+              GROUP BY user_id, model_id, model_version_id
             ) a
             GROUP BY a.${viewId}
           ) ds ON m.${viewId} = ds.${viewId}
