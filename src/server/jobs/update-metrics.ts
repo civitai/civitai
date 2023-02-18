@@ -271,7 +271,9 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         ON CONFLICT ("${tableId}", timeframe) DO UPDATE
           SET "downloadCount" = EXCLUDED."downloadCount", "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating, "favoriteCount" = EXCLUDED."favoriteCount", "commentCount" = EXCLUDED."commentCount";
         `);
-    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Model'`);
+
+    if (target === 'versions')
+      await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Model'`);
   };
 
   const updateUserMetrics = async () => {
