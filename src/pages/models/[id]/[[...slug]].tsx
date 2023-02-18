@@ -421,14 +421,7 @@ export default function ModelDetail({
         <Group spacing={4}>
           {model.tagsOnModels.map(({ tag }) => (
             <Link key={tag.id} href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
-              <Badge
-                key={tag.id}
-                color={tag.color ?? 'blue'}
-                component="a"
-                size="sm"
-                radius="sm"
-                sx={{ cursor: 'pointer' }}
-              >
+              <Badge key={tag.id} component="a" size="sm" radius="sm" sx={{ cursor: 'pointer' }}>
                 {tag.name}
               </Badge>
             </Link>
