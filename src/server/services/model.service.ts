@@ -407,36 +407,101 @@ export const updateModel = async ({
   const tagsToCreate = tagsOnModels?.filter(isNotTag) ?? [];
   const tagsToUpdate = tagsOnModels?.filter(isTag) ?? [];
 
-  return await prisma.$transaction(
-    async (tx) => {
-      if (tagsOnModels)
-        await tx.tag.updateMany({
-          where: {
-            name: { in: tagsOnModels.map((x) => x.name.toLowerCase().trim()) },
-            NOT: { target: { has: TagTarget.Model } },
-          },
-          data: { target: { push: TagTarget.Model } },
-        });
+  if (tagsOnModels)
+    await prisma.tag.updateMany({
+      where: {
+        name: { in: tagsOnModels.map((x) => x.name.toLowerCase().trim()) },
+        NOT: { target: { has: TagTarget.Model } },
+      },
+      data: { target: { push: TagTarget.Model } },
+    });
 
-      return prisma.model.update({
-        where: { id },
-        data: {
-          ...data,
-          checkpointType: data.type === ModelType.Checkpoint ? data.checkpointType : null,
-          nsfw: data.nsfw || (allImagesNSFW && data.status === ModelStatus.Published),
-          status: data.status,
-          publishedAt:
-            data.status === ModelStatus.Published && currentModel.status !== ModelStatus.Published
-              ? new Date()
-              : currentModel.publishedAt,
-          lastVersionAt: hasNewVersions ? new Date() : undefined,
-          modelVersions: {
-            deleteMany: versionIds.length > 0 ? { id: { notIn: versionIds } } : undefined,
-            create: versionsToCreate.map(({ images, files, ...version }) => ({
+  return prisma.model.update({
+    where: { id },
+    data: {
+      ...data,
+      checkpointType: data.type === ModelType.Checkpoint ? data.checkpointType : null,
+      nsfw: data.nsfw || (allImagesNSFW && data.status === ModelStatus.Published),
+      status: data.status,
+      publishedAt:
+        data.status === ModelStatus.Published && currentModel.status !== ModelStatus.Published
+          ? new Date()
+          : currentModel.publishedAt,
+      lastVersionAt: hasNewVersions ? new Date() : undefined,
+      modelVersions: {
+        deleteMany: versionIds.length > 0 ? { id: { notIn: versionIds } } : undefined,
+        create: versionsToCreate.map(({ images, files, ...version }) => ({
+          ...version,
+          files: { create: files },
+          images: {
+            create: images.map((image, index) => ({
+              index,
+              image: {
+                create: {
+                  userId,
+                  ...prepareCreateImage(image),
+                },
+              },
+            })),
+          },
+        })),
+        update: versionsToUpdate.map(({ id = -1, images, files, ...version }) => {
+          const fileIds = files.map((file) => file.id).filter(Boolean) as number[];
+          const currentVersion = existingVersions.find((x) => x.id === id);
+
+          // Determine which files to create/update
+          const { filesToCreate, filesToUpdate } = files.reduce(
+            (acc, current) => {
+              if (!current.id) acc.filesToCreate.push(current);
+              else {
+                const existingFiles = currentVersion?.files ?? [];
+                const matched = existingFiles.findIndex((file) => file.id === current.id);
+                const different = !isEqual(existingFiles[matched], files[matched]);
+                if (different) acc.filesToUpdate.push(current);
+              }
+
+              return acc;
+            },
+            { filesToCreate: [] as typeof files, filesToUpdate: [] as typeof files }
+          );
+
+          // Determine which images to create/update
+          type PayloadImage = typeof images[number] & { index: number };
+          const { imagesToCreate, imagesToUpdate } = images.reduce(
+            (acc, current, index) => {
+              if (!current.id) acc.imagesToCreate.push({ ...current, index });
+              else {
+                const existingImages = currentVersion?.images ?? [];
+                const matched = existingImages.findIndex((image) => image.id === current.id);
+                // !This will always be different now that we have image tags
+                const different = !isEqual(existingImages[matched], images[matched]);
+                if (different) acc.imagesToUpdate.push({ ...current, index });
+              }
+
+              return acc;
+            },
+            { imagesToCreate: [] as PayloadImage[], imagesToUpdate: [] as PayloadImage[] }
+          );
+
+          return {
+            where: { id },
+            data: {
               ...version,
-              files: { create: files },
+              trainedWords: version.trainedWords?.map((x) => x.toLowerCase()),
+              status: data.status,
+              files: {
+                deleteMany: { id: { notIn: fileIds } },
+                create: filesToCreate,
+                update: filesToUpdate.map(({ id, ...fileData }) => ({
+                  where: { id: id ?? -1 },
+                  data: { ...fileData },
+                })),
+              },
               images: {
-                create: images.map((image, index) => ({
+                deleteMany: {
+                  NOT: images.map((image) => ({ imageId: image.id })),
+                },
+                create: imagesToCreate.map(({ index, ...image }) => ({
                   index,
                   image: {
                     create: {
@@ -445,120 +510,47 @@ export const updateModel = async ({
                     },
                   },
                 })),
-              },
-            })),
-            update: versionsToUpdate.map(({ id = -1, images, files, ...version }) => {
-              const fileIds = files.map((file) => file.id).filter(Boolean) as number[];
-              const currentVersion = existingVersions.find((x) => x.id === id);
-
-              // Determine which files to create/update
-              const { filesToCreate, filesToUpdate } = files.reduce(
-                (acc, current) => {
-                  if (!current.id) acc.filesToCreate.push(current);
-                  else {
-                    const existingFiles = currentVersion?.files ?? [];
-                    const matched = existingFiles.findIndex((file) => file.id === current.id);
-                    const different = !isEqual(existingFiles[matched], files[matched]);
-                    if (different) acc.filesToUpdate.push(current);
-                  }
-
-                  return acc;
-                },
-                { filesToCreate: [] as typeof files, filesToUpdate: [] as typeof files }
-              );
-
-              // Determine which images to create/update
-              type PayloadImage = typeof images[number] & { index: number };
-              const { imagesToCreate, imagesToUpdate } = images.reduce(
-                (acc, current, index) => {
-                  if (!current.id) acc.imagesToCreate.push({ ...current, index });
-                  else {
-                    const existingImages = currentVersion?.images ?? [];
-                    const matched = existingImages.findIndex((image) => image.id === current.id);
-                    // !This will always be different now that we have image tags
-                    const different = !isEqual(existingImages[matched], images[matched]);
-                    if (different) acc.imagesToUpdate.push({ ...current, index });
-                  }
-
-                  return acc;
-                },
-                { imagesToCreate: [] as PayloadImage[], imagesToUpdate: [] as PayloadImage[] }
-              );
-
-              return {
-                where: { id },
-                data: {
-                  ...version,
-                  trainedWords: version.trainedWords?.map((x) => x.toLowerCase()),
-                  status: data.status,
-                  files: {
-                    deleteMany: { id: { notIn: fileIds } },
-                    create: filesToCreate,
-                    update: filesToUpdate.map(({ id, ...fileData }) => ({
-                      where: { id: id ?? -1 },
-                      data: { ...fileData },
-                    })),
-                  },
-                  images: {
-                    deleteMany: {
-                      NOT: images.map((image) => ({ imageId: image.id })),
+                update: imagesToUpdate.map(({ index, ...image }) => ({
+                  where: {
+                    imageId_modelVersionId: {
+                      imageId: image.id as number,
+                      modelVersionId: id,
                     },
-                    create: imagesToCreate.map(({ index, ...image }) => ({
-                      index,
-                      image: {
-                        create: {
-                          userId,
-                          ...prepareCreateImage(image),
-                        },
-                      },
-                    })),
-                    update: imagesToUpdate.map(({ index, ...image }) => ({
-                      where: {
-                        imageId_modelVersionId: {
-                          imageId: image.id as number,
-                          modelVersionId: id,
-                        },
-                      },
-                      data: {
-                        index,
-                        image: { update: prepareUpdateImage(image) },
-                      },
-                    })),
+                  },
+                  data: {
+                    index,
+                    image: { update: prepareUpdateImage(image) },
+                  },
+                })),
+              },
+            },
+          };
+        }),
+      },
+      tagsOnModels: tagsOnModels
+        ? {
+            deleteMany: {
+              tagId: {
+                notIn: tagsToUpdate.map((x) => x.id),
+              },
+            },
+            connectOrCreate: tagsToUpdate.map((tag) => ({
+              where: { modelId_tagId: { tagId: tag.id, modelId: id } },
+              create: { tagId: tag.id },
+            })),
+            create: tagsToCreate.map((tag) => {
+              const name = tag.name.toLowerCase().trim();
+              return {
+                tag: {
+                  connectOrCreate: {
+                    where: { name },
+                    create: { name, target: [TagTarget.Model] },
                   },
                 },
               };
             }),
-          },
-          tagsOnModels: tagsOnModels
-            ? {
-                deleteMany: {
-                  tagId: {
-                    notIn: tagsToUpdate.map((x) => x.id),
-                  },
-                },
-                connectOrCreate: tagsToUpdate.map((tag) => ({
-                  where: { modelId_tagId: { tagId: tag.id, modelId: id } },
-                  create: { tagId: tag.id },
-                })),
-                create: tagsToCreate.map((tag) => {
-                  const name = tag.name.toLowerCase().trim();
-                  return {
-                    tag: {
-                      connectOrCreate: {
-                        where: { name },
-                        create: { name, target: [TagTarget.Model] },
-                      },
-                    },
-                  };
-                }),
-              }
-            : undefined,
-        },
-      });
+          }
+        : undefined,
     },
-    {
-      maxWait: 10000,
-      timeout: 30000,
-    }
-  );
+  });
 };
