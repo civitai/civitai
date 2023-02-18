@@ -1,16 +1,10 @@
-import {
-  Prisma,
-  ReportReason,
-  ReportStatus,
-  Review,
-  ReviewReactions,
-  TagTarget,
-} from '@prisma/client';
+import { prepareUpdateImage } from './../selectors/image.selector';
+import { prepareCreateImage } from '~/server/selectors/image.selector';
+import { Prisma, ReportReason, ReportStatus, Review, ReviewReactions } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
 import { ReviewSort } from '~/server/common/enums';
-import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { prisma } from '~/server/db/client';
 import { queueMetricUpdate } from '~/server/jobs/update-metrics';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -132,24 +126,12 @@ export const createOrUpdateReview = async ({
       ...reviewInput,
       userId: ownerId,
       imagesOnReviews: {
-        create: imagesWithIndex.map(({ index, tags = [], ...image }) => ({
+        create: imagesWithIndex.map(({ index, ...image }) => ({
           index,
           image: {
             create: {
-              ...image,
-              generationProcess: image.meta
-                ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
-                : null,
-              tags: {
-                create: tags.map((tag) => ({
-                  tag: {
-                    connectOrCreate: {
-                      where: { id: tag.id },
-                      create: { ...tag, target: [TagTarget.Image] },
-                    },
-                  },
-                })),
-              },
+              userId: ownerId,
+              ...prepareCreateImage(image),
             },
           },
         })),
@@ -161,28 +143,16 @@ export const createOrUpdateReview = async ({
         deleteMany: {
           NOT: imagesToUpdate.map((image) => ({ imageId: image.id })),
         },
-        create: imagesToCreate.map(({ index, tags = [], ...image }) => ({
+        create: imagesToCreate.map(({ index, ...image }) => ({
           index,
           image: {
             create: {
-              ...image,
-              generationProcess: image.meta
-                ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
-                : null,
-              tags: {
-                create: tags.map((tag) => ({
-                  tag: {
-                    connectOrCreate: {
-                      where: { id: tag.id },
-                      create: { ...tag, target: [TagTarget.Image] },
-                    },
-                  },
-                })),
-              },
+              userId: ownerId,
+              ...prepareCreateImage(image),
             },
           },
         })),
-        update: imagesToUpdate.map(({ index, tags = [], meta, nsfw, ...image }) => ({
+        update: imagesToUpdate.map(({ index, ...image }) => ({
           where: {
             imageId_reviewId: {
               imageId: image.id as number,
@@ -191,28 +161,7 @@ export const createOrUpdateReview = async ({
           },
           data: {
             index,
-            image: {
-              update: {
-                nsfw,
-                meta,
-                tags: {
-                  deleteMany: {},
-                  connectOrCreate: tags.map((tag) => ({
-                    where: {
-                      tagId_imageId: { tagId: tag.id as number, imageId: image.id as number },
-                    },
-                    create: {
-                      tag: {
-                        connectOrCreate: {
-                          where: { id: tag.id },
-                          create: { ...tag, target: [TagTarget.Image] },
-                        },
-                      },
-                    },
-                  })),
-                },
-              },
-            },
+            image: { update: prepareUpdateImage(image) },
           },
         })),
       },

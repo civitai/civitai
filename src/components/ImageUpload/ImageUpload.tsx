@@ -562,6 +562,7 @@ function ImageTagTab({
           label: category.name,
           value: category.id.toString(),
         }))}
+        limit={50}
         searchable
         clearable
       />
@@ -574,6 +575,7 @@ function ImageTagTab({
           label: tag.name,
           value: tag.id.toString(),
         }))}
+        limit={50}
         searchable
         clearable
       />
