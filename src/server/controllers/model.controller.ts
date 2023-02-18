@@ -37,8 +37,7 @@ import { constants, ModelFileType } from '~/server/common/constants';
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   const showNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
-  const prioritizeSafeImages =
-    env.SHOW_SFW_IN_NSFW && (!ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw));
+  const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
   try {
     const model = await getModel({
       input,
@@ -111,8 +110,7 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   const prioritizeSafeImages =
-    env.SHOW_SFW_IN_NSFW &&
-    (input.hideNSFW || (ctx.user?.showNsfw ?? false) === false || ctx.user?.blurNsfw);
+    input.hideNSFW || (ctx.user?.showNsfw ?? false) === false || ctx.user?.blurNsfw;
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
 

@@ -150,8 +150,7 @@ export const getGalleryImagesHandler = async ({
 
     const isOwnerOrModerator =
       parsedItems.every((x) => x.user.id === ctx.user?.id) || ctx.user?.isModerator;
-    const prioritizeSafeImages =
-      env.SHOW_SFW_IN_NSFW && (!ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw));
+    const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
 
     return prioritizeSafeImages && !isOwnerOrModerator
       ? parsedItems.sort((a, b) => (a.nsfw === b.nsfw ? sortByIndex(a, b) : a.nsfw ? 1 : -1))
