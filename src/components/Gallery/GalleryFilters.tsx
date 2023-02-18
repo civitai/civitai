@@ -390,7 +390,7 @@ export function GalleryCategories() {
               className={classes.tag}
               variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
               color={active ? 'blue' : 'gray'}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                 const shouldAdd = e.ctrlKey;
                 handleCategoryClick(tag.id, shouldAdd);
               }}
