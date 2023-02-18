@@ -1,3 +1,5 @@
+import { prepareCreateImage } from '~/server/selectors/image.selector';
+import { prepareUpdateImage } from './../selectors/image.selector';
 import { MetricTimeframe, ModelStatus, ModelType, Prisma, TagTarget } from '@prisma/client';
 import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
@@ -434,26 +436,12 @@ export const updateModel = async ({
               ...version,
               files: { create: files },
               images: {
-                create: images.map(({ id, meta, tags = [], ...image }, index) => ({
+                create: images.map((image, index) => ({
                   index,
                   image: {
                     create: {
-                      ...image,
                       userId,
-                      meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                      generationProcess: meta
-                        ? getImageGenerationProcess(meta as Prisma.JsonObject)
-                        : null,
-                      tags: {
-                        create: tags.map((tag) => ({
-                          tag: {
-                            connectOrCreate: {
-                              where: { id: tag.id },
-                              create: { ...tag, target: [TagTarget.Image] },
-                            },
-                          },
-                        })),
-                      },
+                      ...prepareCreateImage(image),
                     },
                   },
                 })),
@@ -480,31 +468,15 @@ export const updateModel = async ({
               );
 
               // Determine which images to create/update
-              type PayloadImage = typeof images[number] & {
-                index: number;
-                userId: number;
-                meta: Prisma.JsonObject;
-              };
+              type PayloadImage = typeof images[number] & { index: number };
               const { imagesToCreate, imagesToUpdate } = images.reduce(
                 (acc, current, index) => {
-                  if (!current.id)
-                    acc.imagesToCreate.push({
-                      ...current,
-                      index,
-                      userId,
-                      meta: (current.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                    });
+                  if (!current.id) acc.imagesToCreate.push({ ...current, index });
                   else {
                     const existingImages = currentVersion?.images ?? [];
                     const matched = existingImages.findIndex((image) => image.id === current.id);
                     const different = !isEqual(existingImages[matched], images[matched]);
-                    if (different)
-                      acc.imagesToUpdate.push({
-                        ...current,
-                        index,
-                        userId,
-                        meta: (current.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                      });
+                    if (different) acc.imagesToUpdate.push({ ...current, index });
                   }
 
                   return acc;
@@ -530,24 +502,12 @@ export const updateModel = async ({
                     deleteMany: {
                       NOT: images.map((image) => ({ imageId: image.id })),
                     },
-                    create: imagesToCreate.map(({ index, tags = [], ...image }) => ({
+                    create: imagesToCreate.map(({ index, ...image }) => ({
                       index,
                       image: {
                         create: {
-                          ...image,
-                          generationProcess: image.meta
-                            ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
-                            : null,
-                          tags: {
-                            create: tags.map((tag) => ({
-                              tag: {
-                                connectOrCreate: {
-                                  where: { id: tag.id },
-                                  create: { ...tag, target: [TagTarget.Image] },
-                                },
-                              },
-                            })),
-                          },
+                          userId,
+                          ...prepareCreateImage(image),
                         },
                       },
                     })),
@@ -560,31 +520,7 @@ export const updateModel = async ({
                       },
                       data: {
                         index,
-                        image: {
-                          update: {
-                            nsfw,
-                            meta,
-                            tags: {
-                              deleteMany: {},
-                              connectOrCreate: tags.map((tag) => ({
-                                where: {
-                                  tagId_imageId: {
-                                    tagId: tag.id as number,
-                                    imageId: image.id as number,
-                                  },
-                                },
-                                create: {
-                                  tag: {
-                                    connectOrCreate: {
-                                      where: { id: tag.id },
-                                      create: { ...tag, target: [TagTarget.Image] },
-                                    },
-                                  },
-                                },
-                              })),
-                            },
-                          },
-                        },
+                        image: { update: prepareUpdateImage(image) },
                       },
                     })),
                   },
