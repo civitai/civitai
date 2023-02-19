@@ -38,6 +38,7 @@ These rules apply to all Content posted on Civitai. Moderators consider context 
   - graphic injuries
   - depictions of human death
   - graphic violence
+  - beastiality
 - Models intended for the photorealistic depiction of minors
 
   Will be removed.
