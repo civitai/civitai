@@ -210,6 +210,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
                   a."createdAt" AS created_at
                 FROM "UserActivity" a
               ) t
+              JOIN "ModelVersion" mv ON mv.id = t.model_version_id -- only count existing model versions
               GROUP BY user_id, model_id, model_version_id
             ) a
             GROUP BY a.${viewId}
