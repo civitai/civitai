@@ -2,22 +2,33 @@ import { ModelHashType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
+import { Session } from 'next-auth';
 
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { publicApiContext } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
-import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { GetAllModelsInput } from '~/server/schema/model.schema';
+import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
 
-export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const apiCaller = appRouter.createCaller(publicApiContext);
+const authedOnlyOptions: Array<keyof GetAllModelsInput> = ['favorites', 'hidden'];
+
+export default MixedAuthEndpoint(async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  user: Session['user'] | undefined
+) {
+  const apiCaller = appRouter.createCaller({ ...publicApiContext, user });
   try {
+    if (Object.keys(req.query).some((key: any) => authedOnlyOptions.includes(key)) && !user)
+      return res.status(401).json({ error: 'Unauthorized' });
+
     const { items, ...metadata } = await apiCaller.model.getAllWithVersions(req.query);
     const { nextPage, prevPage, baseUrl } = getPaginationLinks({ ...metadata, req });
 
