@@ -4,11 +4,15 @@ import { createLogger } from '~/utils/logging';
 
 const log = createLogger('update-metrics', 'blue');
 
+const UPDATE_METRICS_LOCK_KEY = 'update-metrics-lock';
 const METRIC_LAST_UPDATED_KEY = 'last-metrics-update';
 const RANK_LAST_UPDATED_KEY = 'last-rank-update';
 const RANK_UPDATE_DELAY = 1000 * 60 * 60; // 60 minutes
 
-export const updateMetricsJob = createJob('update-metrics', '*/5 * * * *', async () => {
+export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async () => {
+  const isUpdating = await redis?.get(UPDATE_METRICS_LOCK_KEY);
+  if (isUpdating === 'true') return;
+  await redis?.set(UPDATE_METRICS_LOCK_KEY, 'true');
   // Get the last time this ran from the KeyValue store
   // --------------------------------------
   const dates = await prisma.keyValue.findMany({
@@ -1173,6 +1177,8 @@ export const updateMetricsJob = createJob('update-metrics', '*/5 * * * *', async
       update: { value: new Date().getTime() },
     });
   }
+
+  await redis?.del(UPDATE_METRICS_LOCK_KEY);
 });
 
 type MetricUpdateType = 'Model' | 'ModelVersion' | 'Answer' | 'Question' | 'User' | 'Tag' | 'Image';
