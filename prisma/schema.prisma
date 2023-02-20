@@ -510,6 +510,8 @@ model UserActivity {
   details   Json?
   hide      Boolean          @default(false)
   createdAt DateTime         @default(now())
+
+  @@index([userId, createdAt])
 }
 
 enum ReportReason {
