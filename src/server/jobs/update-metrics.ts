@@ -13,7 +13,9 @@ const RANK_UPDATE_DELAY = 1000 * 60 * 60; // 60 minutes
 export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async () => {
   const isUpdating = await redis?.get(UPDATE_METRICS_LOCK_KEY);
   if (isUpdating === 'true') return;
-  await redis?.set(UPDATE_METRICS_LOCK_KEY, 'true');
+  await redis?.set(UPDATE_METRICS_LOCK_KEY, 'true', {
+    EX: 300 // Expire key after 5 minutes to ensure that we can recover from failures in the process
+  });
   // Get the last time this ran from the KeyValue store
   // --------------------------------------
   const dates = await prisma.keyValue.findMany({
@@ -556,6 +558,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
               r.id
           FROM recent_engagements r
           WHERE r.id IS NOT NULL
+          AND r.id IN (SELECT id FROM "Question")
       )
 
       -- upsert metrics for all affected users
