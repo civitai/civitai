@@ -7,7 +7,8 @@ const log = createLogger('update-metrics', 'blue');
 const METRIC_LAST_UPDATED_KEY = 'last-metrics-update';
 const RANK_LAST_UPDATED_KEY = 'last-rank-update';
 const RANK_UPDATE_DELAY = 1000 * 60 * 60; // 60 minutes
-export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async () => {
+
+export const updateMetricsJob = createJob('update-metrics', '*/5 * * * *', async () => {
   // Get the last time this ran from the KeyValue store
   // --------------------------------------
   const dates = await prisma.keyValue.findMany({
