@@ -1,6 +1,7 @@
 import { createJob } from './job';
 import { prisma } from '~/server/db/client';
 import { createLogger } from '~/utils/logging';
+import { redis } from '~/server/redis/client';
 
 const log = createLogger('update-metrics', 'blue');
 
