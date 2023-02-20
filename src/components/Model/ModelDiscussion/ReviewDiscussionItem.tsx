@@ -284,6 +284,11 @@ function ReviewCarousel({
             height: 8,
             transition: 'width 250ms ease',
           },
+          // Increase carousel control arrow size
+          control: {
+            width: 32,
+            height: 32,
+          },
         }}
       >
         <ImageGuard

@@ -179,6 +179,17 @@ const useStyles = createStyles((theme) => ({
       width: '100%',
     },
   },
+
+  // Increase carousel control arrow size
+  control: {
+    minWidth: 56,
+    minHeight: 56,
+
+    svg: {
+      width: 24,
+      height: 24,
+    },
+  },
 }));
 
 export default function ModelDetail({
@@ -886,6 +897,7 @@ function ModelCarousel({
   latestVersion: ModelById['modelVersions'][number];
   mobile?: boolean;
 }) {
+  const { classes } = useStyles();
   if (!latestVersion.images.length) return null;
 
   return (
@@ -894,6 +906,7 @@ function ModelCarousel({
       slideSize="50%"
       breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
       slideGap="xl"
+      classNames={{ control: classes.control }}
       align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
       slidesToScroll={mobile ? 1 : 2}
       withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
