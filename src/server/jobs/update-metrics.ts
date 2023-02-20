@@ -687,6 +687,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
               r.id
           FROM recent_engagements r
           WHERE r.id IS NOT NULL
+          AND r.id IN (SELECT id FROM Answers)
       )
 
       -- upsert metrics for all affected users
