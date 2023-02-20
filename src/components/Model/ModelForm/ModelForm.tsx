@@ -458,6 +458,7 @@ export function ModelForm({ model }: Props) {
                           value: type,
                         }))}
                         onChange={handleModelTypeChange}
+                        disabled={editing}
                         withAsterisk
                       />
                       {type === 'Checkpoint' && (
