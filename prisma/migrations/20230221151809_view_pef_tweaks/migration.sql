@@ -25,6 +25,8 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS public."TagRank"
     row_number() OVER (ORDER BY "TagStat"."imageCountAllTime" DESC, "TagStat"."followerCountAllTime" DESC, "TagStat"."hiddenCountAllTime", "TagStat"."tagId") AS "imageCountAllTimeRank"
    FROM "TagStat";
 
+CREATE UNIQUE INDEX "TagRank_PK" ON "TagRank" ("tagId");
+
 ALTER TABLE public."TagRank"
     OWNER TO modelshare;
 	
@@ -75,6 +77,8 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS public."ModelVersionRank"
              CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
              LEFT JOIN "ModelVersionMetric" mm ON mm."modelVersionId" = m.id AND mm.timeframe = tf.timeframe) t
   GROUP BY t."modelVersionId";
+
+CREATE UNIQUE INDEX "ModelVersionRank_PK" ON "ModelVersionRank" ("modelVersionId");
 
 ALTER TABLE public."ModelVersionRank"
     OWNER TO modelshare;
