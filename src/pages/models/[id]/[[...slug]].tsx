@@ -188,6 +188,16 @@ const useStyles = createStyles((theme) => ({
     svg: {
       width: 24,
       height: 24,
+
+      [theme.fn.smallerThan('sm')]: {
+        minWidth: 16,
+        minHeight: 16,
+      },
+    },
+
+    [theme.fn.smallerThan('sm')]: {
+      minWidth: 32,
+      minHeight: 32,
     },
   },
 }));
