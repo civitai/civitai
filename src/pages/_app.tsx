@@ -114,6 +114,7 @@ function MyApp(props: CustomAppProps) {
         <title>Civitai | Share your models</title>
         <meta name="viewport" content="maximum-scale=1, initial-scale=1, width=device-width" />
         <link rel="manifest" href="/site.webmanifest" />
+        <script defer data-domain="civitai.com" src="https://plausible.io/js/script.js"></script>
       </Head>
 
       <ColorSchemeProvider
