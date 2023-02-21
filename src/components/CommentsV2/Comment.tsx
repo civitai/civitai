@@ -22,7 +22,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import create from 'zustand';
+import { create } from 'zustand';
 import { Reactions, ReactionMetrics } from '~/components/Reaction/Reactions';
 import { ReviewReactions } from '@prisma/client';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';

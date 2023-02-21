@@ -1,4 +1,4 @@
-import create from 'zustand';
+import { create } from 'zustand';
 import { ModelType, MetricTimeframe, CheckpointType, ModelStatus } from '@prisma/client';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';

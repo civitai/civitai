@@ -4,7 +4,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { trpc } from '~/utils/trpc';
-import create from 'zustand';
+import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 /**NOTES**

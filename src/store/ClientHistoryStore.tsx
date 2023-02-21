@@ -1,6 +1,6 @@
 import { useWindowEvent } from '@mantine/hooks';
 import { useEffect } from 'react';
-import create from 'zustand';
+import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 // partial support navigation api - https://caniuse.com/?search=window.navigation

@@ -26,7 +26,7 @@ import { deleteCookie } from 'cookies-next';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 import z from 'zod';
-import create from 'zustand';
+import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
