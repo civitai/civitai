@@ -14,7 +14,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
   const isUpdating = await redis?.get(UPDATE_METRICS_LOCK_KEY);
   if (isUpdating === 'true') return;
   await redis?.set(UPDATE_METRICS_LOCK_KEY, 'true', {
-    EX: 300 // Expire key after 5 minutes to ensure that we can recover from failures in the process
+    EX: 300, // Expire key after 5 minutes to ensure that we can recover from failures in the process
   });
   // Get the last time this ran from the KeyValue store
   // --------------------------------------
@@ -213,13 +213,11 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
               FROM (
                 SELECT
                   COALESCE(CAST(a."userId" as text), a.details->>'ip') user_id,
-                  CAST(a.details ->> 'modelId' AS INT) AS model_id,
-	                CAST(a.details ->> 'modelVersionId' AS INT) AS model_version_id,
+                  CAST(a.details ->> '${tableId}' AS INT) AS ${viewId},
                   a."createdAt" AS created_at
                 FROM "UserActivity" a
               ) t
-              JOIN "ModelVersion" mv ON mv.id = t.model_version_id -- only count existing model versions
-              GROUP BY user_id, model_id, model_version_id
+              GROUP BY user_id, ${viewId}
             ) a
             GROUP BY a.${viewId}
           ) ds ON m.${viewId} = ds.${viewId}
