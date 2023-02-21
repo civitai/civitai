@@ -39,6 +39,7 @@ These rules apply to all Content posted on Civitai. Moderators consider context 
   - depictions of human death
   - graphic violence
   - beastiality
+  - "loli" or "lolicon" content
 - Models intended for the photorealistic depiction of minors
 
   Will be removed.
