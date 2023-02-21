@@ -1,4 +1,5 @@
 import { env } from '~/env/client.mjs';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 // from options available in CF Flexible variants:
 // https://developers.cloudflare.com/images/cloudflare-images/transform/flexible-variants/
@@ -39,8 +40,10 @@ export function EdgeImage({
   metadata,
   ...imgProps
 }: EdgeImageProps) {
+  const currentUser = useCurrentUser();
   if (width) width = Math.min(width, 4096);
   if (height) height = Math.min(height, 4096);
+  anim ??= currentUser ? (!currentUser.autoplayGifs ? false : undefined) : undefined;
 
   src = getEdgeUrl(src, { width, height, fit, anim, blur, quality, gravity, metadata });
   // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
