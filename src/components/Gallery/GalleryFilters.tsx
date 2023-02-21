@@ -11,6 +11,7 @@ import {
   MultiSelect,
   Popover,
   ScrollArea,
+  SegmentedControl,
   Stack,
 } from '@mantine/core';
 import { ImageGenerationProcess, MetricTimeframe } from '@prisma/client';
@@ -32,7 +33,7 @@ import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { galleryFilterSchema, useCookies } from '~/providers/CookiesProvider';
 import { constants } from '~/server/common/constants';
-import { ImageResource, ImageSort, TagSort } from '~/server/common/enums';
+import { BrowsingMode, ImageResource, ImageSort, TagSort } from '~/server/common/enums';
 import { setCookie } from '~/utils/cookies-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -59,7 +60,7 @@ type Store = {
   filters: FilterProps;
   setSort: (sort?: ImageSort) => void;
   setPeriod: (period?: MetricTimeframe) => void;
-  setHideNsfw: (hide?: boolean) => void;
+  setBrowsingMode: (browsingMode?: BrowsingMode) => void;
   setTypes: (types?: ImageGenerationProcess[]) => void;
   setResources: (resources?: ImageResource[]) => void;
   setTags: (tags?: number[]) => void;
@@ -83,10 +84,10 @@ const useFiltersStore = create<Store>()(
         !!period ? setCookie('g_period', period) : deleteCookie('g_period');
       });
     },
-    setHideNsfw: (hide) => {
+    setBrowsingMode: (mode) => {
       set((state) => {
-        state.filters.hideNSFW = hide;
-        hide ? setCookie('g_hideNSFW', hide) : deleteCookie('g_hideNSFW');
+        state.filters.browsingMode = mode;
+        mode ? setCookie('g_browsingMode', mode) : deleteCookie('g_browsingMode');
       });
     },
     setTypes: (types) => {
@@ -204,6 +205,7 @@ export function GalleryPeriod() {
 }
 
 export function GalleryFilters() {
+  const user = useCurrentUser();
   const { classes } = useStyles();
   const { clearFilters } = useGalleryFilters();
   const cookies = useCookies().gallery;
@@ -223,6 +225,11 @@ export function GalleryFilters() {
   const singleImageAlbum = useFiltersStore(
     (state) => state.filters.singleImageAlbum ?? cookies.singleImageAlbum ?? false
   );
+  const browsingMode = useFiltersStore(
+    (state) => state.filters.browsingMode ?? cookies.browsingMode ?? BrowsingMode.SFW
+  );
+  const setBrowsingMode = useFiltersStore((state) => state.setBrowsingMode);
+  const showNSFWToggle = !user || user.showNsfw;
 
   const filterLength =
     types.length +
@@ -261,6 +268,33 @@ export function GalleryFilters() {
       </Popover.Target>
       <Popover.Dropdown maw={350} w="100%">
         <Stack spacing={4}>
+          {showNSFWToggle && (
+            <>
+              <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} />
+              <SegmentedControl
+                my={5}
+                value={browsingMode ?? 'SFW'}
+                size="xs"
+                color="blue"
+                styles={(theme) => ({
+                  root: {
+                    border: `1px solid ${
+                      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+                    }`,
+                    background: 'none',
+                  },
+                })}
+                data={[
+                  { label: 'Safe', value: 'SFW' },
+                  { label: 'Adult', value: 'NSFW' },
+                  { label: 'Everything', value: 'All' },
+                ]}
+                onChange={(value) => {
+                  setBrowsingMode(value as BrowsingMode);
+                }}
+              />
+            </>
+          )}
           <Divider label="Generation process" labelProps={{ weight: 'bold' }} />
           <Chip.Group
             spacing={4}

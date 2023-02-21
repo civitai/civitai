@@ -110,7 +110,7 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   const prioritizeSafeImages =
-    input.hideNSFW || (ctx.user?.showNsfw ?? false) === false || ctx.user?.blurNsfw;
+    input.browsingMode || (ctx.user?.showNsfw ?? false) === false || ctx.user?.blurNsfw;
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
 

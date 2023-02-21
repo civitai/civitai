@@ -1,4 +1,4 @@
-import { ImageSort } from './../common/enums';
+import { BrowsingMode, ImageSort } from './../common/enums';
 import { ImageGenerationProcess, MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
@@ -71,7 +71,7 @@ export const getGalleryImageSchema = z.object({
   infinite: z.boolean().default(true),
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
-  hideNSFW: z.boolean().optional(),
+  browsingMode: z.nativeEnum(BrowsingMode).optional().default(BrowsingMode.SFW),
   tags: z.array(z.number()).optional(),
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),

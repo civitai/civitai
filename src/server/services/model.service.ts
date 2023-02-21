@@ -4,7 +4,7 @@ import { MetricTimeframe, ModelStatus, ModelType, Prisma, TagTarget } from '@pri
 import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
 
-import { ModelSort } from '~/server/common/enums';
+import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -51,7 +51,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     rating,
     favorites,
     hidden,
-    hideNSFW,
+    browsingMode,
     excludedTagIds,
     excludedIds,
     checkpointType,
@@ -126,6 +126,8 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     AND.push({ OR: TypeOr });
   }
 
+  if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
+
   const where: Prisma.ModelWhereInput = {
     tagsOnModels:
       tagname ?? tag
@@ -133,7 +135,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
         : undefined,
     user: username || user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
-    nsfw: !canViewNsfw || hideNSFW ? { equals: false } : undefined,
+    nsfw:
+      browsingMode === BrowsingMode.All
+        ? undefined
+        : { equals: browsingMode === BrowsingMode.NSFW },
     rank: rating
       ? {
           AND: [{ ratingAllTime: { gte: rating } }, { ratingAllTime: { lt: rating + 1 } }],

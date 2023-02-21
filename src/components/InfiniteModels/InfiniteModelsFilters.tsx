@@ -1,6 +1,6 @@
 import create from 'zustand';
 import { ModelType, MetricTimeframe, CheckpointType, ModelStatus } from '@prisma/client';
-import { ModelSort } from '~/server/common/enums';
+import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { splitUppercase } from '~/utils/string-helpers';
 import { deleteCookie } from 'cookies-next';
@@ -34,7 +34,7 @@ export const useFilters = create<{
   setTypes: (types?: ModelType[]) => void;
   setCheckpointType: (checkpointType?: CheckpointType) => void;
   setBaseModels: (baseModels?: BaseModel[]) => void;
-  setHideNSFW: (includeNSFW?: boolean) => void;
+  setBrowsingMode: (browsingMode?: BrowsingMode) => void;
   setStatus: (status?: ModelStatus[]) => void;
 }>()(
   immer((set) => ({
@@ -69,10 +69,10 @@ export const useFilters = create<{
         !!baseModels?.length ? setCookie('f_baseModels', baseModels) : deleteCookie('f_baseModels');
       });
     },
-    setHideNSFW: (hideNSFW) => {
+    setBrowsingMode: (browsingMode) => {
       set((state) => {
-        state.filters.hideNSFW = hideNSFW;
-        hideNSFW ? setCookie('f_hideNSFW', hideNSFW) : deleteCookie('f_hideNSFW');
+        state.filters.browsingMode = browsingMode;
+        browsingMode ? setCookie('f_browsingMode', browsingMode) : deleteCookie('f_browsingMode');
       });
     },
     setStatus: (status) => {
@@ -90,7 +90,7 @@ export const useInfiniteModelsFilters = () => {
     period = constants.modelFilterDefaults.period,
     baseModels,
     types,
-    hideNSFW,
+    browsingMode,
     status,
     checkpointType,
   } = useCookies().models;
@@ -102,7 +102,7 @@ export const useInfiniteModelsFilters = () => {
     period,
     types,
     baseModels,
-    hideNSFW,
+    browsingMode,
     status,
     checkpointType,
     ...filters,
@@ -159,11 +159,13 @@ export function InfiniteModelsFilter() {
   const status = useFilters((state) => state.filters.status ?? cookies.status ?? []);
   const setBaseModels = useFilters((state) => state.setBaseModels);
   const baseModels = useFilters((state) => state.filters.baseModels ?? cookies.baseModels ?? []);
-  const hideNSFW = useFilters((state) => state.filters.hideNSFW ?? cookies.hideNSFW ?? false);
-  const setHideNSFW = useFilters((state) => state.setHideNSFW);
+  const browsingMode = useFilters(
+    (state) => state.filters.browsingMode ?? cookies.browsingMode ?? BrowsingMode.SFW
+  );
+  const setBrowsingMode = useFilters((state) => state.setBrowsingMode);
   const setCheckpointType = useFilters((state) => state.setCheckpointType);
   const checkpointType = useFilters(
-    (state) => state.filters.checkpointType ?? cookies.checkpointType ?? 'all'
+    (state) => state.filters.checkpointType ?? cookies.checkpointType ?? 'All'
   );
   const showNSFWToggle = !user || user.showNsfw;
   const showCheckpointType = !types?.length || types.includes('Checkpoint');
@@ -172,13 +174,13 @@ export function InfiniteModelsFilter() {
     types.length +
     baseModels.length +
     status.length +
-    (showNSFWToggle && hideNSFW ? 1 : 0) +
-    (showCheckpointType && checkpointType !== 'all' ? 1 : 0);
+    (showNSFWToggle && browsingMode !== BrowsingMode.SFW ? 1 : 0) +
+    (showCheckpointType && checkpointType !== 'All' ? 1 : 0);
   const handleClear = () => {
     setTypes([]);
     setBaseModels([]);
     setStatus([]);
-    setHideNSFW(false);
+    setBrowsingMode(BrowsingMode.SFW);
     setCheckpointType(undefined);
   };
 
@@ -213,7 +215,7 @@ export function InfiniteModelsFilter() {
               <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} />
               <SegmentedControl
                 my={5}
-                value={!hideNSFW ? 'nsfw' : 'sfw'}
+                value={browsingMode ?? 'SFW'}
                 size="xs"
                 color="blue"
                 styles={(theme) => ({
@@ -225,11 +227,12 @@ export function InfiniteModelsFilter() {
                   },
                 })}
                 data={[
-                  { label: 'Safe', value: 'sfw' },
-                  { label: 'Adult', value: 'nsfw' },
+                  { label: 'Safe', value: 'SFW' },
+                  { label: 'Adult', value: 'NSFW' },
+                  { label: 'Everything', value: 'All' },
                 ]}
                 onChange={(value) => {
-                  setHideNSFW(value === 'sfw');
+                  setBrowsingMode(value as BrowsingMode);
                 }}
               />
             </>
