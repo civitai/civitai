@@ -29,7 +29,7 @@ export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => 
         id: true,
         name: true,
         isCategory: true,
-        tagsOnModels: withModels ? { select: { modelId: true } } : undefined,
+        tagsOnModels: withModels ? { select: { modelId: true } } : false,
       },
     });
 

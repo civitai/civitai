@@ -8,7 +8,7 @@ import {
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
-import { ModelSort } from '~/server/common/enums';
+import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
@@ -45,7 +45,7 @@ export const getAllModelsSchema = z.object({
       if (!rel) return undefined;
       return Array.isArray(rel) ? rel : [rel];
     }),
-  hideNSFW: z.boolean().optional().default(false),
+  browsingMode: z.nativeEnum(BrowsingMode).optional().default(BrowsingMode.SFW),
   sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   rating: z

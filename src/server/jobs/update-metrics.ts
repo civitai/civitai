@@ -7,6 +7,7 @@ const log = createLogger('update-metrics', 'blue');
 const METRIC_LAST_UPDATED_KEY = 'last-metrics-update';
 const RANK_LAST_UPDATED_KEY = 'last-rank-update';
 const RANK_UPDATE_DELAY = 1000 * 60 * 60; // 60 minutes
+
 export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async () => {
   // Get the last time this ran from the KeyValue store
   // --------------------------------------
@@ -199,9 +200,17 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
             FROM
             (
               SELECT
-                CAST(a.details ->> '${tableId}' AS INT) AS ${viewId},
-                a."createdAt" AS created_at
-              FROM "UserActivity" a
+                user_id,
+                ${viewId},
+                MAX(created_at) created_at
+              FROM (
+                SELECT
+                  COALESCE(CAST(a."userId" as text), a.details->>'ip') user_id,
+                  CAST(a.details ->> '${tableId}' AS INT) AS ${viewId},
+                  a."createdAt" AS created_at
+                FROM "UserActivity" a
+              ) t
+              GROUP BY user_id, ${viewId}
             ) a
             GROUP BY a.${viewId}
           ) ds ON m.${viewId} = ds.${viewId}
@@ -263,7 +272,9 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         ON CONFLICT ("${tableId}", timeframe) DO UPDATE
           SET "downloadCount" = EXCLUDED."downloadCount", "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating, "favoriteCount" = EXCLUDED."favoriteCount", "commentCount" = EXCLUDED."commentCount";
         `);
-    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Model'`);
+
+    if (target === 'versions')
+      await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Model'`);
   };
 
   const updateUserMetrics = async () => {
@@ -538,6 +549,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
               r.id
           FROM recent_engagements r
           WHERE r.id IS NOT NULL
+          AND r.id IN (SELECT id FROM "Question")
       )
 
       -- upsert metrics for all affected users
@@ -670,6 +682,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
               r.id
           FROM recent_engagements r
           WHERE r.id IS NOT NULL
+          AND r.id IN (SELECT id FROM "Answer")
       )
 
       -- upsert metrics for all affected users
@@ -1103,6 +1116,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
   const refreshModelRank = async () =>
     await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelRank"');
 
+  const refreshVersionModelRank = async () =>
+    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelVersionRank"');
+
+  const refreshTagRank = async () =>
+    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "TagRank"');
+
   const refreshUserRank = async () =>
     await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "UserRank"');
 
@@ -1137,6 +1156,8 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
   await updateTagMetrics();
   await updateImageMetrics();
   await refreshModelRank();
+  await refreshVersionModelRank();
+  await refreshTagRank();
   log('Updated metrics');
 
   // Update the last update time

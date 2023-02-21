@@ -208,5 +208,5 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
         favoriteCountAllTime: true,
       },
     },
-    tagsOnModels: { select: { tag: true } },
+    tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
   });

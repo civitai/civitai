@@ -3,7 +3,7 @@ import { NextLink } from '@mantine/next';
 import { IconEye, IconEyeOff, IconLock, IconPlus } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import React, { cloneElement, createContext, useContext, useState } from 'react';
-import create from 'zustand';
+import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';

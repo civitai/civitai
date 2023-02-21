@@ -2,7 +2,7 @@ import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client'
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
-import { ImageSort } from '~/server/common/enums';
+import { BrowsingMode, ImageSort } from '~/server/common/enums';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetGalleryImageInput, GetImageConnectionsSchema } from '~/server/schema/image.schema';
@@ -44,6 +44,7 @@ export const getGalleryImages = async <
   excludedUserIds,
   isFeatured,
   types,
+  browsingMode,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const isMod = user?.isModerator ?? false;
@@ -91,12 +92,17 @@ export const getGalleryImages = async <
     imagesOnReviews: reviewId ? { reviewId } : undefined,
   };
 
+  if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
+
   const items = await prisma.image.findMany({
     cursor: cursor ? { id: cursor } : undefined,
     take: limit,
     where: {
       userId,
-      nsfw: !canViewNsfw ? { equals: false } : undefined,
+      nsfw:
+        browsingMode === BrowsingMode.All
+          ? undefined
+          : { equals: browsingMode === BrowsingMode.NSFW },
       tosViolation: !isMod ? false : undefined,
       ...(infinite ? infiniteWhere : finiteWhere),
     },

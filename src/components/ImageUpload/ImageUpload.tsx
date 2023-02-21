@@ -517,12 +517,17 @@ function ImageTagTab({
 
   const { data: { items: categories } = { items: [] }, isLoading: loadingCategories } =
     trpc.tag.getAll.useQuery(
-      { limit: 0, entityType: [TagTarget.Image], categories: true, sort: TagSort.MostImages },
+      {
+        limit: 0,
+        entityType: [TagTarget.Image, TagTarget.Model],
+        categories: true,
+        sort: TagSort.MostImages,
+      },
       { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
     );
   const { data: { items: tags } = { items: [] }, isLoading: loadingTags } =
     trpc.tag.getAll.useQuery(
-      { limit: 0, entityType: [TagTarget.Image], categories: false },
+      { limit: 0, entityType: [TagTarget.Image, TagTarget.Model], categories: false },
       { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
     );
 
@@ -562,6 +567,7 @@ function ImageTagTab({
           label: category.name,
           value: category.id.toString(),
         }))}
+        limit={50}
         searchable
         clearable
       />
@@ -574,6 +580,7 @@ function ImageTagTab({
           label: tag.name,
           value: tag.id.toString(),
         }))}
+        limit={50}
         searchable
         clearable
       />

@@ -42,8 +42,7 @@ export const getReviewsInfiniteHandler = async ({
   input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
   const limit = input.limit + 1;
   const canViewNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
-  const prioritizeSafeImages =
-    env.SHOW_SFW_IN_NSFW && (!ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw));
+  const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
 
   const reviews = await getReviews({
     input: { ...input, limit },
@@ -178,8 +177,7 @@ export const getReviewDetailsHandler = async ({
 }) => {
   try {
     const canViewNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
-    const prioritizeSafeImages =
-      env.SHOW_SFW_IN_NSFW && (!ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw));
+    const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
     const result = await getReviewById({
       id,
       select: reviewDetailSelect(canViewNsfw),
