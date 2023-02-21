@@ -1116,6 +1116,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/5 * * * *', async
   const refreshModelRank = async () =>
     await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelRank"');
 
+  const refreshVersionModelRank = async () =>
+    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelVersionRank"');
+
+  const refreshTagRank = async () =>
+    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "TagRank"');
+
   const refreshUserRank = async () =>
     await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "UserRank"');
 
@@ -1150,6 +1156,8 @@ export const updateMetricsJob = createJob('update-metrics', '*/5 * * * *', async
   await updateTagMetrics();
   await updateImageMetrics();
   await refreshModelRank();
+  await refreshVersionModelRank();
+  await refreshTagRank();
   log('Updated metrics');
 
   // Update the last update time
