@@ -1,4 +1,11 @@
-DROP VIEW IF EXISTS public."TagRank";
+DO $$
+BEGIN
+    IF EXISTS(SELECT 1 FROM pg_matviews WHERE schemaname = 'public' AND matviewname = 'TagRank') THEN
+        DROP MATERIALIZED VIEW public."TagRank";
+    ELSE
+        DROP VIEW IF EXISTS public."TagRank";
+    END IF;
+END $$;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS public."TagRank"
  AS
@@ -25,12 +32,20 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS public."TagRank"
     row_number() OVER (ORDER BY "TagStat"."imageCountAllTime" DESC, "TagStat"."followerCountAllTime" DESC, "TagStat"."hiddenCountAllTime", "TagStat"."tagId") AS "imageCountAllTimeRank"
    FROM "TagStat";
 
+DROP INDEX IF EXISTS "TagRank_PK";
 CREATE UNIQUE INDEX "TagRank_PK" ON "TagRank" ("tagId");
 
 ALTER TABLE public."TagRank"
     OWNER TO modelshare;
-	
-DROP VIEW IF EXISTS public."ModelVersionRank";
+
+DO $$
+BEGIN
+    IF EXISTS(SELECT 1 FROM pg_matviews WHERE schemaname = 'public' AND matviewname = 'ModelVersionRank') THEN
+        DROP MATERIALIZED VIEW public."ModelVersionRank";
+    ELSE
+        DROP VIEW IF EXISTS public."ModelVersionRank";
+    END IF;
+END $$;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS public."ModelVersionRank"
  AS
@@ -78,6 +93,7 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS public."ModelVersionRank"
              LEFT JOIN "ModelVersionMetric" mm ON mm."modelVersionId" = m.id AND mm.timeframe = tf.timeframe) t
   GROUP BY t."modelVersionId";
 
+DROP INDEX IF EXISTS "ModelVersionRank_PK";
 CREATE UNIQUE INDEX "ModelVersionRank_PK" ON "ModelVersionRank" ("modelVersionId");
 
 ALTER TABLE public."ModelVersionRank"
