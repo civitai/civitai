@@ -1,7 +1,7 @@
 ##### DEPENDENCIES
 
-FROM node:18-alpine AS deps
-RUN apk add --no-cache libc6-compat openssl1.1-compat
+FROM node:18-alpine3.16 AS deps
+RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 # Install Prisma Client - remove if not using Prisma
@@ -21,7 +21,7 @@ RUN \
 
 ##### BUILDER
 
-FROM node:18-alpine AS builder
+FROM node:18-alpine3.16 AS builder
 ARG NEXT_PUBLIC_IMAGE_LOCATION
 ARG NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION
 ARG NEXT_PUBLIC_MAINTENANCE_MODE
@@ -40,7 +40,7 @@ RUN \
 
 ##### RUNNER
 
-FROM node:18-alpine AS runner
+FROM node:18-alpine3.16 AS runner
 WORKDIR /app
 
 # Install PM2 to manage node processes
