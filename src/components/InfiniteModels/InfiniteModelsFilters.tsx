@@ -153,6 +153,7 @@ export function InfiniteModelsFilter() {
   const { classes } = useStyles();
   const cookies = useCookies().models;
   const user = useCurrentUser();
+  const defaultBrowsingMode = user?.showNsfw ? BrowsingMode.All : BrowsingMode.SFW;
   const setTypes = useFilters((state) => state.setTypes);
   const types = useFilters((state) => state.filters.types ?? cookies.types ?? []);
   const setStatus = useFilters((state) => state.setStatus);
@@ -160,7 +161,7 @@ export function InfiniteModelsFilter() {
   const setBaseModels = useFilters((state) => state.setBaseModels);
   const baseModels = useFilters((state) => state.filters.baseModels ?? cookies.baseModels ?? []);
   const browsingMode = useFilters(
-    (state) => state.filters.browsingMode ?? cookies.browsingMode ?? BrowsingMode.SFW
+    (state) => state.filters.browsingMode ?? cookies.browsingMode ?? defaultBrowsingMode
   );
   const setBrowsingMode = useFilters((state) => state.setBrowsingMode);
   const setCheckpointType = useFilters((state) => state.setCheckpointType);
@@ -174,7 +175,7 @@ export function InfiniteModelsFilter() {
     types.length +
     baseModels.length +
     status.length +
-    (showNSFWToggle && browsingMode !== BrowsingMode.SFW ? 1 : 0) +
+    (showNSFWToggle && browsingMode !== defaultBrowsingMode ? 1 : 0) +
     (showCheckpointType && checkpointType !== 'All' ? 1 : 0);
   const handleClear = () => {
     setTypes([]);

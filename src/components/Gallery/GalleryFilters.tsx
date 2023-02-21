@@ -206,6 +206,7 @@ export function GalleryPeriod() {
 
 export function GalleryFilters() {
   const user = useCurrentUser();
+  const defaultBrowsingMode = user?.showNsfw ? BrowsingMode.All : BrowsingMode.SFW;
   const { classes } = useStyles();
   const { clearFilters } = useGalleryFilters();
   const cookies = useCookies().gallery;
@@ -226,7 +227,7 @@ export function GalleryFilters() {
     (state) => state.filters.singleImageAlbum ?? cookies.singleImageAlbum ?? false
   );
   const browsingMode = useFiltersStore(
-    (state) => state.filters.browsingMode ?? cookies.browsingMode ?? BrowsingMode.SFW
+    (state) => state.filters.browsingMode ?? cookies.browsingMode ?? defaultBrowsingMode
   );
   const setBrowsingMode = useFiltersStore((state) => state.setBrowsingMode);
   const showNSFWToggle = !user || user.showNsfw;
@@ -234,6 +235,7 @@ export function GalleryFilters() {
   const filterLength =
     types.length +
     resources.length +
+    (browsingMode !== defaultBrowsingMode ? 1 : 0) +
     (excludedTags.length > 0 ? 1 : 0) +
     (singleImageModel ? 1 : 0) +
     (singleImageAlbum ? 1 : 0);
