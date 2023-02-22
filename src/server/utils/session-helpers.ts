@@ -6,6 +6,7 @@ import { redis } from '~/server/redis/client';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { Session } from 'next-auth';
 
+const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days
 const log = createLogger('session-helpers', 'green');
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
@@ -18,8 +19,15 @@ export async function refreshToken(token: JWT) {
   if (!token.user) return token;
   const user = token.user as User;
   if (!user.id) return token;
-  const redisDate = await redis.get(`session:${user.id}`);
-  const invalidationDate = redisDate ? new Date(redisDate) : undefined;
+
+  let invalidationDate: Date | undefined;
+  const allInvalidationDate = await redis.get('session:all');
+  if (allInvalidationDate) invalidationDate = new Date(allInvalidationDate);
+  else {
+    const redisDate = await redis.get(`session:${user.id}`);
+    invalidationDate = redisDate ? new Date(redisDate) : undefined;
+  }
+
   if (
     !invalidationDate ||
     (token.signedAt && new Date(token.signedAt as string) > invalidationDate)
@@ -39,8 +47,16 @@ export async function refreshToken(token: JWT) {
 
 export function invalidateSession(userId: number) {
   redis.set(`session:${userId}`, new Date().toISOString(), {
-    EX: 60 * 60 * 24 * 30, // 30 days
+    EX: DEFAULT_EXPIRATION, // 30 days
   });
+  log(`Scheduling refresh session for user ${userId}`);
+}
+
+export function invalidateAllSessions(asOf: Date | undefined = new Date()) {
+  redis.set('session:all', asOf.toISOString(), {
+    EX: DEFAULT_EXPIRATION, // 30 days
+  });
+  log(`Scheduling session refresh for all users`);
 }
 
 export async function getSessionFromBearerToken(key: string) {
