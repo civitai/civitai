@@ -92,7 +92,8 @@ export const getGalleryImages = async <
     imagesOnReviews: reviewId ? { reviewId } : undefined,
   };
 
-  if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
+  if (canViewNsfw && !browsingMode) browsingMode = BrowsingMode.All;
+  else if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
 
   const items = await prisma.image.findMany({
     cursor: cursor ? { id: cursor } : undefined,

@@ -145,7 +145,6 @@ const zodParse = z
           ...models,
           types: !!models.types ? JSON.parse(decodeURIComponent(models.types)) : [],
           baseModels: !!models.baseModels ? JSON.parse(decodeURIComponent(models.baseModels)) : [],
-          browsingMode: models?.browsingMode,
           status: !!models.status ? JSON.parse(decodeURIComponent(models.status)) : [],
         },
         questions,

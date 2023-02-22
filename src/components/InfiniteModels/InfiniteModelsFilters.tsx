@@ -181,7 +181,7 @@ export function InfiniteModelsFilter() {
     setTypes([]);
     setBaseModels([]);
     setStatus([]);
-    setBrowsingMode(BrowsingMode.SFW);
+    setBrowsingMode(defaultBrowsingMode);
     setCheckpointType(undefined);
   };
 

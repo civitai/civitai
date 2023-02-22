@@ -126,7 +126,8 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     AND.push({ OR: TypeOr });
   }
 
-  if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
+  if (canViewNsfw && !browsingMode) browsingMode = BrowsingMode.All;
+  else if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
 
   const where: Prisma.ModelWhereInput = {
     tagsOnModels:
@@ -387,7 +388,7 @@ export const updateModel = async ({
   }));
 
   // Determine which version to create/update
-  type PayloadVersion = typeof modelVersions[number] & { index: number };
+  type PayloadVersion = (typeof modelVersions)[number] & { index: number };
   const { versionsToCreate, versionsToUpdate } = parsedModelVersions.reduce(
     (acc, current, index) => {
       if (!current.id) acc.versionsToCreate.push({ ...current, index });
@@ -471,7 +472,7 @@ export const updateModel = async ({
           );
 
           // Determine which images to create/update
-          type PayloadImage = typeof images[number] & { index: number };
+          type PayloadImage = (typeof images)[number] & { index: number };
           const { imagesToCreate, imagesToUpdate } = images.reduce(
             (acc, current, index) => {
               if (!current.id) acc.imagesToCreate.push({ ...current, index });
