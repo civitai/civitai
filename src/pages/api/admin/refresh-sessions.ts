@@ -1,10 +1,9 @@
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import z from 'zod';
-import { redis } from '~/server/redis/client';
 import { invalidateAllSessions } from '~/server/utils/session-helpers';
 
 const refreshSessionsSchema = z.object({
-  asOf: z.preprocess((v) => new Date(v), z.date()).optional(),
+  asOf: z.preprocess((v) => (v ? new Date(String(v)) : undefined), z.date().optional()).optional(),
 });
 
 export default WebhookEndpoint(async (req, res) => {
