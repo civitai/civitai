@@ -90,6 +90,7 @@ export const getGalleryImageSchema = z.object({
   singleImageAlbum: z.boolean().optional(),
   isFeatured: z.boolean().optional(),
   types: z.nativeEnum(ImageGenerationProcess).array().optional(),
+  inReview: z.boolean().optional(),
 });
 
 export const getImageConnectionsSchema = z.object({
