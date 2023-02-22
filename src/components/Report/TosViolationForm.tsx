@@ -10,6 +10,7 @@ const violations = [
   'Deceptive content',
   'Sale of illegal substances',
   'Child abuse and exploitation',
+  'Prohibited prompts',
 ];
 
 export const TosViolationForm = createReportForm({
