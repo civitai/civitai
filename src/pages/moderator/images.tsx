@@ -1,10 +1,20 @@
-import { ActionIcon, Center, Container, Group, Loader, Stack } from '@mantine/core';
-import { IconFilterOff } from '@tabler/icons';
+import {
+  ActionIcon,
+  AspectRatio,
+  Box,
+  Card,
+  Center,
+  Container,
+  Group,
+  Loader,
+  Menu,
+} from '@mantine/core';
+import { IconCheck, IconDotsVertical, IconFlag, IconTrash } from '@tabler/icons';
+import { GetServerSideProps } from 'next';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { Announcements } from '~/components/Announcements/Announcements';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
+import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import {
   GalleryCategories,
   GalleryFilters,
@@ -12,14 +22,13 @@ import {
   GallerySort,
   useGalleryFilters,
 } from '~/components/Gallery/GalleryFilters';
-import { InfiniteGalleryGrid } from '~/components/Gallery/InfiniteGalleryGrid';
-import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
+import { ReportImageButton } from '~/components/Gallery/ReportImageButton';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
-import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { hideMobile, showMobile } from '~/libs/sx-helpers';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { ImageGetAllInfinite } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
@@ -35,21 +44,23 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
   return { props: {} };
 };
 
-// TODO Manuel
 export default function Images() {
   const { ref, inView } = useInView();
-  const { data, isLoading } = trpc.image.getGalleryImagesInfinite.useInfiniteQuery(
-    {
-      inReview: true,
-    },
-    {
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-    }
-  );
+  const { data, isLoading, fetchNextPage, hasNextPage } =
+    trpc.image.getGalleryImagesInfinite.useInfiniteQuery(
+      { needsReview: false },
+      {
+        getNextPageParam: (lastPage) => lastPage.nextCursor,
+      }
+    );
   const images = useMemo(
     () => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [],
     [data?.pages]
   );
+
+  useEffect(() => {
+    if (inView) fetchNextPage();
+  }, [fetchNextPage, inView]);
 
   return (
     <Container>
@@ -71,14 +82,88 @@ export default function Images() {
   );
 }
 
-function ImageGridItem({ data, index }: Props) {
+function ImageGridItem({ data: image }: ImageGridItemProps) {
   return (
-    <Card>
-
+    <Card shadow="sm" p={0} withBorder>
+      <Card.Section>
+        <ImageGuard
+          images={[image]}
+          render={(image) => (
+            <Box sx={{ position: 'relative' }}>
+              <Menu position="left">
+                <Menu.Target>
+                  <ActionIcon
+                    variant="transparent"
+                    p={0}
+                    onClick={(e: React.MouseEvent) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    sx={{
+                      width: 30,
+                      position: 'absolute',
+                      top: 10,
+                      right: 4,
+                      zIndex: 8,
+                    }}
+                  >
+                    <IconDotsVertical
+                      size={24}
+                      color="#fff"
+                      style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                    />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <ReportImageButton imageId={image.id}>
+                    <Menu.Item icon={<IconFlag size={14} stroke={1.5} />}>Report</Menu.Item>
+                  </ReportImageButton>
+                </Menu.Dropdown>
+              </Menu>
+              <ImageGuard.ToggleImage
+                sx={(theme) => ({
+                  backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
+                  color: 'white',
+                  backdropFilter: 'blur(7px)',
+                  boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
+                  position: 'absolute',
+                  top: theme.spacing.xs,
+                  left: theme.spacing.xs,
+                  zIndex: 10,
+                })}
+                position="static"
+              />
+              <ImageGuard.Unsafe>
+                <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                  <MediaHash {...image} />
+                </AspectRatio>
+              </ImageGuard.Unsafe>
+              <ImageGuard.Safe>
+                <EdgeImage
+                  src={image.url}
+                  alt={image.name ?? undefined}
+                  width={450}
+                  placeholder="empty"
+                  style={{ width: '100%', zIndex: 2, position: 'relative' }}
+                />
+              </ImageGuard.Safe>
+            </Box>
+          )}
+        />
+      </Card.Section>
+      <Group position="apart" noWrap>
+        <ActionIcon color="red">
+          <IconTrash />
+        </ActionIcon>
+        <ActionIcon color="green">
+          <IconCheck />
+        </ActionIcon>
+      </Group>
     </Card>
+  );
 }
 
 type ImageGridItemProps = {
-  data: any;
+  data: ImageGetAllInfinite[number];
   index: number;
 };

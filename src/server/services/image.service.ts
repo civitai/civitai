@@ -45,6 +45,7 @@ export const getGalleryImages = async <
   isFeatured,
   types,
   browsingMode,
+  needsReview,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const isMod = user?.isModerator ?? false;
@@ -104,6 +105,7 @@ export const getGalleryImages = async <
           ? undefined
           : { equals: browsingMode === BrowsingMode.NSFW },
       tosViolation: !isMod ? false : undefined,
+      needsReview,
       ...(infinite ? infiniteWhere : finiteWhere),
     },
     select: imageGallerySelect({ user }),

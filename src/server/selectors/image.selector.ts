@@ -1,16 +1,14 @@
-import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { Prisma, TagTarget } from '@prisma/client';
 import { SessionUser } from 'next-auth';
+
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { ImageUploadProps } from '~/server/schema/image.schema';
-
-import { getReactionsSelect } from '~/server/selectors/reaction.selector';
-import { simpleTagSelect } from '~/server/selectors/tag.selector';
+import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { detectNsfwImage } from '~/utils/image-metadata';
 
+import { getReactionsSelect } from './reaction.selector';
+import { simpleTagSelect } from './tag.selector';
 import { userWithCosmeticsSelect } from './user.selector';
-import { ImageUploadProps } from '~/server/schema/image.schema';
-import { getImageGenerationProcess } from '~/server/common/model-helpers';
 
 export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   id: true,
