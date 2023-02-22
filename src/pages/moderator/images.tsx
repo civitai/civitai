@@ -5,30 +5,30 @@ import {
   Card,
   Center,
   Container,
+  Grid,
   Group,
   Loader,
-  Menu,
+  Stack,
+  Text,
+  Title,
+  Tooltip,
 } from '@mantine/core';
-import { IconCheck, IconDotsVertical, IconFlag, IconTrash } from '@tabler/icons';
+import { usePrevious } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
+import { IconCheck, IconTrash } from '@tabler/icons';
 import { GetServerSideProps } from 'next';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import {
-  GalleryCategories,
-  GalleryFilters,
-  GalleryPeriod,
-  GallerySort,
-  useGalleryFilters,
-} from '~/components/Gallery/GalleryFilters';
-import { ReportImageButton } from '~/components/Gallery/ReportImageButton';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { ImageUpdateSchema } from '~/server/schema/image.schema';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { ImageGetAllInfinite } from '~/types/router';
+import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
@@ -46,80 +46,132 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 
 export default function Images() {
   const { ref, inView } = useInView();
-  const { data, isLoading, fetchNextPage, hasNextPage } =
+  const queryUtils = trpc.useContext();
+
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetching } =
     trpc.image.getGalleryImagesInfinite.useInfiniteQuery(
-      { needsReview: false },
-      {
-        getNextPageParam: (lastPage) => lastPage.nextCursor,
-      }
+      { needsReview: true },
+      { getNextPageParam: (lastPage) => lastPage.nextCursor }
     );
-  const images = useMemo(
-    () => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [],
-    [data?.pages]
-  );
+  const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
+
+  const previousFetching = usePrevious(isFetching);
+
+  const onMutate = async ({ id }: { id: number }) => {
+    await queryUtils.image.getGalleryImagesInfinite.cancel();
+    queryUtils.image.getGalleryImagesInfinite.setInfiniteData({ needsReview: false }, (data) => {
+      if (!data) {
+        return {
+          pages: [],
+          pageParams: [],
+        };
+      }
+
+      return {
+        ...data,
+        pages: data.pages.map((page) => ({
+          ...page,
+          items: page.items.map((item) =>
+            item.id === id ? { ...item, needsReview: false } : item
+          ),
+        })),
+      };
+    });
+  };
+
+  const deleteImageMutation = trpc.image.delete.useMutation({
+    onMutate,
+    onSuccess() {
+      showSuccessNotification({ message: 'The image has been updated' });
+    },
+  });
+  const updateImageMutation = trpc.image.update.useMutation({
+    onMutate,
+    onSuccess() {
+      showSuccessNotification({ message: 'The image has been deleted' });
+    },
+  });
+
+  const handleDelete = (id: number) => {
+    deleteImageMutation.mutate({ id });
+  };
+  const handleUpdate = (image: ImageUpdateSchema) => {
+    updateImageMutation.mutate(image);
+  };
 
   useEffect(() => {
     if (inView) fetchNextPage();
   }, [fetchNextPage, inView]);
 
   return (
-    <Container>
-      {isLoading ? (
-        <Center py="xl">
-          <Loader size="xl" />
-        </Center>
-      ) : images.length ? (
-        <MasonryGrid items={images} render={ImageGridItem} />
-      ) : (
-        <NoContent mt="lg" />
-      )}
-      {!isLoading && hasNextPage && (
-        <Group position="center" ref={ref}>
-          <Loader />
-        </Group>
-      )}
+    <Container size="xl">
+      <Grid gutter="xl">
+        <Grid.Col>
+          <Stack spacing={0}>
+            <Title order={1}>Classified Images</Title>
+            <Text color="dimmed">
+              These are images that have been marked by our AI as NSFW which needs further attention
+              from the mods
+            </Text>
+          </Stack>
+        </Grid.Col>
+        <Grid.Col>
+          {isLoading ? (
+            <Center py="xl">
+              <Loader size="xl" />
+            </Center>
+          ) : images.length ? (
+            <MasonryGrid
+              items={images}
+              previousFetching={previousFetching}
+              render={(props) => (
+                <ImageGridItem
+                  {...props}
+                  onDeleteClick={handleDelete}
+                  onUpdateClick={handleUpdate}
+                />
+              )}
+            />
+          ) : (
+            <NoContent mt="lg" message="There are no images that need review" />
+          )}
+          {!isLoading && hasNextPage && (
+            <Group position="center" ref={ref}>
+              <Loader />
+            </Group>
+          )}
+        </Grid.Col>
+      </Grid>
     </Container>
   );
 }
 
-function ImageGridItem({ data: image }: ImageGridItemProps) {
+function ImageGridItem({
+  data: image,
+  width: itemWidth,
+  onDeleteClick,
+  onUpdateClick,
+}: ImageGridItemProps) {
+  const height = useMemo(() => {
+    if (!image.width || !image.height) return 300;
+    const width = itemWidth > 0 ? itemWidth : 300;
+    const aspectRatio = image.width / image.height;
+    const imageHeight = Math.floor(width / aspectRatio);
+    return Math.min(imageHeight, 600);
+  }, [itemWidth, image.width, image.height]);
+
   return (
-    <Card shadow="sm" p={0} withBorder>
-      <Card.Section>
+    <Card
+      shadow="sm"
+      p="xs"
+      sx={{ opacity: image.needsReview === false ? 0.2 : undefined }}
+      withBorder
+    >
+      <Card.Section sx={{ height: `${height}px` }}>
         <ImageGuard
           images={[image]}
           render={(image) => (
-            <Box sx={{ position: 'relative' }}>
-              <Menu position="left">
-                <Menu.Target>
-                  <ActionIcon
-                    variant="transparent"
-                    p={0}
-                    onClick={(e: React.MouseEvent) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                    }}
-                    sx={{
-                      width: 30,
-                      position: 'absolute',
-                      top: 10,
-                      right: 4,
-                      zIndex: 8,
-                    }}
-                  >
-                    <IconDotsVertical
-                      size={24}
-                      color="#fff"
-                      style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                    />
-                  </ActionIcon>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  <ReportImageButton imageId={image.id}>
-                    <Menu.Item icon={<IconFlag size={14} stroke={1.5} />}>Report</Menu.Item>
-                  </ReportImageButton>
-                </Menu.Dropdown>
-              </Menu>
+            <Box sx={{ position: 'relative', height: '100%', overflow: 'hidden' }}>
               <ImageGuard.ToggleImage
                 sx={(theme) => ({
                   backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
@@ -134,7 +186,7 @@ function ImageGridItem({ data: image }: ImageGridItemProps) {
                 position="static"
               />
               <ImageGuard.Unsafe>
-                <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
                   <MediaHash {...image} />
                 </AspectRatio>
               </ImageGuard.Unsafe>
@@ -144,20 +196,46 @@ function ImageGridItem({ data: image }: ImageGridItemProps) {
                   alt={image.name ?? undefined}
                   width={450}
                   placeholder="empty"
-                  style={{ width: '100%', zIndex: 2, position: 'relative' }}
                 />
               </ImageGuard.Safe>
             </Box>
           )}
         />
       </Card.Section>
-      <Group position="apart" noWrap>
-        <ActionIcon color="red">
-          <IconTrash />
-        </ActionIcon>
-        <ActionIcon color="green">
-          <IconCheck />
-        </ActionIcon>
+      <Group position="apart" pt="xs" noWrap grow>
+        <Tooltip label="Delete Image">
+          <ActionIcon
+            variant="filled"
+            color="red"
+            onClick={() => {
+              openConfirmModal({
+                title: 'Delete Image',
+                children: 'Are you sure you want to delete this image?',
+                centered: true,
+                onConfirm: () => {
+                  onDeleteClick(image.id);
+                },
+                labels: { confirm: 'Yes, delete it', cancel: 'Cancel' },
+                confirmProps: { color: 'red' },
+              });
+            }}
+            disabled={!image.needsReview}
+          >
+            <IconTrash size={20} stroke={1.5} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label="Accept Image">
+          <ActionIcon
+            variant="filled"
+            color="green"
+            onClick={() => {
+              onUpdateClick({ id: image.id, needsReview: false });
+            }}
+            disabled={!image.needsReview}
+          >
+            <IconCheck size={20} stroke={1.5} />
+          </ActionIcon>
+        </Tooltip>
       </Group>
     </Card>
   );
@@ -166,4 +244,7 @@ function ImageGridItem({ data: image }: ImageGridItemProps) {
 type ImageGridItemProps = {
   data: ImageGetAllInfinite[number];
   index: number;
+  width: number;
+  onDeleteClick: (id: number) => void;
+  onUpdateClick: (image: ImageUpdateSchema) => void;
 };

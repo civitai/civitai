@@ -56,10 +56,24 @@ export const imageSchema = z.object({
   nsfw: z.boolean().optional(),
   analysis: imageAnalysisSchema.optional(),
   tags: z.array(tagSchema).optional(),
+  needsReview: z.boolean().optional(),
 });
 
 export type ImageUploadProps = z.infer<typeof imageSchema>;
 export type ImageMetaProps = z.infer<typeof imageMetaSchema> & Record<string, unknown>;
+
+export const imageUpdateSchema = z.object({
+  id: z.number(),
+  name: z.string().optional(),
+  url: z
+    .string()
+    .url()
+    .or(z.string().uuid('One of the files did not upload properly, please try again').optional())
+    .optional(),
+  nsfw: z.boolean().optional(),
+  needsReview: z.boolean().optional(),
+});
+export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
 
 export type GetModelVersionImagesSchema = z.infer<typeof getModelVersionImageSchema>;
 export const getModelVersionImageSchema = z.object({

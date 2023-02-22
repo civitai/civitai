@@ -34,6 +34,7 @@ export const imageGallerySelect = ({ user }: { user?: SessionUser }) =>
   Prisma.validator<Prisma.ImageSelect>()({
     ...imageSelect,
     createdAt: true,
+    needsReview: true,
     user: { select: userWithCosmeticsSelect },
     connections: {
       select: {
