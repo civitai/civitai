@@ -1,4 +1,4 @@
-import { ImageGenerationProcess, ModelFileFormat, Prisma } from '@prisma/client';
+import { ImageGenerationProcess, Prisma } from '@prisma/client';
 import { ModelFileType } from '~/server/common/constants';
 import { QS } from '~/utils/qs';
 

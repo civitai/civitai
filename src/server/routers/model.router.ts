@@ -4,6 +4,7 @@ import { env } from '~/env/server.mjs';
 import {
   createModelHandler,
   deleteModelHandler,
+  getDownloadCommandHandler,
   getModelDetailsForReviewHandler,
   getModelHandler,
   getModelReportDetailsHandler,
@@ -11,17 +12,21 @@ import {
   getModelsPagedSimpleHandler,
   getModelsWithVersionsHandler,
   getModelVersionsHandler,
+  getMyDraftModelsHandler,
   restoreModelHandler,
   unpublishModelHandler,
   updateModelHandler,
+  upsertModelHandler,
 } from '~/server/controllers/model.controller';
-import { prisma } from '~/server/db/client';
-import { getByIdSchema } from '~/server/schema/base.schema';
+import { dbRead } from '~/server/db/client';
+import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteModelSchema,
   getAllModelsSchema,
+  getDownloadSchema,
   ModelInput,
   modelSchema,
+  modelUpsertSchema,
 } from '~/server/schema/model.schema';
 import {
   guardedProcedure,
@@ -43,7 +48,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   let ownerId = userId;
   if (id) {
     const isModerator = ctx?.user?.isModerator;
-    ownerId = (await prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
+    ownerId = (await dbRead.model.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator) {
       if (ownerId !== userId) throw throwAuthorizationError();
     }
@@ -89,7 +94,9 @@ export const modelRouter = router({
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
     .query(getModelsWithVersionsHandler),
   getVersions: publicProcedure.input(getByIdSchema).query(getModelVersionsHandler),
+  getMyDraftModels: protectedProcedure.input(getAllQuerySchema).query(getMyDraftModelsHandler),
   add: guardedProcedure.input(modelSchema).use(checkFilesExistence).mutation(createModelHandler),
+  upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
   update: protectedProcedure
     .input(modelSchema.extend({ id: z.number() }))
     .use(isOwnerOrModerator)
@@ -109,4 +116,5 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .query(getModelDetailsForReviewHandler),
   restore: protectedProcedure.input(getByIdSchema).mutation(restoreModelHandler),
+  getDownloadCommand: protectedProcedure.input(getDownloadSchema).query(getDownloadCommandHandler),
 });

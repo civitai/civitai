@@ -23,13 +23,17 @@ import { CustomModalsProvider } from './../providers/CustomModalsProvider';
 import { TosProvider } from '~/providers/TosProvider';
 import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
 import { MaintenanceMode } from '~/components/MaintenanceMode/MaintenanceMode';
-import { NsfwWorkerProvider } from '~/providers/NsfwWorkerProvider';
+import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { FeatureFlags } from '~/server/services/feature-flags.service';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
 import { isDev, isMaintenanceMode } from '~/env/other';
+import { MetaPWA } from '~/components/Meta/MetaPWA';
+import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
+import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { FiltersProvider, FiltersInput, parseFiltersCookie } from '~/providers/FiltersProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -46,6 +50,7 @@ type CustomAppProps = {
   session: Session | null;
   colorScheme: ColorScheme;
   cookies: CookiesContext;
+  filters: FiltersInput;
   flags: FeatureFlags;
   isMaintenanceMode: boolean | undefined;
 }>;
@@ -57,6 +62,7 @@ function MyApp(props: CustomAppProps) {
       session,
       colorScheme: initialColorScheme,
       cookies,
+      filters,
       flags,
       isMaintenanceMode,
       ...pageProps
@@ -91,18 +97,23 @@ function MyApp(props: CustomAppProps) {
   ) : (
     <>
       <ClientHistoryStore />
+      <RegisterCatchNavigation />
       <SessionProvider session={session}>
         <CookiesProvider value={cookies}>
-          <FeatureFlagsProvider flags={flags}>
-            <NsfwWorkerProvider>
-              <CustomModalsProvider>
-                <NotificationsProvider>
-                  <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                  <RoutedContextProvider2 />
-                </NotificationsProvider>
-              </CustomModalsProvider>
-            </NsfwWorkerProvider>
-          </FeatureFlagsProvider>
+          <FiltersProvider value={filters}>
+            <FeatureFlagsProvider flags={flags}>
+              <ImageProcessingProvider>
+                <CivitaiLinkProvider>
+                  <CustomModalsProvider>
+                    <NotificationsProvider>
+                      <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                      <RoutedContextProvider2 />
+                    </NotificationsProvider>
+                  </CustomModalsProvider>
+                </CivitaiLinkProvider>
+              </ImageProcessingProvider>
+            </FeatureFlagsProvider>
+          </FiltersProvider>
         </CookiesProvider>
       </SessionProvider>
     </>
@@ -112,9 +123,12 @@ function MyApp(props: CustomAppProps) {
     <>
       <Head>
         <title>Civitai | Share your models</title>
-        <meta name="viewport" content="maximum-scale=1, initial-scale=1, width=device-width" />
-        <link rel="manifest" href="/site.webmanifest" />
-        <script defer data-domain="civitai.com" src="https://plausible.io/js/script.js"></script>
+        <script
+          defer
+          data-domain="civitai.com"
+          src="https://analytics.civitai.com/js/script.js"
+        ></script>
+        <MetaPWA />
       </Head>
 
       <ColorSchemeProvider
@@ -145,6 +159,12 @@ function MyApp(props: CustomAppProps) {
                 styles: { leftSection: { lineHeight: 1 } },
                 defaultProps: { radius: 'sm' },
               },
+              Checkbox: {
+                styles: {
+                  input: { cursor: 'pointer' },
+                  label: { cursor: 'pointer' },
+                },
+              },
             },
           }}
           withGlobalStyles
@@ -161,12 +181,13 @@ function MyApp(props: CustomAppProps) {
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
   const isClient = appContext.ctx?.req?.url?.startsWith('/_next/data');
-  if (isClient) return initialProps;
+  // if (isClient) return initialProps;
 
   const { pageProps, ...appProps } = initialProps;
   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx);
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
+  const filters = parseFiltersCookie(cookies);
 
   if (isMaintenanceMode) {
     return {
@@ -175,11 +196,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
         colorScheme,
         cookies: parsedCookies,
         isMaintenanceMode,
+        filters,
       },
       ...appProps,
     };
   } else {
-    const session = typeof window === 'undefined' ? await getSession(appContext.ctx) : undefined;
+    const session = !isClient ? await getSession(appContext.ctx) : undefined;
     const flags = getFeatureFlags({ user: session?.user });
     return {
       pageProps: {
@@ -188,6 +210,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
         cookies: parsedCookies,
         session,
         flags,
+        filters,
       },
       ...appProps,
     };

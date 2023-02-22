@@ -44,6 +44,12 @@ export enum ImageSort {
   Newest = 'Newest',
 }
 
+export enum PostSort {
+  MostReactions = 'Most Reactions',
+  MostComments = 'Most Comments',
+  Newest = 'Newest',
+}
+
 export enum BrowsingMode {
   All = 'All',
   SFW = 'SFW',

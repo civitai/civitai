@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 
-import { prisma } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
@@ -18,7 +18,7 @@ export const getUserDownloads = async <TSelect extends Prisma.DownloadHistorySel
   const where: Prisma.DownloadHistoryWhereInput = {
     userId,
   };
-  const downloadHistoryQuery = prisma.downloadHistory.findMany({
+  const downloadHistoryQuery = dbRead.downloadHistory.findMany({
     take: limit,
     cursor: cursor ? { id: cursor } : undefined,
     where,
@@ -27,9 +27,9 @@ export const getUserDownloads = async <TSelect extends Prisma.DownloadHistorySel
   });
 
   if (count) {
-    const [items, count] = await prisma.$transaction([
+    const [items, count] = await dbRead.$transaction([
       downloadHistoryQuery,
-      prisma.downloadHistory.count({ where }),
+      dbRead.downloadHistory.count({ where }),
     ]);
 
     return { items, count };
@@ -46,7 +46,7 @@ export const updateUserActivityById = ({
   data,
   all = false,
 }: HideDownloadInput & { data: Prisma.UserActivityUpdateInput }) => {
-  return prisma.userActivity.updateMany({
+  return dbWrite.userActivity.updateMany({
     where: { id: !all ? id : undefined, userId, hide: { equals: false } },
     data,
   });

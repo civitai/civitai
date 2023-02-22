@@ -6,7 +6,7 @@ import {
   ModelStatus,
   ModelType,
 } from '@prisma/client';
-import React, { createContext, useContext } from 'react';
+import React, { createContext, useContext, useEffect } from 'react';
 import { z } from 'zod';
 
 import { constants } from '~/server/common/constants';
@@ -47,8 +47,12 @@ export const galleryFilterSchema = z.object({
   excludedTags: z.number().array().optional(),
 });
 
-const CookiesCtx = createContext<CookiesContext>({} as CookiesContext);
-export const useCookies = () => useContext(CookiesCtx);
+const CookiesCtx = createContext<CookiesContext | null>(null);
+export const useCookies = () => {
+  const context = useContext(CookiesCtx);
+  if (!context) throw new Error('Missing CookiesCtx.Provider in the tree');
+  return context;
+};
 export const CookiesProvider = ({
   children,
   value: initialValue,
@@ -65,7 +69,7 @@ const cookiesSchema = z.object({
   questions: questionsFilterSchema,
   gallery: galleryFilterSchema,
 });
-export type CookiesContext = z.input<typeof cookiesSchema>;
+export type CookiesContext = z.infer<typeof cookiesSchema>;
 
 export function parseCookies(
   cookies: Partial<{

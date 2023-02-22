@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { SessionUser } from 'next-auth';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
 
@@ -77,6 +78,15 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
   allowCommercialUse: true,
   allowDerivatives: true,
   allowDifferentLicense: true,
+  rank: {
+    select: {
+      downloadCountAllTime: true,
+      commentCountAllTime: true,
+      favoriteCountAllTime: true,
+      ratingCountAllTime: true,
+      ratingAllTime: true,
+    },
+  },
   user: {
     select: {
       image: true,
@@ -96,7 +106,7 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
   },
 });
 
-export const modelWithDetailsSelect = (includeNSFW = true) =>
+export const modelWithDetailsSelect = (includeNSFW = true, user?: SessionUser) =>
   Prisma.validator<Prisma.ModelSelect>()({
     id: true,
     name: true,
@@ -167,7 +177,13 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
               select: imageSelect,
             },
           },
-          where: { image: { nsfw: includeNSFW ? undefined : false, tosViolation: false } },
+          where: {
+            image: {
+              nsfw: includeNSFW ? undefined : false,
+              tosViolation: false,
+              OR: [{ needsReview: false }, { userId: user?.id }],
+            },
+          },
         },
         rank: {
           select: {
@@ -183,7 +199,7 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
             sizeKB: true,
             name: true,
             type: true,
-            format: true,
+            metadata: true,
             pickleScanResult: true,
             pickleScanMessage: true,
             virusScanResult: true,

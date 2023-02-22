@@ -1,5 +1,5 @@
 import { createJob } from './job';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('update-metrics', 'blue');
@@ -8,27 +8,30 @@ const METRIC_LAST_UPDATED_KEY = 'last-metrics-update';
 const RANK_LAST_UPDATED_KEY = 'last-rank-update';
 const RANK_UPDATE_DELAY = 1000 * 60 * 60; // 60 minutes
 
-export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async () => {
-  // Get the last time this ran from the KeyValue store
-  // --------------------------------------
-  const dates = await prisma.keyValue.findMany({
-    where: { key: { in: [METRIC_LAST_UPDATED_KEY, RANK_LAST_UPDATED_KEY] } },
-  });
-  const lastUpdateDate = new Date(
-    (dates.find((d) => d.key === METRIC_LAST_UPDATED_KEY)?.value as number) ?? 0
-  );
-  const lastRankDate = new Date(
-    (dates?.find((d) => d.key === RANK_LAST_UPDATED_KEY)?.value as number) ?? 0
-  );
-  const lastUpdate = lastUpdateDate.toISOString();
+export const updateMetricsJob = createJob(
+  'update-metrics',
+  '*/1 * * * *',
+  async () => {
+    // Get the last time this ran from the KeyValue store
+    // --------------------------------------
+    const dates = await dbWrite.keyValue.findMany({
+      where: { key: { in: [METRIC_LAST_UPDATED_KEY, RANK_LAST_UPDATED_KEY] } },
+    });
+    const lastUpdateDate = new Date(
+      (dates.find((d) => d.key === METRIC_LAST_UPDATED_KEY)?.value as number) ?? 0
+    );
+    const lastRankDate = new Date(
+      (dates?.find((d) => d.key === RANK_LAST_UPDATED_KEY)?.value as number) ?? 0
+    );
+    const lastUpdate = lastUpdateDate.toISOString();
 
-  const updateModelMetrics = async (target: 'models' | 'versions') => {
-    const [tableName, tableId, viewName, viewId] =
-      target === 'models'
-        ? ['ModelMetric', 'modelId', 'affected_models', 'model_id']
-        : ['ModelVersionMetric', 'modelVersionId', 'affected_versions', 'model_version_id'];
+    const updateModelMetrics = async (target: 'models' | 'versions') => {
+      const [tableName, tableId, viewName, viewId] =
+        target === 'models'
+          ? ['ModelMetric', 'modelId', 'affected_models', 'model_id']
+          : ['ModelVersionMetric', 'modelVersionId', 'affected_versions', 'model_version_id'];
 
-    await prisma.$executeRawUnsafe(`
+      await dbWrite.$executeRawUnsafe(`
         -- Get all user activities that have happened since then that affect metrics
         WITH recent_activities AS
         (
@@ -273,12 +276,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           SET "downloadCount" = EXCLUDED."downloadCount", "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating, "favoriteCount" = EXCLUDED."favoriteCount", "commentCount" = EXCLUDED."commentCount";
         `);
 
-    if (target === 'versions')
-      await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Model'`);
-  };
+      if (target === 'versions')
+        await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Model'`);
+    };
 
-  const updateUserMetrics = async () => {
-    await prisma.$executeRawUnsafe(`
+    const updateUserMetrics = async () => {
+      await dbWrite.$executeRawUnsafe(`
       WITH recent_engagements AS
       (
         SELECT
@@ -509,11 +512,11 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("userId", timeframe) DO UPDATE
         SET "followerCount" = EXCLUDED."followerCount", "followingCount" = EXCLUDED."followingCount", "hiddenCount" = EXCLUDED."hiddenCount", "uploadCount" = EXCLUDED."uploadCount", "reviewCount" = EXCLUDED."reviewCount", "answerCount" = EXCLUDED."answerCount", "answerAcceptCount" = EXCLUDED."answerAcceptCount";
     `);
-    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'User'`);
-  };
+      await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'User'`);
+    };
 
-  const updateQuestionMetrics = async () => {
-    await prisma.$executeRawUnsafe(`
+    const updateQuestionMetrics = async () => {
+      await dbWrite.$executeRawUnsafe(`
       WITH recent_engagements AS
       (
         SELECT
@@ -641,11 +644,11 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("questionId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "answerCount" = EXCLUDED."answerCount";
     `);
-    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Question'`);
-  };
+      await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Question'`);
+    };
 
-  const updateAnswerMetrics = async () => {
-    await prisma.$executeRawUnsafe(`
+    const updateAnswerMetrics = async () => {
+      await dbWrite.$executeRawUnsafe(`
       WITH recent_engagements AS
       (
         SELECT
@@ -796,11 +799,11 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("answerId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "checkCount" = EXCLUDED."checkCount", "crossCount" = EXCLUDED."crossCount";
     `);
-    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Answer'`);
-  };
+      await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Answer'`);
+    };
 
-  const updateTagMetrics = async () => {
-    await prisma.$executeRawUnsafe(`
+    const updateTagMetrics = async () => {
+      await dbWrite.$executeRawUnsafe(`
       -- Get all engagements that have happened since then that affect metrics
       WITH recent_engagements AS
       (
@@ -836,7 +839,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
 
       -- upsert metrics for all affected
       -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "TagMetric" ("tagId", timeframe, "followerCount", "hiddenCount", "modelCount", "imageCount")
+      INSERT INTO "TagMetric" ("tagId", timeframe, "followerCount", "hiddenCount", "modelCount", "imageCount", "postCount")
       SELECT
         m.id,
         tf.timeframe,
@@ -867,7 +870,14 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           WHEN tf.timeframe = 'Month' THEN month_image_count
           WHEN tf.timeframe = 'Week' THEN week_image_count
           WHEN tf.timeframe = 'Day' THEN day_image_count
-        END AS image_count
+        END AS image_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN post_count
+          WHEN tf.timeframe = 'Year' THEN year_post_count
+          WHEN tf.timeframe = 'Month' THEN month_post_count
+          WHEN tf.timeframe = 'Week' THEN week_post_count
+          WHEN tf.timeframe = 'Day' THEN day_post_count
+        END AS post_count
       FROM
       (
         SELECT
@@ -891,7 +901,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           COALESCE(i.year_image_count, 0) AS year_image_count,
           COALESCE(i.month_image_count, 0) AS month_image_count,
           COALESCE(i.week_image_count, 0) AS week_image_count,
-          COALESCE(i.day_image_count, 0) AS day_image_count
+          COALESCE(i.day_image_count, 0) AS day_image_count,
+          COALESCE(p.post_count, 0) AS post_count,
+          COALESCE(p.year_post_count, 0) AS year_post_count,
+          COALESCE(p.month_post_count, 0) AS month_post_count,
+          COALESCE(p.week_post_count, 0) AS week_post_count,
+          COALESCE(p.day_post_count, 0) AS day_post_count
         FROM affected a
         LEFT JOIN (
           SELECT
@@ -919,6 +934,18 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         ) i ON i.id = a.id
         LEFT JOIN (
           SELECT
+            "tagId" id,
+            COUNT("postId") post_count,
+            SUM(IIF(p."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_post_count,
+            SUM(IIF(p."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_post_count,
+            SUM(IIF(p."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_post_count,
+            SUM(IIF(p."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_post_count
+          FROM "TagsOnPost" top
+          JOIN "Post" p ON p.id = top."postId"
+          GROUP BY "tagId"
+        ) p ON p.id = a.id
+        LEFT JOIN (
+          SELECT
             "tagId"                                                                      AS id,
             SUM(IIF(type = 'Follow', 1, 0))                                                     AS follower_count,
             SUM(IIF(type = 'Follow' AND "createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_follower_count,
@@ -938,13 +965,13 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       ON CONFLICT ("tagId", timeframe) DO UPDATE
-        SET "followerCount" = EXCLUDED."followerCount", "modelCount" = EXCLUDED."modelCount", "hiddenCount" = EXCLUDED."hiddenCount";
+        SET "followerCount" = EXCLUDED."followerCount", "modelCount" = EXCLUDED."modelCount", "hiddenCount" = EXCLUDED."hiddenCount", "postCount" = EXCLUDED."postCount";
     `);
-    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Tag'`);
-  };
+      await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Tag'`);
+    };
 
-  const updateImageMetrics = async () => {
-    await prisma.$executeRawUnsafe(`
+    const updateImageMetrics = async () => {
+      await dbWrite.$executeRawUnsafe(`
       WITH recent_engagements AS
       (
         SELECT
@@ -1110,83 +1137,95 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount";
     `);
 
-    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Image'`);
-  };
+      await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Image'`);
+    };
 
-  const refreshModelRank = async () =>
-    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelRank"');
+    const refreshModelRank = async () =>
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelRank"');
 
-  const refreshVersionModelRank = async () =>
-    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelVersionRank"');
+    const refreshVersionModelRank = async () =>
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelVersionRank"');
 
-  const refreshTagRank = async () =>
-    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "TagRank"');
+    const refreshTagRank = async () =>
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "TagRank"');
 
-  const refreshUserRank = async () =>
-    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "UserRank"');
+    const refreshUserRank = async () =>
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "UserRank"');
 
-  const refreshImageRank = async () =>
-    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ImageRank"');
+    const refreshImageRank = async () =>
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ImageRank"');
 
-  const clearDayMetrics = async () =>
-    await Promise.all(
-      [
-        `UPDATE "ModelMetric" SET "downloadCount" = 0, "ratingCount" = 0, rating = 0, "favoriteCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
-        `UPDATE "ModelVersionMetric" SET "downloadCount" = 0, "ratingCount" = 0, rating = 0, "favoriteCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
-        `UPDATE "QuestionMetric" SET "answerCount" = 0, "commentCount" = 0, "heartCount" = 0 WHERE timeframe = 'Day';`,
-        `UPDATE "AnswerMetric" SET "heartCount" = 0, "checkCount" = 0, "crossCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
-        `UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
-      ].map((x) => prisma.$executeRawUnsafe(x))
-    );
+    const clearDayMetrics = async () =>
+      await Promise.all(
+        [
+          `UPDATE "ModelMetric" SET "downloadCount" = 0, "ratingCount" = 0, rating = 0, "favoriteCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
+          `UPDATE "ModelVersionMetric" SET "downloadCount" = 0, "ratingCount" = 0, rating = 0, "favoriteCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
+          `UPDATE "QuestionMetric" SET "answerCount" = 0, "commentCount" = 0, "heartCount" = 0 WHERE timeframe = 'Day';`,
+          `UPDATE "AnswerMetric" SET "heartCount" = 0, "checkCount" = 0, "crossCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
+          `UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
+        ].map((x) => dbWrite.$executeRawUnsafe(x))
+      );
 
-  // If this is the first metric update of the day, reset the day metrics
-  // -------------------------------------------------------------------
-  if (lastUpdateDate.getDate() !== new Date().getDate()) {
-    await clearDayMetrics();
-    log('Cleared day metrics');
-  }
+    // If this is the first metric update of the day, reset the day metrics
+    // -------------------------------------------------------------------
+    if (lastUpdateDate.getDate() !== new Date().getDate()) {
+      await clearDayMetrics();
+      log('Cleared day metrics');
+    }
 
-  // Update all affected metrics
-  // --------------------------------------------
-  await updateModelMetrics('models');
-  await updateModelMetrics('versions');
-  await updateAnswerMetrics();
-  await updateQuestionMetrics();
-  await updateUserMetrics();
-  await updateTagMetrics();
-  await updateImageMetrics();
-  await refreshModelRank();
-  await refreshVersionModelRank();
-  await refreshTagRank();
-  log('Updated metrics');
+    // Update all affected metrics
+    // --------------------------------------------
+    await updateModelMetrics('models');
+    await updateModelMetrics('versions');
+    await updateAnswerMetrics();
+    await updateQuestionMetrics();
+    await updateUserMetrics();
+    await updateTagMetrics();
+    await updateImageMetrics();
+    await refreshModelRank();
+    await refreshVersionModelRank();
+    await refreshTagRank();
+    log('Updated metrics');
 
-  // Update the last update time
-  // --------------------------------------------
-  await prisma?.keyValue.upsert({
-    where: { key: METRIC_LAST_UPDATED_KEY },
-    create: { key: METRIC_LAST_UPDATED_KEY, value: new Date().getTime() },
-    update: { value: new Date().getTime() },
-  });
-
-  // Check if we need to update the slow ranks
-  // --------------------------------------------
-  const shouldUpdateRanks = lastRankDate.getTime() + RANK_UPDATE_DELAY <= new Date().getTime();
-  if (shouldUpdateRanks) {
-    await refreshImageRank();
-    await refreshUserRank();
-    log('Updated ranks');
-    await prisma?.keyValue.upsert({
-      where: { key: RANK_LAST_UPDATED_KEY },
-      create: { key: RANK_LAST_UPDATED_KEY, value: new Date().getTime() },
+    // Update the last update time
+    // --------------------------------------------
+    await dbWrite?.keyValue.upsert({
+      where: { key: METRIC_LAST_UPDATED_KEY },
+      create: { key: METRIC_LAST_UPDATED_KEY, value: new Date().getTime() },
       update: { value: new Date().getTime() },
     });
-  }
-});
 
-type MetricUpdateType = 'Model' | 'ModelVersion' | 'Answer' | 'Question' | 'User' | 'Tag' | 'Image';
+    // Check if we need to update the slow ranks
+    // --------------------------------------------
+    const shouldUpdateRanks = lastRankDate.getTime() + RANK_UPDATE_DELAY <= new Date().getTime();
+    if (shouldUpdateRanks) {
+      await refreshImageRank();
+      await refreshUserRank();
+      log('Updated ranks');
+      await dbWrite?.keyValue.upsert({
+        where: { key: RANK_LAST_UPDATED_KEY },
+        create: { key: RANK_LAST_UPDATED_KEY, value: new Date().getTime() },
+        update: { value: new Date().getTime() },
+      });
+    }
+  },
+  {
+    lockExpiration: 5 * 60,
+  }
+);
+
+type MetricUpdateType =
+  | 'Model'
+  | 'ModelVersion'
+  | 'Answer'
+  | 'Question'
+  | 'User'
+  | 'Tag'
+  | 'Image'
+  | 'Post';
 export const queueMetricUpdate = async (type: MetricUpdateType, id: number) => {
   try {
-    await prisma.metricUpdateQueue.createMany({ data: { type, id } });
+    await dbWrite.metricUpdateQueue.createMany({ data: { type, id } });
   } catch (e) {
     // Ignore duplicate errors
   }

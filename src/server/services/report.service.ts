@@ -1,6 +1,6 @@
 import { Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
 
-import { prisma } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CreateReportInput,
@@ -14,7 +14,7 @@ export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
   select,
 }: GetByIdInput & { select: TSelect }) => {
-  return prisma.report.findUnique({ where: { id }, select });
+  return dbRead.report.findUnique({ where: { id }, select });
 };
 
 const validateReportCreation = async ({
@@ -29,7 +29,7 @@ const validateReportCreation = async ({
   reason: ReportReason;
 }): Promise<Report | null> => {
   // Look if there's already a report for this type with the same reason
-  const existingReport = await prisma.report.findFirst({
+  const existingReport = await dbWrite.report.findFirst({
     where: { reason, [reportType]: { [`${reportType}Id`]: entityReportId } },
     orderBy: { id: 'desc' },
   });
@@ -42,7 +42,7 @@ const validateReportCreation = async ({
   // if alsoReportedBy count is greater than previouslyReviewedCount * 2,
   // then set the status to pending and reset the previouslyReviewedCount
   if (previouslyReviewedCount > 0 && alsoReportedBy.length >= previouslyReviewedCount * 2) {
-    const updatedReport = await prisma.report.update({
+    const updatedReport = await dbWrite.report.update({
       where: { id },
       data: {
         status: ReportStatus.Pending,
@@ -54,7 +54,7 @@ const validateReportCreation = async ({
     return updatedReport;
   }
 
-  const updatedReport = await prisma.report.update({
+  const updatedReport = await dbWrite.report.update({
     where: { id },
     data: {
       alsoReportedBy: [...alsoReportedBy, userId],
@@ -91,7 +91,7 @@ export const createReport = async ({
 
   const toUpdate = data.reason === ReportReason.NSFW ? { nsfw: true } : undefined;
 
-  return prisma.$transaction(async (tx) => {
+  return dbWrite.$transaction(async (tx) => {
     switch (type) {
       case ReportEntity.Model:
         await tx.modelReport.create({
@@ -114,7 +114,7 @@ export const createReport = async ({
 
         break;
       case ReportEntity.Review:
-        await prisma.reviewReport.create({
+        await dbWrite.reviewReport.create({
           data: {
             review: { connect: { id } },
             report,
@@ -132,7 +132,7 @@ export const createReport = async ({
           });
           if (review?.model?.poi && report.create) {
             report.create.reason = ReportReason.TOSViolation;
-            await prisma.reviewReport.create({
+            await dbWrite.reviewReport.create({
               data: {
                 review: { connect: { id } },
                 report,
@@ -142,7 +142,7 @@ export const createReport = async ({
         }
         break;
       case ReportEntity.Comment:
-        await prisma.commentReport.create({
+        await dbWrite.commentReport.create({
           data: {
             comment: { connect: { id } },
             report,
@@ -186,14 +186,14 @@ export const getReports = async <TSelect extends Prisma.ReportSelect>({
   };
   // if (type) where[type] = {};
 
-  const items = await prisma.report.findMany({
+  const items = await dbRead.report.findMany({
     take,
     skip,
     select,
     where,
-    orderBy: [{ createdAt: 'desc' }],
+    orderBy: [{ id: 'desc' }],
   });
-  const count = await prisma.report.count({ where });
+  const count = await dbRead.report.count({ where });
   return getPagingData({ items, count }, take, page);
 };
 
@@ -201,11 +201,11 @@ export const updateReportById = ({
   id,
   data,
 }: GetByIdInput & { data: Prisma.ReportUpdateArgs['data'] }) => {
-  return prisma.report.update({ where: { id }, data });
+  return dbWrite.report.update({ where: { id }, data });
 };
 
 export const getReportCounts = ({ type }: GetReportCountInput) => {
-  return prisma.report.count({
+  return dbRead.report.count({
     where: { [type]: { isNot: null }, status: ReportStatus.Pending },
   });
 };
@@ -217,7 +217,7 @@ export const getReviewReports = <TSelect extends Prisma.ReviewReportSelect>({
   reviewId: number;
   select: TSelect;
 }) => {
-  return prisma.reviewReport.findMany({
+  return dbRead.reviewReport.findMany({
     select,
     where: { reviewId },
   });
@@ -230,7 +230,7 @@ export const getCommentReports = <TSelect extends Prisma.CommentReportSelect>({
   commentId: number;
   select: TSelect;
 }) => {
-  return prisma.commentReport.findMany({
+  return dbRead.commentReport.findMany({
     select,
     where: { commentId },
   });
@@ -243,7 +243,7 @@ export const getImageReports = <TSelect extends Prisma.ImageReportSelect>({
   imageId: number;
   select: TSelect;
 }) => {
-  return prisma.imageReport.findMany({
+  return dbRead.imageReport.findMany({
     select,
     where: { imageId },
   });

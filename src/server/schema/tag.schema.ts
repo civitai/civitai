@@ -8,7 +8,7 @@ export const getTagByNameSchema = z.object({
   name: z.string(),
 });
 
-type TagUpsertSchema = z.infer<typeof tagSchema>;
+export type TagUpsertSchema = z.infer<typeof tagSchema>;
 export const tagSchema = z.object({
   id: z.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),

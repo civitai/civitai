@@ -31,7 +31,7 @@ export const ModelHash = ({ hashes, initialType = 'AutoV2', color = 'gray' }: Pr
         color={color}
         px={6}
         sx={{
-          width: 60,
+          // width: 60,
           borderTopRightRadius: 0,
           borderBottomRightRadius: 0,
           borderRight: 0,

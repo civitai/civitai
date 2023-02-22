@@ -11,6 +11,12 @@ declare global {
     ? R
     : any;
 
+  type DeepPartial<T> = T extends object
+    ? {
+        [P in keyof T]?: DeepPartial<T[P]>;
+      }
+    : T;
+
   type MixedObject = Record<string, any>;
   type BaseEntity = { id: number | string } & MixedObject;
 
@@ -32,10 +38,42 @@ declare global {
     analysis?: ImageAnalysisInput;
     status?: 'processing' | 'uploading' | 'complete' | 'blocked' | 'error';
     blockedFor?: string[];
+    message?: string;
   };
 
   type DeepNonNullable<T> = { [P in keyof T]-?: NonNullable<T[P]> } & NonNullable<T>;
 
   // eslint-disable-next-line no-var, vars-on-top
   var navigation: { currentEntry: { index: number } };
+
+  type TrackedFile = {
+    file: File;
+    progress: number;
+    uploaded: number;
+    size: number;
+    speed: number;
+    timeRemaining: number;
+    name: string;
+    status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
+    abort: () => void;
+    uuid: string;
+    meta?: Record<string, unknown>;
+    id?: number;
+  };
+
+  type ModelFileFormat = 'SafeTensor' | 'PickleTensor' | 'Other';
+  type ModelFileSize = 'full' | 'pruned';
+  type ModelFileFp = 'fp32' | 'fp16';
+
+  type UserFilePreferences = {
+    format: ModelFileFormat;
+    size: ModelFileSize;
+    fp: ModelFileFp;
+  };
+
+  type FileMetadata = {
+    format?: ModelFileFormat;
+    size?: ModelFileSize;
+    fp?: ModelFileFp;
+  };
 }

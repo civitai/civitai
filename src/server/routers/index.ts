@@ -1,48 +1,55 @@
-import { modelVersionRouter } from './model-version.router';
-import { partnerRouter } from './partner.router';
-import { userLinkRouter } from './user-link.router';
 import { router } from '~/server/trpc';
+
 import { accountRouter } from './account.router';
+import { announcementRouter } from './announcement.router';
+import { answerRouter } from './answer.router';
 import { apiKeyRouter } from './apiKey.router';
 import { authRouter } from './auth.router';
 import { commentRouter } from './comment.router';
+import { commentv2Router } from './commentv2.router';
+import { downloadRouter } from './download.router';
+import { imageRouter } from './image.router';
+import { modelFileRouter } from './model-file.router';
+import { modelVersionRouter } from './model-version.router';
 import { modelRouter } from './model.router';
 import { notificationRouter } from './notification.router';
-import { reviewRouter } from './review.router';
-import { tagRouter } from './tag.router';
-import { userRouter } from './user.router';
-import { imageRouter } from './image.router';
-import { reportRouter } from './report.router';
+import { partnerRouter } from './partner.router';
+import { postRouter } from './post.router';
 import { questionRouter } from './question.router';
-import { answerRouter } from './answer.router';
-import { commentv2Router } from './commentv2.router';
 import { reactionRouter } from './reaction.router';
-import { downloadRouter } from './download.router';
+import { reportRouter } from './report.router';
+import { resourceReviewRouter } from './resourceReview.router';
+import { reviewRouter } from './review.router';
 import { stripeRouter } from './stripe.router';
-import { announcementRouter } from '~/server/routers/announcement.router';
+import { tagRouter } from './tag.router';
+import { userLinkRouter } from './user-link.router';
+import { userRouter } from './user.router';
 
 export const appRouter = router({
   account: accountRouter,
   announcement: announcementRouter,
+  answer: answerRouter,
   apiKey: apiKeyRouter,
   auth: authRouter,
   comment: commentRouter,
-  model: modelRouter,
-  notification: notificationRouter,
+  commentv2: commentv2Router,
   download: downloadRouter,
+  image: imageRouter,
+  model: modelRouter,
+  modelFile: modelFileRouter,
+  modelVersion: modelVersionRouter,
+  notification: notificationRouter,
+  partner: partnerRouter,
+  post: postRouter,
+  question: questionRouter,
+  reaction: reactionRouter,
+  report: reportRouter,
+  resourceReview: resourceReviewRouter,
   review: reviewRouter,
+  stripe: stripeRouter,
   tag: tagRouter,
   user: userRouter,
   userLink: userLinkRouter,
-  partner: partnerRouter,
-  modelVersion: modelVersionRouter,
-  image: imageRouter,
-  report: reportRouter,
-  question: questionRouter,
-  answer: answerRouter,
-  commentv2: commentv2Router,
-  reaction: reactionRouter,
-  stripe: stripeRouter,
 });
 
 // export type definition of API

@@ -2,7 +2,7 @@ import { isFutureDate } from '~/utils/date-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import * as Schema from '../schema/stripe.schema';
-import { prisma } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { Stripe } from 'stripe';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -13,7 +13,7 @@ const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
 
 export const getPlans = async () => {
-  const products = await prisma.product.findMany({
+  const products = await dbRead.product.findMany({
     where: { active: true, prices: { some: { type: 'recurring', active: true } } },
     select: {
       id: true,
@@ -51,7 +51,7 @@ export const getPlans = async () => {
 };
 
 export const getUserSubscription = async ({ userId }: Schema.GetUserSubscriptionInput) => {
-  const subscription = await prisma.customerSubscription.findUnique({
+  const subscription = await dbRead.customerSubscription.findUnique({
     where: { userId },
     select: {
       id: true,
@@ -94,11 +94,11 @@ export const getUserSubscription = async ({ userId }: Schema.GetUserSubscription
 export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) => {
   const stripe = await getServerStripe();
 
-  const user = await prisma.user.findUnique({ where: { id }, select: { customerId: true } });
+  const user = await dbWrite.user.findUnique({ where: { id }, select: { customerId: true } });
   if (!user?.customerId) {
     const customer = await stripe.customers.create({ email });
 
-    await prisma.user.update({ where: { id }, data: { customerId: customer.id } });
+    await dbWrite.user.update({ where: { id }, data: { customerId: customer.id } });
     invalidateSession(id);
 
     return customer.id;
@@ -146,6 +146,7 @@ export const createSubscribeSession = async ({
     line_items: lineItems,
     success_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
     cancel_url: `${baseUrl}/pricing?canceled=true`,
+    allow_promotion_codes: true,
   });
 
   return { sessionId: session.id, url: session.url };
@@ -203,7 +204,7 @@ export const upsertSubscription = async (
   customerId: string,
   eventDate: Date
 ) => {
-  const user = await prisma.user.findFirst({
+  const user = await dbWrite.user.findFirst({
     where: { customerId: customerId },
     select: {
       id: true,
@@ -237,9 +238,9 @@ export const upsertSubscription = async (
     updatedAt: eventDate,
   };
 
-  await prisma.$transaction([
-    prisma.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
-    prisma.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
+  await dbWrite.$transaction([
+    dbWrite.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
+    dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
   ]);
 
   invalidateSession(user.id);
@@ -260,7 +261,7 @@ export const upsertProductRecord = async (product: Stripe.Product) => {
     metadata: product.metadata,
     defaultPriceId: product.default_price as string | null,
   };
-  await prisma.product.upsert({
+  await dbWrite.product.upsert({
     where: { id: product.id },
     update: productData,
     create: productData,
@@ -281,7 +282,7 @@ export const upsertPriceRecord = async (price: Stripe.Price) => {
     intervalCount: price.recurring?.interval_count,
     metadata: price.metadata,
   };
-  await prisma.price.upsert({
+  await dbWrite.price.upsert({
     where: { id: price.id },
     update: priceData,
     create: priceData,
@@ -323,7 +324,7 @@ export const manageCheckoutPayment = async (sessionId: string, customerId: strin
   }));
 
   if (purchases) {
-    await prisma.purchase.createMany({ data: purchases });
+    await dbWrite.purchase.createMany({ data: purchases });
   }
 };
 
@@ -335,5 +336,5 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
     status: invoice.status,
   }));
 
-  await prisma.purchase.createMany({ data: purchases });
+  await dbWrite.purchase.createMany({ data: purchases });
 };

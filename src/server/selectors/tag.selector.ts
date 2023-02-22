@@ -5,9 +5,12 @@ export const simpleTagSelect = Prisma.validator<Prisma.TagSelect>()({
   name: true,
   isCategory: true,
 });
-
-const simpleTag = Prisma.validator<Prisma.TagArgs>()({
-  select: simpleTagSelect,
-});
-
 export type SimpleTag = Prisma.TagGetPayload<typeof simpleTag>;
+const simpleTag = Prisma.validator<Prisma.TagArgs>()({ select: simpleTagSelect });
+
+export const imageTagSelect = Prisma.validator<Prisma.TagSelect>()({
+  ...simpleTagSelect,
+  type: true,
+});
+export type ImageTag = Prisma.TagGetPayload<typeof imageTag>;
+const imageTag = Prisma.validator<Prisma.TagArgs>()({ select: imageTagSelect });

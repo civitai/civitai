@@ -29,6 +29,7 @@ model Account {
   scope             String?
   id_token          String? @db.Text
   session_state     String?
+  metadata          Json    @default("{}")
   user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
@@ -52,34 +53,34 @@ model SessionInvalidation {
 }
 
 model User {
-  id                   Int                   @id @default(autoincrement())
-  name                 String?
-  username             String?               @unique @db.Citext
+  id              Int                   @id @default(autoincrement())
+  name            String?
+  username        String?               @unique @db.Citext
   // displayName       String?          @db.Citext // [deleted]
-  email                String?               @unique
-  emailVerified        DateTime?
-  image                String?
-  showNsfw             Boolean?              @default(false)
-  blurNsfw             Boolean?              @default(true)
-  isModerator          Boolean?              @default(false)
-  tos                  Boolean?              @default(false)
-  createdAt            DateTime              @default(now())
-  deletedAt            DateTime?
-  preferredModelFormat ModelFileFormat?      @default(SafeTensor)
-  preferredPrunedModel Boolean?              @default(false)
-  customerId           String?               @unique
-  subscriptionId       String?
-  subscription         CustomerSubscription?
-  muted                Boolean?              @default(false)
-  bannedAt             DateTime?
-  autoplayGifs         Boolean?              @default(true)
+  email           String?               @unique
+  emailVerified   DateTime?
+  image           String?
+  showNsfw        Boolean?              @default(false)
+  blurNsfw        Boolean?              @default(true)
+  isModerator     Boolean?              @default(false)
+  tos             Boolean?              @default(false)
+  createdAt       DateTime              @default(now())
+  deletedAt       DateTime?
+  customerId      String?               @unique
+  subscriptionId  String?
+  subscription    CustomerSubscription?
+  muted           Boolean?              @default(false)
+  bannedAt        DateTime?
+  autoplayGifs    Boolean?              @default(true)
+  filePreferences Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
 
   accounts             Account[]
   sessions             Session[]
   reviews              Review[]
   reviewReactions      ReviewReaction[]
   images               Image[]
-  models               Model[]
+  models               Model[]                    @relation("creator")
+  deletedModels        Model[]                    @relation("deletedBy")
   activities           UserActivity[]
   saves                SavedModel[]
   imports              Import[]
@@ -114,6 +115,9 @@ model User {
   imageConnections    ImageConnection[]
   purchases           Purchase[]
   cosmetics           UserCosmetic[]
+  postReactions       PostReaction[]
+  posts               Post[]
+  resourceReviews     ResourceReview[]
 }
 
 model CustomerSubscription {
@@ -236,6 +240,8 @@ enum ModelType {
   Hypernetwork
   AestheticGradient
   LORA
+  Controlnet
+  Poses
 }
 
 enum ImportStatus {
@@ -296,13 +302,15 @@ model Model {
   tosViolation   Boolean         @default(false)
   poi            Boolean         @default(false)
   userId         Int
-  user           User            @relation(fields: [userId], references: [id])
+  user           User            @relation("creator", fields: [userId], references: [id])
   status         ModelStatus     @default(Draft)
   publishedAt    DateTime?
   fromImport     Import?         @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId   Int?            @unique
   meta           Json            @default("{}")
   deletedAt      DateTime?
+  deletedBy      Int?
+  deletedByUser  User?           @relation("deletedBy", fields: [deletedBy], references: [id], onDelete: SetNull)
   checkpointType CheckpointType?
   locked         Boolean         @default(false)
 
@@ -326,6 +334,7 @@ model Model {
   reportStats      ModelReportStat?
   downloads        DownloadHistory[]
   imageConnections ImageConnection[]
+  hashes           ModelHash[]
 }
 
 model License {
@@ -390,6 +399,10 @@ model ModelVersion {
   rank             ModelVersionRank?
   downloads        DownloadHistory[]
   imageConnections ImageConnection[]
+  imageResources   ImageResource[]
+  posts            Post[]
+  resourceReviews  ResourceReview[]
+  hashes           ModelHash[]
 }
 
 enum ModelVersionEngagementType {
@@ -415,7 +428,7 @@ enum ModelHashType {
   BLAKE3
 }
 
-model ModelHash {
+model ModelFileHash {
   file      ModelFile     @relation(fields: [fileId], references: [id], onDelete: Cascade)
   fileId    Int
   type      ModelHashType
@@ -432,12 +445,6 @@ enum ScanResultCode {
   Error
 }
 
-enum ModelFileFormat {
-  PickleTensor
-  SafeTensor
-  Other
-}
-
 model ModelFile {
   id                Int             @id @default(autoincrement())
   name              String
@@ -445,7 +452,6 @@ model ModelFile {
   sizeKB            Float
   createdAt         DateTime        @default(now())
   type              String          @default("Model")
-  format            ModelFileFormat @default(Other)
   modelVersionId    Int
   modelVersion      ModelVersion    @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   pickleScanResult  ScanResultCode  @default(Pending)
@@ -456,9 +462,8 @@ model ModelFile {
   scannedAt         DateTime?
   scanRequestedAt   DateTime?
   rawScanResult     Json?
-  hashes            ModelHash[]
-
-  @@unique([modelVersionId, type, format])
+  hashes            ModelFileHash[]
+  metadata          Json?
 }
 
 enum MetricTimeframe {
@@ -606,6 +611,17 @@ model Review {
   imageConnections ImageConnection[]
 }
 
+model ResourceReview {
+  id             Int          @id @default(autoincrement())
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  rating         Int
+  details        String
+  userId         Int
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  thread         Thread?
+}
+
 enum ReviewReactions {
   Like
   Dislike
@@ -625,6 +641,43 @@ model ReviewReaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([reviewId, userId, reaction])
+}
+
+model Post {
+  id             Int           @id @default(autoincrement())
+  nsfw           Boolean       @default(false)
+  title          String?
+  detail         String?
+  userId         Int
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelVersionId Int?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  publishedAt    DateTime?
+
+  images    Image[]
+  tags      TagsOnPost[]
+  reactions PostReaction[]
+  thread    Thread?
+  helper    PostHelper?
+  stats     PostStat?
+  rank      PostRank?
+  metrics   PostMetric[]
+}
+
+model PostMetric {
+  postId       Int
+  post         Post            @relation(fields: [postId], references: [id], onDelete: Cascade)
+  timeframe    MetricTimeframe
+  likeCount    Int             @default(0)
+  dislikeCount Int             @default(0)
+  laughCount   Int             @default(0)
+  cryCount     Int             @default(0)
+  heartCount   Int             @default(0)
+  commentCount Int             @default(0)
+
+  @@id([postId, timeframe])
 }
 
 enum ImageGenerationProcess {
@@ -651,6 +704,15 @@ model Image {
   analysis          Json?
   generationProcess ImageGenerationProcess?
   featuredAt        DateTime?
+  postId            Int?
+  post              Post?                   @relation(fields: [postId], references: [id], onDelete: SetNull)
+  needsReview       Boolean                 @default(false)
+  hideMeta          Boolean                 @default(false)
+  index             Int?
+  scannedAt         DateTime?
+  scanRequestedAt   DateTime?
+  mimeType          String?
+  sizeKB            Int?
 
   imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?
@@ -663,6 +725,19 @@ model Image {
   stats           ImageStat?
   rank            ImageRank?
   modHelper       ImageModHelper?
+  resources       ImageResource[]
+}
+
+model ImageResource {
+  id             Int           @id @default(autoincrement())
+  modelVersionId Int?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  name           String?
+  imageId        Int
+  image          Image         @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  detected       Boolean       @default(false)
+
+  @@unique([modelVersionId, name, imageId])
 }
 
 model ImageMetric {
@@ -708,6 +783,13 @@ enum TagTarget {
   Model
   Question
   Image
+  Post
+}
+
+enum TagType {
+  UserGenerated
+  Label
+  Moderation
 }
 
 model Tag {
@@ -717,6 +799,7 @@ model Tag {
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
   target     TagTarget[]
+  type       TagType     @default(UserGenerated)
   unlisted   Boolean     @default(false)
   unfeatured Boolean     @default(false)
   isCategory Boolean     @default(false)
@@ -724,6 +807,7 @@ model Tag {
   tagsOnModels   TagsOnModels[]
   tagsOnQuestion TagsOnQuestions[]
   tagsOnImage    TagsOnImage[]
+  tagsOnPosts    TagsOnPost[]
   usersEngaged   TagEngagement[]
   metrics        TagMetric[]
   stats          TagStat?
@@ -752,13 +836,25 @@ model TagsOnQuestions {
 }
 
 model TagsOnImage {
-  imageId   Int
-  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  imageId    Int
+  image      Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  tagId      Int
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  automated  Boolean  @default(false)
+  confidence Int?
+
+  @@id([tagId, imageId])
+}
+
+model TagsOnPost {
+  postId    Int
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
   tagId     Int
   tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
 
-  @@id([tagId, imageId])
+  @@id([tagId, postId])
 }
 
 model TagMetric {
@@ -767,6 +863,7 @@ model TagMetric {
   timeframe     MetricTimeframe
   modelCount    Int             @default(0)
   imageCount    Int             @default(0)
+  postCount     Int             @default(0)
   hiddenCount   Int             @default(0)
   followerCount Int             @default(0)
 
@@ -1016,12 +1113,16 @@ model Thread {
   id     Int     @id @default(autoincrement())
   locked Boolean @default(false)
 
-  questionId Int?      @unique
-  question   Question? @relation(fields: [questionId], references: [id], onDelete: SetNull)
-  answerId   Int?      @unique
-  answer     Answer?   @relation(fields: [answerId], references: [id], onDelete: SetNull)
-  imageId    Int?      @unique
-  image      Image?    @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  questionId Int?            @unique
+  question   Question?       @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  answerId   Int?            @unique
+  answer     Answer?         @relation(fields: [answerId], references: [id], onDelete: SetNull)
+  imageId    Int?            @unique
+  image      Image?          @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  postId     Int?            @unique
+  post       Post?           @relation(fields: [postId], references: [id], onDelete: SetNull)
+  reviewId   Int?            @unique
+  review     ResourceReview? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
 
   comments CommentV2[]
 }
@@ -1076,6 +1177,19 @@ model ImageReaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([imageId, userId, reaction])
+}
+
+model PostReaction {
+  id        Int             @id @default(autoincrement())
+  postId    Int
+  post      Post            @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([postId, userId, reaction])
 }
 
 enum TagEngagementType {
@@ -1469,6 +1583,11 @@ model TagStat {
   imageCountMonth      Int
   imageCountYear       Int
   imageCountAllTime    Int
+  postCountDay         Int
+  postCountWeek        Int
+  postCountMonth       Int
+  postCountYear        Int
+  postCountAllTime     Int
 }
 
 /// @view
@@ -1495,6 +1614,11 @@ model TagRank {
   imageCountMonthRank      Int
   imageCountYearRank       Int
   imageCountAllTimeRank    Int
+  postCountDayRank         Int
+  postCountWeekRank        Int
+  postCountMonthRank       Int
+  postCountYearRank        Int
+  postCountAllTimeRank     Int
 }
 
 /// @view
@@ -1612,4 +1736,104 @@ model ImageModHelper {
   image           Image    @relation(fields: [imageId], references: [id], onDelete: NoAction)
   assessedNSFW    Boolean? @default(false)
   nsfwReportCount Int      @default(0)
+}
+
+/// @view
+model ModelHash {
+  modelId        Int           @id
+  model          Model         @relation(fields: [modelId], references: [id])
+  modelVersionId Int
+  modelVersion   ModelVersion  @relation(fields: [modelVersionId], references: [id])
+  hashType       ModelHashType
+  fileType       String
+  hash           String
+}
+
+/// @view
+model PostHelper {
+  postId  Int     @id
+  post    Post    @relation(fields: [postId], references: [id], onDelete: NoAction)
+  scanned Boolean
+}
+
+/// @view
+model PostStat {
+  postId               Int  @id
+  post                 Post @relation(fields: [postId], references: [id], onDelete: NoAction)
+  cryCountDay          Int  @default(0)
+  cryCountWeek         Int  @default(0)
+  cryCountMonth        Int  @default(0)
+  cryCountYear         Int  @default(0)
+  cryCountAllTime      Int  @default(0)
+  dislikeCountDay      Int  @default(0)
+  dislikeCountWeek     Int  @default(0)
+  dislikeCountMonth    Int  @default(0)
+  dislikeCountYear     Int  @default(0)
+  dislikeCountAllTime  Int  @default(0)
+  heartCountDay        Int  @default(0)
+  heartCountWeek       Int  @default(0)
+  heartCountMonth      Int  @default(0)
+  heartCountYear       Int  @default(0)
+  heartCountAllTime    Int  @default(0)
+  laughCountDay        Int  @default(0)
+  laughCountWeek       Int  @default(0)
+  laughCountMonth      Int  @default(0)
+  laughCountYear       Int  @default(0)
+  laughCountAllTime    Int  @default(0)
+  likeCountDay         Int  @default(0)
+  likeCountWeek        Int  @default(0)
+  likeCountMonth       Int  @default(0)
+  likeCountYear        Int  @default(0)
+  likeCountAllTime     Int  @default(0)
+  commentCountDay      Int  @default(0)
+  commentCountWeek     Int  @default(0)
+  commentCountMonth    Int  @default(0)
+  commentCountYear     Int  @default(0)
+  commentCountAllTime  Int  @default(0)
+  reactionCountDay     Int  @default(0)
+  reactionCountWeek    Int  @default(0)
+  reactionCountMonth   Int  @default(0)
+  reactionCountYear    Int  @default(0)
+  reactionCountAllTime Int  @default(0)
+}
+
+/// @view
+model PostRank {
+  postId                   Int  @id
+  post                     Post @relation(fields: [postId], references: [id], onDelete: NoAction)
+  cryCountDayRank          Int  @default(0)
+  cryCountWeekRank         Int  @default(0)
+  cryCountMonthRank        Int  @default(0)
+  cryCountYearRank         Int  @default(0)
+  cryCountAllTimeRank      Int  @default(0)
+  dislikeCountDayRank      Int  @default(0)
+  dislikeCountWeekRank     Int  @default(0)
+  dislikeCountMonthRank    Int  @default(0)
+  dislikeCountYearRank     Int  @default(0)
+  dislikeCountAllTimeRank  Int  @default(0)
+  heartCountDayRank        Int  @default(0)
+  heartCountWeekRank       Int  @default(0)
+  heartCountMonthRank      Int  @default(0)
+  heartCountYearRank       Int  @default(0)
+  heartCountAllTimeRank    Int  @default(0)
+  laughCountDayRank        Int  @default(0)
+  laughCountWeekRank       Int  @default(0)
+  laughCountMonthRank      Int  @default(0)
+  laughCountYearRank       Int  @default(0)
+  laughCountAllTimeRank    Int  @default(0)
+  likeCountDayRank         Int  @default(0)
+  likeCountWeekRank        Int  @default(0)
+  likeCountMonthRank       Int  @default(0)
+  likeCountYearRank        Int  @default(0)
+  likeCountAllTimeRank     Int  @default(0)
+  commentCountDayRank      Int  @default(0)
+  commentCountWeekRank     Int  @default(0)
+  commentCountMonthRank    Int  @default(0)
+  commentCountYearRank     Int  @default(0)
+  commentCountAllTimeRank  Int  @default(0)
+  reactionCountDayRank     Int  @default(0)
+  reactionCountWeekRank    Int  @default(0)
+  reactionCountMonthRank   Int  @default(0)
+  reactionCountYearRank    Int  @default(0)
+  reactionCountAllTimeRank Int  @default(0)
 }

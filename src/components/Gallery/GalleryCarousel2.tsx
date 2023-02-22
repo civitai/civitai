@@ -89,12 +89,14 @@ export function GalleryCarousel2({ className, connect, withIndicators }: Gallery
               >
                 <ImageGuard.ToggleConnect />
                 <ImageGuard.ToggleImage />
+                <ImageGuard.ReportNSFW />
                 <ImageGuard.Unsafe>
                   <MediaHash {...image} />
                 </ImageGuard.Unsafe>
                 <ImageGuard.Safe>
                   <EdgeImage
                     src={image.url}
+                    name={image.name ?? image.id.toString()}
                     alt={image.name ?? undefined}
                     style={{ maxHeight: '100%', maxWidth: '100%' }}
                     width={image.width ?? 1200}

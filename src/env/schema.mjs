@@ -7,6 +7,7 @@ import { z } from 'zod';
  */
 export const serverSchema = z.object({
   DATABASE_URL: z.string().url(),
+  DATABASE_REPLICA_URL: z.string().url(),
   REDIS_URL: z.string().url(),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
@@ -19,6 +20,8 @@ export const serverSchema = z.object({
   ),
   DISCORD_CLIENT_ID: z.string(),
   DISCORD_CLIENT_SECRET: z.string(),
+  DISCORD_BOT_TOKEN: z.string().optional(),
+  DISCORD_GUILD_ID: z.string().optional(),
   GITHUB_CLIENT_ID: z.string(),
   GITHUB_CLIENT_SECRET: z.string(),
   GOOGLE_CLIENT_ID: z.string(),
@@ -41,6 +44,9 @@ export const serverSchema = z.object({
   S3_UPLOAD_ENDPOINT: z.string().url(),
   S3_UPLOAD_BUCKET: z.string(),
   S3_SETTLED_BUCKET: z.string(),
+  S3_FORCE_PATH_STYLE: z
+    .preprocess((val) => val === true || val === 'true', z.boolean())
+    .default(false),
   CF_ACCOUNT_ID: z.string(),
   CF_IMAGES_TOKEN: z.string(),
   JOB_TOKEN: z.string(),
@@ -58,6 +64,8 @@ export const serverSchema = z.object({
     const str = String(value);
     return str.split(',');
   }, z.array(z.string())),
+  IMAGE_INGESTION_MESSAGE_QUEUE_SERVER: z.string().optional(),
+  RPC_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 30000), z.number()),
 });
 
 /**
@@ -70,6 +78,8 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string(),
   NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),
+  NEXT_PUBLIC_CIVITAI_LINK: z.string().url(),
+  NEXT_PUBLIC_MAINTENANCE_MODE: z.preprocess((val) => val === true || val === 'true', z.boolean()),
 });
 
 /**
@@ -83,4 +93,6 @@ export const clientEnv = {
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: process.env.NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION,
   NEXT_PUBLIC_IMAGE_LOCATION: process.env.NEXT_PUBLIC_IMAGE_LOCATION,
   NEXT_PUBLIC_GIT_HASH: process.env.NEXT_PUBLIC_GIT_HASH,
+  NEXT_PUBLIC_MAINTENANCE_MODE: process.env.NEXT_PUBLIC_MAINTENANCE_MODE === 'true',
+  NEXT_PUBLIC_CIVITAI_LINK: process.env.NEXT_PUBLIC_CIVITAI_LINK,
 };

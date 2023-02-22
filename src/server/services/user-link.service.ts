@@ -2,11 +2,11 @@ import { GetByIdInput } from './../schema/base.schema';
 import { isDefined } from '~/utils/type-guards';
 import { UpsertManyUserLinkParams, UpsertUserLinkParams } from './../schema/user-link.schema';
 
-import { prisma } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { SessionUser } from 'next-auth';
 
 export const getUserLinks = async ({ userId }: { userId: number }) => {
-  return await prisma.userLink.findMany({
+  return await dbRead.userLink.findMany({
     where: { userId },
     select: {
       id: true,
@@ -26,7 +26,7 @@ export const upsertManyUserLinks = async ({
   if (!user) return;
 
   const userLinkIds = data.map((x) => x.id).filter(isDefined);
-  const currentUserLinks = await prisma.userLink.findMany({
+  const currentUserLinks = await dbWrite.userLink.findMany({
     where: { userId: user.id },
     select: { id: true },
   });
@@ -38,7 +38,7 @@ export const upsertManyUserLinks = async ({
   const toUpdate = withIndexes.filter((x) => !!x.id);
   const toDelete = currentUserLinks.filter((x) => !userLinkIds.includes(x.id)).map((x) => x.id);
 
-  await prisma.$transaction(async (tx) => {
+  await dbWrite.$transaction(async (tx) => {
     if (toCreate.length) {
       await tx.userLink.createMany({ data: toCreate });
     }
@@ -64,11 +64,11 @@ export const upsertManyUserLinks = async ({
 };
 
 export const upsertUserLink = async ({ data }: { data: UpsertUserLinkParams }) => {
-  if (!data.id) await prisma.userLink.create({ data });
-  else await prisma.userLink.update({ where: { id: data.id }, data });
+  if (!data.id) await dbWrite.userLink.create({ data });
+  else await dbWrite.userLink.update({ where: { id: data.id }, data });
   // await prisma.userLink.upsert({ where: { id: data.id }, create: data, update: data });
 };
 
 export const deleteUserLink = async ({ id }: GetByIdInput) => {
-  await prisma.userLink.delete({ where: { id } });
+  await dbWrite.userLink.delete({ where: { id } });
 };

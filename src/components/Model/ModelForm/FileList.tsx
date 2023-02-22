@@ -1,16 +1,16 @@
 import { ActionIcon, Anchor, Group, InputWrapperProps, Stack } from '@mantine/core';
-import { ModelFileFormat, ModelType } from '@prisma/client';
+import { ModelType } from '@prisma/client';
 import { IconTrash } from '@tabler/icons';
 import { useEffect, useState } from 'react';
 import { useFieldArray, UseFormReturn } from 'react-hook-form';
 
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { InputFileUpload } from '~/libs/form';
-import { ModelFileType } from '~/server/common/constants';
+import { constants, ModelFileType } from '~/server/common/constants';
 import { ModelFileInput } from '~/server/schema/model-file.schema';
 import { splitUppercase } from '~/utils/string-helpers';
 
-const fileFormats = Object.values(ModelFileFormat).filter((type) => type !== 'Other');
+const fileFormats = constants.modelFileFormats.filter((type) => type !== 'Other');
 const fileFormatCount = fileFormats.length;
 
 const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
@@ -21,6 +21,7 @@ const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   Config: '.yaml,.yml',
   VAE: '.pt,.ckpt,.safetensors',
   'Text Encoder': '.pt',
+  Archive: '.zip',
 };
 
 const fileTypesByModelType: Record<ModelType, ModelFileType[]> = {
@@ -29,6 +30,8 @@ const fileTypesByModelType: Record<ModelType, ModelFileType[]> = {
   Checkpoint: ['Model', 'Pruned Model', 'Config', 'VAE', 'Training Data'],
   AestheticGradient: ['Model', 'Training Data'],
   Hypernetwork: ['Model', 'Training Data'],
+  Controlnet: ['Model'],
+  Poses: ['Archive'],
 };
 
 export function FileList({ parentIndex, form }: Props) {
@@ -87,11 +90,13 @@ export function FileList({ parentIndex, form }: Props) {
     <Stack spacing="xs">
       {fields.map(({ id, ...item }, index) => {
         const file = item as ModelFileInput;
+        const type = !availableFileTypes.includes(file.type) ? availableFileTypes[0] : file.type;
 
         return (
           <Stack key={id} spacing={5}>
             <FileItem
               {...file}
+              type={type}
               index={index}
               parentIndex={parentIndex}
               modelType={modelType}
@@ -100,7 +105,7 @@ export function FileList({ parentIndex, form }: Props) {
             {index === 0 && (
               <Group spacing="xs">
                 {availableFileTypes.map((type, index) => {
-                  if (type === 'Model' && !isCheckpointModel) return null;
+                  if (type === availableFileTypes[0] && !isCheckpointModel) return null;
                   const disableModelOption = type === 'Model' && reachedModelLimit;
                   const disablePrunedOption = type === 'Pruned Model' && reachedPrunedLimit;
                   const disabled =

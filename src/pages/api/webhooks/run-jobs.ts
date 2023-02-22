@@ -11,8 +11,14 @@ import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { updateMetricsJob } from '~/server/jobs/update-metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { createLogger } from '~/utils/logging';
+import { redis } from '~/server/redis/client';
+import { removeDisconnectedImages } from '~/server/jobs/remove-disconnected-images';
+import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
+import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
+import { Job } from '~/server/jobs/job';
 
-const jobs = [
+const jobs: Job[] = [
   scanFilesJob,
   updateMetricsJob,
   processImportsJob,
@@ -21,12 +27,18 @@ const jobs = [
   addOnDemandRunStrategiesJob,
   deliverCosmetics,
   selectFeaturedImages,
+  removeDisconnectedImages,
+  pushDiscordMetadata,
+  ...applyDiscordRoles,
 ];
+
+const log = createLogger('jobs', 'green');
 
 export default WebhookEndpoint(async (req, res) => {
   const { run: runJob } = querySchema.parse(req.query);
   const ran = [];
   const toRun = [];
+  const alreadyRunning = [];
   const afterResponse = [];
 
   const now = new Date();
@@ -35,16 +47,37 @@ export default WebhookEndpoint(async (req, res) => {
       if (runJob !== name) continue;
     } else if (!isCronMatch(cron, now)) continue;
 
+    const jobLock = await redis?.get(`job:${name}`);
+    if (jobLock === 'true') {
+      log(`${name} already running`);
+      alreadyRunning.push(name);
+      continue;
+    }
+
+    const processJob = async () => {
+      try {
+        log(`${name} starting`);
+        await redis?.set(`job:${name}`, 'true', { EX: options.lockExpiration });
+        const jobStart = Date.now();
+        await run();
+        log(`${name} successful: ${((jobStart - Date.now()) / 1000).toFixed(2)}ms`);
+      } catch (e) {
+        log(`${name} failed`, e);
+      } finally {
+        await redis?.del(`job:${name}`);
+      }
+    };
+
     if (options.shouldWait) {
-      await run();
+      await processJob();
       ran.push(name);
     } else {
-      afterResponse.push(run);
+      afterResponse.push(processJob);
       toRun.push(name);
     }
   }
 
-  res.status(200).json({ ok: true, ran, toRun });
+  res.status(200).json({ ok: true, ran, toRun, alreadyRunning });
   await Promise.all(afterResponse.map((run) => run()));
 });
 
@@ -53,7 +86,7 @@ const cronScopes = ['minute', 'hour', 'day', 'month', 'weekday'] as const;
 function isCronMatch(
   cronExpression: string,
   date: Date,
-  scope: typeof cronScopes[number] = 'minute'
+  scope: (typeof cronScopes)[number] = 'minute'
 ): boolean {
   const scopeIndex = cronScopes.indexOf(scope);
   const day = dayjs(date);

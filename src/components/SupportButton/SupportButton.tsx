@@ -70,6 +70,7 @@ const useStyles = createStyles((theme) => ({
   },
   svg: {
     height: 30,
+    transform: 'translateZ(0)',
     animation: `${pulseSize} 1s ease-in-out infinite`,
 
     [`&:hover`]: {
@@ -86,7 +87,7 @@ const useStyles = createStyles((theme) => ({
 
   pulser: {
     transformOrigin: 'center',
-    transform: 'scale(1)',
+    transform: 'scale(1) translateZ(0)',
 
     animation: `${pulse} 1s ease-in-out infinite`,
   },

@@ -14,6 +14,19 @@ export const loadImage = async (src: string) =>
     img.src = src;
   });
 
+export const getImageData = async (img: HTMLImageElement) => {
+  const canvas = document.createElement('canvas');
+  const { height: h, width: w } = img;
+  canvas.height = h;
+  canvas.width = w;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('unable to get canvas context');
+  ctx.drawImage(img, 0, 0);
+  const canvasData = ctx.getImageData(0, 0, w, h).data;
+  const imageData = new ImageData(canvasData, w, h);
+  return imageData;
+};
+
 export const getClampedSize = (
   width: number,
   height: number,

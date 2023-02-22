@@ -38,6 +38,7 @@ import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
+import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
 
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -48,6 +49,7 @@ import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
+import { UploadTracker } from '~/components/Resource/UploadTracker';
 
 const HEADER_HEIGHT = 70;
 
@@ -353,7 +355,12 @@ export function AppHeader() {
                 Sign In
               </Button>
             ) : null}
-
+            {currentUser && (
+              <>
+                <UploadTracker />
+                <CivitaiLinkPopover />
+              </>
+            )}
             {currentUser?.showNsfw && <BlurToggle />}
             {currentUser && <NotificationBell />}
             <Menu
@@ -410,7 +417,8 @@ export function AppHeader() {
           </Group>
         </Grid.Col>
         <Grid.Col span="auto" className={classes.burger}>
-          <Group>
+          <Group spacing={4} noWrap>
+            {currentUser && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
             <Burger
               opened={burgerOpened}

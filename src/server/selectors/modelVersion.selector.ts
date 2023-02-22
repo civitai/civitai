@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 
-import { imageSelectWithoutId } from '~/server/selectors/image.selector';
+import { imageSelectWithoutName } from '~/server/selectors/image.selector';
 
 export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersionSelect>()({
   id: true,
@@ -18,7 +18,7 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
     },
     select: {
       image: {
-        select: imageSelectWithoutId,
+        select: imageSelectWithoutName,
       },
     },
     take: 20,
@@ -29,7 +29,7 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
       id: true,
       sizeKB: true,
       type: true,
-      format: true,
+      metadata: true,
       pickleScanResult: true,
       pickleScanMessage: true,
       virusScanResult: true,

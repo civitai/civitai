@@ -1,4 +1,4 @@
-import { ImageSort, QuestionSort } from './enums';
+import { ImageSort, PostSort, QuestionSort, BrowsingMode } from './enums';
 import { MetricTimeframe } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 
@@ -17,6 +17,12 @@ export const constants = {
     period: MetricTimeframe.AllTime,
     limit: 50,
   },
+  postFilterDefaults: {
+    sort: PostSort.MostReactions,
+    period: MetricTimeframe.AllTime,
+    browsingMode: BrowsingMode.All,
+    limit: 50,
+  },
   baseModels: ['SD 1.4', 'SD 1.5', 'SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'Other'],
   modelFileTypes: [
     'Model',
@@ -26,7 +32,11 @@ export const constants = {
     'Training Data',
     'VAE',
     'Config',
+    'Archive',
   ],
+  modelFileFormats: ['SafeTensor', 'PickleTensor', 'Other'],
+  modelFileSizes: ['full', 'pruned'],
+  modelFileFp: ['fp16', 'fp32'],
   tagFilterDefaults: {
     trendingTagsLimit: 20,
   },
@@ -41,8 +51,9 @@ export const constants = {
     'Text Encoder': 4,
     VAE: 5,
     Negative: 6,
+    Archive: 7,
   },
 } as const;
 
-export type BaseModel = typeof constants.baseModels[number];
-export type ModelFileType = typeof constants.modelFileTypes[number];
+export type BaseModel = (typeof constants.baseModels)[number];
+export type ModelFileType = (typeof constants.modelFileTypes)[number];

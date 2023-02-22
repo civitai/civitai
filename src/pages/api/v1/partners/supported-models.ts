@@ -1,7 +1,7 @@
 import { Partner } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { PartnerEndpoint } from '~/server/utils/endpoint-helpers';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { z } from 'zod';
 
 const runStrategySchema = z.object({
@@ -16,10 +16,10 @@ export default PartnerEndpoint(
     if (!results.success) return res.status(420).json({ error: `Invalid supported model format` });
 
     // Clear previous entries
-    await prisma.runStrategy.deleteMany({ where: { partnerId: partner.id } });
+    await dbWrite.runStrategy.deleteMany({ where: { partnerId: partner.id } });
 
     // Set new entries
-    await prisma.runStrategy.createMany({
+    await dbWrite.runStrategy.createMany({
       data: results.data.map(({ modelVersionId, runUrl: url }) => ({
         modelVersionId,
         url,

@@ -2,7 +2,7 @@ import { ModelHashType } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -39,24 +39,27 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     tags: tagsOnModels.map(({ tag }) => tag.name),
     modelVersions: modelVersions
       .map(({ images, files, ...version }) => {
-        const primaryFile = getPrimaryFile(files);
+        const castedFiles = files as Array<
+          Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
+        >;
+        const primaryFile = getPrimaryFile(castedFiles);
         if (!primaryFile) return null;
 
         return {
           ...version,
-          files: files.map(({ hashes, ...file }) => ({
+          files: castedFiles.map(({ hashes, ...file }) => ({
             ...file,
             name: getDownloadFilename({ model: fullModel, modelVersion: version, file }),
             hashes: hashesAsObject(hashes),
             downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
               versionId: version.id,
               type: file.type,
-              format: file.format,
+              format: file.metadata.format,
               primary: primaryFile.id === file.id,
             })}`,
           })),
-          images: images.map(({ image: { url, ...image } }) => ({
-            url: getEdgeUrl(url, { width: 450 }),
+          images: images.map(({ image: { url, id, ...image } }) => ({
+            url: getEdgeUrl(url, { width: 450, name: id.toString() }),
             ...image,
           })),
           downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({

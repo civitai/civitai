@@ -1,14 +1,16 @@
+import { getImageDetail } from './../services/image.service';
 import { ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { env } from '~/env/server.mjs';
 import { Context } from '~/server/createContext';
-import { prisma } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetModelVersionImagesSchema,
   GetReviewImagesSchema,
   GetGalleryImageInput,
   GetImageConnectionsSchema,
+  ImageUpdateSchema,
+  UpdateImageInput,
 } from '~/server/schema/image.schema';
 import { imageGallerySelect } from '~/server/selectors/image.selector';
 import {
@@ -19,6 +21,7 @@ import {
   updateImageById,
   updateImageReportStatusByReason,
   getImageConnectionsById,
+  updateImage,
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
@@ -60,7 +63,7 @@ export const getGalleryImageDetailHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const item = await prisma.image.findUnique({
+    const item = await dbRead.image.findUnique({
       where: { id },
       // TODO.gallery - If the gallery is infinite, use the current gallery filters. If the gallery is finite, use MetricTimeFrame.AllTime
       select: imageGallerySelect({ user: ctx.user }),
@@ -77,7 +80,7 @@ export const getGalleryImageDetailHandler = async ({
         heartCount: stats?.heartCountAllTime,
         commentCount: stats?.commentCountAllTime,
       },
-      tags: tags.map(({ tag }) => tag),
+      tags: tags.map(({ tag, automated }) => ({ ...tag, automated })),
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -109,7 +112,10 @@ export const getGalleryImagesInfiniteHandler = async ({
 
     return {
       nextCursor,
-      items: items.map(({ tags, ...item }) => ({ ...item, tags: tags.map(({ tag }) => tag) })),
+      items: items.map(({ tags, ...item }) => ({
+        ...item,
+        tags: tags.map(({ tag, automated }) => ({ ...tag, automated })),
+      })),
     };
   } catch (error) {
     throw throwDbError(error);
@@ -141,11 +147,11 @@ export const getGalleryImagesHandler = async ({
     const items = await getGalleryImages({
       ...input,
       user: ctx.user,
-      // orderBy: [{ connections: { index: 'asc' } }, { createdAt: 'desc' }], // Disabled for performance reasons
+      // orderBy: [{ connections: { index: 'asc' } }, { id: 'desc' }], // Disabled for performance reasons
     });
     const parsedItems = items.map(({ tags, ...item }) => ({
       ...item,
-      tags: tags.map(({ tag }) => tag),
+      tags: tags.map(({ tag, automated }) => ({ ...tag, automated })),
     }));
 
     const isOwnerOrModerator =
@@ -157,6 +163,23 @@ export const getGalleryImagesHandler = async ({
       : parsedItems.sort(sortByIndex);
   } catch (error) {
     throw throwDbError(error);
+  }
+};
+
+export const moderateImageHandler = async ({ input }: { input: ImageUpdateSchema }) => {
+  try {
+    const { id, ...data } = input;
+    const image = await updateImageById({
+      id,
+      data,
+      select: { id: true, url: true, name: true, nsfw: true, needsReview: true },
+    });
+    if (!image) throw throwNotFoundError(`No image with id ${id}`);
+
+    return image;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };
 
@@ -184,40 +207,41 @@ export const setTosViolationHandler = async ({
     const { id } = input;
     if (!user.isModerator) throw throwAuthorizationError('Only moderators can set TOS violation');
 
-    const updatedImage = await updateImageById({
-      id,
-      data: { tosViolation: true },
+    // Get details of the image
+    const image = await dbRead.image.findFirst({
+      where: { id },
       select: {
-        id: true,
         user: { select: { id: true } },
         imagesOnModels: {
           select: { modelVersion: { select: { model: { select: { name: true } } } } },
         },
       },
     });
-    if (!updatedImage) throw throwNotFoundError(`No comment with id ${id}`);
+    if (!image) throw throwNotFoundError(`No image with id ${id}`);
 
+    // Update any TOS Violation reports
     await updateImageReportStatusByReason({
-      id: updatedImage.id,
+      id,
       reason: ReportReason.TOSViolation,
       status: ReportStatus.Actioned,
     });
 
     // Create notifications in the background
     createNotification({
-      userId: updatedImage.user.id,
+      userId: image.user.id,
       type: 'tos-violation',
       details: {
-        modelName: updatedImage.imagesOnModels?.modelVersion.model.name,
+        modelName: image.imagesOnModels?.modelVersion.model.name,
         entity: 'image',
       },
     }).catch((error) => {
       // Print out any errors
-      // TODO.logs: sent to logger service
       console.error(error);
     });
 
-    return updatedImage;
+    // Delete image
+    await deleteImageById({ id });
+    return image;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -235,6 +259,24 @@ export const getImageConnectionDataHandler = async ({
 
     const { connections } = image;
     return connections;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const updateImageHandler = async ({ input }: { input: UpdateImageInput }) => {
+  try {
+    return await updateImage({ ...input });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getImageDetailHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    return await getImageDetail({ ...input });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

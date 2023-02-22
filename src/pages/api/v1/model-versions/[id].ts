@@ -2,11 +2,11 @@ import { ModelHashType } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { prisma } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import {
   getModelVersionApiSelect,
   ModelVersionApiReturn,
@@ -26,13 +26,47 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   const { id } = results.data;
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });
 
-  const modelVersion = await prisma.modelVersion.findFirst({
+  const modelVersion = await dbRead.modelVersion.findFirst({
     where: { id },
     select: getModelVersionApiSelect,
   });
 
   resModelVersionDetails(req, res, modelVersion);
 });
+
+export function prepareModelVersionResponse(modelVersion: ModelVersionApiReturn, baseUrl: URL) {
+  const { images, files, model, ...version } = modelVersion;
+  const castedFiles = files as Array<
+    Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
+  >;
+  const primaryFile = getPrimaryFile(castedFiles);
+  if (!primaryFile) return null;
+
+  return {
+    ...version,
+    model,
+    files: castedFiles.map(({ hashes, ...file }) => ({
+      ...file,
+      hashes: hashesAsObject(hashes),
+      name: getDownloadFilename({ model, modelVersion: version, file }),
+      primary: primaryFile.id === file.id,
+      downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
+        versionId: version.id,
+        type: file.type,
+        format: file.metadata.format,
+        primary: primaryFile.id === file.id,
+      })}`,
+    })),
+    images: images.map(({ image: { url, id, ...image } }) => ({
+      url: getEdgeUrl(url, { width: 450, name: id.toString() }),
+      ...image,
+    })),
+    downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
+      versionId: version.id,
+      primary: true,
+    })}`,
+  };
+}
 
 export function resModelVersionDetails(
   req: NextApiRequest,
@@ -42,33 +76,7 @@ export function resModelVersionDetails(
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
 
   const baseUrl = new URL(isProd ? `https://${req.headers.host}` : 'http://localhost:3000');
-
-  const { images, files, model, ...version } = modelVersion;
-  const primaryFile = getPrimaryFile(files);
-  if (!primaryFile) return res.status(404).json({ error: 'Missing model file' });
-
-  res.status(200).json({
-    ...version,
-    model,
-    files: files.map(({ hashes, ...file }) => ({
-      ...file,
-      hashes: hashesAsObject(hashes),
-      name: getDownloadFilename({ model, modelVersion: version, file }),
-      primary: primaryFile.id === file.id,
-      downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
-        versionId: version.id,
-        type: file.type,
-        format: file.format,
-        primary: primaryFile.id === file.id,
-      })}`,
-    })),
-    images: images.map(({ image: { url, ...image } }) => ({
-      url: getEdgeUrl(url, { width: 450 }),
-      ...image,
-    })),
-    downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
-      versionId: version.id,
-      primary: true,
-    })}`,
-  });
+  const body = prepareModelVersionResponse(modelVersion, baseUrl);
+  if (!body) return res.status(404).json({ error: 'Missing model file' });
+  res.status(200).json(body);
 }

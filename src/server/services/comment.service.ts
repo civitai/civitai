@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
-import { prisma } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { queueMetricUpdate } from '~/server/jobs/update-metrics';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -30,7 +30,7 @@ export const getComments = <TSelect extends Prisma.CommentSelect>({
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
-  return prisma.comment.findMany({
+  return dbRead.comment.findMany({
     take: limit,
     skip,
     cursor: cursor ? { id: cursor } : undefined,
@@ -65,14 +65,14 @@ export const getCommentById = <TSelect extends Prisma.CommentSelect>({
 }: GetByIdInput & { select: TSelect; user?: SessionUser }) => {
   const isMod = user?.isModerator ?? false;
 
-  return prisma.comment.findFirst({
+  return dbRead.comment.findFirst({
     where: { id, tosViolation: !isMod ? false : undefined },
     select,
   });
 };
 
 export const getCommentReactions = ({ commentId }: GetCommentReactionsSchema) => {
-  return prisma.commentReaction.findMany({
+  return dbRead.commentReaction.findMany({
     where: { commentId },
     select: getReactionsSelect,
   });
@@ -87,7 +87,7 @@ export const getUserReactionByCommentId = ({
   userId: number;
   commentId: number;
 }) => {
-  return prisma.commentReaction.findFirst({ where: { reaction, userId, commentId } });
+  return dbRead.commentReaction.findFirst({ where: { reaction, userId, commentId } });
 };
 
 export const createOrUpdateComment = ({
@@ -104,7 +104,7 @@ export const createOrUpdateComment = ({
       message: 'This comment is locked and cannot be updated',
     });
 
-  return prisma.comment.upsert({
+  return dbWrite.comment.upsert({
     where: { id: id ?? -1 },
     create: { ...commentInput, userId: ownerId },
     update: { ...commentInput },
@@ -119,12 +119,12 @@ export const createOrUpdateComment = ({
 
 export const deleteCommentById = async ({ id }: GetByIdInput) => {
   const { modelId, model } =
-    (await prisma.comment.findUnique({
+    (await dbWrite.comment.findUnique({
       where: { id },
       select: { modelId: true, model: { select: { userId: true } } },
     })) ?? {};
 
-  await prisma.comment.delete({ where: { id } });
+  await dbWrite.comment.delete({ where: { id } });
   if (modelId) await queueMetricUpdate('Model', modelId);
   if (model?.userId) await queueMetricUpdate('User', model.userId);
 };
@@ -136,7 +136,7 @@ export const updateCommentById = ({
   id: number;
   data: Prisma.CommentUpdateInput;
 }) => {
-  return prisma.comment.update({ where: { id }, data, select: getAllCommentsSelect });
+  return dbWrite.comment.update({ where: { id }, data, select: getAllCommentsSelect });
 };
 
 export const updateCommentReportStatusByReason = ({
@@ -148,7 +148,7 @@ export const updateCommentReportStatusByReason = ({
   reason: ReportReason;
   status: ReportStatus;
 }) => {
-  return prisma.report.updateMany({
+  return dbWrite.report.updateMany({
     where: { reason, comment: { commentId: id } },
     data: { status },
   });

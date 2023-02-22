@@ -1,4 +1,4 @@
-import { prisma } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { Prisma } from '@prisma/client';
 import { GetLatestAnnouncementInput } from '~/server/schema/announcement.schema';
 
@@ -7,7 +7,7 @@ export const getLatestAnnouncement = async <TSelect extends Prisma.AnnouncementS
   select,
 }: GetLatestAnnouncementInput & { select: TSelect }) => {
   const now = new Date();
-  return await prisma.announcement.findFirst({
+  return await dbRead.announcement.findFirst({
     where: {
       id: { notIn: dismissed },
       AND: [
@@ -19,7 +19,7 @@ export const getLatestAnnouncement = async <TSelect extends Prisma.AnnouncementS
         },
       ],
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { id: 'desc' },
     select,
   });
 };

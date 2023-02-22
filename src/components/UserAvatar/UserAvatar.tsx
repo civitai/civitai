@@ -12,7 +12,7 @@ import {
 } from '@mantine/core';
 import Link from 'next/link';
 
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Username } from '~/components/User/Username';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';

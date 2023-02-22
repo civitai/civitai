@@ -1,3 +1,5 @@
+import { getImageDetailHandler } from './../controllers/image.controller';
+import { updateImageSchema } from './../schema/image.schema';
 import {
   deleteImageHandler,
   getGalleryImageDetailHandler,
@@ -7,14 +9,17 @@ import {
   getModelVersionImagesHandler,
   getReviewImagesHandler,
   setTosViolationHandler,
+  moderateImageHandler,
+  updateImageHandler,
 } from '~/server/controllers/image.controller';
-import { prisma } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   getGalleryImageSchema,
   getImageConnectionsSchema,
   getModelVersionImageSchema,
   getReviewImagesSchema,
+  imageUpdateSchema,
 } from '~/server/schema/image.schema';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -28,7 +33,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   let ownerId = userId;
   if (id) {
     const isModerator = ctx?.user?.isModerator;
-    ownerId = (await prisma.image.findUnique({ where: { id } }))?.userId ?? 0;
+    ownerId = (await dbRead.image.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator) {
       if (ownerId !== userId) throw throwAuthorizationError();
     }
@@ -56,9 +61,18 @@ export const imageRouter = router({
   getConnectionData: publicProcedure
     .input(getImageConnectionsSchema)
     .query(getImageConnectionDataHandler),
+  moderate: protectedProcedure
+    .input(imageUpdateSchema)
+    .use(isOwnerOrModerator)
+    .mutation(moderateImageHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteImageHandler),
   setTosViolation: protectedProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
+  update: protectedProcedure
+    .input(updateImageSchema)
+    .use(isOwnerOrModerator)
+    .mutation(updateImageHandler),
+  getDetail: publicProcedure.input(getByIdSchema).query(getImageDetailHandler),
 });

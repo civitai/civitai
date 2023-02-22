@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 
-import { prisma } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import {
   convertToCommentHandler,
   deleteUserReviewHandler,
@@ -40,7 +40,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
   let ownerId: number = userId;
   if (id) {
     const isModerator = ctx?.user?.isModerator;
-    ownerId = (await prisma.review.findUnique({ where: { id } }))?.userId ?? 0;
+    ownerId = (await dbRead.review.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator && ownerId) {
       if (ownerId !== userId) throw throwAuthorizationError();
     }
@@ -70,10 +70,10 @@ const isLocked = middleware(async ({ ctx, next, input }) => {
     });
 
   const { id, modelId } = input as ReviewUpsertInput;
-  const model = await prisma.model.findUnique({ where: { id: modelId } });
+  const model = await dbRead.model.findUnique({ where: { id: modelId } });
   if (model?.locked) throw new TRPCError({ code: 'FORBIDDEN', message: 'Model is locked' });
 
-  const review = await prisma.review.findFirst({ where: { id } });
+  const review = await dbRead.review.findFirst({ where: { id } });
   return next({
     ctx: {
       ...ctx,

@@ -6,7 +6,7 @@ import { isProd } from '~/env/other';
 
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
-  var redis: RedisClientType | undefined;
+  var globalRedis: RedisClientType | undefined;
 }
 
 const log = createLogger('redis', 'green');
@@ -27,6 +27,6 @@ export let redis: RedisClientType;
 if (isProd) {
   redis = getCache();
 } else {
-  if (!global.redis) global.redis = getCache();
-  redis = global.redis;
+  if (!global.globalRedis) global.globalRedis = getCache();
+  redis = global.globalRedis;
 }

@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { prisma } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { z } from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { Prisma } from '@prisma/client';
@@ -34,14 +34,19 @@ export default ModEndpoint(
       return;
     }
 
-    const modelFiles = await prisma.modelFile.findMany({
+    const modelFiles = await dbRead.modelFile.findMany({
       where: { OR },
-      select: { modelVersionId: true, type: true, url: true, format: true },
+      select: { id: true, url: true },
     });
 
     const s3 = getS3Client();
     const promises = modelFiles.map(async (file) => {
-      await requestScannerTasks({ file, s3, tasks: ['Import', 'Hash'], lowPriority: true });
+      await requestScannerTasks({
+        file,
+        s3,
+        tasks: ['Import', 'Hash'],
+        lowPriority: true,
+      });
     });
 
     if (wait) {

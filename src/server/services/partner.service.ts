@@ -1,11 +1,11 @@
 import { Prisma } from '@prisma/client';
-import { prisma } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 
 export const getAllPartners = async <TSelect extends Prisma.PartnerSelect>(args?: {
   select?: TSelect;
 }) => {
   const { select } = args ?? {};
-  return prisma.partner.findMany({
+  return dbRead.partner.findMany({
     where: {},
     select: select ?? {
       id: true,

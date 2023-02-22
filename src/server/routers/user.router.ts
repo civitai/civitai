@@ -40,7 +40,7 @@ import {
   batchBlockTagsSchema,
   getUserCosmeticsSchema,
 } from '~/server/schema/user.schema';
-import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const userRouter = router({
   getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),

@@ -69,10 +69,14 @@ export function slugit(value: string) {
 export function removeTags(str: string) {
   if (!str) return '';
 
-  // Regular expression to identify HTML tags in
-  // the input string. Replacing the identified
-  // HTML tag with a null string.
-  return str.replace(/(<([^>]+)>)/gi, '');
+  // Replace all HTML tags with a single space
+  const stringWithoutTags = str.replace(/<[^>]*>/g, ' ');
+
+  // Replace multiple spaces with a single space
+  const stringWithoutExtraSpaces = stringWithoutTags.replace(/\s+/g, ' ');
+
+  // Trim the resulting string to remove leading/trailing spaces
+  return stringWithoutExtraSpaces.trim();
 }
 
 export function postgresSlugify(str: string) {
@@ -80,4 +84,8 @@ export function postgresSlugify(str: string) {
     .replace(' ', '_')
     .replace(/[^a-zA-Z0-9_]/g, '')
     .toLowerCase();
+}
+
+export function titleCase(val: string) {
+  return val[0].toUpperCase() + val.slice(1).toLowerCase();
 }

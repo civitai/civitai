@@ -1,12 +1,11 @@
-import { ModelFileFormat, Prisma, ScanResultCode } from '@prisma/client';
-import { ModelFileInput } from '~/server/schema/model-file.schema';
+import { Prisma, ScanResultCode } from '@prisma/client';
+import { ModelFileInput, ModelFileUpsertInput } from '~/server/schema/model-file.schema';
 
-export function getModelFileFormat(filename: string) {
-  if (filename.endsWith('.safetensors')) return ModelFileFormat.SafeTensor;
-  else if (filename.endsWith('.pt') || filename.endsWith('.ckpt'))
-    return ModelFileFormat.PickleTensor;
+export function getModelFileFormat(filename: string): ModelFileFormat {
+  if (filename.endsWith('.safetensors')) return 'SafeTensor';
+  else if (filename.endsWith('.pt') || filename.endsWith('.ckpt')) return 'PickleTensor';
 
-  return ModelFileFormat.Other;
+  return 'Other';
 }
 
 const unscannedFile = {
@@ -23,9 +22,9 @@ export function prepareFile(file: ModelFileInput) {
   return {
     ...file,
     ...(file.id ? {} : unscannedFile), // Only set unscannedFile on new files
-    format:
-      file.type === 'Model' || file.type === 'Pruned Model'
-        ? getModelFileFormat(file.name)
-        : ModelFileFormat.Other,
+    metadata: {
+      ...file.metadata,
+      format: file.type === 'Model' ? getModelFileFormat(file.name) : 'Other',
+    },
   };
 }

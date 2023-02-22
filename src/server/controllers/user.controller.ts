@@ -41,7 +41,6 @@ import {
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export const getAllUsersHandler = ({ input }: { input: GetAllUsersInput }) => {
   try {
@@ -251,7 +250,11 @@ export const getCreatorsHandler = async ({ input }: { input: Partial<GetAllSchem
       skip,
       count: true,
       excludeIds: [-1], // Exclude civitai user
-      select: { username: true, models: { select: { id: true }, where: { status: 'Published' } } },
+      select: {
+        username: true,
+        models: { select: { id: true }, where: { status: 'Published' } },
+        image: true,
+      },
     });
 
     return getPagingData(results, take, page);

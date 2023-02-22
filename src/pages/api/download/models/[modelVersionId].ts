@@ -1,30 +1,30 @@
-import { ModelFileFormat, ModelType, Prisma, UserActivityType } from '@prisma/client';
+import { ModelType, Prisma, UserActivityType } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
-import { prisma } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import { getGetUrl } from '~/utils/s3-utils';
 import requestIp from 'request-ip';
 import { constants, ModelFileType } from '~/server/common/constants';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
-import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
+import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import { getJoinLink } from '~/utils/join-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
   type: z.enum(constants.modelFileTypes).optional(),
-  format: z.nativeEnum(ModelFileFormat).optional(),
+  format: z.enum(constants.modelFileFormats).optional(),
 });
 
 export default async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
   // Get ip so that we can block exploits we catch
   const ip = requestIp.getClientIp(req);
   const blacklist = (
-    ((await prisma.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ?? ''
+    ((await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ?? ''
   ).split(',');
   if (ip && blacklist.includes(ip)) return res.status(403).json({ error: 'Forbidden' });
 
@@ -39,9 +39,9 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
 
   const fileWhere: Prisma.ModelFileWhereInput = {};
   if (type) fileWhere.type = type;
-  if (format) fileWhere.format = format;
+  if (format) fileWhere.metadata = { path: ['format'], equals: format };
 
-  const modelVersion = await prisma.modelVersion.findFirst({
+  const modelVersion = await dbRead.modelVersion.findFirst({
     where: { id: modelVersionId },
     select: {
       id: true,
@@ -52,18 +52,20 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
       trainedWords: true,
       earlyAccessTimeFrame: true,
       createdAt: true,
-      files: { where: fileWhere, select: { url: true, name: true, type: true, format: true } },
+      files: { where: fileWhere, select: { url: true, name: true, type: true, metadata: true } },
     },
   });
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
 
+  const castedFiles = modelVersion.files as Array<
+    Omit<(typeof modelVersion.files)[number], 'metadata'> & { metadata: FileMetadata }
+  >;
   const session = await getServerAuthSession({ req, res });
   const file =
     type != null || format != null
-      ? modelVersion.files[0]
-      : getPrimaryFile(modelVersion.files, {
-          type: session?.user?.preferredPrunedModel ? 'Pruned Model' : undefined,
-          format: session?.user?.preferredModelFormat,
+      ? castedFiles[0]
+      : getPrimaryFile(castedFiles, {
+          metadata: session?.user?.filePreferences,
         });
   if (!file) return res.status(404).json({ error: 'Model file not found' });
 
@@ -87,7 +89,7 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
   }
 
   // Handle early access
-  if (!session?.user?.tier) {
+  if (!session?.user?.tier && !session?.user?.isModerator) {
     const earlyAccessDeadline = getEarlyAccessDeadline({
       versionCreatedAt: modelVersion.createdAt,
       publishedAt: modelVersion.model.publishedAt,
@@ -106,7 +108,7 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
 
   // Track download
   try {
-    await prisma.userActivity.create({
+    await dbWrite.userActivity.create({
       data: {
         userId,
         activity: UserActivityType.ModelDownload,
@@ -124,7 +126,7 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
       },
     });
   } catch (error) {
-    return res.status(500).json({ error: 'Invalid database operation', cause: error });
+    // Do nothing if we can't track the download
   }
 
   const fileName = getDownloadFilename({ model: modelVersion.model, modelVersion, file });

@@ -5,7 +5,7 @@ import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
 import { ReviewSort } from '~/server/common/enums';
-import { prisma } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { queueMetricUpdate } from '~/server/jobs/update-metrics';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -30,7 +30,7 @@ export const getReviews = <TSelect extends Prisma.ReviewSelect>({
   const isMod = user?.isModerator ?? false;
   // const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
 
-  return prisma.review.findMany({
+  return dbRead.review.findMany({
     take: limit,
     skip,
     cursor: cursor ? { id: cursor } : undefined,
@@ -71,14 +71,14 @@ export const getReviewById = <TSelect extends Prisma.ReviewSelect>({
 }: GetByIdInput & { select: TSelect; user?: SessionUser }) => {
   const isMod = user?.isModerator ?? false;
 
-  return prisma.review.findFirst({
+  return dbRead.review.findFirst({
     where: { id, tosViolation: !isMod ? false : undefined },
     select,
   });
 };
 
 export const getReviewReactions = ({ reviewId }: GetReviewReactionsInput) => {
-  return prisma.reviewReaction.findMany({
+  return dbRead.reviewReaction.findMany({
     where: { reviewId },
     select: getReactionsSelect,
   });
@@ -93,7 +93,7 @@ export const getUserReactionByReviewId = ({
   userId: number;
   reviewId: number;
 }) => {
-  return prisma.reviewReaction.findFirst({ where: { reaction, userId, reviewId } });
+  return dbRead.reviewReaction.findFirst({ where: { reaction, userId, reviewId } });
 };
 
 export const createOrUpdateReview = async ({
@@ -120,7 +120,7 @@ export const createOrUpdateReview = async ({
   const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
   const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
 
-  return prisma.review.upsert({
+  return dbWrite.review.upsert({
     where: { id: id ?? -1 },
     create: {
       ...reviewInput,
@@ -130,9 +130,9 @@ export const createOrUpdateReview = async ({
           index,
           image: {
             create: {
-              userId: ownerId,
               ...prepareCreateImage(image),
-            },
+              userId: ownerId,
+            } as Prisma.ImageUncheckedCreateWithoutImagesOnReviewsInput,
           },
         })),
       },
@@ -147,9 +147,9 @@ export const createOrUpdateReview = async ({
           index,
           image: {
             create: {
-              userId: ownerId,
               ...prepareCreateImage(image),
-            },
+              userId: ownerId,
+            } as Prisma.ImageUncheckedCreateWithoutImagesOnReviewsInput,
           },
         })),
         update: imagesToUpdate.map(({ index, ...image }) => ({
@@ -175,18 +175,18 @@ export const createOrUpdateReview = async ({
 
 export const deleteReviewById = async ({ id }: GetByIdInput) => {
   const { modelId, model } =
-    (await prisma.review.findUnique({
+    (await dbWrite.review.findUnique({
       where: { id },
       select: { modelId: true, model: { select: { userId: true } } },
     })) ?? {};
 
-  await prisma.review.delete({ where: { id } });
+  await dbWrite.review.delete({ where: { id } });
   if (modelId) await queueMetricUpdate('Model', modelId);
   if (model?.userId) await queueMetricUpdate('User', model.userId);
 };
 
 export const updateReviewById = ({ id, data }: { id: number; data: Prisma.ReviewUpdateInput }) => {
-  return prisma.review.update({ where: { id }, data, select: getAllReviewsSelect() });
+  return dbWrite.review.update({ where: { id }, data, select: getAllReviewsSelect() });
 };
 
 export const convertReviewToComment = ({
@@ -196,7 +196,7 @@ export const convertReviewToComment = ({
   userId,
   createdAt,
 }: Pick<DeepNonNullable<Review>, 'id' | 'text' | 'modelId' | 'userId' | 'createdAt'>) => {
-  return prisma.$transaction(async (tx) => {
+  return dbWrite.$transaction(async (tx) => {
     const reviewReactions = await tx.reviewReaction.findMany({
       where: { reviewId: id },
       select: { reaction: true, userId: true, createdAt: true },
@@ -232,8 +232,8 @@ export const updateReviewReportStatusByReason = ({
   reason: ReportReason;
   status: ReportStatus;
 }) => {
-  return prisma.$transaction(async (tx) => {
-    await prisma.report.updateMany({
+  return dbWrite.$transaction(async (tx) => {
+    await dbWrite.report.updateMany({
       where: { reason, review: { reviewId: id } },
       data: { status },
     });

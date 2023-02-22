@@ -2,7 +2,6 @@ import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import { User } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import NextAuth, { Session, type NextAuthOptions } from 'next-auth';
-import CredentialsProvider from 'next-auth/providers/credentials';
 import DiscordProvider from 'next-auth/providers/discord';
 import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
@@ -10,16 +9,15 @@ import RedditProvider from 'next-auth/providers/reddit';
 import EmailProvider from 'next-auth/providers/email';
 
 import { env } from '~/env/server.mjs';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
 import { sendVerificationRequest } from '~/server/auth/verificationEmail';
 import { refreshToken, invalidateSession } from '~/server/utils/session-helpers';
-import { deleteCookie, getCookies, setCookie } from 'cookies-next';
-import { getSessionUser } from '~/server/services/user.service';
+import { getSessionUser, updateAccountScope } from '~/server/services/user.service';
 
 const setUserName = async (email: string) => {
   try {
-    const { username } = await prisma.user.update({
+    const { username } = await dbWrite.user.update({
       where: { email },
       data: {
         username: `${email.split('@')[0]}${getRandomInt(100, 999)}`,
@@ -40,7 +38,7 @@ const { hostname } = new URL(env.NEXTAUTH_URL);
 const cookieName = `${cookiePrefix}civitai-token`;
 
 export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
-  adapter: PrismaAdapter(prisma),
+  adapter: PrismaAdapter(dbWrite),
   session: {
     strategy: 'jwt',
     maxAge: 30 * 24 * 60 * 60, // 30 days
@@ -56,7 +54,12 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
     },
   },
   callbacks: {
-    jwt: async ({ token, user }) => {
+    async signIn({ account }) {
+      if (account?.provider === 'discord' && !!account.scope) await updateAccountScope(account);
+
+      return true;
+    },
+    async jwt({ token, user }) {
       if (req.url === '/api/auth/session?update') {
         invalidateSession(Number(token.sub));
         const user = await getSessionUser({ userId: Number(token.sub) });
@@ -70,7 +73,7 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
 
       return token;
     },
-    session: async ({ session, token }) => {
+    async session({ session, token }) {
       if (req.url !== '/api/auth/session?update') {
         token = await refreshToken(token);
       }
@@ -83,6 +86,9 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
     DiscordProvider({
       clientId: env.DISCORD_CLIENT_ID,
       clientSecret: env.DISCORD_CLIENT_SECRET,
+      authorization: {
+        params: { scope: 'identify email role_connections.write' },
+      },
     }),
     GithubProvider({
       clientId: env.GITHUB_CLIENT_ID,

@@ -4,7 +4,7 @@ import { IconChevronDown } from '@tabler/icons';
 type SelectMenu<T extends string | number> = {
   label: React.ReactNode;
   options: { label: React.ReactNode; value: T }[];
-  onClick: (value?: T) => void;
+  onClick: (value: T) => void;
   value?: T;
 };
 

@@ -1,7 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { UserActivityType } from '@prisma/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { prisma } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { z } from 'zod';
 
 const schema = z.object({
@@ -21,7 +21,7 @@ export default async function runModel(req: NextApiRequest, res: NextApiResponse
   if (!modelVersionId) return res.status(420).json({ error: 'Missing modelVersionId' });
 
   // Get the modelVersion's run strategies and details
-  const modelVersion = await prisma.modelVersion.findFirst({
+  const modelVersion = await dbRead.modelVersion.findFirst({
     where: { id: modelVersionId },
     select: {
       id: true,
@@ -48,7 +48,7 @@ export default async function runModel(req: NextApiRequest, res: NextApiResponse
   const userId = session?.user?.id;
 
   // Get selected, partner, or first runStrategy
-  let runStrategy: typeof modelVersion.runStrategies[0] | undefined;
+  let runStrategy: (typeof modelVersion.runStrategies)[0] | undefined;
   if (strategyId) runStrategy = modelVersion.runStrategies.find((x) => x.id == strategyId);
   else if (partnerId)
     runStrategy = modelVersion.runStrategies.find((x) => x.partner.id == partnerId);
@@ -58,7 +58,7 @@ export default async function runModel(req: NextApiRequest, res: NextApiResponse
 
   // Track activity
   try {
-    await prisma.userActivity.create({
+    await dbWrite.userActivity.create({
       data: {
         userId,
         activity: UserActivityType.ModelRun,

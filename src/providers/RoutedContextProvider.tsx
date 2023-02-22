@@ -98,7 +98,7 @@ const registry = {
 
 export function openRoutedContext<TName extends keyof typeof registry>(
   modal: TName,
-  props: React.ComponentProps<typeof registry[TName]['Component']>,
+  props: React.ComponentProps<(typeof registry)[TName]['Component']>,
   optionsOverride?: { replace?: boolean }
 ) {
   const resolve = registry[modal].resolve;
@@ -133,7 +133,7 @@ type OpenRoutedContextProps<TName extends keyof typeof registry> = {
   modal: TName;
   options?: { replace?: boolean };
   children: React.ReactElement;
-} & React.ComponentProps<typeof registry[TName]['Component']>;
+} & React.ComponentProps<(typeof registry)[TName]['Component']>;
 
 export function RoutedContextLink<TName extends keyof typeof registry>({
   modal,

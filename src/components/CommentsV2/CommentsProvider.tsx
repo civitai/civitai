@@ -49,6 +49,7 @@ type ChildProps = {
   isMuted: boolean;
   created: CommentsResult;
   badges?: BadgeProps[];
+  limit?: number;
 };
 
 type CommentsContext = CommentConnectorInput &
@@ -144,6 +145,7 @@ export function CommentsProvider({
         created,
         setCreated,
         badges,
+        limit,
       }}
     >
       {children({
@@ -157,6 +159,7 @@ export function CommentsProvider({
         hasPreviousPage,
         created: createdComments,
         badges,
+        limit,
       })}
     </CommentsCtx.Provider>
   );

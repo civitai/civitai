@@ -10,6 +10,7 @@ import {
   Menu,
   Box,
   AspectRatio,
+  Tooltip,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { useRouter } from 'next/router';
@@ -42,10 +43,22 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
+import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
+import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
+import { IconDownload } from '@tabler/icons';
 
 const VERSION_IMAGES_LIMIT = 8;
 
-export function ModelVersions({ items, initialTab, nsfw, type, locked = false }: Props) {
+export function ModelVersions({
+  items,
+  modelId,
+  modelName,
+  initialTab,
+  nsfw,
+  type,
+  locked = false,
+}: Props) {
   const mobile = useIsMobile({ breakpoint: 'md' });
 
   return (
@@ -67,7 +80,14 @@ export function ModelVersions({ items, initialTab, nsfw, type, locked = false }:
         <Grid.Col xs={12} md={10}>
           {items.map((version) => (
             <Tabs.Panel key={version.id} value={version.id.toString()}>
-              <TabContent version={version} nsfw={nsfw} type={type} locked={locked} />
+              <TabContent
+                version={version}
+                nsfw={nsfw}
+                type={type}
+                locked={locked}
+                modelId={modelId}
+                modelName={modelName}
+              />
             </Tabs.Panel>
           ))}
         </Grid.Col>
@@ -78,17 +98,21 @@ export function ModelVersions({ items, initialTab, nsfw, type, locked = false }:
 
 type Props = {
   items: NonNullable<ModelById>['modelVersions'];
+  modelId: number;
+  modelName: string;
   type: ModelType;
   initialTab?: string | null;
   nsfw?: boolean;
   locked?: boolean;
 };
 
-function TabContent({ version, nsfw, type, locked }: TabContentProps) {
+function TabContent({ version, nsfw, type, locked, modelId, modelName }: TabContentProps) {
   const router = useRouter();
   const mobile = useIsMobile();
   const currentUser = useCurrentUser();
   const hashes = getPrimaryFile(version.files)?.hashes;
+  const { connected: civitaiLinked } = useCivitaiLink();
+  const displayCivitaiLink = civitaiLinked && version.hashes.length > 0;
 
   const versionDetails: DescriptionTableProps['items'] = [
     {
@@ -135,10 +159,41 @@ function TabContent({ version, nsfw, type, locked }: TabContentProps) {
 
   const versionImages = version.images;
   const imagesLimit = mobile ? VERSION_IMAGES_LIMIT / 2 : VERSION_IMAGES_LIMIT;
-  const primaryFile = getPrimaryFile(version.files, {
-    format: currentUser?.preferredModelFormat,
-    type: currentUser?.preferredPrunedModel ? 'Pruned Model' : undefined,
+  const castedFiles = version.files as Array<
+    Omit<(typeof version.files)[number], 'metadata'> & { metadata: FileMetadata }
+  >;
+  const primaryFile = getPrimaryFile(castedFiles, {
+    metadata: currentUser?.filePreferences,
   });
+
+  const fileDetails = primaryFile && (
+    <Group position="apart" noWrap spacing={0}>
+      <VerifiedText file={primaryFile} />
+      <Text size="xs" color="dimmed">
+        {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+        {primaryFile.metadata.format}
+      </Text>
+    </Group>
+  );
+
+  const downloadMenuItems = castedFiles.map((file, index) => (
+    <Menu.Item
+      key={index}
+      component="a"
+      py={4}
+      icon={<VerifiedText file={file} iconOnly />}
+      href={createModelFileDownloadUrl({
+        versionId: version.id,
+        type: file.type,
+        format: file.metadata.format,
+      })}
+      download
+    >
+      {`${startCase(file.type)}${
+        ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
+      } (${formatKBytes(file.sizeKB)})`}
+    </Menu.Item>
+  ));
 
   return (
     <Grid gutter="xl">
@@ -146,48 +201,46 @@ function TabContent({ version, nsfw, type, locked }: TabContentProps) {
         <Stack spacing="xs">
           <Group spacing="xs" align="flex-start">
             {version.canDownload ? (
-              <Stack spacing={4} style={{ flex: 1 }}>
-                <MultiActionButton
-                  variant="light"
-                  component="a"
-                  href={createModelFileDownloadUrl({ versionId: version.id, primary: true })}
-                  disabled={!primaryFile}
-                  menuItems={
-                    version.files.length === 1
-                      ? []
-                      : version.files.map((file, index) => (
-                          <Menu.Item
-                            key={index}
-                            component="a"
-                            py={4}
-                            icon={<VerifiedText file={file} iconOnly />}
-                            href={createModelFileDownloadUrl({
-                              versionId: version.id,
-                              type: file.type,
-                              format: file.format,
-                            })}
-                            download
-                          >
-                            {`${startCase(file.type)}${
-                              ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.format : ''
-                            } (${formatKBytes(file.sizeKB)})`}
-                          </Menu.Item>
-                        ))
-                  }
-                  download
-                >
-                  {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
-                </MultiActionButton>
-                {primaryFile && (
-                  <Group position="apart" noWrap spacing={0}>
-                    <VerifiedText file={primaryFile} />
-                    <Text size="xs" color="dimmed">
-                      {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                      {primaryFile.format}
-                    </Text>
-                  </Group>
-                )}
-              </Stack>
+              displayCivitaiLink ? (
+                <Stack spacing={4} style={{ flex: 1 }}>
+                  <CivitiaLinkManageButton
+                    modelId={modelId}
+                    modelVersionId={version.id}
+                    modelName={modelName}
+                    modelType={type}
+                    hashes={version.hashes}
+                    noTooltip
+                  >
+                    {({ color, onClick, ref, icon, label }) => (
+                      <Button
+                        ref={ref}
+                        color={color}
+                        onClick={onClick}
+                        leftIcon={icon}
+                        disabled={!primaryFile}
+                        variant="light"
+                      >
+                        {label}
+                      </Button>
+                    )}
+                  </CivitiaLinkManageButton>
+                  {fileDetails}
+                </Stack>
+              ) : (
+                <Stack spacing={4} style={{ flex: 1 }}>
+                  <MultiActionButton
+                    variant="light"
+                    component="a"
+                    href={createModelFileDownloadUrl({ versionId: version.id, primary: true })}
+                    disabled={!primaryFile}
+                    menuItems={downloadMenuItems.length > 1 ? downloadMenuItems : []}
+                    download
+                  >
+                    {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+                  </MultiActionButton>
+                  {fileDetails}
+                </Stack>
+              )
             ) : (
               <Stack spacing={4} style={{ flex: 1 }}>
                 <JoinPopover>
@@ -197,18 +250,33 @@ function TabContent({ version, nsfw, type, locked }: TabContentProps) {
                     </Text>
                   </Button>
                 </JoinPopover>
-                {primaryFile && (
-                  <Group position="apart" noWrap spacing={0}>
-                    <VerifiedText file={primaryFile} />
-                    <Text size="xs" color="dimmed">
-                      {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                      {primaryFile.format}
-                    </Text>
-                  </Group>
-                )}
+                {fileDetails}
               </Stack>
             )}
-            <RunButton modelVersionId={version.id} variant="light" />
+            {displayCivitaiLink ? (
+              version.canDownload ? (
+                <Menu position="bottom-end">
+                  <Menu.Target>
+                    <Tooltip label="Download options" withArrow>
+                      <Button px={0} w={36} variant="light">
+                        <IconDownload />
+                      </Button>
+                    </Tooltip>
+                  </Menu.Target>
+                  <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
+                </Menu>
+              ) : (
+                <JoinPopover>
+                  <Tooltip label="Download options" withArrow>
+                    <Button px={0} w={36} variant="light">
+                      <IconDownload />
+                    </Button>
+                  </Tooltip>
+                </JoinPopover>
+              )
+            ) : (
+              <RunButton modelVersionId={version.id} variant="light" />
+            )}
           </Group>
 
           <EarlyAccessAlert
@@ -275,53 +343,54 @@ function TabContent({ version, nsfw, type, locked }: TabContentProps) {
                     </AspectRatio>
                   </ImageGuard.Unsafe>
                   <ImageGuard.Safe>
-                    <ImagePreview
-                      key={index}
-                      image={image}
-                      edgeImageProps={{ width: 400 }}
-                      radius="md"
-                      aspectRatio={1}
-                      onClick={() =>
-                        // router.push({
-                        //   pathname: `/gallery/${image.id}`,
-                        //   query: {
-                        //     modelId,
-                        //     modelVersionId: version.id,
-                        //     infinite: false,
-                        //     returnUrl: router.asPath,
-                        //   },
-                        // })
-                        openRoutedContext('galleryDetailModal', {
-                          galleryImageId: image.id,
-                          modelId: version.modelId,
-                          modelVersionId: version.id,
-                          infinite: false,
-                          returnUrl: router.asPath,
-                        })
-                      }
-                      withMeta
-                    />
+                    <AnchorNoTravel
+                      href={`/gallery/${image.id}?modelId=${version.modelId}&modelVersionId=${
+                        version.id
+                      }&infinite=false&returnUrl=${encodeURIComponent(router.asPath)}`}
+                    >
+                      <ImagePreview
+                        image={image}
+                        edgeImageProps={{ width: 400 }}
+                        radius="md"
+                        aspectRatio={1}
+                        onClick={() =>
+                          openRoutedContext('galleryDetailModal', {
+                            galleryImageId: image.id,
+                            modelId: version.modelId,
+                            modelVersionId: version.id,
+                            infinite: false,
+                            returnUrl: router.asPath,
+                          })
+                        }
+                        withMeta
+                      />
+                    </AnchorNoTravel>
                   </ImageGuard.Safe>
                 </Box>
               ) : null
             }
           />
           {versionImages.length > imagesLimit ? (
-            <Button
-              variant="outline"
-              sx={!mobile ? { height: '100%' } : undefined}
-              onClick={() =>
-                openRoutedContext('galleryDetailModal', {
-                  galleryImageId: versionImages[imagesLimit].id,
-                  modelId: version.modelId,
-                  modelVersionId: version.id,
-                  infinite: false,
-                  returnUrl: router.asPath,
-                })
-              }
+            <AnchorNoTravel
+              href={`/gallery/${versionImages[imagesLimit].id}?modelId=${version.modelId}&modelVersionId=${version.id}&infinite=false&returnUrl=${router.asPath}`}
             >
-              View more
-            </Button>
+              <Button
+                variant="outline"
+                sx={!mobile ? { height: '100%' } : undefined}
+                fullWidth
+                onClick={() =>
+                  openRoutedContext('galleryDetailModal', {
+                    galleryImageId: versionImages[imagesLimit].id,
+                    modelId: version.modelId,
+                    modelVersionId: version.id,
+                    infinite: false,
+                    returnUrl: router.asPath,
+                  })
+                }
+              >
+                View more
+              </Button>
+            </AnchorNoTravel>
           ) : null}
         </SimpleGrid>
       </Grid.Col>
@@ -331,6 +400,8 @@ function TabContent({ version, nsfw, type, locked }: TabContentProps) {
 
 type TabContentProps = {
   version: Props['items'][number];
+  modelId: number;
+  modelName: string;
   nsfw?: boolean;
   type: ModelType;
   locked: boolean;

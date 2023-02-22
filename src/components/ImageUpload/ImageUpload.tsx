@@ -33,31 +33,33 @@ import {
   Tabs,
   MultiSelect,
   Box,
+  Alert,
+  HoverCard,
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate, useLocalStorage } from '@mantine/hooks';
 import { TagTarget } from '@prisma/client';
 import {
-  IconExclamationCircle,
   IconPencil,
   IconPhoto,
+  IconAlertTriangle,
   IconRating18Plus,
   IconTrash,
   IconUpload,
   IconX,
 } from '@tabler/icons';
 import isEqual from 'lodash/isEqual';
-import { cloneElement, useEffect, useState } from 'react';
+import { cloneElement, useEffect, useMemo, useState } from 'react';
 
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { useImageUpload } from '~/hooks/useImageUpload';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { trpc } from '~/utils/trpc';
 import { SimpleTag } from '~/server/selectors/tag.selector';
 import { TagSort } from '~/server/common/enums';
+import { getNeedsReview } from '~/utils/image-metadata';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -92,7 +94,6 @@ export function ImageUpload({
     filesHandler,
     removeImage,
     upload,
-    canUseScanner,
     // isCompleted,
     // isUploading,
     // isProcessing,
@@ -172,13 +173,6 @@ export function ImageUpload({
             </div>
           </Group>
         </Dropzone>
-        {!canUseScanner && files.length > 0 ? (
-          <AlertWithIcon color="red" iconColor="red" icon={<IconExclamationCircle />}>
-            The AI system that automatically identifies adult content cannot be run on your device.
-            Please review the content of your images and ensure that any adult content is
-            appropriately flagged.
-          </AlertWithIcon>
-        ) : null}
 
         {isClient && (
           <DndContext
@@ -198,87 +192,16 @@ export function ImageUpload({
                   }}
                 >
                   {files.map((image, index) => {
-                    const showLoading = !!image.file || image.nsfw === undefined;
-
                     return (
-                      // <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
-                      <ImageUploadPreview
-                        key={image.url}
+                      <UploadedImage
                         image={image}
-                        isPrimary={hasPrimaryImage && index === 0}
-                        // disabled={hasSelectedFile}
-                        id={image.url}
-                      >
-                        {showLoading && (
-                          <Center
-                            sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-                          >
-                            <Overlay blur={2} zIndex={10} color="#000" />
-                            <Stack spacing="xs" sx={{ zIndex: 11 }} align="center">
-                              <Loader size="lg" />
-                              {image.status !== 'complete' && (
-                                <Text weight={600}>{image.status}...</Text>
-                              )}
-                            </Stack>
-                          </Center>
-                        )}
-                        <Group
-                          className={classes.actionsGroup}
-                          align="center"
-                          position="right"
-                          p={4}
-                          spacing={4}
-                        >
-                          {!showLoading && (!image.status || image.status === 'complete') && (
-                            <>
-                              <Tooltip label="Toggle NSFW">
-                                <ActionIcon
-                                  color={image.nsfw ? 'red' : undefined}
-                                  variant="filled"
-                                  disabled={image.nsfw === undefined}
-                                  onClick={() =>
-                                    filesHandler.setItem(index, { ...image, nsfw: !image.nsfw })
-                                  }
-                                >
-                                  <IconRating18Plus />
-                                </ActionIcon>
-                              </Tooltip>
-                              {withMeta && (
-                                <ImageMetaPopover
-                                  meta={image.meta}
-                                  tags={image.tags ?? []}
-                                  nsfw={image.nsfw ?? false}
-                                  onSubmit={(data) =>
-                                    filesHandler.setItem(index, { ...image, ...data })
-                                  }
-                                  onCopyTags={(tags) => {
-                                    filesHandler.apply((item) => ({ ...item, tags }));
-                                  }}
-                                >
-                                  <ActionIcon
-                                    variant="outline"
-                                    color={
-                                      image.meta && Object.keys(image.meta).length
-                                        ? 'primary'
-                                        : undefined
-                                    }
-                                  >
-                                    <IconPencil />
-                                  </ActionIcon>
-                                </ImageMetaPopover>
-                              )}
-                            </>
-                          )}
-                          <ActionIcon
-                            color="red"
-                            variant="outline"
-                            onClick={() => removeImage(image)}
-                          >
-                            <IconTrash size={16} />
-                          </ActionIcon>
-                        </Group>
-                      </ImageUploadPreview>
-                      // </SortableImage>
+                        index={index}
+                        key={image.id ?? image.url}
+                        removeImage={removeImage}
+                        withMeta={withMeta}
+                        filesHandler={filesHandler}
+                        isPrimary={hasPrimaryImage === true && index === 0}
+                      />
                     );
                   })}
                 </div>
@@ -322,6 +245,129 @@ export function ImageUpload({
   function handleDragCancel() {
     setActiveId(undefined);
   }
+}
+
+function UploadedImage({
+  image,
+  index,
+  isPrimary,
+  filesHandler,
+  removeImage,
+  withMeta,
+}: {
+  image: CustomFile;
+  index: number;
+  isPrimary: boolean;
+  filesHandler: ReturnType<typeof useImageUpload>['filesHandler'];
+  removeImage: ReturnType<typeof useImageUpload>['removeImage'];
+  withMeta?: boolean;
+}) {
+  const isError = image.status === 'error';
+  const isComplete = image.status === 'complete';
+  const isBlocked = image.status === 'blocked';
+  const showLoading = image.status && !isError && !isComplete && !isBlocked;
+  const needsReview = useMemo(() => {
+    if (image.id || image.status !== 'complete') return false;
+    return getNeedsReview({ analysis: image.analysis, nsfw: image.nsfw });
+  }, [image.id, image.analysis, image.nsfw, image.status]);
+
+  return (
+    <ImageUploadPreview image={image} isPrimary={isPrimary} id={image.url}>
+      {showLoading && (
+        <Center sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+          <Overlay blur={2} zIndex={10} color="#000" />
+          <Stack spacing="xs" sx={{ zIndex: 11 }} align="center">
+            <Loader size="lg" />
+            {image.message && <Text weight={600}>{image.message}...</Text>}
+          </Stack>
+        </Center>
+      )}
+      {needsReview && (
+        <HoverCard withinPortal withArrow position="top" width={250}>
+          <HoverCard.Target>
+            <Alert
+              color="yellow"
+              variant="filled"
+              radius={0}
+              p={4}
+              sx={{
+                position: 'absolute',
+                bottom: 0,
+                right: 0,
+                left: 0,
+                zIndex: 11,
+              }}
+            >
+              <Group spacing={4} noWrap position="center">
+                <IconAlertTriangle size={20} strokeWidth={2.5} />
+                <Text sx={{ lineHeight: 1.1 }} weight={500}>
+                  Will be reviewed
+                </Text>
+              </Group>
+            </Alert>
+          </HoverCard.Target>
+          <HoverCard.Dropdown>
+            <Text size="sm" weight={500}>
+              Flagged by age detection
+            </Text>
+            <Text size="sm" sx={{ lineHeight: 1.2 }}>
+              After submission this image will be reviewed by a moderator.
+            </Text>
+          </HoverCard.Dropdown>
+        </HoverCard>
+      )}
+      <Group
+        sx={(theme) => ({
+          position: 'absolute',
+          background: theme.fn.rgba(theme.colors.dark[9], 0.6),
+          borderBottomLeftRadius: theme.radius.sm,
+          top: 0,
+          right: 0,
+          zIndex: 11,
+        })}
+        align="center"
+        position="right"
+        p={4}
+        spacing={4}
+      >
+        {!showLoading && (!image.status || image.status === 'complete') && (
+          <>
+            <Tooltip label="Toggle NSFW">
+              <ActionIcon
+                color={image.nsfw ? 'red' : undefined}
+                variant={image.nsfw ? 'filled' : 'outline'}
+                disabled={image.nsfw === undefined}
+                onClick={() => filesHandler.setItem(index, { ...image, nsfw: !image.nsfw })}
+              >
+                <IconRating18Plus />
+              </ActionIcon>
+            </Tooltip>
+            {withMeta && (
+              <ImageMetaPopover
+                meta={image.meta}
+                tags={image.tags ?? []}
+                nsfw={image.nsfw ?? false}
+                onSubmit={(data) => filesHandler.setItem(index, { ...image, ...data })}
+                onCopyTags={(tags) => {
+                  filesHandler.apply((item) => ({ ...item, tags }));
+                }}
+              >
+                <ActionIcon
+                  variant="outline"
+                  color={image.meta && Object.keys(image.meta).length ? 'primary' : undefined}
+                >
+                  <IconPencil />
+                </ActionIcon>
+              </ImageMetaPopover>
+            )}
+          </>
+        )}
+        <ActionIcon color="red" variant="outline" onClick={() => removeImage(image)}>
+          <IconTrash size={16} />
+        </ActionIcon>
+      </Group>
+    </ImageUploadPreview>
+  );
 }
 
 function ImageMetaPopover({
@@ -588,17 +634,12 @@ function ImageTagTab({
   );
 }
 
-const useStyles = createStyles((theme, _params, getRef) => ({
+const useStyles = createStyles((theme, _params) => ({
   sortItem: {
     position: 'relative',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-
-    [`&:hover .${getRef('actionsGroup')}`]: {
-      opacity: 1,
-      transition: 'all .1s ease',
-    },
   },
 
   draggableIcon: {
@@ -611,24 +652,6 @@ const useStyles = createStyles((theme, _params, getRef) => ({
     position: 'absolute',
     top: '4px',
     left: '4px',
-  },
-
-  actionsGroup: {
-    ref: getRef('actionsGroup'),
-    position: 'absolute',
-    background: theme.fn.rgba(theme.colors.dark[9], 0.6),
-    borderBottomLeftRadius: theme.radius.sm,
-    top: 0,
-    right: 0,
-    zIndex: 11,
-  },
-
-  selected: {
-    [`.${getRef('actionsGroup')}`]: {
-      opacity: 1,
-      transition: 'all .1s ease',
-      background: theme.fn.rgba(theme.colors.gray[0], 0.4),
-    },
   },
 
   meta: {

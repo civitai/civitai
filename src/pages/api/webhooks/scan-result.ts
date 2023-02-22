@@ -1,15 +1,8 @@
-import {
-  ModelFileFormat,
-  ModelHashType,
-  ModelStatus,
-  Prisma,
-  ScanResultCode,
-} from '@prisma/client';
+import { ModelHashType, ModelStatus, Prisma, ScanResultCode } from '@prisma/client';
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
-import { constants } from '~/server/common/constants';
-import { prisma } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { ScannerTasks } from '~/server/jobs/scan-files';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { bytesToKB } from '~/utils/number-helpers';
@@ -18,15 +11,13 @@ import { getGetUrl } from '~/utils/s3-utils';
 export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { modelVersionId, type, format, ...query } = querySchema.parse(req.query);
+  const { fileId, ...query } = querySchema.parse(req.query);
   const tasks = query.tasks ?? ['Import', 'Scan', 'Hash'];
   const scanResult: ScanResult = req.body;
 
-  const where: Prisma.ModelFileFindUniqueArgs['where'] = {
-    modelVersionId_type_format: { modelVersionId, type, format },
-  };
-  const { url, id: fileId, name } = (await prisma.modelFile.findUnique({ where })) ?? {};
-  if (!url || !fileId) return res.status(404).json({ error: 'File not found' });
+  const where: Prisma.ModelFileFindUniqueArgs['where'] = { id: fileId };
+  const file = await dbRead.modelFile.findUnique({ where });
+  if (!file) return res.status(404).json({ error: 'File not found' });
 
   const data: Prisma.ModelFileUpdateInput = {};
 
@@ -48,9 +39,9 @@ export default WebhookEndpoint(async (req, res) => {
   if (tasks.includes('Import')) {
     data.exists = scanResult.fileExists === 1;
     const bucket = env.S3_SETTLED_BUCKET;
-    const scannerImportedFile = !url.includes(bucket) && scanResult.url.includes(bucket);
+    const scannerImportedFile = !file.url.includes(bucket) && scanResult.url.includes(bucket);
     if (data.exists && scannerImportedFile) data.url = scanResult.url;
-    if (!data.exists) await unpublish(modelVersionId);
+    if (!data.exists) await unpublish(file.modelVersionId);
   }
 
   if (tasks.includes('Convert')) {
@@ -62,15 +53,14 @@ export default WebhookEndpoint(async (req, res) => {
       const { url: s3Url } = await getGetUrl(baseUrl);
       const { headers } = await fetch(s3Url, { method: 'HEAD' });
       const sizeKB = bytesToKB(parseInt(headers.get('Content-Length') ?? '0'));
-      await prisma.modelFile.create({
+      await dbWrite.modelFile.create({
         data: {
           name: convertedName,
           sizeKB,
-          modelVersionId,
+          modelVersionId: file.modelVersionId,
           url: baseUrl,
-          type,
-          format:
-            format == 'safetensors' ? ModelFileFormat.SafeTensor : ModelFileFormat.PickleTensor,
+          type: file.type,
+          metadata: { format: format === 'safetensors' ? 'SafeTensor' : 'PickleTensor' },
           hashes: {
             create: Object.entries(hashes).map(([type, hash]) => ({
               type: hashTypeMap[type.toLowerCase()] as ModelHashType,
@@ -83,13 +73,13 @@ export default WebhookEndpoint(async (req, res) => {
   }
 
   // Update if we made changes...
-  if (Object.keys(data).length > 0) await prisma.modelFile.update({ where, data });
+  if (Object.keys(data).length > 0) await dbWrite.modelFile.update({ where, data });
 
   // Update hashes
   if (tasks.includes('Hash') && scanResult.hashes) {
-    await prisma.$transaction([
-      prisma.modelHash.deleteMany({ where: { fileId } }),
-      prisma.modelHash.createMany({
+    await dbWrite.$transaction([
+      dbWrite.modelFileHash.deleteMany({ where: { fileId } }),
+      dbWrite.modelFileHash.createMany({
         data: Object.entries(scanResult.hashes)
           .filter(([type, val]) => hashTypeMap[type.toLowerCase()] && val)
           .map(([type, hash]) => ({
@@ -108,18 +98,18 @@ const hashTypeMap: Record<string, string> = {};
 for (const t of Object.keys(ModelHashType)) hashTypeMap[t.toLowerCase()] = t;
 
 async function unpublish(modelVersionId: number) {
-  await prisma.modelVersion.update({
+  await dbWrite.modelVersion.update({
     where: { id: modelVersionId },
     data: { status: ModelStatus.Draft },
   });
 
   const { modelId } =
-    (await prisma.modelVersion.findUnique({
+    (await dbWrite.modelVersion.findUnique({
       where: { id: modelVersionId },
       select: { modelId: true },
     })) ?? {};
   if (modelId) {
-    const modelVersionCount = await prisma.model.findUnique({
+    const modelVersionCount = await dbWrite.model.findUnique({
       where: { id: modelId },
       select: {
         _count: {
@@ -133,7 +123,7 @@ async function unpublish(modelVersionId: number) {
     });
 
     if (modelVersionCount?._count.modelVersions === 0)
-      await prisma.model.update({
+      await dbWrite.model.update({
         where: { id: modelId },
         data: { status: ModelStatus.Unpublished },
       });
@@ -174,9 +164,7 @@ type ConversionResult = {
 };
 
 const querySchema = z.object({
-  modelVersionId: z.preprocess((val) => Number(val), z.number()),
-  type: z.enum(constants.modelFileTypes),
-  format: z.nativeEnum(ModelFileFormat),
+  fileId: z.preprocess((val) => Number(val), z.number()),
   tasks: z.array(z.enum(ScannerTasks)).optional(),
 });
 

@@ -4,19 +4,38 @@ import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { tagSchema } from '~/server/schema/tag.schema';
 
-const stringToNumber = z.preprocess((value) => Number(value), z.number());
+const stringToNumber = z.preprocess(
+  (value) => (value ? Number(value) : undefined),
+  z.number().optional()
+);
 
-export const imageMetaSchema = z
-  .object({
-    prompt: z.string(),
-    negativePrompt: z.string(),
-    cfgScale: stringToNumber,
-    steps: stringToNumber,
-    sampler: z.string(),
-    seed: stringToNumber,
+const undefinedString = z.preprocess((value) => (value ? value : undefined), z.string().optional());
+
+export const imageGenerationSchema = z.object({
+  prompt: undefinedString,
+  negativePrompt: undefinedString,
+  cfgScale: stringToNumber,
+  steps: stringToNumber,
+  sampler: undefinedString,
+  seed: stringToNumber,
+});
+
+export const imageMetaSchema = imageGenerationSchema
+  .extend({
+    hashes: z.record(z.string()),
   })
   .partial()
   .passthrough();
+
+export type FaceDetectionInput = z.infer<typeof faceDetectionSchema>;
+export const faceDetectionSchema = z.object({
+  age: z.number(),
+  emotions: z.array(z.object({ emotion: z.string(), score: z.number() })),
+  gender: z.enum(['male', 'female', 'unknown']),
+  genderConfidence: z.number().optional().default(0),
+  live: z.number(),
+  real: z.number(),
+});
 
 export type ImageAnalysisInput = z.infer<typeof imageAnalysisSchema>;
 export const imageAnalysisSchema = z.object({
@@ -25,7 +44,24 @@ export const imageAnalysisSchema = z.object({
   neutral: z.number(),
   porn: z.number(),
   sexy: z.number(),
+  faces: z.array(faceDetectionSchema).optional(),
 });
+
+// #region [Image Resource]
+export type ImageResourceUpsertInput = z.infer<typeof imageResourceUpsertSchema>;
+export const imageResourceUpsertSchema = z.object({
+  id: z.number().optional(),
+  modelVersionId: z.number().optional(),
+  name: z.string().optional(),
+  detected: z.boolean().optional(),
+});
+export const isImageResource = (
+  entity: ImageResourceUpsertInput
+): entity is Omit<ImageResourceUpsertInput, 'id'> & { id: number } => !!entity.id;
+export const isNotImageResource = (
+  entity: ImageResourceUpsertInput
+): entity is Omit<ImageResourceUpsertInput, 'id'> & { id: undefined } => !entity.id;
+// #endregion
 
 export const imageSchema = z.object({
   id: z.number().optional(),
@@ -45,10 +81,28 @@ export const imageSchema = z.object({
   nsfw: z.boolean().optional(),
   analysis: imageAnalysisSchema.optional(),
   tags: z.array(tagSchema).optional(),
+  needsReview: z.boolean().optional(),
+  mimeType: z.string().optional(),
+  sizeKB: z.number().optional(),
+  postId: z.number().optional(),
+  resources: z.array(imageResourceUpsertSchema).optional(),
 });
 
 export type ImageUploadProps = z.infer<typeof imageSchema>;
 export type ImageMetaProps = z.infer<typeof imageMetaSchema> & Record<string, unknown>;
+
+export const imageUpdateSchema = z.object({
+  id: z.number(),
+  name: z.string().optional(),
+  url: z
+    .string()
+    .url()
+    .or(z.string().uuid('One of the files did not upload properly, please try again').optional())
+    .optional(),
+  nsfw: z.boolean().optional(),
+  needsReview: z.boolean().optional(),
+});
+export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
 
 export type GetModelVersionImagesSchema = z.infer<typeof getModelVersionImageSchema>;
 export const getModelVersionImageSchema = z.object({
@@ -71,7 +125,7 @@ export const getGalleryImageSchema = z.object({
   infinite: z.boolean().default(true),
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
-  browsingMode: z.nativeEnum(BrowsingMode).optional().default(BrowsingMode.SFW),
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
   tags: z.array(z.number()).optional(),
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
@@ -79,6 +133,7 @@ export const getGalleryImageSchema = z.object({
   singleImageAlbum: z.boolean().optional(),
   isFeatured: z.boolean().optional(),
   types: z.nativeEnum(ImageGenerationProcess).array().optional(),
+  needsReview: z.boolean().optional(),
 });
 
 export const getImageConnectionsSchema = z.object({
@@ -87,3 +142,25 @@ export const getImageConnectionsSchema = z.object({
   reviewId: z.number().nullish(),
 });
 export type GetImageConnectionsSchema = z.infer<typeof getImageConnectionsSchema>;
+
+export type UpdateImageInput = z.infer<typeof updateImageSchema>;
+export const updateImageSchema = z.object({
+  id: z.number(),
+  meta: z.preprocess((value) => {
+    if (typeof value !== 'object') return null;
+    if (value && !Object.keys(value).length) return null;
+    return value;
+  }, imageMetaSchema.nullish()),
+  hideMeta: z.boolean().optional(),
+  nsfw: z.boolean().optional(),
+  resources: z.array(imageResourceUpsertSchema).optional(),
+});
+
+export type IngestImageInput = z.infer<typeof ingestImageSchema>;
+export const ingestImageSchema = z.object({
+  id: z.number(),
+  url: z.string(),
+  name: z.string().optional(),
+  width: z.number(),
+  mimeType: z.string(),
+});

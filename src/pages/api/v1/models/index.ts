@@ -4,7 +4,7 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { Session } from 'next-auth';
 
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { publicApiContext } from '~/server/createContext';
@@ -32,34 +32,45 @@ export default MixedAuthEndpoint(async function handler(
     const { items, ...metadata } = await apiCaller.model.getAllWithVersions(req.query);
     const { nextPage, prevPage, baseUrl } = getPaginationLinks({ ...metadata, req });
 
+    const preferredFormat = {
+      type: user?.filePreferences?.size === 'pruned' ? 'Pruned Model' : undefined,
+      metadata: user?.filePreferences,
+    };
+    const primaryFileOnly = req.query.primaryFileOnly === 'true';
+
     res.status(200).json({
       items: items.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
         ...model,
         creator: {
           username: user.username,
-          image: user.image ? getEdgeUrl(user.image, { width: 96 }) : null,
+          image: user.image ? getEdgeUrl(user.image, { width: 96, name: user.username }) : null,
         },
         tags: tagsOnModels.map(({ tag }) => tag.name),
         modelVersions: modelVersions
           .map(({ images, files, ...version }) => {
-            const primaryFile = getPrimaryFile(files);
+            let castedFiles = files as Array<
+              Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
+            >;
+            const primaryFile = getPrimaryFile(castedFiles, preferredFormat);
             if (!primaryFile) return null;
+            if (primaryFileOnly) castedFiles = [primaryFile];
 
             return {
               ...version,
-              files: files.map(({ hashes, ...file }) => ({
+              files: castedFiles.map(({ hashes, ...file }) => ({
                 ...file,
                 name: getDownloadFilename({ model, modelVersion: version, file }),
                 hashes: hashesAsObject(hashes),
                 downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,
-                  format: file.format,
+                  format: file.metadata.format,
                   primary: primaryFile.id === file.id,
                 })}`,
+                primary: primaryFile.id === file.id ? true : undefined,
               })),
-              images: images.map(({ image: { url, ...image } }) => ({
-                url: getEdgeUrl(url, { width: 450 }),
+              images: images.map(({ image: { url, id, ...image } }) => ({
+                url: getEdgeUrl(url, { width: 450, name: id.toString() }),
                 ...image,
               })),
               downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({

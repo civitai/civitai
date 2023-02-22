@@ -1,17 +1,19 @@
 import {
-  Container,
-  Title,
-  Text,
-  Stack,
-  Group,
-  Box,
-  createStyles,
   ActionIcon,
   AspectRatio,
-  Rating,
+  Box,
   Card,
+  Container,
+  createStyles,
+  Group,
   Menu,
+  Rating,
+  Stack,
+  Tabs,
+  Text,
+  Title,
 } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowBackUp,
   IconBan,
@@ -27,26 +29,27 @@ import {
 import { InferGetServerSidePropsType } from 'next/types';
 
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
-import { EdgeImage, getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
 import {
-  InfiniteModelsSort,
-  InfiniteModelsPeriod,
   InfiniteModelsFilter,
+  InfiniteModelsPeriod,
+  InfiniteModelsSort,
 } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { Meta } from '~/components/Meta/Meta';
+import { UserDraftModels } from '~/components/User/UserDraftModels';
 import { Username } from '~/components/User/Username';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
+import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { showErrorNotification } from '~/utils/notifications';
-import { openConfirmModal } from '@mantine/modals';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -74,6 +77,7 @@ export default function UserPage({
   const { models: uploads } = user?._count ?? { models: 0 };
   const stats = user?.stats;
   const isMod = currentUser && currentUser.isModerator;
+  const isSameUser = currentUser?.username === username;
 
   const toggleMuteMutation = trpc.user.toggleMute.useMutation({
     async onMutate() {
@@ -158,189 +162,217 @@ export default function UserPage({
           description="Learn more about this awesome creator on Civitai."
         />
       )}
-      {user && (
-        <Box className={classes.banner} mb="md">
-          <Container size="xl">
-            <Stack className={classes.wrapper}>
-              {user.image && (
-                <div className={classes.outsideImage}>
-                  <AspectRatio ratio={1 / 1} className={classes.image}>
-                    <EdgeImage src={user.image} width={128} alt={user.username ?? ''} />
-                  </AspectRatio>
-                </div>
-              )}
-              <Card radius="sm" className={classes.card}>
-                <Group noWrap>
-                  {user.image && (
-                    <div className={classes.insideImage}>
-                      <AspectRatio ratio={1 / 1} className={classes.image}>
-                        <EdgeImage src={user.image} width={128} alt={user.username ?? ''} />
-                      </AspectRatio>
-                    </div>
-                  )}
-                  <Stack spacing="xs">
-                    <Group position="apart">
-                      <Title order={2}>
-                        <Username {...user} inherit />
-                      </Title>
-                      <Group spacing={4} noWrap>
-                        <FollowUserButton userId={user.id} size="md" compact />
+      <Tabs defaultValue="published" variant="outline">
+        {user && (
+          <Box className={classes.banner} mb="md">
+            <Container size="xl">
+              <Stack className={classes.wrapper} mb={isSameUser ? 'md' : undefined}>
+                {user.image && (
+                  <div className={classes.outsideImage}>
+                    <AspectRatio ratio={1 / 1} className={classes.image}>
+                      <EdgeImage
+                        src={user.image}
+                        name={user.username}
+                        width={128}
+                        alt={user.username ?? ''}
+                      />
+                    </AspectRatio>
+                  </div>
+                )}
+                <Card radius="sm" className={classes.card}>
+                  <Group noWrap>
+                    {user.image && (
+                      <div className={classes.insideImage}>
+                        <AspectRatio ratio={1 / 1} className={classes.image}>
+                          <EdgeImage
+                            src={user.image}
+                            name={user.username}
+                            width={128}
+                            alt={user.username ?? ''}
+                          />
+                        </AspectRatio>
+                      </div>
+                    )}
+                    <Stack spacing="xs">
+                      <Group position="apart">
+                        <Title order={2}>
+                          <Username {...user} inherit />
+                        </Title>
+                        <Group spacing={4} noWrap>
+                          <FollowUserButton userId={user.id} size="md" compact />
 
-                        {isMod && (
-                          <Menu position="left" withinPortal>
-                            <Menu.Target>
-                              <ActionIcon>
-                                <IconDotsVertical />
-                              </ActionIcon>
-                            </Menu.Target>
-                            <Menu.Dropdown>
-                              <Menu.Item
-                                color={user.bannedAt ? 'green' : 'red'}
-                                icon={
-                                  !user.bannedAt ? (
-                                    <IconBan size={14} stroke={1.5} />
-                                  ) : (
-                                    <IconArrowBackUp size={14} stroke={1.5} />
-                                  )
-                                }
-                                onClick={handleToggleBan}
+                          {isMod && (
+                            <Menu position="left" withinPortal>
+                              <Menu.Target>
+                                <ActionIcon>
+                                  <IconDotsVertical />
+                                </ActionIcon>
+                              </Menu.Target>
+                              <Menu.Dropdown>
+                                <Menu.Item
+                                  color={user.bannedAt ? 'green' : 'red'}
+                                  icon={
+                                    !user.bannedAt ? (
+                                      <IconBan size={14} stroke={1.5} />
+                                    ) : (
+                                      <IconArrowBackUp size={14} stroke={1.5} />
+                                    )
+                                  }
+                                  onClick={handleToggleBan}
+                                >
+                                  {user.bannedAt ? 'Restore user' : 'Ban user'}
+                                </Menu.Item>
+                                <Menu.Item
+                                  icon={
+                                    user.muted ? (
+                                      <IconMicrophone size={14} stroke={1.5} />
+                                    ) : (
+                                      <IconMicrophoneOff size={14} stroke={1.5} />
+                                    )
+                                  }
+                                  onClick={handleToggleMute}
+                                >
+                                  {user.muted ? 'Unmute user' : 'Mute user'}
+                                </Menu.Item>
+                              </Menu.Dropdown>
+                            </Menu>
+                          )}
+                        </Group>
+                      </Group>
+                      <Group spacing="xs">
+                        <RankBadge rank={user.rank?.leaderboardRank} size="lg" />
+                        {stats && (
+                          <>
+                            <IconBadge
+                              tooltip="Average Rating"
+                              sx={{ userSelect: 'none' }}
+                              size="lg"
+                              icon={
+                                <Rating
+                                  size="sm"
+                                  value={stats.ratingAllTime}
+                                  readOnly
+                                  emptySymbol={
+                                    theme.colorScheme === 'dark' ? (
+                                      <IconStar
+                                        size={18}
+                                        fill="rgba(255,255,255,.3)"
+                                        color="transparent"
+                                      />
+                                    ) : undefined
+                                  }
+                                />
+                              }
+                              variant={
+                                theme.colorScheme === 'dark' && stats.ratingCountAllTime > 0
+                                  ? 'filled'
+                                  : 'light'
+                              }
+                            >
+                              <Text
+                                size="sm"
+                                color={stats.ratingCountAllTime > 0 ? undefined : 'dimmed'}
                               >
-                                {user.bannedAt ? 'Restore user' : 'Ban user'}
-                              </Menu.Item>
-                              <Menu.Item
-                                icon={
-                                  user.muted ? (
-                                    <IconMicrophone size={14} stroke={1.5} />
-                                  ) : (
-                                    <IconMicrophoneOff size={14} stroke={1.5} />
-                                  )
-                                }
-                                onClick={handleToggleMute}
-                              >
-                                {user.muted ? 'Unmute user' : 'Mute user'}
-                              </Menu.Item>
-                            </Menu.Dropdown>
-                          </Menu>
+                                {abbreviateNumber(stats.ratingCountAllTime)}
+                              </Text>
+                            </IconBadge>
+                            <IconBadge
+                              tooltip="Uploads"
+                              icon={<IconUpload size={16} />}
+                              color="gray"
+                              size="lg"
+                              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                            >
+                              <Text size="sm">{abbreviateNumber(uploads)}</Text>
+                            </IconBadge>
+                            <IconBadge
+                              tooltip="Followers"
+                              icon={<IconUsers size={16} />}
+                              href={`${user.username}/followers`}
+                              color="gray"
+                              size="lg"
+                              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                            >
+                              <Text size="sm">{abbreviateNumber(stats.followerCountAllTime)}</Text>
+                            </IconBadge>
+                            <IconBadge
+                              tooltip="Favorites"
+                              icon={<IconHeart size={16} />}
+                              color="gray"
+                              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                              size="lg"
+                            >
+                              <Text size="sm">{abbreviateNumber(stats.favoriteCountAllTime)}</Text>
+                            </IconBadge>
+                            <IconBadge
+                              tooltip="Downloads"
+                              icon={<IconDownload size={16} />}
+                              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                              size="lg"
+                            >
+                              <Text size="sm">{abbreviateNumber(stats.downloadCountAllTime)}</Text>
+                            </IconBadge>
+                          </>
                         )}
                       </Group>
-                    </Group>
-                    <Group spacing="xs">
-                      <RankBadge rank={user.rank?.leaderboardRank} size="lg" />
-                      {stats && (
-                        <>
-                          <IconBadge
-                            tooltip="Average Rating"
-                            sx={{ userSelect: 'none' }}
-                            size="lg"
-                            icon={
-                              <Rating
-                                size="sm"
-                                value={stats.ratingAllTime}
-                                readOnly
-                                emptySymbol={
-                                  theme.colorScheme === 'dark' ? (
-                                    <IconStar
-                                      size={18}
-                                      fill="rgba(255,255,255,.3)"
-                                      color="transparent"
-                                    />
-                                  ) : undefined
-                                }
-                              />
-                            }
-                            variant={
-                              theme.colorScheme === 'dark' && stats.ratingCountAllTime > 0
-                                ? 'filled'
-                                : 'light'
-                            }
-                          >
-                            <Text
-                              size="sm"
-                              color={stats.ratingCountAllTime > 0 ? undefined : 'dimmed'}
+                      {!!user.links?.length && (
+                        <Group spacing={0}>
+                          {sortDomainLinks(user.links).map((link, index) => (
+                            <ActionIcon
+                              key={index}
+                              component="a"
+                              href={link.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              size="md"
                             >
-                              {abbreviateNumber(stats.ratingCountAllTime)}
-                            </Text>
-                          </IconBadge>
-                          <IconBadge
-                            tooltip="Uploads"
-                            icon={<IconUpload size={16} />}
-                            color="gray"
-                            size="lg"
-                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                          >
-                            <Text size="sm">{abbreviateNumber(uploads)}</Text>
-                          </IconBadge>
-                          <IconBadge
-                            tooltip="Followers"
-                            icon={<IconUsers size={16} />}
-                            href={`${user.username}/followers`}
-                            color="gray"
-                            size="lg"
-                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                          >
-                            <Text size="sm">{abbreviateNumber(stats.followerCountAllTime)}</Text>
-                          </IconBadge>
-                          <IconBadge
-                            tooltip="Favorites"
-                            icon={<IconHeart size={16} />}
-                            color="gray"
-                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                            size="lg"
-                          >
-                            <Text size="sm">{abbreviateNumber(stats.favoriteCountAllTime)}</Text>
-                          </IconBadge>
-                          <IconBadge
-                            tooltip="Downloads"
-                            icon={<IconDownload size={16} />}
-                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                            size="lg"
-                          >
-                            <Text size="sm">{abbreviateNumber(stats.downloadCountAllTime)}</Text>
-                          </IconBadge>
-                        </>
+                              <DomainIcon domain={link.domain} size={22} />
+                            </ActionIcon>
+                          ))}
+                        </Group>
                       )}
-                    </Group>
-                    {!!user.links?.length && (
-                      <Group spacing={0}>
-                        {sortDomainLinks(user.links).map((link, index) => (
-                          <ActionIcon
-                            key={index}
-                            component="a"
-                            href={link.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            size="md"
-                          >
-                            <DomainIcon domain={link.domain} size={22} />
-                          </ActionIcon>
-                        ))}
-                      </Group>
-                    )}
-                  </Stack>
+                    </Stack>
+                  </Group>
+                </Card>
+              </Stack>
+              {isSameUser && (
+                <Tabs.List className={classes.tabList}>
+                  <Tabs.Tab value="published">Published models</Tabs.Tab>
+                  <Tabs.Tab value="draft">Draft models</Tabs.Tab>
+                </Tabs.List>
+              )}
+            </Container>
+          </Box>
+        )}
+        <Container size="xl">
+          <Tabs.Panel value="published">
+            <Stack spacing="xs">
+              <Group position="apart">
+                <InfiniteModelsSort />
+                <Group spacing="xs">
+                  <InfiniteModelsPeriod />
+                  <InfiniteModelsFilter />
                 </Group>
-              </Card>
+              </Group>
+              <InfiniteModels showHidden />
             </Stack>
-          </Container>
-        </Box>
-      )}
-      <Container size="xl">
-        <Stack spacing="xs">
-          <Group position="apart">
-            <InfiniteModelsSort />
-            <Group spacing="xs">
-              <InfiniteModelsPeriod />
-              <InfiniteModelsFilter />
-            </Group>
-          </Group>
-          <InfiniteModels showHidden />
-        </Stack>
-      </Container>
+          </Tabs.Panel>
+          <Tabs.Panel value="draft">
+            <Stack spacing={0}>
+              <Title order={3}>Draft models</Title>
+              <Text color="dimmed">Incomplete models not yet published</Text>
+            </Stack>
+            <UserDraftModels />
+          </Tabs.Panel>
+        </Container>
+      </Tabs>
     </>
   );
 }
 
 const useStyles = createStyles((theme) => ({
   banner: {
+    position: 'relative',
     marginTop: `-${theme.spacing.md}px`,
     paddingTop: theme.spacing.xl * 2,
     paddingBottom: theme.spacing.xl * 2,
@@ -377,5 +409,12 @@ const useStyles = createStyles((theme) => ({
     [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
       width: '100%',
     },
+  },
+  tabList: {
+    position: 'absolute',
+    bottom: 0,
+    left: 'auto',
+    right: 'auto',
+    zIndex: 1,
   },
 }));

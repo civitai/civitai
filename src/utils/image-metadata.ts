@@ -1,10 +1,10 @@
-import { FileWithPath } from '@mantine/dropzone';
 import exifr from 'exifr';
 import { unescape } from 'lodash';
-import { ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
+import { ImageAnalysisInput, ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
 import blocked from './blocklist.json';
+import blockedNSFW from './blocklist-nsfw.json';
 
-export async function getMetadata(file: FileWithPath) {
+export async function getMetadata(file: File) {
   let exif: any; //eslint-disable-line
   try {
     exif = await exifr.parse(file, {
@@ -25,7 +25,12 @@ export async function getMetadata(file: FileWithPath) {
     generationDetails = exif.parameters;
   }
 
-  const metadata = parseMetadata(generationDetails);
+  let metadata = {};
+  try {
+    metadata = parseMetadata(generationDetails);
+  } catch (e: any) { //eslint-disable-line
+    console.error('Error parsing metadata', e);
+  }
   const result = imageMetaSchema.safeParse(metadata);
   return result.success ? result.data : {};
 }
@@ -60,6 +65,8 @@ const decoder = new TextDecoder('utf-8');
 // #endregion
 
 // #region [parsers]
+const hashesRegex = /, Hashes:\s*({[^}]+})/;
+const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
 const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.]+):([0-9.]+)>/g;
 const automaticNameHash = /([a-zA-Z0-9_\.]+)\(([a-zA-Z0-9]+)\)/;
 const automaticSDKeyMap = new Map<string, keyof ImageMetaProps>([
@@ -68,30 +75,48 @@ const automaticSDKeyMap = new Map<string, keyof ImageMetaProps>([
   ['Sampler', 'sampler'],
   ['Steps', 'steps'],
 ]);
+const getSDKey = (key: string) => automaticSDKeyMap.get(key.trim()) ?? key.trim();
 const automaticSDParser = createMetadataParser(
   (meta: string) => meta.includes('Steps: '),
   (meta: string) => {
     const metadata: ImageMetaProps = {};
     if (!meta) return metadata;
     const metaLines = meta.split('\n');
-    const fineDetails =
-      metaLines
-        .pop()
-        ?.split(',')
-        .map((x) => x.split(':')) ?? [];
-    for (const [k, v] of fineDetails) {
-      if (!v) continue;
-      const propKey = automaticSDKeyMap.get(k.trim()) ?? k.trim();
-      metadata[propKey] = v.trim();
+
+    // Remove meta keys I wish I hadn't made... :(
+    let detailsLine = metaLines.pop();
+    for (const key of badExtensionKeys) {
+      if (!detailsLine?.includes(key)) continue;
+      detailsLine = detailsLine.split(key)[0];
+    }
+
+    // Extract Hashes
+    const hashes = detailsLine?.match(hashesRegex)?.[1];
+    if (hashes && detailsLine) {
+      metadata.hashes = JSON.parse(hashes);
+      detailsLine = detailsLine.replace(hashesRegex, '');
+    }
+
+    // Extract fine details
+    let currentKey = '';
+    const parts = detailsLine?.split(':') ?? [];
+    for (const part of parts) {
+      const priorValueEnd = part.lastIndexOf(',');
+      if (parts[parts.length - 1] === part) {
+        metadata[currentKey] = part.trim();
+      } else if (priorValueEnd !== -1) {
+        metadata[currentKey] = part.slice(0, priorValueEnd).trim();
+        currentKey = getSDKey(part.slice(priorValueEnd + 1));
+      } else currentKey = getSDKey(part);
     }
 
     // Extract prompts
-    const [prompt, negativePrompt] = metaLines
+    const [prompt, ...negativePrompt] = metaLines
       .join('\n')
       .split('Negative prompt:')
       .map((x) => x.trim());
     metadata.prompt = prompt;
-    metadata.negativePrompt = negativePrompt;
+    metadata.negativePrompt = negativePrompt.join(' ').trim();
 
     // Extract resources
     const extranets = [...prompt.matchAll(automaticExtraNetsRegex)];
@@ -178,14 +203,47 @@ const encoders = {
 
 // #region [audit]
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const blockedBoth = '\\(|\\)|\\[|\\]|\\{|\\}|:|\\|';
+const tokenRegex = (word: string) =>
+  new RegExp(`(^|\\s|${blockedBoth})${escapeRegex(word)}(\\s|,|$|${blockedBoth})`, 'm');
 const blockedRegex = blocked.map((word) => ({
   word,
-  regex: new RegExp(`(^|\\s|\\(|\\))${escapeRegex(word)}(\\s|,|$|\\(|\\))`, 'm'),
+  regex: tokenRegex(word),
 }));
-export const auditMetaData = (meta: AsyncReturnType<typeof getMetadata>) => {
-  const blockedFor = blockedRegex
+const blockedNSFWRegex = blockedNSFW.map((word) => ({
+  word,
+  regex: tokenRegex(word),
+}));
+export const auditMetaData = (
+  meta: AsyncReturnType<typeof getMetadata> | undefined,
+  nsfw: boolean
+) => {
+  if (!meta) return { blockedFor: [], success: true };
+
+  const blockList = nsfw ? blockedNSFWRegex : blockedRegex;
+  const blockedFor = blockList
     .filter(({ regex }) => meta?.prompt && regex.test(meta.prompt))
     .map((x) => x.word);
   return { blockedFor, success: !blockedFor.length };
+};
+
+export const detectNsfwImage = ({ porn, hentai, sexy }: ImageAnalysisInput) => {
+  const isNSFW = porn + hentai + sexy * 0.5 > 0.6; // If the sum of sketchy probabilities is greater than 0.6, it's NSFW
+  return isNSFW;
+};
+
+const MINOR_DETECTION_AGE = 20;
+export const getNeedsReview = ({
+  nsfw,
+  analysis,
+}: {
+  nsfw?: boolean;
+  analysis?: ImageAnalysisInput;
+}) => {
+  const assessedNSFW = analysis ? detectNsfwImage(analysis) : true; // Err on side of caution
+  const assessedMinor = analysis?.faces && analysis.faces.some((x) => x.age <= MINOR_DETECTION_AGE);
+  const needsReview = (nsfw === true || assessedNSFW) && assessedMinor;
+
+  return needsReview;
 };
 // #endregion

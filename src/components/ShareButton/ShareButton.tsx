@@ -30,7 +30,7 @@ export function ShareButton({
 
 function DesktopShare({ children, url }: { children: React.ReactElement; url: string }) {
   return (
-    <Popover position="bottom" withArrow width="100%">
+    <Popover position="bottom" withArrow width="100%" styles={{ dropdown: { maxWidth: 400 } }}>
       <Popover.Target>{children}</Popover.Target>
       <Popover.Dropdown>
         <Group spacing="xs" noWrap>

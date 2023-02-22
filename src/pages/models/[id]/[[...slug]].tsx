@@ -42,7 +42,7 @@ import {
 import startCase from 'lodash/startCase';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
-import Router from 'next/router';
+import Router, { useRouter } from 'next/router';
 import { useEffect, useRef } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -51,7 +51,7 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
@@ -94,6 +94,10 @@ import { Announcements } from '~/components/Announcements/Announcements';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { ModelById } from '~/types/router';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
+import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
+import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
+import truncate from 'lodash/truncate';
 
 //TODO - Break model query into multiple queries
 /*
@@ -182,9 +186,6 @@ const useStyles = createStyles((theme) => ({
 
   // Increase carousel control arrow size
   control: {
-    minWidth: 56,
-    minHeight: 56,
-
     svg: {
       width: 24,
       height: 24,
@@ -209,6 +210,7 @@ export default function ModelDetail({
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();
+  const { connected: civitaiLinked } = useCivitaiLink();
 
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
 
@@ -341,8 +343,7 @@ export default function ModelDetail({
   // Latest version is the first one based on sorting (createdAt - desc)
   const latestVersion = model.modelVersions[0];
   const primaryFile = getPrimaryFile(latestVersion?.files, {
-    format: currentUser?.preferredModelFormat,
-    type: currentUser?.preferredPrunedModel ? 'Pruned Model' : undefined,
+    metadata: currentUser?.filePreferences,
   });
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
@@ -353,7 +354,7 @@ export default function ModelDetail({
   const meta = (
     <Meta
       title={`${model.name} | Stable Diffusion ${model.type} | Civitai`}
-      description={removeTags(model.description ?? '')}
+      description={truncate(removeTags(model.description ?? ''), { length: 150 })}
       image={
         nsfw || latestVersion?.images[0]?.url == null
           ? undefined
@@ -459,6 +460,36 @@ export default function ModelDetail({
     },
   ];
 
+  const primaryFileDetails = primaryFile && (
+    <Group position="apart" noWrap spacing={0}>
+      <VerifiedText file={primaryFile} />
+      <Text size="xs" color="dimmed">
+        {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+        {primaryFile.metadata.format}
+      </Text>
+    </Group>
+  );
+
+  const downloadMenuItems = latestVersion?.files.map((file, index) => (
+    <Menu.Item
+      key={index}
+      component="a"
+      py={4}
+      icon={<VerifiedText file={file} iconOnly />}
+      href={createModelFileDownloadUrl({
+        versionId: latestVersion.id,
+        type: file.type,
+        format: file.metadata.format,
+      })}
+      download
+    >
+      {`${startCase(file.type)}${
+        ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
+      } (${formatKBytes(file.sizeKB)})`}
+    </Menu.Item>
+  ));
+  const displayCivitaiLink = civitaiLinked && latestVersion?.hashes.length > 0;
+
   return (
     <>
       {meta}
@@ -561,11 +592,8 @@ export default function ModelDetail({
                         Delete Model
                       </Menu.Item>
                       <Menu.Item
-                        // component={NextLink}
-                        // href={`/models/${id}/${slug}?edit=true`}
                         icon={<IconEdit size={14} stroke={1.5} />}
                         onClick={() => openRoutedContext('modelEdit', { modelId: model.id })}
-                        // shallow
                       >
                         Edit Model
                       </Menu.Item>
@@ -636,56 +664,51 @@ export default function ModelDetail({
                 </Box>
                 <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
                   {latestVersion.canDownload ? (
-                    <Stack sx={{ flex: 1 }} spacing={4}>
-                      <MultiActionButton
-                        component="a"
-                        href={createModelFileDownloadUrl({
-                          versionId: latestVersion.id,
-                          primary: true,
-                        })}
-                        leftIcon={<IconDownload size={16} />}
-                        disabled={!primaryFile}
-                        menuItems={
-                          latestVersion?.files.length > 1
-                            ? latestVersion?.files.map((file, index) => (
-                                <Menu.Item
-                                  key={index}
-                                  component="a"
-                                  py={4}
-                                  icon={<VerifiedText file={file} iconOnly />}
-                                  href={createModelFileDownloadUrl({
-                                    versionId: latestVersion.id,
-                                    type: file.type,
-                                    format: file.format,
-                                  })}
-                                  download
-                                >
-                                  {`${startCase(file.type)}${
-                                    ['Model', 'Pruned Model'].includes(file.type)
-                                      ? ' ' + file.format
-                                      : ''
-                                  } (${formatKBytes(file.sizeKB)})`}
-                                </Menu.Item>
-                              ))
-                            : []
-                        }
-                        menuTooltip="Other Downloads"
-                        download
-                      >
-                        <Text align="center">
-                          {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
-                        </Text>
-                      </MultiActionButton>
-                      {primaryFile && (
-                        <Group position="apart" noWrap spacing={0}>
-                          <VerifiedText file={primaryFile} />
-                          <Text size="xs" color="dimmed">
-                            {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                            {primaryFile.format}
+                    displayCivitaiLink ? (
+                      <Stack sx={{ flex: 1 }} spacing={4}>
+                        <CivitiaLinkManageButton
+                          modelId={model.id}
+                          modelVersionId={latestVersion.id}
+                          modelName={model.name}
+                          modelType={model.type}
+                          hashes={latestVersion.hashes}
+                          noTooltip
+                        >
+                          {({ color, onClick, ref, icon, label }) => (
+                            <Button
+                              ref={ref}
+                              color={color}
+                              onClick={onClick}
+                              leftIcon={icon}
+                              disabled={!primaryFile}
+                            >
+                              {label}
+                            </Button>
+                          )}
+                        </CivitiaLinkManageButton>
+                        {primaryFileDetails}
+                      </Stack>
+                    ) : (
+                      <Stack sx={{ flex: 1 }} spacing={4}>
+                        <MultiActionButton
+                          component="a"
+                          href={createModelFileDownloadUrl({
+                            versionId: latestVersion.id,
+                            primary: true,
+                          })}
+                          leftIcon={<IconDownload size={16} />}
+                          disabled={!primaryFile}
+                          menuItems={downloadMenuItems.length > 1 ? downloadMenuItems : []}
+                          menuTooltip="Other Downloads"
+                          download
+                        >
+                          <Text align="center">
+                            {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
                           </Text>
-                        </Group>
-                      )}
-                    </Stack>
+                        </MultiActionButton>
+                        {primaryFileDetails}
+                      </Stack>
+                    )
                   ) : (
                     <Stack sx={{ flex: 1 }} spacing={4}>
                       <JoinPopover>
@@ -695,19 +718,33 @@ export default function ModelDetail({
                           </Text>
                         </Button>
                       </JoinPopover>
-                      {primaryFile && (
-                        <Group position="apart" noWrap spacing={0}>
-                          <VerifiedText file={primaryFile} />
-                          <Text size="xs" color="dimmed">
-                            {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                            {primaryFile.format}
-                          </Text>
-                        </Group>
-                      )}
+                      {primaryFileDetails}
                     </Stack>
                   )}
-
-                  <RunButton modelVersionId={latestVersion.id} />
+                  {displayCivitaiLink ? (
+                    latestVersion.canDownload ? (
+                      <Menu position="bottom-end">
+                        <Menu.Target>
+                          <Tooltip label="Download options" withArrow>
+                            <Button px={0} w={36} variant="light">
+                              <IconDownload />
+                            </Button>
+                          </Tooltip>
+                        </Menu.Target>
+                        <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
+                      </Menu>
+                    ) : (
+                      <JoinPopover>
+                        <Tooltip label="Download options" withArrow>
+                          <Button px={0} w={36} variant="light">
+                            <IconDownload />
+                          </Button>
+                        </Tooltip>
+                      </JoinPopover>
+                    )
+                  ) : (
+                    <RunButton modelVersionId={latestVersion.id} />
+                  )}
                   <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
                     <div>
                       <LoginRedirect reason="favorite-model">
@@ -826,6 +863,8 @@ export default function ModelDetail({
                 <ModelVersions
                   type={model.type}
                   items={model.modelVersions}
+                  modelId={model.id}
+                  modelName={model.name}
                   initialTab={latestVersion?.id.toString()}
                   nsfw={model.nsfw}
                   locked={model.locked}
@@ -907,6 +946,7 @@ function ModelCarousel({
   latestVersion: ModelById['modelVersions'][number];
   mobile?: boolean;
 }) {
+  const router = useRouter();
   const { classes } = useStyles();
   if (!latestVersion.images.length) return null;
 
@@ -920,6 +960,7 @@ function ModelCarousel({
       align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
       slidesToScroll={mobile ? 1 : 2}
       withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+      controlSize={56}
       loop
     >
       <ImageGuard
@@ -931,6 +972,7 @@ function ModelCarousel({
             <Center style={{ height: '100%', width: '100%' }}>
               <div style={{ width: '100%', position: 'relative' }}>
                 <ImageGuard.ToggleConnect />
+                <ImageGuard.ReportNSFW />
                 <ImageGuard.Unsafe>
                   <AspectRatio
                     ratio={(image.width ?? 1) / (image.height ?? 1)}
@@ -944,22 +986,28 @@ function ModelCarousel({
                   </AspectRatio>
                 </ImageGuard.Unsafe>
                 <ImageGuard.Safe>
-                  <ImagePreview
-                    image={image}
-                    edgeImageProps={{ width: 400 }}
-                    radius="md"
-                    onClick={() =>
-                      openRoutedContext('galleryDetailModal', {
-                        galleryImageId: image.id,
-                        modelId: model.id,
-                        modelVersionId: latestVersion.id,
-                        infinite: false,
-                        returnUrl: Router.asPath,
-                      })
-                    }
-                    style={{ width: '100%' }}
-                    withMeta
-                  />
+                  <AnchorNoTravel
+                    href={`/gallery/${image.id}?modelId=${model.id}&modelVersionId=${
+                      latestVersion.id
+                    }&infinite=false&returnUrl=${encodeURIComponent(router.asPath)}`}
+                  >
+                    <ImagePreview
+                      image={image}
+                      edgeImageProps={{ width: 400 }}
+                      radius="md"
+                      onClick={() =>
+                        openRoutedContext('galleryDetailModal', {
+                          galleryImageId: image.id,
+                          modelId: model.id,
+                          modelVersionId: latestVersion.id,
+                          infinite: false,
+                          returnUrl: Router.asPath,
+                        })
+                      }
+                      style={{ width: '100%' }}
+                      withMeta
+                    />
+                  </AnchorNoTravel>
                 </ImageGuard.Safe>
               </div>
             </Center>

@@ -41,7 +41,7 @@ import {
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { useRouter } from 'next/router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
@@ -71,7 +71,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useCatchNavigation } from '~/hooks/useCatchNavigation';
+// import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { isBetweenToday } from '~/utils/date-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -80,6 +80,8 @@ import Link from 'next/link';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { NextLink } from '@mantine/next';
+import { useCatchNavigation } from '~/store/catch-navigation.store';
+import { useS3UploadStore } from '~/store/s3-upload.store';
 
 /**NOTES**
   - If a model depicts an actual person, it cannot have nsfw content
@@ -139,6 +141,7 @@ export function ModelForm({ model }: Props) {
   const mobile = useIsMobile();
   const user = useCurrentUser();
   const editing = !!model;
+  const test = useS3UploadStore((state) => state.upload);
 
   const { data: { items: tags } = { items: [] }, isLoading: loadingTags } =
     trpc.tag.getAll.useQuery(
@@ -150,9 +153,11 @@ export function ModelForm({ model }: Props) {
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
   const [complete, setComplete] = useState<Record<string, boolean>>({});
   const [blocked, setBlocked] = useState<Record<string, boolean>>({});
+  const [error, setError] = useState<Record<string, boolean>>({});
   const isBlocked = Object.values(blocked).some((bool) => bool);
   const isComplete = Object.values(complete).every((bool) => bool);
   const isUploading = Object.values(uploading).some((bool) => bool);
+  const isImageUploadError = Object.values(error).some((bool) => bool);
 
   const defaultModelFile = {
     name: '',
@@ -185,23 +190,22 @@ export function ModelForm({ model }: Props) {
     type: model?.type ?? ModelType.Checkpoint,
     status: model?.status ?? ModelStatus.Published,
     tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
-    modelVersions: model?.modelVersions.map(
-      ({ trainedWords, images, files, baseModel, ...version }) => ({
-        ...version,
-        uuid: uuidv4(),
-        baseModel: (baseModel as BaseModel) ?? defaultModelVersion.baseModel,
-        trainedWords: trainedWords,
-        skipTrainedWords: !trainedWords.length,
-        // HOTFIX: Casting image.meta type issue with generated prisma schema
-        images: images.map((image) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
-        // HOTFIX: Casting files to defaultModelFile[] to avoid type confusion and accept room for error
-        files: files.length > 0 ? (files as typeof defaultModelFile[]) : [defaultModelFile],
-        earlyAccessTimeFrame:
-          version.earlyAccessTimeFrame && features.earlyAccessModel
-            ? String(version.earlyAccessTimeFrame)
-            : '0',
-      })
-    ) ?? [defaultModelVersion],
+    modelVersions: model?.modelVersions.map(({ images, files, baseModel, ...version }) => ({
+      ...version,
+      uuid: uuidv4(),
+      baseModel: (baseModel as BaseModel) ?? defaultModelVersion.baseModel,
+      skipTrainedWords:
+        !version.trainedWords.length ||
+        !['Checkpoint', 'TextualInversion', 'LORA'].includes(model?.type ?? ''),
+      // HOTFIX: Casting image.meta type issue with generated prisma schema
+      images: images.map((image) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
+      // HOTFIX: Casting files to defaultModelFile[] to avoid type confusion and accept room for error
+      files: files.length > 0 ? (files as (typeof defaultModelFile)[]) : [defaultModelFile],
+      earlyAccessTimeFrame:
+        version.earlyAccessTimeFrame && features.earlyAccessModel
+          ? String(version.earlyAccessTimeFrame)
+          : '0',
+    })) ?? [defaultModelVersion],
   };
 
   const form = useForm({
@@ -222,7 +226,11 @@ export function ModelForm({ model }: Props) {
   });
 
   const { isDirty, isSubmitted, errors } = form.formState;
-  useCatchNavigation({ unsavedChanges: isDirty && !isSubmitted });
+  // useCatchNavigation({ unsavedChanges: isDirty && !isSubmitted });
+  useCatchNavigation({
+    name: 'model-form',
+    predicate: isDirty && !isSubmitted,
+  });
 
   const tagsOnModels = form.watch('tagsOnModels');
 
@@ -387,11 +395,14 @@ export function ModelForm({ model }: Props) {
           const trainedWords = modelVersion.trainedWords ?? [];
           const [firstWord] = trainedWords;
 
+          form.setValue(`modelVersions.${index}.skipTrainedWords`, false);
           if (firstWord) form.setValue(`modelVersions.${index}.trainedWords`, [firstWord]);
         });
         break;
       case 'Hypernetwork':
       case 'AestheticGradient':
+      case 'Controlnet':
+      case 'Poses':
         modelVersions.forEach((_, index) => {
           form.setValue(`modelVersions.${index}.trainedWords`, []);
           form.setValue(`modelVersions.${index}.skipTrainedWords`, true);
@@ -458,7 +469,6 @@ export function ModelForm({ model }: Props) {
                           value: type,
                         }))}
                         onChange={handleModelTypeChange}
-                        disabled={editing}
                         withAsterisk
                       />
                       {type === 'Checkpoint' && (
@@ -499,6 +509,7 @@ export function ModelForm({ model }: Props) {
                     name="tagsOnModels"
                     label="Tags"
                     placeholder="e.g.: portraits, landscapes, anime, etc."
+                    limit={50}
                     data={tagsData}
                     getCreateLabel={(query) => `+ Create ${query} tag`}
                     onCreate={(query) => {
@@ -529,7 +540,13 @@ export function ModelForm({ model }: Props) {
                   size="xs"
                   leftIcon={<IconPlus size={16} />}
                   variant="outline"
-                  onClick={() => prepend({ ...defaultModelVersion, uuid: uuidv4() })}
+                  onClick={() =>
+                    prepend({
+                      ...defaultModelVersion,
+                      uuid: uuidv4(),
+                      skipTrainedWords: !acceptsTrainedWords,
+                    })
+                  }
                   compact
                 >
                   Add Version
@@ -539,7 +556,7 @@ export function ModelForm({ model }: Props) {
               {modelVersions.map((version, index) => {
                 const trainedWords = form.watch(`modelVersions.${index}.trainedWords`) ?? [];
                 const skipTrainedWords =
-                  !isTextualInversion &&
+                  !acceptsTrainedWords &&
                   (form.watch(`modelVersions.${index}.skipTrainedWords`) ?? false);
                 const name = form.watch(`modelVersions.${index}.name`) ?? '';
                 const showEarlyAccess =
@@ -791,6 +808,7 @@ export function ModelForm({ model }: Props) {
                             withAsterisk
                             onChange={(values) => {
                               const isBlocked = values.some((x) => x.status === 'blocked');
+                              const isError = values.some((x) => x.status === 'error');
                               const isComplete = values
                                 .filter((x) => x.status)
                                 .every((x) => x.status === 'complete');
@@ -798,6 +816,7 @@ export function ModelForm({ model }: Props) {
                               setUploading((state) => ({ ...state, [version.uuid]: isUploading }));
                               setBlocked((state) => ({ ...state, [version.uuid]: isBlocked }));
                               setComplete((state) => ({ ...state, [version.uuid]: isComplete }));
+                              setError((state) => ({ ...state, [version.uuid]: isError }));
                             }}
                           />
                         </Grid.Col>
@@ -885,6 +904,9 @@ export function ModelForm({ model }: Props) {
                       },
                     ]}
                   />
+                  <Text size="xs" color="dimmed">
+                    These are requests, not a formal license.
+                  </Text>
                 </Stack>
               </Paper>
               <Paper radius="md" p="xl" withBorder>
@@ -934,6 +956,20 @@ export function ModelForm({ model }: Props) {
                     Please revise the content of this listing to ensure no images contain content
                     that could constitute a TOS violation.
                   </Text>
+                </>
+              )}
+              {isImageUploadError && (
+                <>
+                  <Alert color="red" pl={10}>
+                    <Group noWrap spacing={10}>
+                      <ThemeIcon color="red">
+                        <IconExclamationMark />
+                      </ThemeIcon>
+                      <Text size="xs" sx={{ lineHeight: 1.2 }}>
+                        Image Upload Error
+                      </Text>
+                    </Group>
+                  </Alert>
                 </>
               )}
               <Group position="right">

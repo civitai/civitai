@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { z } from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { ModelHashType, Prisma } from '@prisma/client';
@@ -29,7 +29,7 @@ export default ModEndpoint(
       return;
     }
 
-    const modelFiles = await prisma.modelFile.findMany({
+    const modelFiles = await dbWrite.modelFile.findMany({
       where: { OR },
       select: { rawScanResult: true, id: true },
     });
@@ -38,9 +38,9 @@ export default ModEndpoint(
       const scanResult = rawScanResult as Prisma.JsonObject;
       if (!scanResult?.hashes) continue;
 
-      await prisma.$transaction([
-        prisma.modelHash.deleteMany({ where: { fileId } }),
-        prisma.modelHash.createMany({
+      await dbWrite.$transaction([
+        dbWrite.modelFileHash.deleteMany({ where: { fileId } }),
+        dbWrite.modelFileHash.createMany({
           data: Object.entries(scanResult.hashes)
             .filter(([type, hash]) => hashTypeMap[type.toLowerCase()] && hash)
             .map(([type, hash]) => ({

@@ -1,4 +1,4 @@
-import { prisma } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import {
   AddAPIKeyInput,
   DeleteAPIKeyInput,
@@ -9,7 +9,7 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 
 export function getApiKey({ id }: GetAPIKeyInput) {
-  return prisma.apiKey.findUnique({
+  return dbRead.apiKey.findUnique({
     where: { id },
     select: {
       scope: true,
@@ -19,7 +19,7 @@ export function getApiKey({ id }: GetAPIKeyInput) {
 }
 
 export function getUserApiKeys({ take, skip, userId }: GetUserAPIKeysInput & { userId: number }) {
-  return prisma.apiKey.findMany({
+  return dbRead.apiKey.findMany({
     take,
     skip,
     where: { userId },
@@ -36,7 +36,7 @@ export async function addApiKey({ name, scope, userId }: AddAPIKeyInput & { user
   const key = generateKey();
   const secret = generateSecretHash(key);
 
-  await prisma.apiKey.create({
+  await dbWrite.apiKey.create({
     data: {
       scope,
       name,
@@ -49,7 +49,7 @@ export async function addApiKey({ name, scope, userId }: AddAPIKeyInput & { user
 }
 
 export function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId: number }) {
-  return prisma.apiKey.deleteMany({
+  return dbWrite.apiKey.deleteMany({
     where: {
       userId,
       id,

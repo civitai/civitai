@@ -27,7 +27,7 @@ import { showSuccessNotification, showErrorNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';
 import { useRouter } from 'next/router';
-import { openModal } from '@mantine/modals';
+import { useImageStore } from '~/store/images.store';
 
 const reports = [
   {
@@ -86,6 +86,7 @@ export default createRoutedContext({
     const router = useRouter();
     const modelId = router.query.modelId ? Number(router.query.modelId) : undefined;
     const reviewId = router.query.reviewId ? Number(router.query.reviewId) : undefined;
+    const setImage = useImageStore((state) => state.setImage);
     // #endregion
 
     //TODO - redirect if no user is authenticated
@@ -148,45 +149,8 @@ export default createRoutedContext({
               await queryUtils.comment.getCommentsById.invalidate();
               break;
             case ReportEntity.Image:
-              if (variables.reason === ReportReason.NSFW)
-                await queryUtils.image.getGalleryImageDetail.invalidate();
-              await queryUtils.image.getGalleryImagesInfinite.invalidate();
-              await queryUtils.image.getGalleryImages.invalidate();
-              // review invalidate
-              if (reviewId) {
-                await queryUtils.review.getDetail.setData(
-                  { id: reviewId },
-                  produce((old) => {
-                    if (old) {
-                      if (variables.reason === ReportReason.NSFW) {
-                        const index = old.images.findIndex((x) => x.id === variables.id);
-                        if (index > -1) old.images[index].nsfw = true;
-                      }
-                    }
-                  })
-                );
-              }
-              await queryUtils.review.getAll.invalidate();
-              // model invalidate
-              if (modelId) {
-                queryUtils.model.getById.setData(
-                  { id: modelId },
-                  produce((old) => {
-                    if (old) {
-                      if (variables.reason === ReportReason.NSFW) {
-                        const [modelVersionIndex, imageIndex] = old.modelVersions.reduce<
-                          [number, number]
-                        >((acc, value, modelVersionIndex) => {
-                          const imageIndex = value.images.findIndex((x) => x.id === variables.id);
-                          return imageIndex > -1 ? [modelVersionIndex, imageIndex] : acc;
-                        }, [] as any);
-                        if (modelVersionIndex > -1 && imageIndex > -1)
-                          old.modelVersions[modelVersionIndex].images[imageIndex].nsfw = true;
-                      }
-                    }
-                  })
-                );
-                await queryUtils.model.getAll.invalidate();
+              if (variables.reason === ReportReason.NSFW) {
+                setImage({ id: variables.id, nsfw: true });
               }
               break;
             default:
