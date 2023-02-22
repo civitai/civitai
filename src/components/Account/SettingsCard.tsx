@@ -28,6 +28,13 @@ export function SettingsCard() {
       <Stack>
         <Title order={2}>Browsing Settings</Title>
         <Switch
+          name="autoplayGifs"
+          label="Autoplay GIFs"
+          defaultChecked={user.autoplayGifs}
+          disabled={isLoading}
+          onChange={(e) => mutate({ ...user, autoplayGifs: e.target.checked })}
+        />
+        <Switch
           name="showNsfw"
           label="Show me adult content"
           description="If you are not of legal age to view adult content, please do not enable this option"

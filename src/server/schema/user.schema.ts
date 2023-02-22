@@ -26,6 +26,7 @@ export const userUpdateSchema = z.object({
   preferredPrunedModel: z.boolean().optional(),
   badgeId: z.number().nullish(),
   nameplateId: z.number().nullish(),
+  autoplayGifs: z.boolean().optional(),
 });
 export type UserUpdateInput = z.input<typeof userUpdateSchema>;
 
