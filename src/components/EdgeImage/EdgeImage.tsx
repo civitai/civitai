@@ -39,7 +39,7 @@ export function EdgeImage({
   blur,
   quality,
   gravity,
-  metadata = 'keep',
+  metadata,
   ...imgProps
 }: EdgeImageProps) {
   const currentUser = useCurrentUser();
