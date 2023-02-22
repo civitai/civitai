@@ -74,6 +74,7 @@ const licensingSchema = z.object({
   allowDifferentLicense: z.boolean().optional(),
 });
 
+export type ModelInput = z.infer<typeof modelSchema>;
 export const modelSchema = licensingSchema.extend({
   id: z.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
@@ -90,7 +91,6 @@ export const modelSchema = licensingSchema.extend({
     .min(1, 'At least one model version is required.'),
   // mergePermissions: licensingSchema.array().optional(),
 });
-export type ModelInput = z.infer<typeof modelSchema>;
 
 export type MergePermissionInput = z.infer<typeof mergePermissionInput>;
 export const mergePermissionInput = licensingSchema.extend({
@@ -100,3 +100,17 @@ export const mergePermissionInput = licensingSchema.extend({
 
 export const deleteModelSchema = getByIdSchema.extend({ permanently: z.boolean().optional() });
 export type DeleteModelSchema = z.infer<typeof deleteModelSchema>;
+
+export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
+export const modelUpsertSchema = licensingSchema.extend({
+  id: z.number().optional(),
+  name: z.string().min(1, 'Name cannot be empty.'),
+  description: getSanitizedStringSchema().nullish(),
+  type: z.nativeEnum(ModelType),
+  status: z.nativeEnum(ModelStatus),
+  checkpointType: z.nativeEnum(CheckpointType).nullish(),
+  tagsOnModels: z.array(tagSchema).nullish(),
+  nsfw: z.boolean().optional(),
+  poi: z.boolean().optional(),
+  locked: z.boolean().optional(),
+});

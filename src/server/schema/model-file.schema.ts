@@ -10,3 +10,13 @@ export const modelFileSchema = z.object({
 });
 
 export type ModelFileInput = z.infer<typeof modelFileSchema>;
+
+export type ModelFileUpsertInput = z.infer<typeof modelFileUpsertSchema>;
+export const modelFileUpsertSchema = z.object({
+  id: z.number().optional(),
+  name: z.string(),
+  url: z.string().url().min(1, 'You must select a file'),
+  sizeKB: z.number(),
+  type: z.enum(constants.modelFileTypes),
+  modelVersionId: z.number(),
+});

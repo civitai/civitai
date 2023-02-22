@@ -390,6 +390,7 @@ model ModelVersion {
   rank             ModelVersionRank?
   downloads        DownloadHistory[]
   imageConnections ImageConnection[]
+  imageResources   ImageResource[]
 }
 
 enum ModelVersionEngagementType {
@@ -457,8 +458,6 @@ model ModelFile {
   scanRequestedAt   DateTime?
   rawScanResult     Json?
   hashes            ModelHash[]
-
-  @@unique([modelVersionId, type, format])
 }
 
 enum MetricTimeframe {
@@ -627,6 +626,15 @@ model ReviewReaction {
   @@unique([reviewId, userId, reaction])
 }
 
+model Post {
+  id     Int          @id @default(autoincrement())
+  nsfw   Boolean      @default(false)
+  title  String?
+  detail String?
+  images Image[]
+  tags   TagsOnPost[]
+}
+
 enum ImageGenerationProcess {
   txt2img
   txt2imgHiRes
@@ -651,6 +659,8 @@ model Image {
   analysis          Json?
   generationProcess ImageGenerationProcess?
   featuredAt        DateTime?
+  postId            Int?
+  post              Post?                   @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?
@@ -663,6 +673,19 @@ model Image {
   stats           ImageStat?
   rank            ImageRank?
   modHelper       ImageModHelper?
+  resources       ImageResource[]
+}
+
+model ImageResource {
+  id             Int           @id @default(autoincrement())
+  modelVersionId Int?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  name           String?
+  imageId        Int
+  image          Image         @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  detected       Boolean       @default(false)
+
+  @@unique([modelVersionId, name, imageId])
 }
 
 model ImageMetric {
@@ -724,6 +747,7 @@ model Tag {
   tagsOnModels   TagsOnModels[]
   tagsOnQuestion TagsOnQuestions[]
   tagsOnImage    TagsOnImage[]
+  tagsOnPosts    TagsOnPost[]
   usersEngaged   TagEngagement[]
   metrics        TagMetric[]
   stats          TagStat?
@@ -759,6 +783,16 @@ model TagsOnImage {
   createdAt DateTime @default(now())
 
   @@id([tagId, imageId])
+}
+
+model TagsOnPost {
+  postId    Int
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([tagId, postId])
 }
 
 model TagMetric {

@@ -41,3 +41,17 @@ export const modelVersionUpsertSchema = z.object({
   earlyAccessTimeFrame: z.number().min(0).max(5).optional(),
   // recipe: z.array(recipeSchema).optional(),
 });
+
+export type ModelVersionUpsertInput = z.infer<typeof modelVersionUpsertSchema2>;
+export const modelVersionUpsertSchema2 = z.object({
+  id: z.number().optional(),
+  name: z.string().min(1, 'Name cannot be empty.'),
+  baseModel: z.enum(constants.baseModels),
+  description: getSanitizedStringSchema({
+    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
+  }).nullish(),
+  steps: z.number().min(0).nullish(),
+  epochs: z.number().min(0).max(100000).nullish(),
+  trainedWords: z.array(z.string()).default([]),
+  earlyAccessTimeFrame: z.number().min(0).max(5).optional(),
+});

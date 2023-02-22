@@ -27,6 +27,14 @@ export const imageAnalysisSchema = z.object({
   sexy: z.number(),
 });
 
+export type ImageResourceUpsertInput = z.infer<typeof imageResourceUpsertSchema>;
+export const imageResourceUpsertSchema = z.object({
+  id: z.number().optional(),
+  modelVersionId: z.number().optional(),
+  name: z.string().optional(),
+  detected: z.boolean().optional(),
+});
+
 export const imageSchema = z.object({
   id: z.number().optional(),
   name: z.string().nullish(),
@@ -45,6 +53,8 @@ export const imageSchema = z.object({
   nsfw: z.boolean().optional(),
   analysis: imageAnalysisSchema.optional(),
   tags: z.array(tagSchema).optional(),
+  postId: z.number().optional(),
+  resources: z.array(imageResourceUpsertSchema).optional(),
 });
 
 export type ImageUploadProps = z.infer<typeof imageSchema>;

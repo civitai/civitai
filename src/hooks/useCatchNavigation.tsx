@@ -1,7 +1,8 @@
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 
-type Props = { unsavedChanges?: boolean };
+type Props = { unsavedChanges?: boolean; message?: string };
+// TODO.posts - props for hook to know only to catch navigation when leaving the site
 
 export function useCatchNavigation({ unsavedChanges = false }: Props) {
   const router = useRouter();
