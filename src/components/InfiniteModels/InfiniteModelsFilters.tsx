@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useEffect } from 'react';
 import { ModelType, MetricTimeframe, CheckpointType, ModelStatus } from '@prisma/client';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
@@ -34,7 +35,7 @@ export const useFilters = create<{
   setTypes: (types?: ModelType[]) => void;
   setCheckpointType: (checkpointType?: CheckpointType) => void;
   setBaseModels: (baseModels?: BaseModel[]) => void;
-  setBrowsingMode: (browsingMode?: BrowsingMode) => void;
+  setBrowsingMode: (browsingMode?: BrowsingMode, keep?: boolean) => void;
   setStatus: (status?: ModelStatus[]) => void;
 }>()(
   immer((set) => ({
@@ -69,10 +70,12 @@ export const useFilters = create<{
         !!baseModels?.length ? setCookie('f_baseModels', baseModels) : deleteCookie('f_baseModels');
       });
     },
-    setBrowsingMode: (browsingMode) => {
+    setBrowsingMode: (browsingMode, keep = false) => {
       set((state) => {
         state.filters.browsingMode = browsingMode;
-        browsingMode ? setCookie('f_browsingMode', browsingMode) : deleteCookie('f_browsingMode');
+        browsingMode && keep
+          ? setCookie('f_browsingMode', browsingMode)
+          : deleteCookie('f_browsingMode');
       });
     },
     setStatus: (status) => {
@@ -160,9 +163,7 @@ export function InfiniteModelsFilter() {
   const status = useFilters((state) => state.filters.status ?? cookies.status ?? []);
   const setBaseModels = useFilters((state) => state.setBaseModels);
   const baseModels = useFilters((state) => state.filters.baseModels ?? cookies.baseModels ?? []);
-  const browsingMode = useFilters(
-    (state) => state.filters.browsingMode ?? cookies.browsingMode ?? defaultBrowsingMode
-  );
+  const browsingMode = useFilters((state) => state.filters.browsingMode ?? cookies.browsingMode);
   const setBrowsingMode = useFilters((state) => state.setBrowsingMode);
   const setCheckpointType = useFilters((state) => state.setCheckpointType);
   const checkpointType = useFilters(
@@ -170,6 +171,10 @@ export function InfiniteModelsFilter() {
   );
   const showNSFWToggle = !user || user.showNsfw;
   const showCheckpointType = !types?.length || types.includes('Checkpoint');
+
+  useEffect(() => {
+    if (browsingMode === undefined) setBrowsingMode(defaultBrowsingMode);
+  }, [browsingMode, defaultBrowsingMode, setBrowsingMode]);
 
   const filterLength =
     types.length +
@@ -233,7 +238,7 @@ export function InfiniteModelsFilter() {
                   { label: 'Everything', value: 'All' },
                 ]}
                 onChange={(value) => {
-                  setBrowsingMode(value as BrowsingMode);
+                  setBrowsingMode(value as BrowsingMode, true);
                 }}
               />
             </>
