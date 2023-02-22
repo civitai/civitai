@@ -15,6 +15,7 @@ import { getRandomInt } from '~/utils/number-helpers';
 import { sendVerificationRequest } from '~/server/auth/verificationEmail';
 import { refreshToken, invalidateSession } from '~/server/utils/session-helpers';
 import { deleteCookie, getCookies, setCookie } from 'cookies-next';
+import { getSessionUser } from '~/server/services/user.service';
 
 const setUserName = async (email: string) => {
   try {
@@ -58,17 +59,21 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
     jwt: async ({ token, user }) => {
       if (req.url === '/api/auth/session?update') {
         invalidateSession(Number(token.sub));
+        const user = await getSessionUser({ userId: Number(token.sub) });
+        token.user = user;
+      } else {
+        token.sub = Number(token.sub) as any; //eslint-disable-line
+        if (user) token.user = user;
+        const { deletedAt, ...restUser } = token.user as User;
+        token.user = { ...restUser };
       }
-
-      token.sub = Number(token.sub) as any; //eslint-disable-line
-      if (user) token.user = user;
-      const { deletedAt, ...restUser } = token.user as User;
-      token.user = { ...restUser };
 
       return token;
     },
     session: async ({ session, token }) => {
-      token = await refreshToken(token);
+      if (req.url !== '/api/auth/session?update') {
+        token = await refreshToken(token);
+      }
       session.user = (token.user ? token.user : session.user) as Session['user'];
       return session;
     },
