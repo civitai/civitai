@@ -2,7 +2,7 @@ import { ImageAnalysisInput } from '../server/schema/image.schema';
 import * as tf from '@tensorflow/tfjs';
 import { setWasmPaths } from '@tensorflow/tfjs-backend-wasm';
 import Queue from '~/utils/queue';
-import { env } from '~/env/client.mjs';
+import { env as clientEnv } from '~/env/client.mjs';
 import {
   WorkerIncomingMessage,
   WorkerOutgoingMessage,
@@ -68,7 +68,7 @@ const inintializeNsfwModel = async () => {
     model = await tf.loadLayersModel('indexeddb://model');
     console.log('Load NSFW Model!');
   } catch (e) {
-    model = await tf.loadLayersModel(env.NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION);
+    model = await tf.loadLayersModel(clientEnv.NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION);
     model.save('indexeddb://model');
     console.log('Save NSFW Model!');
   }
@@ -136,29 +136,32 @@ const humanConfig: Partial<H.Config> = {
   // gesture: { enabled: false },
   // segmentation: { enabled: false },
 };
-const detectFaces = async (img: ImageData) => {
-  if (!human) human = new H.Human(humanConfig);
-  try {
-    const { face } = await human.detect(img);
-    return face
-      ?.filter((f) => f.age)
-      .map((f) => ({
-        age: f.age,
-        gender: f.gender,
-        genderConfidence: f.genderScore,
-        emotions: f.emotion,
-        real: f.real,
-        live: f.live,
-      }));
-  } catch (e: any) {
-    console.error(e);
-  }
-};
 
 const start = async (port: MessagePort) => {
   if (!port.postMessage) return;
 
   const portReq = (req: WorkerOutgoingMessage) => port.postMessage(req);
+
+  const detectFaces = async (img: ImageData) => {
+    try {
+      if (!human) human = new H.Human(humanConfig);
+      portReq({ type: 'log', payload: { human } });
+      const { face } = await human.detect(img);
+      return face
+        ?.filter((f) => f.age)
+        .map((f) => ({
+          age: f.age,
+          gender: f.gender,
+          genderConfidence: f.genderScore,
+          emotions: f.emotion,
+          real: f.real,
+          live: f.live,
+        }));
+    } catch (e: any) {
+      console.error(e);
+      throw e;
+    }
+  };
 
   const handleAnalyze = async (payload: AnalyzePayload) => {
     for (let i = 0; i < payload.length; i++) {

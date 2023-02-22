@@ -188,7 +188,7 @@ export const auditMetaData = (meta: AsyncReturnType<typeof getMetadata>) => {
   return { blockedFor, success: !blockedFor.length };
 };
 
-export const detectNsfwImage = (analysis: ImageAnalysisInput) => {
+export const detectNsfwImage = ({ faces, ...analysis }: ImageAnalysisInput) => {
   const topResult = Object.entries(analysis)
     .sort((a, b) => b[1] - a[1])
     .map(([key]) => key)[0];

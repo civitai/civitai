@@ -31,7 +31,8 @@ export type WorkerOutgoingMessage =
   | { type: 'error'; payload: ErrorMessage }
   | { type: 'nsfw'; payload: AnalysisMessage }
   | { type: 'faces'; payload: AnalysisMessage }
-  | { type: 'status'; payload: StatusMessage };
+  | { type: 'status'; payload: StatusMessage }
+  | { type: 'log'; payload: any };
 
 export type AnalyzePayload = Array<{
   uuid: string;

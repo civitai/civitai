@@ -11,7 +11,7 @@ type ImageUpload = CustomFile;
 type QueueItem = { uuid: string; file: FileWithPath };
 
 export const useImageUpload = ({ max = 10, value }: { max?: number; value: CustomFile[] }) => {
-  const { scanImages, canUseScanner } = useImageProcessingContext();
+  const { scanImages } = useImageProcessingContext();
 
   // const [canUpload, setCanUpload] = useState(!supportsWebWorker);
   const [files, filesHandler] = useListState<ImageUpload>(value);
@@ -35,6 +35,7 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
           let status = 'processing';
           if (payload.blockedFor) status = 'blocked';
           else if (payload.status === 'finished') status = 'uploading';
+          console.log({ payload });
 
           filesHandler.setState(
             produce((state) => {
@@ -155,7 +156,6 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
     removeImage,
     upload: startProcessing,
     canUpload: true,
-    canUseScanner,
     // isCompleted,
     // isUploading,
     // isProcessing,

@@ -92,7 +92,6 @@ export function ImageUpload({
     filesHandler,
     removeImage,
     upload,
-    canUseScanner,
     // isCompleted,
     // isUploading,
     // isProcessing,
@@ -172,13 +171,6 @@ export function ImageUpload({
             </div>
           </Group>
         </Dropzone>
-        {!canUseScanner && files.length > 0 ? (
-          <AlertWithIcon color="red" iconColor="red" icon={<IconExclamationCircle />}>
-            The AI system that automatically identifies adult content cannot be run on your device.
-            Please review the content of your images and ensure that any adult content is
-            appropriately flagged.
-          </AlertWithIcon>
-        ) : null}
 
         {isClient && (
           <DndContext

@@ -19,12 +19,9 @@ type MessageCallback = (data: ScanImageMessage) => void;
 
 type NsfwWorkerState = {
   scanImages: (files: File[], cb: MessageCallback) => void;
-  canUseScanner: boolean;
 };
 
-const NsfwWorkerCtx = createContext<NsfwWorkerState>({
-  canUseScanner: false,
-} as NsfwWorkerState);
+const NsfwWorkerCtx = createContext<NsfwWorkerState>({} as any);
 const callbackQueue: Record<string, MessageCallback> = {};
 const processingQueue: Record<string, ImageProcessing> = {};
 
@@ -32,11 +29,10 @@ export const useImageProcessingContext = () => useContext(NsfwWorkerCtx);
 export const ImageProcessingProvider = ({ children }: { children: React.ReactNode }) => {
   const workerRef = useRef<SharedWorker>();
   const workerPromise = useRef<Promise<SharedWorker>>();
-  const noSharedWorker = typeof window === 'undefined' || !('SharedWorker' in window);
-  const supportsWebWorker = !noSharedWorker;
-  const noOffscrenCanvas = typeof window === 'undefined' || !('OffscreenCanvas' in window);
-  const supportsOffscreenCanvas = !noOffscrenCanvas;
-  const canUseScanner = supportsWebWorker && supportsOffscreenCanvas;
+  // const noSharedWorker = typeof window === 'undefined' || !('SharedWorker' in window);
+  // const supportsWebWorker = !noSharedWorker;
+  // const noOffscrenCanvas = typeof window === 'undefined' || !('OffscreenCanvas' in window);
+  // const supportsOffscreenCanvas = !noOffscrenCanvas;
 
   const getWorker = () => {
     if (workerPromise.current) return workerPromise.current;
@@ -55,6 +51,7 @@ export const ImageProcessingProvider = ({ children }: { children: React.ReactNod
       };
 
       worker.port.onmessage = async function ({ data }: { data: WorkerOutgoingMessage }) {
+        // console.log('worker message', { data });
         switch (data.type) {
           case 'ready':
             return handleReady();
@@ -66,7 +63,10 @@ export const ImageProcessingProvider = ({ children }: { children: React.ReactNod
             return handleNsfw(data.payload);
           case 'status':
             return handleStatus(data.payload);
+          case 'log':
+            return handleLog(data.payload);
           default:
+            console.log({ data });
             throw new Error('unsupported message type');
         }
       };
@@ -77,6 +77,7 @@ export const ImageProcessingProvider = ({ children }: { children: React.ReactNod
 
   const workerReq = async (req: WorkerIncomingMessage) => {
     const worker = await getWorker();
+    // console.log('worker', { worker, req });
     worker.port.postMessage(req);
   };
 
@@ -124,11 +125,7 @@ export const ImageProcessingProvider = ({ children }: { children: React.ReactNod
     workerReq({ type: 'analyze', payload });
   };
 
-  return (
-    <NsfwWorkerCtx.Provider value={{ scanImages, canUseScanner }}>
-      {children}
-    </NsfwWorkerCtx.Provider>
-  );
+  return <NsfwWorkerCtx.Provider value={{ scanImages }}>{children}</NsfwWorkerCtx.Provider>;
 };
 
 const handleError = (data: ErrorMessage) => {
@@ -181,4 +178,8 @@ const handleFaces = (data: AnalysisMessage) => {
     delete callbackQueue[data.uuid];
     delete processingQueue[data.uuid];
   }
+};
+
+const handleLog = (data: any) => {
+  console.log(data);
 };
