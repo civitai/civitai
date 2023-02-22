@@ -20,13 +20,14 @@ export async function refreshToken(token: JWT) {
   const user = token.user as User;
   if (!user.id) return token;
 
-  let invalidationDate: Date | undefined;
-  const allInvalidationDate = await redis.get('session:all');
-  if (allInvalidationDate) invalidationDate = new Date(allInvalidationDate);
-  else {
-    const redisDate = await redis.get(`session:${user.id}`);
-    invalidationDate = redisDate ? new Date(redisDate) : undefined;
-  }
+  const userDateStr = await redis.get(`session:${user.id}`);
+  const userDate = userDateStr ? new Date(userDateStr) : undefined;
+  const allInvalidationDateStr = await redis.get('session:all');
+  const allInvalidationDate = allInvalidationDateStr ? new Date(allInvalidationDateStr) : undefined;
+  const invalidationDate =
+    userDate && allInvalidationDate
+      ? new Date(Math.max(userDate.getTime(), allInvalidationDate.getTime()))
+      : userDate ?? allInvalidationDate;
 
   if (
     !invalidationDate ||
