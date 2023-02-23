@@ -45,7 +45,7 @@ export const getAllModelsSchema = z.object({
       if (!rel) return undefined;
       return Array.isArray(rel) ? rel : [rel];
     }),
-  browsingMode: z.nativeEnum(BrowsingMode).optional().default(BrowsingMode.SFW),
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
   sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   rating: z

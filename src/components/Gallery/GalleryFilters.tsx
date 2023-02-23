@@ -24,7 +24,7 @@ import {
 } from '@tabler/icons';
 import { deleteCookie } from 'cookies-next';
 import { useRouter } from 'next/router';
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import z from 'zod';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -60,7 +60,7 @@ type Store = {
   filters: FilterProps;
   setSort: (sort?: ImageSort) => void;
   setPeriod: (period?: MetricTimeframe) => void;
-  setBrowsingMode: (browsingMode?: BrowsingMode) => void;
+  setBrowsingMode: (browsingMode?: BrowsingMode, keep?: boolean) => void;
   setTypes: (types?: ImageGenerationProcess[]) => void;
   setResources: (resources?: ImageResource[]) => void;
   setTags: (tags?: number[]) => void;
@@ -84,10 +84,10 @@ const useFiltersStore = create<Store>()(
         !!period ? setCookie('g_period', period) : deleteCookie('g_period');
       });
     },
-    setBrowsingMode: (mode) => {
+    setBrowsingMode: (mode, keep) => {
       set((state) => {
         state.filters.browsingMode = mode;
-        mode ? setCookie('g_browsingMode', mode) : deleteCookie('g_browsingMode');
+        mode && keep ? setCookie('g_browsingMode', mode) : deleteCookie('g_browsingMode');
       });
     },
     setTypes: (types) => {
@@ -232,6 +232,10 @@ export function GalleryFilters() {
   const setBrowsingMode = useFiltersStore((state) => state.setBrowsingMode);
   const showNSFWToggle = !user || user.showNsfw;
 
+  useEffect(() => {
+    if (browsingMode === undefined) setBrowsingMode(defaultBrowsingMode);
+  }, [browsingMode, defaultBrowsingMode, setBrowsingMode]);
+
   const filterLength =
     types.length +
     resources.length +
@@ -292,7 +296,7 @@ export function GalleryFilters() {
                   { label: 'Everything', value: 'All' },
                 ]}
                 onChange={(value) => {
-                  setBrowsingMode(value as BrowsingMode);
+                  setBrowsingMode(value as BrowsingMode, true);
                 }}
               />
             </>

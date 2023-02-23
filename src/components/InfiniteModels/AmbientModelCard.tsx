@@ -344,7 +344,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                 render={(image) => (
                   <Box sx={{ position: 'relative' }}>
                     {contextMenuItems.length > 0 && (
-                      <Menu>
+                      <Menu position="left-start" withArrow offset={-5}>
                         <Menu.Target>
                           <ActionIcon
                             variant="transparent"

@@ -72,6 +72,7 @@ model User {
   subscription         CustomerSubscription?
   muted                Boolean?              @default(false)
   bannedAt             DateTime?
+  autoplayGifs         Boolean?              @default(true)
 
   accounts             Account[]
   sessions             Session[]

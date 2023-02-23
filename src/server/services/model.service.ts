@@ -125,7 +125,8 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     AND.push({ OR: TypeOr });
   }
 
-  if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
+  if (canViewNsfw && !browsingMode) browsingMode = BrowsingMode.All;
+  else if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
 
   const where: Prisma.ModelWhereInput = {
     tagsOnModels:

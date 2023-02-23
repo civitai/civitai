@@ -89,6 +89,7 @@ export function GalleryCarousel2({ className, connect, withIndicators }: Gallery
               >
                 <ImageGuard.ToggleConnect />
                 <ImageGuard.ToggleImage />
+                <ImageGuard.ReportNSFW />
                 <ImageGuard.Unsafe>
                   <MediaHash {...image} />
                 </ImageGuard.Unsafe>
@@ -98,6 +99,7 @@ export function GalleryCarousel2({ className, connect, withIndicators }: Gallery
                     alt={image.name ?? undefined}
                     style={{ maxHeight: '100%', maxWidth: '100%' }}
                     width={image.width ?? 1200}
+                    anim
                   />
                 </ImageGuard.Safe>
               </Center>

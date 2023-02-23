@@ -1,5 +1,6 @@
 import { createStyles } from '@mantine/core';
 import { env } from '~/env/client.mjs';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 // from options available in CF Flexible variants:
 // https://developers.cloudflare.com/images/cloudflare-images/transform/flexible-variants/
@@ -16,6 +17,8 @@ export type EdgeImageProps = Omit<
   quality?: number; // 0-100
   gravity?: 'auto' | 'side' | 'left' | 'right' | 'top' | 'bottom';
   metadata?: 'keep' | 'copyright' | 'none';
+  background?: string;
+  gamma?: number;
 };
 
 export function getEdgeUrl(src: string, variantParams: Omit<EdgeImageProps, 'src'>) {
@@ -42,10 +45,16 @@ export function EdgeImage({
   ...imgProps
 }: EdgeImageProps) {
   const { classes, cx } = useStyles({ maxWidth: width });
+  const currentUser = useCurrentUser();
+  
   if (width) width = Math.min(width, 4096);
   if (height) height = Math.min(height, 4096);
+  const isGif = imgProps.alt?.endsWith('.gif');
+  anim ??= isGif && currentUser ? (!currentUser.autoplayGifs ? false : undefined) : undefined;
+  const gamma = anim === false ? 0.99 : undefined;
+  if (anim && !isGif) anim = undefined;
 
-  src = getEdgeUrl(src, { width, height, fit, anim, blur, quality, gravity, metadata });
+  src = getEdgeUrl(src, { width, height, fit, anim, blur, quality, gravity, metadata, gamma });
   // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
   return <img className={cx(classes.responsive, className)} src={src} {...imgProps} />;
 }
