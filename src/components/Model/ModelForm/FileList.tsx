@@ -21,6 +21,7 @@ const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   Config: '.yaml,.yml',
   VAE: '.pt,.ckpt,.safetensors',
   'Text Encoder': '.pt',
+  Archive: '.zip',
 };
 
 const fileTypesByModelType: Record<ModelType, ModelFileType[]> = {
@@ -29,6 +30,8 @@ const fileTypesByModelType: Record<ModelType, ModelFileType[]> = {
   Checkpoint: ['Model', 'Pruned Model', 'Config', 'VAE', 'Training Data'],
   AestheticGradient: ['Model', 'Training Data'],
   Hypernetwork: ['Model', 'Training Data'],
+  Controlnet: ['Model'],
+  Poses: ['Archive'],
 };
 
 export function FileList({ parentIndex, form }: Props) {
@@ -87,11 +90,13 @@ export function FileList({ parentIndex, form }: Props) {
     <Stack spacing="xs">
       {fields.map(({ id, ...item }, index) => {
         const file = item as ModelFileInput;
+        const type = !availableFileTypes.includes(file.type) ? availableFileTypes[0] : file.type;
 
         return (
           <Stack key={id} spacing={5}>
             <FileItem
               {...file}
+              type={type}
               index={index}
               parentIndex={parentIndex}
               modelType={modelType}
@@ -100,7 +105,7 @@ export function FileList({ parentIndex, form }: Props) {
             {index === 0 && (
               <Group spacing="xs">
                 {availableFileTypes.map((type, index) => {
-                  if (type === 'Model' && !isCheckpointModel) return null;
+                  if (type === availableFileTypes[0] && !isCheckpointModel) return null;
                   const disableModelOption = type === 'Model' && reachedModelLimit;
                   const disablePrunedOption = type === 'Pruned Model' && reachedPrunedLimit;
                   const disabled =

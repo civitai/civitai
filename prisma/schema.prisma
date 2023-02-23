@@ -236,6 +236,8 @@ enum ModelType {
   Hypernetwork
   AestheticGradient
   LORA
+  Controlnet
+  Poses
 }
 
 enum ImportStatus {
