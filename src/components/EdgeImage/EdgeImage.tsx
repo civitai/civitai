@@ -1,3 +1,4 @@
+import { createStyles } from '@mantine/core';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
@@ -40,9 +41,12 @@ export function EdgeImage({
   quality,
   gravity,
   metadata,
+  className,
   ...imgProps
 }: EdgeImageProps) {
+  const { classes, cx } = useStyles({ maxWidth: width });
   const currentUser = useCurrentUser();
+  
   if (width) width = Math.min(width, 4096);
   if (height) height = Math.min(height, 4096);
   const isGif = imgProps.alt?.endsWith('.gif');
@@ -52,5 +56,9 @@ export function EdgeImage({
 
   src = getEdgeUrl(src, { width, height, fit, anim, blur, quality, gravity, metadata, gamma });
   // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
-  return <img src={src} {...imgProps} />;
+  return <img className={cx(classes.responsive, className)} src={src} {...imgProps} />;
 }
+
+const useStyles = createStyles((_theme, params: { maxWidth?: number }) => ({
+  responsive: { width: '100%', height: 'auto', maxWidth: params.maxWidth },
+}));

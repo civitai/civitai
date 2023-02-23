@@ -134,7 +134,7 @@ export const getModelsInfiniteHandler = async ({
           earlyAccessTimeFrame: true,
           createdAt: true,
           images: {
-            where: { image: { tosViolation: false } },
+            where: { image: { tosViolation: false, needsReview: false } },
             orderBy: prioritizeSafeImages
               ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
               : [{ index: 'asc' }],

@@ -18,6 +18,16 @@ export const imageMetaSchema = z
   .partial()
   .passthrough();
 
+export type FaceDetectionInput = z.infer<typeof faceDetectionSchema>;
+export const faceDetectionSchema = z.object({
+  age: z.number(),
+  emotions: z.array(z.object({ emotion: z.string(), score: z.number() })),
+  gender: z.enum(['male', 'female']),
+  genderConfidence: z.number(),
+  live: z.number(),
+  real: z.number(),
+});
+
 export type ImageAnalysisInput = z.infer<typeof imageAnalysisSchema>;
 export const imageAnalysisSchema = z.object({
   drawing: z.number(),
@@ -25,6 +35,7 @@ export const imageAnalysisSchema = z.object({
   neutral: z.number(),
   porn: z.number(),
   sexy: z.number(),
+  faces: z.array(faceDetectionSchema),
 });
 
 export const imageSchema = z.object({
@@ -45,10 +56,24 @@ export const imageSchema = z.object({
   nsfw: z.boolean().optional(),
   analysis: imageAnalysisSchema.optional(),
   tags: z.array(tagSchema).optional(),
+  needsReview: z.boolean().optional(),
 });
 
 export type ImageUploadProps = z.infer<typeof imageSchema>;
 export type ImageMetaProps = z.infer<typeof imageMetaSchema> & Record<string, unknown>;
+
+export const imageUpdateSchema = z.object({
+  id: z.number(),
+  name: z.string().optional(),
+  url: z
+    .string()
+    .url()
+    .or(z.string().uuid('One of the files did not upload properly, please try again').optional())
+    .optional(),
+  nsfw: z.boolean().optional(),
+  needsReview: z.boolean().optional(),
+});
+export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
 
 export type GetModelVersionImagesSchema = z.infer<typeof getModelVersionImageSchema>;
 export const getModelVersionImageSchema = z.object({
@@ -79,6 +104,7 @@ export const getGalleryImageSchema = z.object({
   singleImageAlbum: z.boolean().optional(),
   isFeatured: z.boolean().optional(),
   types: z.nativeEnum(ImageGenerationProcess).array().optional(),
+  needsReview: z.boolean().optional(),
 });
 
 export const getImageConnectionsSchema = z.object({

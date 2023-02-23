@@ -11,7 +11,7 @@ import { decreaseDate } from '~/utils/date-helpers';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await prisma.imagesOnModels.findMany({
-    where: { modelVersionId, image: { tosViolation: false } },
+    where: { modelVersionId, image: { tosViolation: false, needsReview: false } },
     select: { image: { select: imageSelect } },
   });
   return result.map((x) => x.image);
@@ -19,7 +19,7 @@ export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId
 
 export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
   const result = await prisma.imagesOnReviews.findMany({
-    where: { reviewId, image: { tosViolation: false } },
+    where: { reviewId, image: { tosViolation: false, needsReview: false } },
     select: { image: { select: imageSelect } },
   });
   return result.map((x) => x.image);
@@ -45,6 +45,7 @@ export const getGalleryImages = async <
   isFeatured,
   types,
   browsingMode,
+  needsReview,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const isMod = user?.isModerator ?? false;
@@ -105,6 +106,7 @@ export const getGalleryImages = async <
           ? undefined
           : { equals: browsingMode === BrowsingMode.NSFW },
       tosViolation: !isMod ? false : undefined,
+      needsReview: needsReview ?? false,
       ...(infinite ? infiniteWhere : finiteWhere),
     },
     select: imageGallerySelect({ user }),

@@ -150,9 +150,11 @@ export function ModelForm({ model }: Props) {
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
   const [complete, setComplete] = useState<Record<string, boolean>>({});
   const [blocked, setBlocked] = useState<Record<string, boolean>>({});
+  const [error, setError] = useState<Record<string, boolean>>({});
   const isBlocked = Object.values(blocked).some((bool) => bool);
   const isComplete = Object.values(complete).every((bool) => bool);
   const isUploading = Object.values(uploading).some((bool) => bool);
+  const isImageUploadError = Object.values(error).some((bool) => bool);
 
   const defaultModelFile = {
     name: '',
@@ -195,7 +197,7 @@ export function ModelForm({ model }: Props) {
         // HOTFIX: Casting image.meta type issue with generated prisma schema
         images: images.map((image) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
         // HOTFIX: Casting files to defaultModelFile[] to avoid type confusion and accept room for error
-        files: files.length > 0 ? (files as typeof defaultModelFile[]) : [defaultModelFile],
+        files: files.length > 0 ? (files as (typeof defaultModelFile)[]) : [defaultModelFile],
         earlyAccessTimeFrame:
           version.earlyAccessTimeFrame && features.earlyAccessModel
             ? String(version.earlyAccessTimeFrame)
@@ -791,6 +793,7 @@ export function ModelForm({ model }: Props) {
                             withAsterisk
                             onChange={(values) => {
                               const isBlocked = values.some((x) => x.status === 'blocked');
+                              const isError = values.some((x) => x.status === 'error');
                               const isComplete = values
                                 .filter((x) => x.status)
                                 .every((x) => x.status === 'complete');
@@ -798,6 +801,7 @@ export function ModelForm({ model }: Props) {
                               setUploading((state) => ({ ...state, [version.uuid]: isUploading }));
                               setBlocked((state) => ({ ...state, [version.uuid]: isBlocked }));
                               setComplete((state) => ({ ...state, [version.uuid]: isComplete }));
+                              setError((state) => ({ ...state, [version.uuid]: isError }));
                             }}
                           />
                         </Grid.Col>
@@ -934,6 +938,20 @@ export function ModelForm({ model }: Props) {
                     Please revise the content of this listing to ensure no images contain content
                     that could constitute a TOS violation.
                   </Text>
+                </>
+              )}
+              {isImageUploadError && (
+                <>
+                  <Alert color="red" pl={10}>
+                    <Group noWrap spacing={10}>
+                      <ThemeIcon color="red">
+                        <IconExclamationMark />
+                      </ThemeIcon>
+                      <Text size="xs" sx={{ lineHeight: 1.2 }}>
+                        Image Upload Error
+                      </Text>
+                    </Group>
+                  </Alert>
                 </>
               )}
               <Group position="right">
