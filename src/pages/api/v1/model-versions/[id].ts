@@ -34,20 +34,12 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   resModelVersionDetails(req, res, modelVersion);
 });
 
-export function resModelVersionDetails(
-  req: NextApiRequest,
-  res: NextApiResponse,
-  modelVersion: ModelVersionApiReturn | null
-) {
-  if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
-
-  const baseUrl = new URL(isProd ? `https://${req.headers.host}` : 'http://localhost:3000');
-
+export function prepareModelVersionResponse(modelVersion: ModelVersionApiReturn, baseUrl: URL) {
   const { images, files, model, ...version } = modelVersion;
   const primaryFile = getPrimaryFile(files);
-  if (!primaryFile) return res.status(404).json({ error: 'Missing model file' });
+  if (!primaryFile) return null;
 
-  res.status(200).json({
+  return {
     ...version,
     model,
     files: files.map(({ hashes, ...file }) => ({
@@ -70,5 +62,18 @@ export function resModelVersionDetails(
       versionId: version.id,
       primary: true,
     })}`,
-  });
+  };
+}
+
+export function resModelVersionDetails(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  modelVersion: ModelVersionApiReturn | null
+) {
+  if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
+
+  const baseUrl = new URL(isProd ? `https://${req.headers.host}` : 'http://localhost:3000');
+  const body = prepareModelVersionResponse(modelVersion, baseUrl);
+  if (!body) return res.status(404).json({ error: 'Missing model file' });
+  res.status(200).json(body);
 }
