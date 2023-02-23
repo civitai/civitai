@@ -11,7 +11,8 @@ import {
 } from './image-processing-worker-types';
 import * as H from '@vladmandic/human';
 
-setWasmPaths('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm/wasm-out/');
+const wasmPath = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm/wasm-out/';
+setWasmPaths(wasmPath);
 tf.enableProdMode();
 
 // --------------------------------
@@ -98,6 +99,8 @@ let human: H.Human;
 const humanConfig: Partial<H.Config> = {
   modelBasePath: 'https://publicstore.civitai.com/face_detection/',
   async: true,
+  wasmPath,
+  backend: 'wasm',
   face: {
     enabled: true,
     detector: {
