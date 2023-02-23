@@ -1,11 +1,15 @@
 import { UploadType } from '~/server/common/enums';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { v4 as uuidv4 } from 'uuid';
+import { bytesToKB } from '~/utils/number-helpers';
 
 type UploadResult = {
-  url: string;
+  url: string | null;
   bucket: string;
   key: string;
+  name: string;
+  size: number;
 };
 
 type RequestOptions = {
@@ -33,15 +37,17 @@ type TrackedFile = {
   size: number;
   speed: number;
   timeRemaining: number;
+  name: string;
   status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
   abort: () => void;
+  uuid: string;
+  meta: Record<string, unknown>;
 };
 
 type UploadStatus = 'pending' | 'error' | 'success' | 'aborted';
 
 type StoreProps = {
-  files: TrackedFile[];
-  upload: (file: File, type: UploadType, options?: UploadToS3Options) => Promise<UploadResult>;
+  items: TrackedFile[];
   reset: () => void;
   getStatus: () => {
     pending: number;
@@ -50,27 +56,54 @@ type StoreProps = {
     success: number;
     aborted: number;
   };
+  abort: (uuid: string) => void;
+  setMeta: (
+    uuid: string,
+    dispatch: (meta: Record<string, unknown>) => Record<string, unknown>
+  ) => void;
+  upload: (
+    args: {
+      file: File;
+      type: UploadType;
+      meta: Record<string, unknown>;
+      options?: UploadToS3Options;
+    },
+    cb?: ({ url, bucket, key, name, size }: UploadResult) => void
+  ) => Promise<UploadResult>;
 };
 
-export const useFileUpload = create<StoreProps>()(
+export const useS3UploadStore = create<StoreProps>()(
   immer((set, get) => ({
-    files: [],
+    items: [],
     reset: () => {
       set((state) => {
-        state.files = [];
+        state.items = [];
       });
     },
     getStatus: () => {
-      const files = get().files;
+      const items = get().items;
       return {
-        pending: files.filter((x) => x.status === 'pending').length,
-        error: files.filter((x) => x.status === 'error').length,
-        uploading: files.filter((x) => x.status === 'uploading').length,
-        success: files.filter((x) => x.status === 'success').length,
-        aborted: files.filter((x) => x.status === 'aborted').length,
+        pending: items.filter((x) => x.status === 'pending').length,
+        error: items.filter((x) => x.status === 'error').length,
+        uploading: items.filter((x) => x.status === 'uploading').length,
+        success: items.filter((x) => x.status === 'success').length,
+        aborted: items.filter((x) => x.status === 'aborted').length,
       };
     },
-    upload: async (file, type, options) => {
+    setMeta: (uuid, dispatch) => {
+      set((state) => {
+        const items = get().items;
+        const index = items.findIndex((x) => x.uuid === uuid);
+        if (index === -1) throw new Error('index out of bounds');
+        state.items[index].meta = dispatch(state.items[index].meta);
+      });
+    },
+    abort: (uuid) => {
+      // TODO.posts - check with justin
+      const item = get().items.find((x) => x.uuid === uuid);
+      item?.abort();
+    },
+    upload: async ({ file, type, options, meta }, cb) => {
       const endpoint = '/api/upload';
       const completeEndpoint = '/api/upload/complete';
       const abortEndpoint = '/api/upload/abort';
@@ -114,13 +147,22 @@ export const useFileUpload = create<StoreProps>()(
           if (currentXhr) currentXhr.abort();
         };
 
+        const trackedFile = {
+          ...pendingTrackedFile,
+          file,
+          abort,
+          size: file.size ? bytesToKB(file.size) : 0,
+          uuid: uuidv4(),
+          meta,
+          name: file.name,
+        };
         set((state) => {
-          state.files.push({ file, ...pendingTrackedFile, abort } as TrackedFile);
+          state.items.push(trackedFile);
         });
 
         function updateFile(trackedFile: Partial<TrackedFile>) {
           set((state) => {
-            state.files = state.files.map((x) => {
+            state.items = state.items.map((x) => {
               if (x.file !== file) return x;
               return { ...x, ...trackedFile } as TrackedFile;
             });
@@ -221,7 +263,13 @@ export const useFileUpload = create<StoreProps>()(
           if (uploadStatus !== 'success') {
             updateFile({ status: uploadStatus, file: undefined });
             await abortUpload();
-            return { url: null, bucket, key };
+            return {
+              url: null,
+              bucket,
+              key,
+              name: trackedFile.name,
+              size: trackedFile.size,
+            } as UploadResult;
           }
         }
 
@@ -230,14 +278,24 @@ export const useFileUpload = create<StoreProps>()(
         await updateFile({ status: 'success' });
 
         const url = urls[0].url.split('?')[0];
-        return { url, bucket, key };
+
+        const payload: UploadResult = {
+          url,
+          bucket,
+          key,
+          name: trackedFile.name,
+          size: trackedFile.size,
+        };
+
+        cb?.(payload);
+        return payload;
       }
     },
   }))
 );
 
 const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
-const pendingTrackedFile = {
+const pendingTrackedFile: Omit<TrackedFile, 'uuid' | 'file' | 'name'> = {
   progress: 0,
   uploaded: 0,
   size: 0,
@@ -245,4 +303,5 @@ const pendingTrackedFile = {
   timeRemaining: 0,
   status: 'pending',
   abort: () => undefined,
+  meta: {},
 };

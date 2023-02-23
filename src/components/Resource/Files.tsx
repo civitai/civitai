@@ -1,6 +1,7 @@
 import { Card } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { ModelFileType } from '~/server/common/constants';
+import { useS3UploadStore } from '~/store/s3-upload.store';
 
 const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   Model: '.ckpt,.pt,.safetensors,.bin',
@@ -29,6 +30,8 @@ TODO.posts
 */
 
 export function Files({ modelVersionId }: FilesProps) {
+  const { items, reset, upload, abort } = useS3UploadStore();
+
   return (
     <>
       {/* TODO.dropzone */}
@@ -44,3 +47,36 @@ export function Files({ modelVersionId }: FilesProps) {
 type FilesProps = {
   modelVersionId: number;
 };
+
+// export function Files({ modelVersionId }: FilesProps) {
+//   const { items, reset, upload, abort } = useS3UploadStore();
+
+//   const { mutate } = trpc.modelFile.create.useMutation({
+//     onSuccess: () => {
+//       // update/invalidate cache
+//     },
+//   });
+
+//   const handleDropFile = (file: File) => {
+//     upload({ file, type: UploadType.Model, meta: { modelVersionId } }, ({ url, bucket, key }) => {
+//       mutate({
+//         sizeKB: file.size ? bytesToKB(file.size) : 0,
+//         type: 'Model',
+//         url,
+//         name: file.name,
+//         modelVersionId,
+//       });
+//     });
+//   };
+
+//   return (
+//     <>
+//       {items
+//         .filter((x) => x.meta.modelVersionId === modelVersionId)
+//         .map((item) => {
+//           const { modelVersionId } = item.meta as { modelVersionId?: number };
+//           return <>Model version details and progress</>;
+//         })}
+//     </>
+//   );
+// }
