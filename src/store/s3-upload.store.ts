@@ -48,7 +48,7 @@ type UploadStatus = 'pending' | 'error' | 'success' | 'aborted';
 
 type StoreProps = {
   items: TrackedFile[];
-  reset: () => void;
+  clear: (predicate?: (item: TrackedFile) => boolean) => void;
   getStatus: () => {
     pending: number;
     error: number;
@@ -75,9 +75,9 @@ type StoreProps = {
 export const useS3UploadStore = create<StoreProps>()(
   immer((set, get) => ({
     items: [],
-    reset: () => {
+    clear: (predicate) => {
       set((state) => {
-        state.items = [];
+        state.items = predicate ? state.items.filter(predicate) : [];
       });
     },
     getStatus: () => {

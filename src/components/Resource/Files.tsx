@@ -30,7 +30,7 @@ TODO.posts
 */
 
 export function Files({ modelVersionId }: FilesProps) {
-  const { items, reset, upload, abort } = useS3UploadStore();
+  const { items, clear, upload, abort } = useS3UploadStore();
 
   return (
     <>
