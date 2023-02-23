@@ -190,7 +190,11 @@ export function ImageUpload({
                   }}
                 >
                   {files.map((image, index) => {
-                    const showLoading = !!image.file || image.nsfw === undefined;
+                    // const showLoading = !!image.file || image.nsfw === undefined;
+                    const isError = image.status === 'error';
+                    const isComplete = image.status === 'complete';
+                    const isBlocked = image.status === 'blocked';
+                    const showLoading = !isError && !isComplete && !isBlocked;
 
                     return (
                       // <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
@@ -208,9 +212,7 @@ export function ImageUpload({
                             <Overlay blur={2} zIndex={10} color="#000" />
                             <Stack spacing="xs" sx={{ zIndex: 11 }} align="center">
                               <Loader size="lg" />
-                              {image.status !== 'complete' && (
-                                <Text weight={600}>{image.status}...</Text>
-                              )}
+                              {image.message && <Text weight={600}>{image.message}...</Text>}
                             </Stack>
                           </Center>
                         )}

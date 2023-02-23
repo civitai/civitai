@@ -145,8 +145,9 @@ const start = async (port: MessagePort) => {
   const detectFaces = async (img: ImageData) => {
     try {
       if (!human) human = new H.Human(humanConfig);
-      portReq({ type: 'log', payload: { human } });
+      portReq({ type: 'log', payload: 1 });
       const { face } = await human.detect(img);
+      portReq({ type: 'log', payload: 2 });
       return face
         ?.filter((f) => f.age)
         .map((f) => ({
@@ -181,7 +182,7 @@ const start = async (port: MessagePort) => {
 
               resolve({});
             } catch (error: any) {
-              portReq({ type: 'error', payload: { msg: error, uuid } });
+              portReq({ type: 'error', payload: { msg: error.message, uuid } });
               reject({ error });
             }
           })

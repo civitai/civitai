@@ -23,8 +23,8 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
         case 'error':
           filesHandler.setState(
             produce((state) => {
-              const index = state.findIndex((x) => x.uuid === payload.uuid);
-              if (!index) throw new Error('missing index');
+              const index = state.findIndex((x) => x.uuid === data.payload.uuid);
+              if (index === -1) throw new Error('missing index');
               state[index].status = 'error';
             })
           );
@@ -35,7 +35,6 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
           let status = 'processing';
           if (payload.blockedFor) status = 'blocked';
           else if (payload.status === 'finished') status = 'uploading';
-          console.log({ payload });
 
           filesHandler.setState(
             produce((state) => {
@@ -47,6 +46,12 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
                 previewUrl: payload.src,
                 file: status !== 'blocked' ? payload.file : undefined,
               } as CustomFile;
+
+              if (payload.status === 'processing') {
+                data.message = 'warming up';
+              } else if (payload.status === 'nsfw') {
+                data.message = 'scanning content';
+              }
 
               if (index === -1) state.push(data);
               state[index] = data;
@@ -92,20 +97,18 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
         };
       });
 
-      //TODO.image-processing - uncomment uploadToCF
       Promise.resolve(
         (async function () {
           const existingFile = files.find((x) => x.uuid === item.uuid);
           if (!existingFile) return;
-          // const { id } = await uploadToCF(item.file);
-          console.log('need to uncomment some code');
+          const { id } = await uploadToCF(item.file); // TODO.uncomment
           filesHandler.setState(
             produce((state) => {
               const index = state.findIndex((x) => x.uuid === item.uuid);
               if (index > -1) {
                 const previewUrl = state[index].previewUrl;
                 if (previewUrl) state[index].onLoad = () => URL.revokeObjectURL(previewUrl);
-                // state[index].url = id;
+                state[index].url = id; // TODO.uncomment
                 state[index].file = undefined;
                 state[index].status = 'complete';
               }

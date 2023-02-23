@@ -51,7 +51,6 @@ export const ImageProcessingProvider = ({ children }: { children: React.ReactNod
       };
 
       worker.port.onmessage = async function ({ data }: { data: WorkerOutgoingMessage }) {
-        // console.log('worker message', { data });
         switch (data.type) {
           case 'ready':
             return handleReady();
@@ -66,7 +65,6 @@ export const ImageProcessingProvider = ({ children }: { children: React.ReactNod
           case 'log':
             return handleLog(data.payload);
           default:
-            console.log({ data });
             throw new Error('unsupported message type');
         }
       };
@@ -77,7 +75,6 @@ export const ImageProcessingProvider = ({ children }: { children: React.ReactNod
 
   const workerReq = async (req: WorkerIncomingMessage) => {
     const worker = await getWorker();
-    // console.log('worker', { worker, req });
     worker.port.postMessage(req);
   };
 
@@ -87,6 +84,7 @@ export const ImageProcessingProvider = ({ children }: { children: React.ReactNod
         src: URL.createObjectURL(file),
         uuid: uuidv4(),
         file,
+        status: 'processing',
       })
     );
 
@@ -131,8 +129,9 @@ export const ImageProcessingProvider = ({ children }: { children: React.ReactNod
 const handleError = (data: ErrorMessage) => {
   const cb = callbackQueue[data.uuid];
   if (cb) {
+    console.error(data.msg);
     cb({ type: 'error', payload: data });
-    delete callbackQueue[data.uuid];
+    handleFinish(data.uuid);
   }
 };
 
@@ -175,11 +174,15 @@ const handleFaces = (data: AnalysisMessage) => {
 
     processingQueue[data.uuid] = payload;
     cb({ type: 'processing', payload });
-    delete callbackQueue[data.uuid];
-    delete processingQueue[data.uuid];
+    handleFinish(data.uuid);
   }
 };
 
+const handleFinish = (uuid: string) => {
+  delete callbackQueue[uuid];
+  delete processingQueue[uuid];
+};
+
 const handleLog = (data: any) => {
-  console.log(data);
+  console.log('WORKER_LOG', data);
 };
