@@ -57,7 +57,7 @@ type StoreProps = {
     aborted: number;
   };
   abort: (uuid: string) => void;
-  setMeta: (
+  updateMeta: (
     uuid: string,
     dispatch: (meta: Record<string, unknown>) => Record<string, unknown>
   ) => void;
@@ -90,7 +90,7 @@ export const useS3UploadStore = create<StoreProps>()(
         aborted: items.filter((x) => x.status === 'aborted').length,
       };
     },
-    setMeta: (uuid, dispatch) => {
+    updateMeta: (uuid, dispatch) => {
       set((state) => {
         const items = get().items;
         const index = items.findIndex((x) => x.uuid === uuid);
