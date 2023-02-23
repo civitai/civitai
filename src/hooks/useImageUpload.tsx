@@ -51,6 +51,8 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
                 data.message = 'warming up';
               } else if (payload.status === 'nsfw') {
                 data.message = 'scanning content';
+              } else if (payload.status === 'finished') {
+                data.message = 'uploading';
               }
 
               if (index === -1) state.push(data);
