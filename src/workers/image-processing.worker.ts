@@ -146,11 +146,10 @@ const start = async (port: MessagePort) => {
   const portReq = (req: WorkerOutgoingMessage) => port.postMessage(req);
 
   const detectFaces = async (img: ImageData) => {
+    if (typeof OffscreenCanvas === 'undefined') return [];
+    if (!human) human = new H.Human(humanConfig);
     try {
-      if (!human) human = new H.Human(humanConfig);
-      portReq({ type: 'log', payload: 1 });
       const { face } = await human.detect(img);
-      portReq({ type: 'log', payload: 2 });
       return face
         ?.filter((f) => f.age)
         .map((f) => ({
@@ -181,7 +180,7 @@ const start = async (port: MessagePort) => {
               portReq({ type: 'status', payload: { uuid, status: 'faces' } });
               const faces = await detectFaces(imageData);
               portReq({ type: 'faces', payload: { uuid, analysis: { faces } } });
-              // portReq({type: 'status', payload: {uuid, status: 'finished'}})
+              // portReq({ type: 'status', payload: { uuid, status: 'finished' } });
 
               resolve({});
             } catch (error: any) {
