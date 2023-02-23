@@ -89,6 +89,7 @@ export function GalleryCarousel2({ className, connect, withIndicators }: Gallery
               >
                 <ImageGuard.ToggleConnect />
                 <ImageGuard.ToggleImage />
+                <ImageGuard.ReportNSFW />
                 <ImageGuard.Unsafe>
                   <MediaHash {...image} />
                 </ImageGuard.Unsafe>

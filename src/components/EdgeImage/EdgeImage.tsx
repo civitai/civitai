@@ -47,7 +47,8 @@ export function EdgeImage({
   if (height) height = Math.min(height, 4096);
   const isGif = imgProps.alt?.endsWith('.gif');
   anim ??= isGif && currentUser ? (!currentUser.autoplayGifs ? false : undefined) : undefined;
-  const gamma = isGif && anim === false ? 0.99 : undefined;
+  const gamma = anim === false ? 0.99 : undefined;
+  if (anim && !isGif) anim = undefined;
 
   src = getEdgeUrl(src, { width, height, fit, anim, blur, quality, gravity, metadata, gamma });
   // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
