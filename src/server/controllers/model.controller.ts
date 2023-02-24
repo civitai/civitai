@@ -43,7 +43,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const model = await getModel({
       input,
       user: ctx.user,
-      select: modelWithDetailsSelect(showNsfw),
+      select: modelWithDetailsSelect(showNsfw, ctx.user),
     });
     if (!model) {
       throw throwNotFoundError(`No model with id ${input.id}`);
@@ -137,7 +137,12 @@ export const getModelsInfiniteHandler = async ({
           earlyAccessTimeFrame: true,
           createdAt: true,
           images: {
-            where: { image: { tosViolation: false, needsReview: false } },
+            where: {
+              image: {
+                tosViolation: false,
+                OR: [{ needsReview: false }, { userId: ctx.user?.id }],
+              },
+            },
             orderBy: prioritizeSafeImages
               ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
               : [{ index: 'asc' }],

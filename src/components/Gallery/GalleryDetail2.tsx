@@ -22,6 +22,7 @@ import {
   IconDotsVertical,
   IconExternalLink,
   IconPlus,
+  IconAlertTriangle,
 } from '@tabler/icons';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -38,6 +39,7 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { GalleryDetailContextMenu } from '~/components/Gallery/GalleryDetailContextMenu';
 import Link from 'next/link';
 import { GalleryResources } from '~/components/Gallery/GalleryResources';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 export function GalleryDetail2() {
   const { classes, cx } = useStyles();
@@ -156,7 +158,19 @@ export function GalleryDetail2() {
           >
             {/* TODO.gallery - do I need this? */}
             {/* <LoadingOverlay visible={deleteMutation.isLoading} /> */}
-            <Stack spacing="md" py="md" style={{ flex: 1 }}>
+            <Stack spacing="md" pt={image.needsReview ? 0 : 'md'} pb="md" style={{ flex: 1 }}>
+              {image.needsReview && (
+                <AlertWithIcon
+                  icon={<IconAlertTriangle />}
+                  color="yellow"
+                  iconColor="yellow"
+                  title="Flagged by age detection"
+                  radius={0}
+                  px="md"
+                >
+                  {`This image won't be visible to other users until it's reviewed by our moderators.`}
+                </AlertWithIcon>
+              )}
               <Group spacing={4} px="md">
                 {image.tags.map((tag) => (
                   <Badge key={tag.id}>{tag.name}</Badge>

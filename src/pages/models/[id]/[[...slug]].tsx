@@ -184,6 +184,7 @@ const useStyles = createStyles((theme) => ({
   control: {
     minWidth: 56,
     minHeight: 56,
+    borderRadius: '50%',
 
     svg: {
       width: 24,

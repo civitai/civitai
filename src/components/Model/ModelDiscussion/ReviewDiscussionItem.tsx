@@ -289,6 +289,7 @@ function ReviewCarousel({
           control: {
             width: 32,
             height: 32,
+            borderRadius: '50%',
           },
         }}
       >

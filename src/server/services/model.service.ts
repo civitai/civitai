@@ -10,7 +10,11 @@ import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { prepareCreateImage, prepareUpdateImage } from '~/server/selectors/image.selector';
+import {
+  imageSelect,
+  prepareCreateImage,
+  prepareUpdateImage,
+} from '~/server/selectors/image.selector';
 import { prepareFile } from '~/utils/file-helpers';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
@@ -360,17 +364,7 @@ export const updateModel = async ({
         orderBy: { index: 'asc' },
         select: {
           image: {
-            select: {
-              id: true,
-              meta: true,
-              generationProcess: true,
-              name: true,
-              width: true,
-              height: true,
-              hash: true,
-              url: true,
-              nsfw: true,
-            },
+            select: imageSelect,
           },
         },
       },
