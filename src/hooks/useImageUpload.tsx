@@ -31,7 +31,6 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
           break;
         case 'processing': // this would be better if we split it into separate events
           const { payload } = data;
-          if (payload.analysis?.faces) console.log({ faces: payload.analysis?.faces });
           let status = 'processing';
           if (payload.blockedFor) status = 'blocked';
           else if (payload.status === 'finished') status = 'uploading';

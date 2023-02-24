@@ -2,6 +2,7 @@ import exifr from 'exifr';
 import { unescape } from 'lodash';
 import { ImageAnalysisInput, ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
 import blocked from './blocklist.json';
+import blockedNSFW from './blocklist-nsfw.json';
 
 export async function getMetadata(file: File) {
   let exif: any; //eslint-disable-line
@@ -181,18 +182,25 @@ const blockedRegex = blocked.map((word) => ({
   word,
   regex: new RegExp(`(^|\\s|\\(|\\))${escapeRegex(word)}(\\s|,|$|\\(|\\))`, 'm'),
 }));
-export const auditMetaData = (meta: AsyncReturnType<typeof getMetadata>) => {
-  const blockedFor = blockedRegex
+const blockedNSFWRegex = blockedNSFW.map((word) => ({
+  word,
+  regex: new RegExp(`(^|\\s|\\(|\\))${escapeRegex(word)}(\\s|,|$|\\(|\\))`, 'm'),
+}));
+export const auditMetaData = (
+  meta: AsyncReturnType<typeof getMetadata> | undefined,
+  nsfw: boolean
+) => {
+  if (!meta) return { blockedFor: [], success: true };
+
+  const blockList = nsfw ? blockedNSFWRegex : blockedRegex;
+  const blockedFor = blockList
     .filter(({ regex }) => meta?.prompt && regex.test(meta.prompt))
     .map((x) => x.word);
   return { blockedFor, success: !blockedFor.length };
 };
 
-export const detectNsfwImage = ({ faces, ...analysis }: ImageAnalysisInput) => {
-  const topResult = Object.entries(analysis)
-    .sort((a, b) => b[1] - a[1])
-    .map(([key]) => key)[0];
-  const nsfw = ['porn', 'hentai', 'sexy'].includes(topResult);
-  return nsfw;
+export const detectNsfwImage = ({ porn, hentai, sexy }: ImageAnalysisInput) => {
+  const isNSFW = porn + hentai + sexy * 0.5 > 0.6; // If the sum of sketchy probabilities is greater than 0.6, it's NSFW
+  return isNSFW;
 };
 // #endregion

@@ -149,7 +149,7 @@ const handleNsfw = (data: AnalysisMessage) => {
   if (cb) {
     const processing = processingQueue[data.uuid];
     const nsfw = detectNsfwImage(data.analysis as any);
-    const auditResult = nsfw && processing.meta ? auditMetaData(processing.meta) : undefined;
+    const auditResult = auditMetaData(processing.meta, nsfw);
     const blockedFor = !auditResult?.success ? auditResult?.blockedFor : undefined;
     const payload = {
       ...processing,
