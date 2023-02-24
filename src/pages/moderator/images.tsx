@@ -13,7 +13,6 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { usePrevious } from '@mantine/hooks';
 import { IconCheck, IconInfoCircle, IconRadar2, IconTrash } from '@tabler/icons';
 import { GetServerSideProps } from 'next';
 import { useEffect, useMemo } from 'react';
@@ -54,14 +53,12 @@ export default function Images() {
   const { ref, inView } = useInView();
   const queryUtils = trpc.useContext();
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetching } =
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.image.getGalleryImagesInfinite.useInfiniteQuery(
       { needsReview: true },
       { getNextPageParam: (lastPage) => lastPage.nextCursor }
     );
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
-
-  const previousFetching = usePrevious(isFetching);
 
   const onMutate = async ({ id }: { id: number }) => {
     await queryUtils.image.getGalleryImagesInfinite.cancel();
@@ -129,7 +126,8 @@ export default function Images() {
           ) : images.length ? (
             <MasonryGrid
               items={images}
-              previousFetching={previousFetching}
+              isRefetching={isRefetching}
+              isFetchingNextPage={isFetchingNextPage}
               render={(props) => (
                 <ImageGridItem
                   {...props}
