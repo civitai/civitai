@@ -1,6 +1,25 @@
-import { Stack, Group, Input } from '@mantine/core';
-import { CheckpointType, ModelType, TagTarget } from '@prisma/client';
+import {
+  Alert,
+  Button,
+  Divider,
+  Grid,
+  Group,
+  Input,
+  Paper,
+  Stack,
+  Text,
+  ThemeIcon,
+} from '@mantine/core';
+import { CheckpointType, CommercialUse, ModelType, TagTarget } from '@prisma/client';
+import {
+  IconCurrencyDollarOff,
+  IconPhoto,
+  IconBrush,
+  IconShoppingCart,
+  IconExclamationMark,
+} from '@tabler/icons';
 import { z } from 'zod';
+import { useWizardContext } from '~/components/Resource/Wizard/Wizard';
 import {
   useForm,
   Form,
@@ -9,6 +28,7 @@ import {
   InputSegmentedControl,
   InputRTE,
   InputTags,
+  InputCheckbox,
 } from '~/libs/form';
 import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
 import { splitUppercase } from '~/utils/string-helpers';
@@ -22,11 +42,24 @@ const schema = modelUpsertSchema.refine(
 );
 
 export function ModelUpsertForm({ model }: Props) {
-  const editing = !!model;
+  const { goNext } = useWizardContext();
 
-  const form = useForm({ schema });
+  const defaultValues: ModelUpsertInput = {
+    ...model,
+    name: model?.name ?? '',
+    status: model?.status ?? 'Draft',
+    type: model?.type ?? 'Checkpoint',
+    allowCommercialUse: model?.allowCommercialUse ?? CommercialUse.Sell,
+    allowDerivatives: model?.allowDerivatives ?? true,
+    allowNoCredit: model?.allowNoCredit ?? true,
+    allowDifferentLicense: model?.allowDifferentLicense ?? true,
+  };
+  const form = useForm({ schema, defaultValues, shouldUnregister: false });
   const { errors } = form.formState;
-  const [type, allowDerivatives, status] = form.watch(['type', 'allowDerivatives', 'status']);
+  const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives', 'status']);
+  const nsfwPoi = form.watch(['nsfw', 'poi']);
+
+  const editing = !!model;
 
   const handleModelTypeChange = (value: ModelType) => {
     // TODO.post - uncomment this code if useForm({ shouldUnregister:false })
@@ -40,65 +73,189 @@ export function ModelUpsertForm({ model }: Props) {
     }
   };
 
+  const handleSubmit = (data: z.infer<typeof schema>) => {
+    goNext();
+  };
+
   return (
-    <Form form={form}>
-      <Stack>
-        <InputText name="name" label="Name" placeholder="Name" withAsterisk />
-        <Stack spacing={5}>
-          <Group spacing={8} grow>
-            <InputSelect
-              name="type"
-              label="Type"
-              placeholder="Type"
-              data={Object.values(ModelType).map((type) => ({
-                label: splitUppercase(type),
-                value: type,
-              }))}
-              onChange={handleModelTypeChange}
-              disabled={editing}
-              withAsterisk
-            />
-            {type === 'Checkpoint' && (
-              <Input.Wrapper label="Checkpoint Type" withAsterisk>
-                <InputSegmentedControl
-                  name="checkpointType"
-                  data={Object.values(CheckpointType).map((type) => ({
+    <Form form={form} onSubmit={handleSubmit}>
+      <Grid gutter="xl">
+        <Grid.Col span={12}>
+          <Stack>
+            <InputText name="name" label="Name" placeholder="Name" withAsterisk />
+            <Stack spacing={5}>
+              <Group spacing="sm" grow>
+                <InputSelect
+                  name="type"
+                  label="Type"
+                  placeholder="Type"
+                  data={Object.values(ModelType).map((type) => ({
                     label: splitUppercase(type),
                     value: type,
                   }))}
-                  color="blue"
-                  styles={(theme) => ({
-                    root: {
-                      border: `1px solid ${
-                        errors.checkpointType
-                          ? theme.colors.red[theme.fn.primaryShade()]
-                          : theme.colorScheme === 'dark'
-                          ? theme.colors.dark[4]
-                          : theme.colors.gray[4]
-                      }`,
-                      background: 'none',
-                      height: 36,
-                    },
-                    label: {
-                      padding: '2px 10px',
-                    },
-                  })}
-                  fullWidth
+                  onChange={handleModelTypeChange}
+                  disabled={editing}
+                  withAsterisk
                 />
-              </Input.Wrapper>
+                {type === 'Checkpoint' && (
+                  <Input.Wrapper label="Checkpoint Type" withAsterisk>
+                    <InputSegmentedControl
+                      name="checkpointType"
+                      data={Object.values(CheckpointType).map((type) => ({
+                        label: splitUppercase(type),
+                        value: type,
+                      }))}
+                      color="blue"
+                      styles={(theme) => ({
+                        root: {
+                          border: `1px solid ${
+                            errors.checkpointType
+                              ? theme.colors.red[theme.fn.primaryShade()]
+                              : theme.colorScheme === 'dark'
+                              ? theme.colors.dark[4]
+                              : theme.colors.gray[4]
+                          }`,
+                          background: 'none',
+                          height: 36,
+                        },
+                        label: {
+                          padding: '2px 10px',
+                        },
+                      })}
+                      fullWidth
+                    />
+                  </Input.Wrapper>
+                )}
+              </Group>
+              {errors.checkpointType && <Input.Error>{errors.checkpointType.message}</Input.Error>}
+            </Stack>
+            <InputTags name="tagsOnModels" label="Tags" target={[TagTarget.Model]} />
+            <InputRTE
+              name="description"
+              label="About your model"
+              description="Tell us what your model does"
+              includeControls={['heading', 'formatting', 'list', 'link', 'media', 'mentions']}
+              editorSize="xl"
+            />
+          </Stack>
+        </Grid.Col>
+        <Grid.Col span={12}>
+          <Stack>
+            <Paper radius="md" p="xl" withBorder>
+              <Grid gutter="xs">
+                <Grid.Col xs={12} sm={6}>
+                  <Stack spacing="xs">
+                    <Text size="md" weight={500} sx={{ lineHeight: 1.2 }} mb="xs">
+                      {`When using this model, I give permission for users to:`}
+                    </Text>
+                    <InputCheckbox name="allowNoCredit" label="Use without crediting me" />
+                    <InputCheckbox name="allowDerivatives" label="Share merges of this model" />
+                    {allowDerivatives && (
+                      <InputCheckbox
+                        name="allowDifferentLicense"
+                        label="Use different permissions on merges"
+                      />
+                    )}
+                  </Stack>
+                </Grid.Col>
+                <Grid.Col xs={12} sm={6}>
+                  <Stack spacing="xs">
+                    <Text size="md" weight={500} sx={{ lineHeight: 1.2 }}>
+                      Commercial Use
+                    </Text>
+                    <InputSegmentedControl
+                      name="allowCommercialUse"
+                      orientation="vertical"
+                      fullWidth
+                      color="blue"
+                      styles={(theme) => ({
+                        root: {
+                          border: `1px solid ${
+                            theme.colorScheme === 'dark'
+                              ? theme.colors.dark[4]
+                              : theme.colors.gray[4]
+                          }`,
+                          background: 'none',
+                        },
+                      })}
+                      data={[
+                        {
+                          value: CommercialUse.None,
+                          label: (
+                            <Group>
+                              <IconCurrencyDollarOff size={16} /> None
+                            </Group>
+                          ),
+                        },
+                        {
+                          value: CommercialUse.Image,
+                          label: (
+                            <Group>
+                              <IconPhoto size={16} /> Sell generated images
+                            </Group>
+                          ),
+                        },
+                        {
+                          value: CommercialUse.Rent,
+                          label: (
+                            <Group>
+                              <IconBrush size={16} /> Use on generation services
+                            </Group>
+                          ),
+                        },
+                        {
+                          value: CommercialUse.Sell,
+                          label: (
+                            <Group>
+                              <IconShoppingCart size={16} /> Sell this model or merges
+                            </Group>
+                          ),
+                        },
+                      ]}
+                    />
+                  </Stack>
+                </Grid.Col>
+              </Grid>
+            </Paper>
+            <Paper radius="md" p="xl" withBorder>
+              <Stack>
+                <Text size="md" weight={500}>
+                  This model:
+                </Text>
+                <InputCheckbox
+                  name="poi"
+                  label="Depicts an actual person"
+                  description="For Example: Tom Cruise or Tom Cruise as Maverick"
+                />
+                <InputCheckbox name="nsfw" label="Is for an adult audience (NSFW)" />
+              </Stack>
+            </Paper>
+            {nsfwPoi.every((item) => item === true) && (
+              <>
+                <Alert color="red" pl={10}>
+                  <Group noWrap spacing={10}>
+                    <ThemeIcon color="red">
+                      <IconExclamationMark />
+                    </ThemeIcon>
+                    <Text size="xs" sx={{ lineHeight: 1.2 }}>
+                      NSFW content depicting actual people is not permitted.
+                    </Text>
+                  </Group>
+                </Alert>
+                <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
+                  Please revise the content of this listing to ensure no actual person is depicted
+                  in an NSFW context out of respect for the individual.
+                </Text>
+              </>
             )}
+          </Stack>
+        </Grid.Col>
+        <Grid.Col span={12}>
+          <Group position="right">
+            <Button type="submit">Next</Button>
           </Group>
-          {errors.checkpointType && <Input.Error>{errors.checkpointType.message}</Input.Error>}
-        </Stack>
-        <InputTags name="tagsOnModels" label="Tags" target={[TagTarget.Model]} />
-        <InputRTE
-          name="description"
-          label="About your model"
-          description="Tell us what your model does"
-          includeControls={['heading', 'formatting', 'list', 'link', 'media', 'mentions']}
-          editorSize="md"
-        />
-      </Stack>
+        </Grid.Col>
+      </Grid>
     </Form>
   );
 }
