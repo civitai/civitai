@@ -49,13 +49,14 @@ export const getGalleryImages = async <
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const isMod = user?.isModerator ?? false;
+  needsReview = isMod ? needsReview : false;
 
   const conditionalFilters: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   if (!!excludedTagIds?.length)
     conditionalFilters.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
 
   if (!!tags?.length) conditionalFilters.push({ tags: { some: { tagId: { in: tags } } } });
-  else {
+  else if (!needsReview) {
     const periodStart = decreaseDate(new Date(), 3, 'days');
     conditionalFilters.push({ featuredAt: { gt: periodStart } });
   }
