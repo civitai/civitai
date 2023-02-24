@@ -194,7 +194,7 @@ export function ImageUpload({
                     const isError = image.status === 'error';
                     const isComplete = image.status === 'complete';
                     const isBlocked = image.status === 'blocked';
-                    const showLoading = !isError && !isComplete && !isBlocked;
+                    const showLoading = image.status && !isError && !isComplete && !isBlocked;
 
                     return (
                       // <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
