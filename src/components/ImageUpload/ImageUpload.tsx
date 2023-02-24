@@ -199,7 +199,7 @@ export function ImageUpload({
                     return (
                       // <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
                       <ImageUploadPreview
-                        key={image.url}
+                        key={image.id ?? image.url}
                         image={image}
                         isPrimary={hasPrimaryImage && index === 0}
                         // disabled={hasSelectedFile}
