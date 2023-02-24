@@ -19,16 +19,14 @@ export const imageMetaSchema = z
   .passthrough();
 
 export type FaceDetectionInput = z.infer<typeof faceDetectionSchema>;
-export const faceDetectionSchema = z
-  .object({
-    age: z.number(),
-    emotions: z.array(z.object({ emotion: z.string(), score: z.number() })),
-    gender: z.enum(['male', 'female', 'unknown']),
-    genderConfidence: z.number(),
-    live: z.number(),
-    real: z.number(),
-  })
-  .partial();
+export const faceDetectionSchema = z.object({
+  age: z.number(),
+  emotions: z.array(z.object({ emotion: z.string(), score: z.number() })),
+  gender: z.enum(['male', 'female', 'unknown']),
+  genderConfidence: z.number().optional().default(0),
+  live: z.number(),
+  real: z.number(),
+});
 
 export type ImageAnalysisInput = z.infer<typeof imageAnalysisSchema>;
 export const imageAnalysisSchema = z.object({
