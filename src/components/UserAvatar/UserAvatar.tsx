@@ -14,6 +14,7 @@ import Link from 'next/link';
 
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { Username } from '~/components/User/Username';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { getInitials } from '~/utils/string-helpers';
 
@@ -41,6 +42,7 @@ export function UserAvatar({
   includeAvatar = true,
 }: Props) {
   const { classes } = useStyles();
+  const currentUser = useCurrentUser();
 
   if (!user) return null;
   const userDeleted = !!user.deletedAt;
@@ -51,7 +53,14 @@ export function UserAvatar({
     <Group align="center" spacing={spacing} noWrap>
       {includeAvatar && (
         <Avatar
-          src={user.image && !userDeleted ? getEdgeUrl(user.image, { width: 96 }) : undefined}
+          src={
+            user.image && !userDeleted
+              ? getEdgeUrl(user.image, {
+                  width: 96,
+                  anim: currentUser ? (!currentUser.autoplayGifs ? false : undefined) : undefined,
+                })
+              : undefined
+          }
           alt={user.username && !userDeleted ? `${user.username}'s Avatar` : undefined}
           radius="xl"
           size={size}

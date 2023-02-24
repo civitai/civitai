@@ -139,8 +139,6 @@ export const createReport = async ({
               },
             });
           }
-        } else if (data.reason === ReportReason.TOSViolation) {
-          await tx.review.update({ where: { id }, data: { tosViolation: true } });
         }
         break;
       case ReportEntity.Comment:

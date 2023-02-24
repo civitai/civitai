@@ -227,6 +227,7 @@ function ReviewCarousel({
     // });
   };
 
+  // this is used to keep content rendered while scrolling - carousel unmounted
   if (!inView && review.images.length > 0)
     return (
       <ImageGuard
@@ -284,6 +285,11 @@ function ReviewCarousel({
             height: 8,
             transition: 'width 250ms ease',
           },
+          // Increase carousel control arrow size
+          control: {
+            width: 32,
+            height: 32,
+          },
         }}
       >
         <ImageGuard
@@ -315,6 +321,7 @@ function ReviewCarousel({
                     withMeta
                   />
                 )}
+                <ImageGuard.ReportNSFW />
               </ImageGuard.Safe>
             </Carousel.Slide>
           )}

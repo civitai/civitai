@@ -3,7 +3,7 @@ import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import { useState, cloneElement } from 'react';
-import create from 'zustand';
+import { create } from 'zustand';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { v4 as uuidv4 } from 'uuid';
 

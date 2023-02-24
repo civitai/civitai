@@ -2,7 +2,7 @@ import { Popover, Stack, Group, ThemeIcon, Button, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons';
 import { useState, cloneElement } from 'react';
-import create from 'zustand';
+import { create } from 'zustand';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -59,7 +59,9 @@ export function JoinPopover({
               <ThemeIcon color="red" size="xl" variant="outline">
                 <IconLock />
               </ThemeIcon>
-              {typeof message != 'string' ? message : (
+              {typeof message != 'string' ? (
+                message
+              ) : (
                 <Text size="sm" weight={500} sx={{ flex: 1 }}>
                   {message ?? 'You must be a Supporter Tier member to access this content.'}
                 </Text>

@@ -7,6 +7,14 @@ import { appRouter } from '~/server/routers';
 const PUBLIC_CACHE_MAX_AGE = 60;
 const PUBLIC_CACHE_STALE_WHILE_REVALIDATE = 30;
 
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb',
+    },
+  },
+};
+
 // export API handler
 export default createNextApiHandler({
   router: appRouter,

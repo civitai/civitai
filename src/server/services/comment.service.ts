@@ -26,7 +26,7 @@ export const getComments = <TSelect extends Prisma.CommentSelect>({
 }) => {
   const skip = page ? (page - 1) * limit : undefined;
   const isMod = user?.isModerator ?? false;
-  // const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+  // const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 

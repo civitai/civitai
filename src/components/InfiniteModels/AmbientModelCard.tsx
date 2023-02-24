@@ -43,8 +43,8 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controller';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { ModelGetAll } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { splitUppercase, slugit } from '~/utils/string-helpers';
@@ -344,7 +344,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                 render={(image) => (
                   <Box sx={{ position: 'relative' }}>
                     {contextMenuItems.length > 0 && (
-                      <Menu>
+                      <Menu position="left-start" withArrow offset={-5}>
                         <Menu.Target>
                           <ActionIcon
                             variant="transparent"
@@ -483,6 +483,6 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
 
 type Props = {
   index: number;
-  data: GetModelsInfiniteReturnType[number];
+  data: ModelGetAll['items'][number];
   width: number;
 };

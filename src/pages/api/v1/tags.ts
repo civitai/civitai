@@ -14,7 +14,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     const { items, ...metadata } = await apiCaller.tag.getAll({
       ...req.query,
       withModels: true,
-      entityType: TagTarget.Model,
+      entityType: [TagTarget.Model],
     });
     const { nextPage, prevPage, baseUrl } = getPaginationLinks({
       ...metadata,

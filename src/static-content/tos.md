@@ -38,6 +38,8 @@ These rules apply to all Content posted on Civitai. Moderators consider context 
   - graphic injuries
   - depictions of human death
   - graphic violence
+  - beastiality
+  - "loli", "lolicon", "shota", or "shotacon" content
 - Models intended for the photorealistic depiction of minors
 
   Will be removed.

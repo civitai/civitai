@@ -2,6 +2,7 @@ import { Container, Group, Stack, Title } from '@mantine/core';
 import { GetServerSideProps } from 'next';
 import { useRouter } from 'next/router';
 import { Announcements } from '~/components/Announcements/Announcements';
+import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
 import {
@@ -12,6 +13,7 @@ import {
 import { Meta } from '~/components/Meta/Meta';
 import { TrendingTags } from '~/components/TrendingTags/TrendingTags';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 
@@ -30,7 +32,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     }
 
     // Prefetch trending tags
-    await ssg.tag.getTrending.prefetch({ entityType: 'Model' });
+    await ssg.tag.getTrending.prefetch({ entityType: ['Model'] });
   }
 
   return {
@@ -66,8 +68,12 @@ function Home() {
               },
             })}
           />
+          <HomeContentToggle sx={showMobile} />
           <Group position="apart" spacing={0}>
-            <InfiniteModelsSort />
+            <Group>
+              <HomeContentToggle sx={hideMobile} />
+              <InfiniteModelsSort />
+            </Group>
             <Group spacing={4}>
               <InfiniteModelsPeriod />
               <InfiniteModelsFilter />

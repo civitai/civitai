@@ -61,7 +61,7 @@ export function ListSearch({ onSearch }: Props) {
     query.startsWith('#') ? query.substring(1).toLowerCase().trim() : query.toLowerCase();
 
   const { data: tags } = trpc.tag.getAll.useQuery(
-    { query: parseTagQuery(value), limit, entityType: TagTarget.Model },
+    { query: parseTagQuery(value), limit, entityType: [TagTarget.Model] },
     { enabled: !!value.length && canQueryTags }
   );
 
@@ -150,11 +150,11 @@ export function ListSearch({ onSearch }: Props) {
         filter={(value) => {
           if (value.startsWith('@')) {
             const parsed = parseUserQuery(value.toLowerCase().trim());
-            return users?.some((user) => user.username?.toLowerCase().includes(parsed));
+            return users?.some((user) => user.username?.toLowerCase().includes(parsed)) ?? false;
           }
           if (value.startsWith('#')) {
             const parsed = parseTagQuery(value.toLowerCase().trim());
-            return tags?.items.some((tag) => tag.name.toLowerCase().includes(parsed));
+            return tags?.items.some((tag) => tag.name.toLowerCase().includes(parsed)) ?? false;
           }
 
           return true;

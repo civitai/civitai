@@ -23,7 +23,7 @@ import { CustomModalsProvider } from './../providers/CustomModalsProvider';
 import { TosProvider } from '~/providers/TosProvider';
 import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
 import { MaintenanceMode } from '~/components/MaintenanceMode/MaintenanceMode';
-import { NsfwWorkerProvider } from '~/providers/NsfwWorkerProvider';
+import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { FeatureFlags } from '~/server/services/feature-flags.service';
@@ -96,7 +96,7 @@ function MyApp(props: CustomAppProps) {
         {/* {flags.civitaiLink && <CivitaiLinkProvider />} */}
         <CookiesProvider value={cookies}>
           <FeatureFlagsProvider flags={flags}>
-            <NsfwWorkerProvider>
+            <ImageProcessingProvider>
               {/* TODO.civitai-link - dont' use provider if they don't have the flag */}
               <CivitaiLinkProvider>
                 <CustomModalsProvider>
@@ -106,7 +106,7 @@ function MyApp(props: CustomAppProps) {
                   </NotificationsProvider>
                 </CustomModalsProvider>
               </CivitaiLinkProvider>
-            </NsfwWorkerProvider>
+            </ImageProcessingProvider>
           </FeatureFlagsProvider>
         </CookiesProvider>
       </SessionProvider>
@@ -119,6 +119,7 @@ function MyApp(props: CustomAppProps) {
         <title>Civitai | Share your models</title>
         <meta name="viewport" content="maximum-scale=1, initial-scale=1, width=device-width" />
         <link rel="manifest" href="/site.webmanifest" />
+        <script defer data-domain="civitai.com" src="https://plausible.io/js/script.js"></script>
       </Head>
 
       <ColorSchemeProvider

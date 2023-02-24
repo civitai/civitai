@@ -7,6 +7,7 @@ import {
   IconBrandLinktree,
   IconBrandPatreon,
   IconBrandReddit,
+  IconBrandTumblr,
   IconBrandTwitch,
   IconBrandTwitter,
   IconBrandYoutube,
@@ -46,4 +47,5 @@ const tablerIconMap: { [key in DomainLink]: TablerIcon } = {
   github: IconBrandGithub,
   linktree: IconBrandLinktree,
   deviantArt: IconBrandDeviantart,
+  tumblr: IconBrandTumblr,
 };

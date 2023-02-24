@@ -28,9 +28,9 @@ export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => 
       select: {
         id: true,
         name: true,
-        tagsOnModels: withModels ? { select: { modelId: true } } : undefined,
+        isCategory: true,
+        tagsOnModels: withModels ? { select: { modelId: true } } : false,
       },
-      orderBy: { rank: { modelCountAllTimeRank: 'asc' } },
     });
 
     return getPagingData(results, take, page);
@@ -44,7 +44,6 @@ export const getTrendingTagsHandler = async ({ input }: { input: GetTrendingTags
     ...input,
     take: input.limit ?? constants.tagFilterDefaults.trendingTagsLimit,
     select: { id: true, name: true },
-    orderBy: { rank: { modelCountAllTimeRank: 'asc' } },
   });
 
   return items;

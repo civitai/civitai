@@ -14,7 +14,7 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
     const { data: blockedTags = [] } = trpc.user.getTags.useQuery({ type: 'Hide' });
     const { data, isLoading } = trpc.tag.getAll.useQuery({
       limit: 0,
-      entityType: 'Model',
+      entityType: ['Model'],
       modelId,
     });
     const modelTags = data?.items ?? [];

@@ -21,7 +21,7 @@ type ImagePreviewProps = {
   nsfw?: boolean;
   aspectRatio?: number;
   // lightboxImages?: ImageModel[];
-  image: ImageModel;
+  image: Omit<ImageModel, 'tags'>;
   edgeImageProps?: Omit<EdgeImageProps, 'src'>;
   withMeta?: boolean;
   onClick?: React.MouseEventHandler<HTMLImageElement>;
@@ -30,7 +30,7 @@ type ImagePreviewProps = {
 } & Omit<BoxProps, 'component'>;
 
 export function ImagePreview({
-  image: { url, name, width, height, hash, meta },
+  image: { url, name, width, height, hash, meta, generationProcess },
   edgeImageProps = {},
   nsfw,
   aspectRatio,
@@ -43,7 +43,7 @@ export function ImagePreview({
   ...props
 }: ImagePreviewProps) {
   const { classes, cx } = useStyles({ radius });
-  aspectRatio ??= (width ?? 16) / (height ?? 9);
+  aspectRatio ??= Math.max((width ?? 16) / (height ?? 9), 9 / 16);
 
   if (!edgeImageProps.width && !edgeImageProps.height) {
     if (!edgeImageProps.height && width) edgeImageProps.width = width;
@@ -59,7 +59,10 @@ export function ImagePreview({
   );
 
   const Meta = !nsfw && withMeta && meta && (
-    <ImageMetaPopover meta={meta as ImageMetaProps}>
+    <ImageMetaPopover
+      meta={meta as ImageMetaProps}
+      generationProcess={generationProcess ?? 'txt2img'}
+    >
       <ActionIcon
         variant="transparent"
         style={{ position: 'absolute', bottom: '5px', right: '5px' }}

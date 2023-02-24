@@ -167,7 +167,13 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
               select: imageSelect,
             },
           },
-          where: { image: { nsfw: includeNSFW ? undefined : false, tosViolation: false } },
+          where: {
+            image: {
+              nsfw: includeNSFW ? undefined : false,
+              tosViolation: false,
+              needsReview: false,
+            },
+          },
         },
         rank: {
           select: {
@@ -208,5 +214,5 @@ export const modelWithDetailsSelect = (includeNSFW = true) =>
         favoriteCountAllTime: true,
       },
     },
-    tagsOnModels: { select: { tag: true } },
+    tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
   });

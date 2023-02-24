@@ -1,5 +1,4 @@
 import { Button, Center, Grid, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
-import { usePrevious } from '@mantine/hooks';
 import React, { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
 
@@ -40,10 +39,6 @@ export function ModelDiscussion({ modelId }: Props) {
     }
   );
 
-  const previousFetching = usePrevious(
-    (refetchingComments && !fetchingComments) || (refetchingReviews && !fetchingReviews)
-  );
-
   const reviews = useMemo(
     () => reviewsData?.pages.flatMap((x) => x.reviews) ?? [],
     [reviewsData?.pages]
@@ -66,7 +61,12 @@ export function ModelDiscussion({ modelId }: Props) {
       <Grid.Col span={12} sx={{ position: 'relative' }}>
         <LoadingOverlay visible={loading} />
         {hasItems ? (
-          <MasonryGrid items={items} render={DiscussionItem} previousFetching={previousFetching} />
+          <MasonryGrid
+            items={items}
+            render={DiscussionItem}
+            isRefetching={refetchingComments || refetchingReviews}
+            isFetchingNextPage={fetchingComments || fetchingReviews}
+          />
         ) : (
           <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Stack>

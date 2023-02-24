@@ -26,11 +26,13 @@ declare global {
     width?: number | null;
     hash?: string;
     nsfw?: boolean;
+    tags?: Array<{ id: number; name: string; isCategory: boolean }>;
     // navigation properties
     uuid?: string;
     analysis?: ImageAnalysisInput;
     status?: 'processing' | 'uploading' | 'complete' | 'blocked' | 'error';
     blockedFor?: string[];
+    message?: string;
   };
 
   type DeepNonNullable<T> = { [P in keyof T]-?: NonNullable<T[P]> } & NonNullable<T>;

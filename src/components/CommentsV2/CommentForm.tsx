@@ -94,9 +94,9 @@ export const CommentForm = ({
             }
           })
         );
-      } else {
-        setCreated((state) => [...state, response]);
-      }
+      } else setCreated((state) => [...state, response]);
+      // update comment count
+      queryUtils.commentv2.getCount.setData({ entityType, entityId }, (old = 0) => old + 1);
       handleCancel();
     },
     onError(error) {

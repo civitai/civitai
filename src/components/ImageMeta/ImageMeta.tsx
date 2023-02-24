@@ -14,9 +14,11 @@ import { useClipboard } from '@mantine/hooks';
 import { IconCheck, IconCopy } from '@tabler/icons';
 import { useMemo } from 'react';
 import { encodeMetadata } from '~/utils/image-metadata';
+import { ImageGenerationProcess } from '@prisma/client';
 
 type Props = {
   meta: ImageMetaProps;
+  generationProcess?: ImageGenerationProcess;
 };
 type MetaDisplay = {
   label: string;
@@ -33,7 +35,7 @@ const labelDictionary: Record<keyof ImageMetaProps, string> = {
   Model: 'Model',
 };
 
-export function ImageMeta({ meta }: Props) {
+export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
   const { copied, copy } = useClipboard();
   // TODO only show keys in our meta list
   const metas = useMemo(() => {
@@ -51,28 +53,20 @@ export function ImageMeta({ meta }: Props) {
     return { long, medium, short };
   }, [meta]);
 
-  const type = useMemo(() => {
-    const denoiseStrength = meta['Denoise strength'] ?? meta['Denoising strength'] != null;
-    const hiresFixed =
-      meta['First pass strength'] ?? (meta['Hires upscale'] ?? meta['Hires upscaler']) != null;
-    if (meta['Mask blur'] != null) return 'inpainting';
-    if (denoiseStrength && !hiresFixed) return 'img2img';
-    if (denoiseStrength && hiresFixed) return 'txt2img + hi-res';
-    return 'txt2img';
-  }, [meta]);
-
   return (
     <Stack spacing="xs">
       {metas.long.map(({ label, value }) => (
         <Stack key={label} spacing={0}>
-          <Text size="sm" weight={500}>
-            {label}{' '}
+          <Group spacing={4} align="center">
+            <Text size="sm" weight={500}>
+              {label}
+            </Text>
             {label === 'Prompt' && (
-              <Badge size="xs" radius="sm" ml={4}>
-                {type}
+              <Badge size="xs" radius="sm">
+                {generationProcess === 'txt2imgHiRes' ? 'txt2img + Hi-Res' : generationProcess}
               </Badge>
             )}
-          </Text>
+          </Group>
           <Code block sx={{ whiteSpace: 'normal', maxHeight: 150, overflowY: 'auto' }}>
             {value}
           </Code>
@@ -117,6 +111,7 @@ export function ImageMeta({ meta }: Props) {
 
 export function ImageMetaPopover({
   meta,
+  generationProcess,
   children,
   ...popoverProps
 }: Props & { children: React.ReactElement } & PopoverProps) {
@@ -124,7 +119,7 @@ export function ImageMetaPopover({
     <Popover width={350} shadow="md" position="top-end" withArrow withinPortal {...popoverProps}>
       <Popover.Target>{children}</Popover.Target>
       <Popover.Dropdown>
-        <ImageMeta meta={meta} />
+        <ImageMeta meta={meta} generationProcess={generationProcess} />
       </Popover.Dropdown>
     </Popover>
   );

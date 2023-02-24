@@ -179,6 +179,27 @@ const useStyles = createStyles((theme) => ({
       width: '100%',
     },
   },
+
+  // Increase carousel control arrow size
+  control: {
+    minWidth: 56,
+    minHeight: 56,
+
+    svg: {
+      width: 24,
+      height: 24,
+
+      [theme.fn.smallerThan('sm')]: {
+        minWidth: 16,
+        minHeight: 16,
+      },
+    },
+
+    [theme.fn.smallerThan('sm')]: {
+      minWidth: 32,
+      minHeight: 32,
+    },
+  },
 }));
 
 export default function ModelDetail({
@@ -421,14 +442,7 @@ export default function ModelDetail({
         <Group spacing={4}>
           {model.tagsOnModels.map(({ tag }) => (
             <Link key={tag.id} href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
-              <Badge
-                key={tag.id}
-                color={tag.color ?? 'blue'}
-                component="a"
-                size="sm"
-                radius="sm"
-                sx={{ cursor: 'pointer' }}
-              >
+              <Badge key={tag.id} component="a" size="sm" radius="sm" sx={{ cursor: 'pointer' }}>
                 {tag.name}
               </Badge>
             </Link>
@@ -893,6 +907,7 @@ function ModelCarousel({
   latestVersion: ModelById['modelVersions'][number];
   mobile?: boolean;
 }) {
+  const { classes } = useStyles();
   if (!latestVersion.images.length) return null;
 
   return (
@@ -901,6 +916,7 @@ function ModelCarousel({
       slideSize="50%"
       breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
       slideGap="xl"
+      classNames={{ control: classes.control }}
       align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
       slidesToScroll={mobile ? 1 : 2}
       withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
@@ -915,6 +931,7 @@ function ModelCarousel({
             <Center style={{ height: '100%', width: '100%' }}>
               <div style={{ width: '100%', position: 'relative' }}>
                 <ImageGuard.ToggleConnect />
+                <ImageGuard.ReportNSFW />
                 <ImageGuard.Unsafe>
                   <AspectRatio
                     ratio={(image.width ?? 1) / (image.height ?? 1)}

@@ -21,7 +21,7 @@ import { deleteCookie } from 'cookies-next';
 import Link from 'next/link';
 import router, { useRouter } from 'next/router';
 import { z } from 'zod';
-import create from 'zustand';
+import { create } from 'zustand';
 import createContext from 'zustand/context';
 import { immer } from 'zustand/middleware/immer';
 

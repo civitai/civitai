@@ -1,6 +1,7 @@
-import create from 'zustand';
+import { create } from 'zustand';
+import { useEffect } from 'react';
 import { ModelType, MetricTimeframe, CheckpointType, ModelStatus } from '@prisma/client';
-import { ModelSort } from '~/server/common/enums';
+import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { splitUppercase } from '~/utils/string-helpers';
 import { deleteCookie } from 'cookies-next';
@@ -10,7 +11,6 @@ import {
   Popover,
   ActionIcon,
   Stack,
-  Checkbox,
   Indicator,
   Divider,
   SegmentedControl,
@@ -35,7 +35,7 @@ export const useFilters = create<{
   setTypes: (types?: ModelType[]) => void;
   setCheckpointType: (checkpointType?: CheckpointType) => void;
   setBaseModels: (baseModels?: BaseModel[]) => void;
-  setHideNSFW: (includeNSFW?: boolean) => void;
+  setBrowsingMode: (browsingMode?: BrowsingMode, keep?: boolean) => void;
   setStatus: (status?: ModelStatus[]) => void;
 }>()(
   immer((set) => ({
@@ -70,10 +70,12 @@ export const useFilters = create<{
         !!baseModels?.length ? setCookie('f_baseModels', baseModels) : deleteCookie('f_baseModels');
       });
     },
-    setHideNSFW: (hideNSFW) => {
+    setBrowsingMode: (browsingMode, keep = false) => {
       set((state) => {
-        state.filters.hideNSFW = hideNSFW;
-        hideNSFW ? setCookie('f_hideNSFW', hideNSFW) : deleteCookie('f_hideNSFW');
+        state.filters.browsingMode = browsingMode;
+        browsingMode && keep
+          ? setCookie('f_browsingMode', browsingMode)
+          : deleteCookie('f_browsingMode');
       });
     },
     setStatus: (status) => {
@@ -91,7 +93,7 @@ export const useInfiniteModelsFilters = () => {
     period = constants.modelFilterDefaults.period,
     baseModels,
     types,
-    hideNSFW,
+    browsingMode,
     status,
     checkpointType,
   } = useCookies().models;
@@ -103,7 +105,7 @@ export const useInfiniteModelsFilters = () => {
     period,
     types,
     baseModels,
-    hideNSFW,
+    browsingMode,
     status,
     checkpointType,
     ...filters,
@@ -147,21 +149,22 @@ export function InfiniteModelsPeriod() {
 }
 
 const availableStatus = Object.values(ModelStatus).filter((status) =>
-  ['Draft', 'Deleted'].includes(status)
+  ['Draft', 'Deleted', 'Unpublished'].includes(status)
 );
 
 export function InfiniteModelsFilter() {
   const { classes } = useStyles();
   const cookies = useCookies().models;
   const user = useCurrentUser();
+  const defaultBrowsingMode = user?.showNsfw ? BrowsingMode.All : BrowsingMode.SFW;
   const setTypes = useFilters((state) => state.setTypes);
   const types = useFilters((state) => state.filters.types ?? cookies.types ?? []);
   const setStatus = useFilters((state) => state.setStatus);
   const status = useFilters((state) => state.filters.status ?? cookies.status ?? []);
   const setBaseModels = useFilters((state) => state.setBaseModels);
   const baseModels = useFilters((state) => state.filters.baseModels ?? cookies.baseModels ?? []);
-  const hideNSFW = useFilters((state) => state.filters.hideNSFW ?? cookies.hideNSFW ?? false);
-  const setHideNSFW = useFilters((state) => state.setHideNSFW);
+  const browsingMode = useFilters((state) => state.filters.browsingMode ?? cookies.browsingMode);
+  const setBrowsingMode = useFilters((state) => state.setBrowsingMode);
   const setCheckpointType = useFilters((state) => state.setCheckpointType);
   const checkpointType = useFilters(
     (state) => state.filters.checkpointType ?? cookies.checkpointType ?? 'all'
@@ -169,23 +172,29 @@ export function InfiniteModelsFilter() {
   const showNSFWToggle = !user || user.showNsfw;
   const showCheckpointType = !types?.length || types.includes('Checkpoint');
 
+  useEffect(() => {
+    if (browsingMode === undefined) setBrowsingMode(defaultBrowsingMode);
+  }, [browsingMode, defaultBrowsingMode, setBrowsingMode]);
+
   const filterLength =
     types.length +
     baseModels.length +
-    (showNSFWToggle && hideNSFW ? 1 : 0) +
+    status.length +
+    (showNSFWToggle && browsingMode !== defaultBrowsingMode ? 1 : 0) +
     (showCheckpointType && checkpointType !== 'all' ? 1 : 0);
   const handleClear = () => {
     setTypes([]);
     setBaseModels([]);
-    setHideNSFW(false);
+    setStatus([]);
+    setBrowsingMode(defaultBrowsingMode);
     setCheckpointType(undefined);
   };
 
   const chipProps: Partial<ChipProps> = {
     radius: 'sm',
     size: 'sm',
-    classNames: classes
-  }
+    classNames: classes,
+  };
 
   return (
     <Popover withArrow>
@@ -205,14 +214,14 @@ export function InfiniteModelsFilter() {
           </ActionIcon>
         </Indicator>
       </Popover.Target>
-      <Popover.Dropdown maw={350} w='100%'>
+      <Popover.Dropdown maw={350} w="100%">
         <Stack spacing={0}>
           {showNSFWToggle && (
             <>
               <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} />
               <SegmentedControl
                 my={5}
-                value={!hideNSFW ? 'nsfw' : 'sfw'}
+                value={browsingMode ?? 'SFW'}
                 size="xs"
                 color="blue"
                 styles={(theme) => ({
@@ -224,11 +233,12 @@ export function InfiniteModelsFilter() {
                   },
                 })}
                 data={[
-                  { label: 'Safe', value: 'sfw' },
-                  { label: 'Adult', value: 'nsfw' },
+                  { label: 'Safe', value: 'SFW' },
+                  { label: 'Adult', value: 'NSFW' },
+                  { label: 'Everything', value: 'All' },
                 ]}
                 onChange={(value) => {
-                  setHideNSFW(value === 'sfw');
+                  setBrowsingMode(value as BrowsingMode, true);
                 }}
               />
             </>
@@ -252,13 +262,17 @@ export function InfiniteModelsFilter() {
             </>
           )}
           <Divider label="Model types" labelProps={{ weight: 'bold' }} />
-          <Chip.Group spacing={4}
-                value={types}
-                onChange={(types: ModelType[]) => setTypes(types)}
-                multiple
-                my={4}>
+          <Chip.Group
+            spacing={4}
+            value={types}
+            onChange={(types: ModelType[]) => setTypes(types)}
+            multiple
+            my={4}
+          >
             {Object.values(ModelType).map((type, index) => (
-              <Chip key={index} value={type} {...chipProps}>{splitUppercase(type)}</Chip>
+              <Chip key={index} value={type} {...chipProps}>
+                {splitUppercase(type)}
+              </Chip>
             ))}
           </Chip.Group>
           {showCheckpointType ? (
@@ -290,13 +304,17 @@ export function InfiniteModelsFilter() {
             </>
           ) : null}
           <Divider label="Base model" labelProps={{ weight: 'bold' }} />
-          <Chip.Group spacing={4}
-                value={baseModels}
-                onChange={(baseModels: BaseModel[]) => setBaseModels(baseModels)}
-                multiple
-                my={4}>
+          <Chip.Group
+            spacing={4}
+            value={baseModels}
+            onChange={(baseModels: BaseModel[]) => setBaseModels(baseModels)}
+            multiple
+            my={4}
+          >
             {constants.baseModels.map((baseModel, index) => (
-              <Chip key={index} value={baseModel} {...chipProps}>{baseModel}</Chip>
+              <Chip key={index} value={baseModel} {...chipProps}>
+                {baseModel}
+              </Chip>
             ))}
           </Chip.Group>
           {filterLength > 0 && (

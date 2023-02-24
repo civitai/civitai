@@ -1,9 +1,23 @@
 import { useSetState } from '@mantine/hooks';
-import { CheckpointType, MetricTimeframe, ModelStatus, ModelType } from '@prisma/client';
+import {
+  CheckpointType,
+  ImageGenerationProcess,
+  MetricTimeframe,
+  ModelStatus,
+  ModelType,
+} from '@prisma/client';
 import React, { createContext, useContext } from 'react';
 import { z } from 'zod';
+
 import { constants } from '~/server/common/constants';
-import { ImageSort, ModelSort, QuestionSort, QuestionStatus } from '~/server/common/enums';
+import {
+  BrowsingMode,
+  ImageResource,
+  ImageSort,
+  ModelSort,
+  QuestionSort,
+  QuestionStatus,
+} from '~/server/common/enums';
 
 export const modelFilterSchema = z.object({
   sort: z.nativeEnum(ModelSort).optional(),
@@ -11,7 +25,7 @@ export const modelFilterSchema = z.object({
   types: z.nativeEnum(ModelType).array().optional(),
   checkpointType: z.nativeEnum(CheckpointType).optional(),
   baseModels: z.enum(constants.baseModels).array().optional(),
-  hideNSFW: z.boolean().optional(),
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
   status: z.nativeEnum(ModelStatus).array().optional(),
 });
 
@@ -24,7 +38,13 @@ export const questionsFilterSchema = z.object({
 export const galleryFilterSchema = z.object({
   sort: z.nativeEnum(ImageSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
-  hideNSFW: z.boolean().optional(),
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
+  singleImageModel: z.boolean().optional(),
+  singleImageAlbum: z.boolean().optional(),
+  types: z.nativeEnum(ImageGenerationProcess).array().optional(),
+  resources: z.nativeEnum(ImageResource).array().optional(),
+  tags: z.number().array().optional(),
+  excludedTags: z.number().array().optional(),
 });
 
 const CookiesCtx = createContext<CookiesContext>({} as CookiesContext);
@@ -58,7 +78,7 @@ export function parseCookies(
       period: cookies?.['f_period'],
       types: cookies?.['f_types'],
       baseModels: cookies?.['f_baseModels'],
-      hideNSFW: cookies?.['f_hideNSFW'],
+      browsingMode: cookies?.['f_browsingMode'],
       status: cookies?.['f_status'],
       checkpointType: cookies?.['f_ckptType'],
     },
@@ -70,7 +90,13 @@ export function parseCookies(
     gallery: {
       sort: cookies?.['g_sort'],
       period: cookies?.['g_period'],
-      hideNSFW: cookies?.['g_hideNSFW'],
+      browsingMode: cookies?.['g_browsingMode'],
+      singleImageModel: cookies?.['g_singleImageModel'],
+      singleImageAlbum: cookies?.['g_singleImageAlbum'],
+      types: cookies?.['g_types'],
+      resources: cookies?.['g_resources'],
+      tags: cookies?.['g_tags'],
+      excludedTags: cookies?.['g_excludedTags'],
     },
   });
 }
@@ -85,7 +111,7 @@ const zodParse = z
           period: z.string(),
           types: z.string(),
           baseModels: z.string(),
-          hideNSFW: z.string(),
+          browsingMode: z.string(),
           status: z.string(),
           checkpointType: z.string(),
         })
@@ -101,7 +127,13 @@ const zodParse = z
         .object({
           sort: z.string(),
           period: z.string(),
-          hideNSFW: z.string(),
+          browsingMode: z.string(),
+          singleImageModel: z.string(),
+          singleImageAlbum: z.string(),
+          types: z.string(),
+          resources: z.string(),
+          tags: z.string(),
+          excludedTags: z.string(),
         })
         .partial(),
     })
@@ -113,11 +145,20 @@ const zodParse = z
           ...models,
           types: !!models.types ? JSON.parse(decodeURIComponent(models.types)) : [],
           baseModels: !!models.baseModels ? JSON.parse(decodeURIComponent(models.baseModels)) : [],
-          hideNSFW: models?.hideNSFW === 'true',
           status: !!models.status ? JSON.parse(decodeURIComponent(models.status)) : [],
         },
         questions,
-        gallery: { ...gallery, hideNSFW: gallery.hideNSFW === 'true' },
+        gallery: {
+          ...gallery,
+          singleImageModel: gallery.singleImageModel === 'true',
+          singleImageAlbum: gallery.singleImageAlbum === 'true',
+          types: !!gallery.types ? JSON.parse(decodeURIComponent(gallery.types)) : [],
+          resources: !!gallery.resources ? JSON.parse(decodeURIComponent(gallery.resources)) : [],
+          tags: !!gallery.tags ? JSON.parse(decodeURIComponent(gallery.tags)) : [],
+          excludedTags: !!gallery.excludedTags
+            ? JSON.parse(decodeURIComponent(gallery.excludedTags))
+            : [],
+        },
       } as CookiesContext)
   );
 

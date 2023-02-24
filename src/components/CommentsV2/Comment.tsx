@@ -22,7 +22,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import create from 'zustand';
+import { create } from 'zustand';
 import { Reactions, ReactionMetrics } from '~/components/Reaction/Reactions';
 import { ReviewReactions } from '@prisma/client';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -199,16 +199,21 @@ export function DeleteComment({
   entityType,
 }: { children: React.ReactElement; id: number } & CommentConnectorInput) {
   const queryUtils = trpc.useContext();
+  const { created, setCreated } = useCommentsContext();
   const { mutate, isLoading } = trpc.commentv2.delete.useMutation({
-    async onSuccess() {
+    async onSuccess(response, request) {
       showSuccessNotification({
         title: 'Your comment has been deleted',
         message: 'Successfully deleted the comment',
       });
-      closeAllModals();
-      //TODO.comments - possiby add optimistic updates
+      if (created.some((x) => x.id === request.id)) {
+        setCreated((state) => state.filter((x) => x.id !== request.id));
+      } else {
+        //TODO.comments - possiby add optimistic updates
+        await queryUtils.commentv2.getInfinite.invalidate({ entityId, entityType });
+      }
       queryUtils.commentv2.getCount.setData({ entityId, entityType }, (old = 1) => old - 1);
-      await queryUtils.commentv2.getInfinite.invalidate({ entityId, entityType });
+      closeAllModals();
     },
     onError(error) {
       showErrorNotification({

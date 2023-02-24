@@ -1,10 +1,6 @@
-import { ModelHashType } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
-import { env } from '~/env/server.mjs';
-import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { resModelVersionDetails } from '~/pages/api/v1/model-versions/[id]';
 import { prisma } from '~/server/db/client';
 import { getModelVersionApiSelect } from '~/server/selectors/modelVersion.selector';

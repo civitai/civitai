@@ -72,6 +72,7 @@ model User {
   subscription         CustomerSubscription?
   muted                Boolean?              @default(false)
   bannedAt             DateTime?
+  autoplayGifs         Boolean?              @default(true)
 
   accounts             Account[]
   sessions             Session[]
@@ -235,6 +236,8 @@ enum ModelType {
   Hypernetwork
   AestheticGradient
   LORA
+  Controlnet
+  Poses
 }
 
 enum ImportStatus {
@@ -512,6 +515,8 @@ model UserActivity {
   details   Json?
   hide      Boolean          @default(false)
   createdAt DateTime         @default(now())
+
+  @@index([userId, createdAt])
 }
 
 enum ReportReason {
@@ -626,21 +631,31 @@ model ReviewReaction {
   @@unique([reviewId, userId, reaction])
 }
 
+enum ImageGenerationProcess {
+  txt2img
+  txt2imgHiRes
+  img2img
+  inpainting
+}
+
 model Image {
-  id           Int      @id @default(autoincrement())
-  name         String?
-  url          String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId       Int
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  meta         Json?
-  hash         String?
-  height       Int?
-  width        Int?
-  nsfw         Boolean  @default(false)
-  tosViolation Boolean  @default(false)
-  analysis     Json?
+  id                Int                     @id @default(autoincrement())
+  name              String?
+  url               String
+  user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId            Int
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  meta              Json?
+  hash              String?
+  height            Int?
+  width             Int?
+  nsfw              Boolean                 @default(false)
+  tosViolation      Boolean                 @default(false)
+  analysis          Json?
+  generationProcess ImageGenerationProcess?
+  featuredAt        DateTime?
+  needsReview       Boolean                 @default(false)
 
   imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?
@@ -652,6 +667,7 @@ model Image {
   connections     ImageConnection?
   stats           ImageStat?
   rank            ImageRank?
+  modHelper       ImageModHelper?
 }
 
 model ImageMetric {
@@ -700,13 +716,15 @@ enum TagTarget {
 }
 
 model Tag {
-  id        Int       @id @default(autoincrement())
-  name      String
-  color     String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  target    TagTarget
-  unlisted  Boolean   @default(false)
+  id         Int         @id @default(autoincrement())
+  name       String
+  color      String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  target     TagTarget[]
+  unlisted   Boolean     @default(false)
+  unfeatured Boolean     @default(false)
+  isCategory Boolean     @default(false)
 
   tagsOnModels   TagsOnModels[]
   tagsOnQuestion TagsOnQuestions[]
@@ -716,7 +734,7 @@ model Tag {
   stats          TagStat?
   rank           TagRank?
 
-  @@unique([name, target])
+  @@unique([name])
 }
 
 model TagsOnModels {
@@ -753,6 +771,7 @@ model TagMetric {
   tagId         Int
   timeframe     MetricTimeframe
   modelCount    Int             @default(0)
+  imageCount    Int             @default(0)
   hiddenCount   Int             @default(0)
   followerCount Int             @default(0)
 
@@ -1272,24 +1291,24 @@ model ModelRank {
 
 /// @view
 model ModelReportStat {
-  model                 Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
-  modelId               Int   @id
-  tosViolationPending   Int
-  tosViolationValid     Int
-  tosViolationInvalid   Int
-  nsfwPending           Int
-  nsfwValid             Int
-  nsfwInvalid           Int
-  ownershipPending      Int
-  ownershipProcessing   Int
-  ownershipValid        Int
-  ownershipInvalid      Int
-  adminAttentionPending Int
-  adminAttentionValid   Int
-  adminAttentionInvalid Int
-  claimPending          Int
-  claimValid            Int
-  claimInvalid          Int
+  model                    Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
+  modelId                  Int   @id
+  tosViolationPending      Int
+  tosViolationUnactioned   Int
+  tosViolationActioned     Int
+  nsfwPending              Int
+  nsfwUnactioned           Int
+  nsfwActioned             Int
+  ownershipPending         Int
+  ownershipProcessing      Int
+  ownershipActioned        Int
+  ownershipUnactioned      Int
+  adminAttentionPending    Int
+  adminAttentionActioned   Int
+  adminAttentionUnactioned Int
+  claimPending             Int
+  claimActioned            Int
+  claimUnactioned          Int
 }
 
 /// @view
@@ -1450,6 +1469,11 @@ model TagStat {
   modelCountMonth      Int
   modelCountYear       Int
   modelCountAllTime    Int
+  imageCountDay        Int
+  imageCountWeek       Int
+  imageCountMonth      Int
+  imageCountYear       Int
+  imageCountAllTime    Int
 }
 
 /// @view
@@ -1471,6 +1495,11 @@ model TagRank {
   modelCountMonthRank      Int
   modelCountYearRank       Int
   modelCountAllTimeRank    Int
+  imageCountDayRank        Int
+  imageCountWeekRank       Int
+  imageCountMonthRank      Int
+  imageCountYearRank       Int
+  imageCountAllTimeRank    Int
 }
 
 /// @view
@@ -1502,74 +1531,92 @@ model ImageConnection {
 
 /// @view
 model ImageStat {
-  imageId             Int   @id
-  image               Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
-  cryCountDay         Int   @default(0)
-  cryCountWeek        Int   @default(0)
-  cryCountMonth       Int   @default(0)
-  cryCountYear        Int   @default(0)
-  cryCountAllTime     Int   @default(0)
-  dislikeCountDay     Int   @default(0)
-  dislikeCountWeek    Int   @default(0)
-  dislikeCountMonth   Int   @default(0)
-  dislikeCountYear    Int   @default(0)
-  dislikeCountAllTime Int   @default(0)
-  heartCountDay       Int   @default(0)
-  heartCountWeek      Int   @default(0)
-  heartCountMonth     Int   @default(0)
-  heartCountYear      Int   @default(0)
-  heartCountAllTime   Int   @default(0)
-  laughCountDay       Int   @default(0)
-  laughCountWeek      Int   @default(0)
-  laughCountMonth     Int   @default(0)
-  laughCountYear      Int   @default(0)
-  laughCountAllTime   Int   @default(0)
-  likeCountDay        Int   @default(0)
-  likeCountWeek       Int   @default(0)
-  likeCountMonth      Int   @default(0)
-  likeCountYear       Int   @default(0)
-  likeCountAllTime    Int   @default(0)
-  commentCountDay     Int   @default(0)
-  commentCountWeek    Int   @default(0)
-  commentCountMonth   Int   @default(0)
-  commentCountYear    Int   @default(0)
-  commentCountAllTime Int   @default(0)
+  imageId              Int   @id
+  image                Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
+  cryCountDay          Int   @default(0)
+  cryCountWeek         Int   @default(0)
+  cryCountMonth        Int   @default(0)
+  cryCountYear         Int   @default(0)
+  cryCountAllTime      Int   @default(0)
+  dislikeCountDay      Int   @default(0)
+  dislikeCountWeek     Int   @default(0)
+  dislikeCountMonth    Int   @default(0)
+  dislikeCountYear     Int   @default(0)
+  dislikeCountAllTime  Int   @default(0)
+  heartCountDay        Int   @default(0)
+  heartCountWeek       Int   @default(0)
+  heartCountMonth      Int   @default(0)
+  heartCountYear       Int   @default(0)
+  heartCountAllTime    Int   @default(0)
+  laughCountDay        Int   @default(0)
+  laughCountWeek       Int   @default(0)
+  laughCountMonth      Int   @default(0)
+  laughCountYear       Int   @default(0)
+  laughCountAllTime    Int   @default(0)
+  likeCountDay         Int   @default(0)
+  likeCountWeek        Int   @default(0)
+  likeCountMonth       Int   @default(0)
+  likeCountYear        Int   @default(0)
+  likeCountAllTime     Int   @default(0)
+  commentCountDay      Int   @default(0)
+  commentCountWeek     Int   @default(0)
+  commentCountMonth    Int   @default(0)
+  commentCountYear     Int   @default(0)
+  commentCountAllTime  Int   @default(0)
+  reactionCountDay     Int   @default(0)
+  reactionCountWeek    Int   @default(0)
+  reactionCountMonth   Int   @default(0)
+  reactionCountYear    Int   @default(0)
+  reactionCountAllTime Int   @default(0)
 }
 
 /// @view
 model ImageRank {
-  imageId                 Int   @id
-  image                   Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
-  cryCountDayRank         Int   @default(0)
-  cryCountWeekRank        Int   @default(0)
-  cryCountMonthRank       Int   @default(0)
-  cryCountYearRank        Int   @default(0)
-  cryCountAllTimeRank     Int   @default(0)
-  dislikeCountDayRank     Int   @default(0)
-  dislikeCountWeekRank    Int   @default(0)
-  dislikeCountMonthRank   Int   @default(0)
-  dislikeCountYearRank    Int   @default(0)
-  dislikeCountAllTimeRank Int   @default(0)
-  heartCountDayRank       Int   @default(0)
-  heartCountWeekRank      Int   @default(0)
-  heartCountMonthRank     Int   @default(0)
-  heartCountYearRank      Int   @default(0)
-  heartCountAllTimeRank   Int   @default(0)
-  laughCountDayRank       Int   @default(0)
-  laughCountWeekRank      Int   @default(0)
-  laughCountMonthRank     Int   @default(0)
-  laughCountYearRank      Int   @default(0)
-  laughCountAllTimeRank   Int   @default(0)
-  likeCountDayRank        Int   @default(0)
-  likeCountWeekRank       Int   @default(0)
-  likeCountMonthRank      Int   @default(0)
-  likeCountYearRank       Int   @default(0)
-  likeCountAllTimeRank    Int   @default(0)
-  commentCountDayRank     Int   @default(0)
-  commentCountWeekRank    Int   @default(0)
-  commentCountMonthRank   Int   @default(0)
-  commentCountYearRank    Int   @default(0)
-  commentCountAllTimeRank Int   @default(0)
+  imageId                  Int   @id
+  image                    Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
+  cryCountDayRank          Int   @default(0)
+  cryCountWeekRank         Int   @default(0)
+  cryCountMonthRank        Int   @default(0)
+  cryCountYearRank         Int   @default(0)
+  cryCountAllTimeRank      Int   @default(0)
+  dislikeCountDayRank      Int   @default(0)
+  dislikeCountWeekRank     Int   @default(0)
+  dislikeCountMonthRank    Int   @default(0)
+  dislikeCountYearRank     Int   @default(0)
+  dislikeCountAllTimeRank  Int   @default(0)
+  heartCountDayRank        Int   @default(0)
+  heartCountWeekRank       Int   @default(0)
+  heartCountMonthRank      Int   @default(0)
+  heartCountYearRank       Int   @default(0)
+  heartCountAllTimeRank    Int   @default(0)
+  laughCountDayRank        Int   @default(0)
+  laughCountWeekRank       Int   @default(0)
+  laughCountMonthRank      Int   @default(0)
+  laughCountYearRank       Int   @default(0)
+  laughCountAllTimeRank    Int   @default(0)
+  likeCountDayRank         Int   @default(0)
+  likeCountWeekRank        Int   @default(0)
+  likeCountMonthRank       Int   @default(0)
+  likeCountYearRank        Int   @default(0)
+  likeCountAllTimeRank     Int   @default(0)
+  commentCountDayRank      Int   @default(0)
+  commentCountWeekRank     Int   @default(0)
+  commentCountMonthRank    Int   @default(0)
+  commentCountYearRank     Int   @default(0)
+  commentCountAllTimeRank  Int   @default(0)
+  reactionCountDayRank     Int   @default(0)
+  reactionCountWeekRank    Int   @default(0)
+  reactionCountMonthRank   Int   @default(0)
+  reactionCountYearRank    Int   @default(0)
+  reactionCountAllTimeRank Int   @default(0)
+}
+
+/// @view
+model ImageModHelper {
+  imageId         Int      @id
+  image           Image    @relation(fields: [imageId], references: [id], onDelete: NoAction)
+  assessedNSFW    Boolean? @default(false)
+  nsfwReportCount Int      @default(0)
 }
 
 /// @view

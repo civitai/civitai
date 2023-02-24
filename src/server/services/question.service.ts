@@ -67,59 +67,76 @@ export const upsertQuestion = async ({
   tags,
   userId,
 }: UpsertQuestionInput & { userId: number }) => {
-  return !id
-    ? await prisma.question.create({
-        data: {
-          title,
-          content,
-          userId,
-          tags: tags
-            ? {
-                create: tags.map((tag) => {
-                  const name = tag.name.toLowerCase().trim();
-                  return {
-                    tag: {
-                      connectOrCreate: {
-                        where: { name_target: { name, target: TagTarget.Question } },
-                        create: { name, target: TagTarget.Question },
-                      },
-                    },
-                  };
-                }),
-              }
-            : undefined,
+  const tagsToCreate = tags?.filter(isNotTag) ?? [];
+  const tagsToUpdate = tags?.filter(isTag) ?? [];
+
+  return await prisma.$transaction(async (tx) => {
+    if (tags)
+      await tx.tag.updateMany({
+        where: {
+          name: { in: tags.map((x) => x.name.toLowerCase().trim()) },
+          NOT: { target: { has: TagTarget.Question } },
         },
-        select: { id: true, title: true },
-      })
-    : await prisma.question.update({
-        where: { id },
-        data: {
-          title,
-          content,
-          tags: tags
-            ? {
-                deleteMany: {
-                  tagId: {
-                    notIn: tags.filter(isTag).map((x) => x.id),
-                  },
-                },
-                connectOrCreate: tags.filter(isTag).map((tag) => ({
-                  where: { tagId_questionId: { tagId: tag.id, questionId: id } },
-                  create: { tagId: tag.id },
-                })),
-                create: tags.filter(isNotTag).map((tag) => {
-                  const name = tag.name.toLowerCase().trim();
-                  return {
-                    tag: {
-                      create: { name, target: TagTarget.Question },
-                    },
-                  };
-                }),
-              }
-            : undefined,
-        },
-        select: { id: true, title: true },
+        data: { target: { push: TagTarget.Question } },
       });
+
+    return !id
+      ? await tx.question.create({
+          data: {
+            title,
+            content,
+            userId,
+            tags: tags
+              ? {
+                  create: tags.map((tag) => {
+                    const name = tag.name.toLowerCase().trim();
+                    return {
+                      tag: {
+                        connectOrCreate: {
+                          where: { name },
+                          create: { name, target: [TagTarget.Question] },
+                        },
+                      },
+                    };
+                  }),
+                }
+              : undefined,
+          },
+          select: { id: true, title: true },
+        })
+      : await tx.question.update({
+          where: { id },
+          data: {
+            title,
+            content,
+            tags: tags
+              ? {
+                  deleteMany: {
+                    tagId: {
+                      notIn: tagsToUpdate.map((x) => x.id),
+                    },
+                  },
+                  connectOrCreate: tagsToUpdate.map((tag) => ({
+                    where: { tagId_questionId: { tagId: tag.id, questionId: id } },
+                    create: { tagId: tag.id },
+                  })),
+                  create: tagsToCreate.map((tag) => {
+                    const name = tag.name.toLowerCase().trim();
+                    return {
+                      tag: {
+                        connectOrCreate: {
+                          where: { name },
+                          create: { name, target: [TagTarget.Question] },
+                        },
+                      },
+                    };
+                  }),
+                }
+              : undefined,
+          },
+          select: { id: true, title: true },
+        });
+  });
 };
 
 export const deleteQuestion = async ({ id }: GetByIdInput) => {

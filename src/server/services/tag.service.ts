@@ -1,4 +1,5 @@
 import { ModelStatus, Prisma } from '@prisma/client';
+import { TagSort } from '~/server/common/enums';
 
 import { prisma } from '~/server/db/client';
 import { GetTagsInput } from '~/server/schema/tag.schema';
@@ -27,21 +28,22 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
   entityType,
   query,
   modelId,
-  orderBy,
   not,
   unlisted,
+  categories,
+  sort,
 }: Omit<GetTagsInput, 'limit' | 'page'> & {
   select: TSelect;
   take?: number;
   skip?: number;
-  orderBy?: Prisma.TagFindManyArgs['orderBy'];
 }) => {
   const where: Prisma.TagWhereInput = {
     name: query ? { contains: query, mode: 'insensitive' } : undefined,
-    target: entityType,
+    target: { hasSome: entityType },
     tagsOnModels: modelId ? { some: { modelId } } : undefined,
     id: not ? { notIn: not } : undefined,
     unlisted,
+    isCategory: categories,
   };
 
   const items = await prisma.tag.findMany({
@@ -49,7 +51,11 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
     skip,
     select,
     where,
-    orderBy,
+    orderBy: [
+      ...(sort === TagSort.MostImages
+        ? [{ rank: { imageCountAllTimeRank: 'asc' } as const }]
+        : [{ rank: { modelCountAllTimeRank: 'asc' } as const }]),
+    ],
   });
   const count = await prisma.tag.count({ where });
 

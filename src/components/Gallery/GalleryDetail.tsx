@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Badge,
   Box,
   Card,
   CloseButton,
@@ -22,11 +23,13 @@ import {
   IconDotsVertical,
   IconTrash,
   IconBan,
+  IconLock,
 } from '@tabler/icons';
 import Router, { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { ToggleLockComments } from '~/components/CommentsV2';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { GalleryCarousel } from '~/components/Gallery/GalleryCarousel';
 import { useGalleryFilters } from '~/components/Gallery/GalleryFilters';
@@ -47,7 +50,7 @@ import { trpc } from '~/utils/trpc';
 export function GalleryDetail() {
   const router = useRouter();
   const id = Number(router.query.galleryImageId);
-  const filters = useGalleryFilters();
+  const { filters } = useGalleryFilters();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   const closingRef = useRef(false);
@@ -71,7 +74,6 @@ export function GalleryDetail() {
   );
   const isLoading = infinite ? infiniteLoading : finiteLoading;
 
-  // const {data: }
   const galleryImages = useMemo(
     () => infiniteGallery?.pages.flatMap((x) => x.items) ?? finiteGallery ?? [],
     [infiniteGallery, finiteGallery]
@@ -272,12 +274,26 @@ export function GalleryDetail() {
                           Delete
                         </Menu.Item>
                         {isMod && (
-                          <Menu.Item
-                            icon={<IconBan size={14} stroke={1.5} />}
-                            onClick={handleTosViolation}
-                          >
-                            Remove as TOS Violation
-                          </Menu.Item>
+                          <>
+                            <Menu.Item
+                              icon={<IconBan size={14} stroke={1.5} />}
+                              onClick={handleTosViolation}
+                            >
+                              Remove as TOS Violation
+                            </Menu.Item>
+                            <ToggleLockComments entityId={image.id} entityType="image">
+                              {({ toggle, locked }) => {
+                                return (
+                                  <Menu.Item
+                                    icon={<IconLock size={14} stroke={1.5} />}
+                                    onClick={toggle}
+                                  >
+                                    {locked ? 'Unlock' : 'Lock'} Comments
+                                  </Menu.Item>
+                                );
+                              }}
+                            </ToggleLockComments>
+                          </>
                         )}
                       </Menu.Dropdown>
                     </Menu>
@@ -298,6 +314,11 @@ export function GalleryDetail() {
                   metrics={image.metrics}
                 />
               </Box>
+              <Group spacing={4} px="md">
+                {image.tags.map((tag) => (
+                  <Badge key={tag.id}>{tag.name}</Badge>
+                ))}
+              </Group>
               <div>
                 <Divider
                   label="Comments"
@@ -320,7 +341,10 @@ export function GalleryDetail() {
                 <>
                   <Divider label="Generation Data" labelPosition="center" mb={-15} />
                   <Box px="md">
-                    <ImageMeta meta={image.meta as ImageMetaProps} />
+                    <ImageMeta
+                      meta={image.meta as ImageMetaProps}
+                      generationProcess={image.generationProcess ?? 'txt2img'}
+                    />
                   </Box>
                 </>
               )}

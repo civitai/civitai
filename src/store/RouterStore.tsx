@@ -1,6 +1,6 @@
 import { useDidUpdate, useWindowEvent } from '@mantine/hooks';
 import React, { useEffect, useState } from 'react';
-import create from 'zustand';
+import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { useMemo } from 'react';
 import Router, { NextRouter, useRouter } from 'next/router';

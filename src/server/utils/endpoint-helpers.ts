@@ -46,6 +46,27 @@ export function WebhookEndpoint(
 const PUBLIC_CACHE_MAX_AGE = 300;
 const PUBLIC_CACHE_STALE_WHILE_REVALIDATE = PUBLIC_CACHE_MAX_AGE / 2;
 
+const addCorsHeaders = (
+  req: NextApiRequest,
+  res: NextApiResponse,
+  allowedMethods: string[] = ['GET']
+) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Allow-Methods', allowedMethods.join(', '));
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return true;
+  }
+};
+
+const addPublicCacheHeaders = (req: NextApiRequest, res: NextApiResponse) => {
+  res.setHeader(
+    'Cache-Control',
+    `public, s-maxage=${PUBLIC_CACHE_MAX_AGE}, stale-while-revalidate=${PUBLIC_CACHE_STALE_WHILE_REVALIDATE}`
+  );
+};
+
 export function PublicEndpoint(
   handler: (req: NextApiRequest, res: NextApiResponse) => Promise<void>,
   allowedMethods: string[] = ['GET']
@@ -53,14 +74,9 @@ export function PublicEndpoint(
   return async (req: NextApiRequest, res: NextApiResponse) => {
     if (handleMaintenanceMode(req, res)) return;
 
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', '*');
-    res.setHeader('Access-Control-Allow-Methods', allowedMethods.join(', '));
-    res.setHeader(
-      'Cache-Control',
-      `public, s-maxage=${PUBLIC_CACHE_MAX_AGE}, stale-while-revalidate=${PUBLIC_CACHE_STALE_WHILE_REVALIDATE}`
-    );
-    if (req.method === 'OPTIONS') return res.status(200).json({});
+    const shouldStop = addCorsHeaders(req, res, allowedMethods);
+    addPublicCacheHeaders(req, res);
+    if (shouldStop) return;
     await handler(req, res);
   };
 }
@@ -72,14 +88,38 @@ export function AuthedEndpoint(
   return async (req: NextApiRequest, res: NextApiResponse) => {
     if (handleMaintenanceMode(req, res)) return;
 
+    const shouldStop = addCorsHeaders(req, res, allowedMethods);
+    if (shouldStop) return;
+
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
-
-    if (!req.headers.authorization) return res.status(401).json({ error: 'Unauthorized' });
 
     const session = await getServerAuthSession({ req, res });
     if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });
     await handler(req, res, session.user);
+  };
+}
+
+export function MixedAuthEndpoint(
+  handler: (
+    req: NextApiRequest,
+    res: NextApiResponse,
+    user: Session['user'] | undefined
+  ) => Promise<void>,
+  allowedMethods: string[] = ['GET']
+) {
+  return async (req: NextApiRequest, res: NextApiResponse) => {
+    if (handleMaintenanceMode(req, res)) return;
+
+    if (!req.method || !allowedMethods.includes(req.method))
+      return res.status(405).json({ error: 'Method not allowed' });
+
+    const shouldStop = addCorsHeaders(req, res, allowedMethods);
+    const session = await getServerAuthSession({ req, res });
+    if (!session) addPublicCacheHeaders(req, res);
+    if (shouldStop) return;
+
+    await handler(req, res, session?.user);
   };
 }
 

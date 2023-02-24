@@ -18,6 +18,15 @@ const useStyles = createStyles(() => ({
     iframe: {
       border: 'none',
     },
+    // pre: {
+    //   whiteSpace: 'pre',
+    //   wordWrap: 'normal',
+    //   overflowX: 'auto',
+    // },
+    code: {
+      // whiteSpace: 'pre-line',
+      whiteSpace: 'break-spaces',
+    },
   },
 }));
 

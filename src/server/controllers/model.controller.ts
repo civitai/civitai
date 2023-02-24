@@ -33,10 +33,12 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import { env } from '~/env/server.mjs';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
+import { constants, ModelFileType } from '~/server/common/constants';
+import { BrowsingMode } from '~/server/common/enums';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
-  const showNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATE_LIST_NSFW;
+  const showNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
   try {
     const model = await getModel({
@@ -57,11 +59,14 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         const images =
           !isOwnerOrModerator && prioritizeSafeImages
             ? version.images
-                .flatMap((x) => x.image)
+                .flatMap((x) => ({ ...x.image, tags: x.image.tags.map(({ tag }) => tag) }))
                 .sort((a, b) => {
                   return a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1;
                 })
-            : version.images.flatMap((x) => x.image);
+            : version.images.flatMap((x) => ({
+                ...x.image,
+                tags: x.image.tags.map(({ tag }) => tag),
+              }));
         let earlyAccessDeadline = features.earlyAccessModel
           ? getEarlyAccessDeadline({
               versionCreatedAt: version.createdAt,
@@ -75,9 +80,12 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
 
         // sort version files by file type, 'Model' type goes first
         const files = [...version.files].sort((a, b) => {
-          if (a.type === 'Model' && b.type !== 'Model') return -1;
-          if (a.type !== 'Model' && b.type === 'Model') return 1;
-          return 0;
+          const aType = a.type as ModelFileType;
+          const bType = b.type as ModelFileType;
+
+          if (constants.modelFileOrder[aType] < constants.modelFileOrder[bType]) return -1;
+          else if (constants.modelFileOrder[aType] > constants.modelFileOrder[bType]) return 1;
+          else return 0;
         });
 
         return {
@@ -104,7 +112,9 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   const prioritizeSafeImages =
-    input.hideNSFW || (ctx.user?.showNsfw ?? false) === false || ctx.user?.blurNsfw;
+    input.browsingMode === BrowsingMode.SFW ||
+    (ctx.user?.showNsfw ?? false) === false ||
+    ctx.user?.blurNsfw;
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
 
@@ -128,7 +138,7 @@ export const getModelsInfiniteHandler = async ({
           earlyAccessTimeFrame: true,
           createdAt: true,
           images: {
-            where: { image: { tosViolation: false } },
+            where: { image: { tosViolation: false, needsReview: false } },
             orderBy: prioritizeSafeImages
               ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
               : [{ index: 'asc' }],
@@ -174,6 +184,7 @@ export const getModelsInfiniteHandler = async ({
     items: items.map(({ modelVersions, reportStats, publishedAt, ...model }) => {
       const rank = model.rank as Record<string, number>;
       const latestVersion = modelVersions[0];
+      const { tags, ...image } = latestVersion.images[0]?.image ?? {};
       const earlyAccess =
         !latestVersion ||
         isEarlyAccess({
@@ -181,6 +192,7 @@ export const getModelsInfiniteHandler = async ({
           publishedAt,
           earlyAccessTimeframe: latestVersion.earlyAccessTimeFrame,
         });
+      if (model.nsfw && !env.SHOW_SFW_IN_NSFW) image.nsfw = true;
       return {
         ...model,
         rank: {
@@ -190,7 +202,7 @@ export const getModelsInfiniteHandler = async ({
           ratingCount: rank[`ratingCount${input.period}`],
           rating: rank[`rating${input.period}`],
         },
-        image: latestVersion?.images[0]?.image ?? {},
+        image,
         earlyAccess,
       };
     }),

@@ -16,6 +16,7 @@ export const DismissibleAlert = ({
   const [dismissed, setDismissed] = useLocalStorage({
     key: `alert-dismissed-${id}`,
     defaultValue: false,
+    getInitialValueInEffect: true,
   });
 
   if (dismissed) return null;
@@ -28,6 +29,7 @@ export const DismissibleAlert = ({
       {...props}
       className={cx(className, classes.announcement)}
       onClose={() => setDismissed(true)}
+      closeButtonLabel="Close alert"
       withCloseButton
     >
       <Group spacing="xs" noWrap>
