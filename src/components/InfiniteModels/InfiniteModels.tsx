@@ -132,7 +132,6 @@ export function InfiniteModels({
       excludedIds: queryParams.hidden ? undefined : excludedIds,
     },
     {
-      enabled: !currentUser || (!!currentUser && !!hiddenUsers),
       keepPreviousData: true,
       getNextPageParam: (lastPage) => lastPage.nextCursor,
     }
