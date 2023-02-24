@@ -33,6 +33,7 @@ import { env } from '~/env/server.mjs';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { constants, ModelFileType } from '~/server/common/constants';
+import { BrowsingMode } from '~/server/common/enums';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -110,7 +111,9 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   const prioritizeSafeImages =
-    input.browsingMode || (ctx.user?.showNsfw ?? false) === false || ctx.user?.blurNsfw;
+    input.browsingMode === BrowsingMode.SFW ||
+    (ctx.user?.showNsfw ?? false) === false ||
+    ctx.user?.blurNsfw;
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
 
