@@ -49,7 +49,7 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
               if (payload.status === 'processing') {
                 data.message = 'warming up';
               } else if (payload.status === 'nsfw' || payload.status === 'faces') {
-                data.message = 'scanning content';
+                data.message = 'scanning';
               } else if (payload.status === 'finished') {
                 data.message = 'uploading';
               }

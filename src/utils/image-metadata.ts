@@ -203,4 +203,19 @@ export const detectNsfwImage = ({ porn, hentai, sexy }: ImageAnalysisInput) => {
   const isNSFW = porn + hentai + sexy * 0.5 > 0.6; // If the sum of sketchy probabilities is greater than 0.6, it's NSFW
   return isNSFW;
 };
+
+const MINOR_DETECTION_AGE = 20;
+export const getNeedsReview = ({
+  nsfw,
+  analysis,
+}: {
+  nsfw?: boolean;
+  analysis?: ImageAnalysisInput;
+}) => {
+  const assessedNSFW = analysis ? detectNsfwImage(analysis) : true; // Err on side of caution
+  const assessedMinor = analysis?.faces && analysis.faces.some((x) => x.age <= MINOR_DETECTION_AGE);
+  const needsReview = (nsfw === true || assessedNSFW) && assessedMinor;
+
+  return needsReview;
+};
 // #endregion
