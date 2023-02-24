@@ -501,6 +501,7 @@ export function ModelForm({ model }: Props) {
                     name="tagsOnModels"
                     label="Tags"
                     placeholder="e.g.: portraits, landscapes, anime, etc."
+                    limit={50}
                     data={tagsData}
                     getCreateLabel={(query) => `+ Create ${query} tag`}
                     onCreate={(query) => {

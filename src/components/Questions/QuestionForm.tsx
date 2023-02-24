@@ -138,6 +138,7 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
                   data={tagsData}
                   name="tags"
                   label="Tags"
+                  limit={50}
                   placeholder="e.g.: portrait, sharp focus, etc."
                   description="Please add your tags"
                   creatable

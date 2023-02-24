@@ -321,6 +321,7 @@ export function GalleryFilters() {
             data={tags.map((tag) => ({ value: tag.id.toString(), label: tag.name }))}
             onChange={(tags) => setExcludedTags(tags.map(Number))}
             nothingFound="No tags found"
+            limit={50}
             clearable
             searchable
           />
