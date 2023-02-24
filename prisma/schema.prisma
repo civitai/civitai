@@ -236,6 +236,8 @@ enum ModelType {
   Hypernetwork
   AestheticGradient
   LORA
+  Controlnet
+  Poses
 }
 
 enum ImportStatus {
@@ -661,6 +663,7 @@ model Image {
   featuredAt        DateTime?
   postId            Int?
   post              Post?                   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  needsReview       Boolean                 @default(false)
 
   imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?

@@ -43,7 +43,7 @@ export function ImagePreview({
   ...props
 }: ImagePreviewProps) {
   const { classes, cx } = useStyles({ radius });
-  aspectRatio ??= (width ?? 16) / (height ?? 9);
+  aspectRatio ??= Math.max((width ?? 16) / (height ?? 9), 9 / 16);
 
   if (!edgeImageProps.width && !edgeImageProps.height) {
     if (!edgeImageProps.height && width) edgeImageProps.width = width;

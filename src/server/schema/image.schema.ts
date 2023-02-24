@@ -18,6 +18,16 @@ export const imageMetaSchema = z
   .partial()
   .passthrough();
 
+export type FaceDetectionInput = z.infer<typeof faceDetectionSchema>;
+export const faceDetectionSchema = z.object({
+  age: z.number(),
+  emotions: z.array(z.object({ emotion: z.string(), score: z.number() })),
+  gender: z.enum(['male', 'female', 'unknown']),
+  genderConfidence: z.number().optional().default(0),
+  live: z.number(),
+  real: z.number(),
+});
+
 export type ImageAnalysisInput = z.infer<typeof imageAnalysisSchema>;
 export const imageAnalysisSchema = z.object({
   drawing: z.number(),
@@ -25,6 +35,7 @@ export const imageAnalysisSchema = z.object({
   neutral: z.number(),
   porn: z.number(),
   sexy: z.number(),
+  faces: z.array(faceDetectionSchema).optional(),
 });
 
 export type ImageResourceUpsertInput = z.infer<typeof imageResourceUpsertSchema>;
@@ -53,12 +64,26 @@ export const imageSchema = z.object({
   nsfw: z.boolean().optional(),
   analysis: imageAnalysisSchema.optional(),
   tags: z.array(tagSchema).optional(),
+  needsReview: z.boolean().optional(),
   postId: z.number().optional(),
   resources: z.array(imageResourceUpsertSchema).optional(),
 });
 
 export type ImageUploadProps = z.infer<typeof imageSchema>;
 export type ImageMetaProps = z.infer<typeof imageMetaSchema> & Record<string, unknown>;
+
+export const imageUpdateSchema = z.object({
+  id: z.number(),
+  name: z.string().optional(),
+  url: z
+    .string()
+    .url()
+    .or(z.string().uuid('One of the files did not upload properly, please try again').optional())
+    .optional(),
+  nsfw: z.boolean().optional(),
+  needsReview: z.boolean().optional(),
+});
+export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
 
 export type GetModelVersionImagesSchema = z.infer<typeof getModelVersionImageSchema>;
 export const getModelVersionImageSchema = z.object({
@@ -81,7 +106,7 @@ export const getGalleryImageSchema = z.object({
   infinite: z.boolean().default(true),
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
-  browsingMode: z.nativeEnum(BrowsingMode).optional().default(BrowsingMode.SFW),
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
   tags: z.array(z.number()).optional(),
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
@@ -89,6 +114,7 @@ export const getGalleryImageSchema = z.object({
   singleImageAlbum: z.boolean().optional(),
   isFeatured: z.boolean().optional(),
   types: z.nativeEnum(ImageGenerationProcess).array().optional(),
+  needsReview: z.boolean().optional(),
 });
 
 export const getImageConnectionsSchema = z.object({

@@ -11,7 +11,7 @@ import { decreaseDate } from '~/utils/date-helpers';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await prisma.imagesOnModels.findMany({
-    where: { modelVersionId, image: { tosViolation: false } },
+    where: { modelVersionId, image: { tosViolation: false, needsReview: false } },
     select: { image: { select: imageSelect } },
   });
   return result.map((x) => x.image);
@@ -19,7 +19,7 @@ export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId
 
 export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
   const result = await prisma.imagesOnReviews.findMany({
-    where: { reviewId, image: { tosViolation: false } },
+    where: { reviewId, image: { tosViolation: false, needsReview: false } },
     select: { image: { select: imageSelect } },
   });
   return result.map((x) => x.image);
@@ -45,16 +45,18 @@ export const getGalleryImages = async <
   isFeatured,
   types,
   browsingMode,
+  needsReview,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const isMod = user?.isModerator ?? false;
+  needsReview = isMod ? needsReview : false;
 
   const conditionalFilters: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   if (!!excludedTagIds?.length)
     conditionalFilters.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
 
   if (!!tags?.length) conditionalFilters.push({ tags: { some: { tagId: { in: tags } } } });
-  else {
+  else if (!needsReview) {
     const periodStart = decreaseDate(new Date(), 3, 'days');
     conditionalFilters.push({ featuredAt: { gt: periodStart } });
   }
@@ -98,16 +100,19 @@ export const getGalleryImages = async <
   const items = await prisma.image.findMany({
     cursor: cursor ? { id: cursor } : undefined,
     take: limit,
-    where: {
-      userId,
-      nsfw:
-        browsingMode === BrowsingMode.All
-          ? undefined
-          : { equals: browsingMode === BrowsingMode.NSFW },
-      tosViolation: !isMod ? false : undefined,
-      ...(infinite ? infiniteWhere : finiteWhere),
-    },
-    select: imageGallerySelect({ user }),
+    where: needsReview
+      ? { needsReview: true }
+      : {
+          userId,
+          nsfw:
+            browsingMode === BrowsingMode.All
+              ? undefined
+              : { equals: browsingMode === BrowsingMode.NSFW },
+          tosViolation: !isMod ? false : undefined,
+          needsReview: false,
+          ...(infinite ? infiniteWhere : finiteWhere),
+        },
+    select: imageGallerySelect({ user, needsReview }),
     orderBy: orderBy ?? [
       ...(sort === ImageSort.MostComments
         ? [{ rank: { [`commentCount${period}Rank`]: 'asc' } }]

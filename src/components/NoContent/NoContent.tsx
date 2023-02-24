@@ -1,7 +1,10 @@
 import { Stack, StackProps, Text, ThemeIcon } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons';
 
-export function NoContent({ ...props }: Omit<StackProps, 'children' | 'align'>) {
+export function NoContent({
+  message,
+  ...props
+}: Omit<StackProps, 'children' | 'align'> & { message?: string }) {
   return (
     <Stack {...props} align="center">
       <ThemeIcon size={128} radius={100}>
@@ -11,7 +14,7 @@ export function NoContent({ ...props }: Omit<StackProps, 'children' | 'align'>) 
         No results found
       </Text>
       <Text align="center">
-        {"Try adjusting your search or filters to find what you're looking for"}
+        {message ?? "Try adjusting your search or filters to find what you're looking for"}
       </Text>
     </Stack>
   );

@@ -26,6 +26,7 @@ export const constants = {
     'Training Data',
     'VAE',
     'Config',
+    'Archive',
   ],
   tagFilterDefaults: {
     trendingTagsLimit: 20,
@@ -41,8 +42,9 @@ export const constants = {
     'Text Encoder': 4,
     VAE: 5,
     Negative: 6,
+    Archive: 7,
   },
 } as const;
 
-export type BaseModel = typeof constants.baseModels[number];
-export type ModelFileType = typeof constants.modelFileTypes[number];
+export type BaseModel = (typeof constants.baseModels)[number];
+export type ModelFileType = (typeof constants.modelFileTypes)[number];

@@ -32,6 +32,7 @@ declare global {
     analysis?: ImageAnalysisInput;
     status?: 'processing' | 'uploading' | 'complete' | 'blocked' | 'error';
     blockedFor?: string[];
+    message?: string;
   };
 
   type DeepNonNullable<T> = { [P in keyof T]-?: NonNullable<T[P]> } & NonNullable<T>;

@@ -45,6 +45,9 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
 
     if (!image) return null;
 
+    const isBlocked = image.status === 'blocked';
+    const isError = image.status === 'error';
+
     return (
       <Paper
         ref={setNodeRef}
@@ -67,7 +70,7 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
           />
         ) : null}
 
-        {image.status === 'blocked' && (
+        {(isBlocked || isError) && (
           <>
             <Overlay color="#000" zIndex={10} />
             <Alert
@@ -83,24 +86,27 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
               }}
               radius={0}
             >
-              <Group spacing={4}>
-                <Popover position="top" withinPortal withArrow>
-                  <Popover.Target>
-                    <ActionIcon>
-                      <IconInfoCircle />
-                    </ActionIcon>
-                  </Popover.Target>
-                  <Popover.Dropdown sx={{ maxWidth: 400 }} pb={14}>
-                    <Stack spacing={0}>
-                      <Text size="xs" weight={500}>
-                        Blocked for
-                      </Text>
-                      <Code color="red">{image.blockedFor?.join(', ')}</Code>
-                    </Stack>
-                  </Popover.Dropdown>
-                </Popover>
-                <Text>TOS Violation</Text>
-              </Group>
+              {isBlocked && (
+                <Group spacing={4}>
+                  <Popover position="top" withinPortal withArrow>
+                    <Popover.Target>
+                      <ActionIcon>
+                        <IconInfoCircle />
+                      </ActionIcon>
+                    </Popover.Target>
+                    <Popover.Dropdown sx={{ maxWidth: 400 }} pb={14}>
+                      <Stack spacing={0}>
+                        <Text size="xs" weight={500}>
+                          Blocked for
+                        </Text>
+                        <Code color="red">{image.blockedFor?.join(', ')}</Code>
+                      </Stack>
+                    </Popover.Dropdown>
+                  </Popover>
+                  <Text>TOS Violation</Text>
+                </Group>
+              )}
+              {isError && <Text>Error</Text>}
             </Alert>
           </>
         )}

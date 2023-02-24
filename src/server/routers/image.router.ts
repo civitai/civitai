@@ -7,6 +7,7 @@ import {
   getModelVersionImagesHandler,
   getReviewImagesHandler,
   setTosViolationHandler,
+  updateImageHandler,
 } from '~/server/controllers/image.controller';
 import { prisma } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
@@ -15,6 +16,7 @@ import {
   getImageConnectionsSchema,
   getModelVersionImageSchema,
   getReviewImagesSchema,
+  imageUpdateSchema,
 } from '~/server/schema/image.schema';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -56,6 +58,10 @@ export const imageRouter = router({
   getConnectionData: publicProcedure
     .input(getImageConnectionsSchema)
     .query(getImageConnectionDataHandler),
+  update: protectedProcedure
+    .input(imageUpdateSchema)
+    .use(isOwnerOrModerator)
+    .mutation(updateImageHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)

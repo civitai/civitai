@@ -88,10 +88,11 @@ export function AuthedEndpoint(
   return async (req: NextApiRequest, res: NextApiResponse) => {
     if (handleMaintenanceMode(req, res)) return;
 
+    const shouldStop = addCorsHeaders(req, res, allowedMethods);
+    if (shouldStop) return;
+
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
-
-    if (!req.headers.authorization) return res.status(401).json({ error: 'Unauthorized' });
 
     const session = await getServerAuthSession({ req, res });
     if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });

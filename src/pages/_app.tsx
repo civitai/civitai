@@ -23,7 +23,7 @@ import { CustomModalsProvider } from './../providers/CustomModalsProvider';
 import { TosProvider } from '~/providers/TosProvider';
 import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
 import { MaintenanceMode } from '~/components/MaintenanceMode/MaintenanceMode';
-import { NsfwWorkerProvider } from '~/providers/NsfwWorkerProvider';
+import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { FeatureFlags } from '~/server/services/feature-flags.service';
@@ -96,14 +96,14 @@ function MyApp(props: CustomAppProps) {
       <SessionProvider session={session}>
         <CookiesProvider value={cookies}>
           <FeatureFlagsProvider flags={flags}>
-            <NsfwWorkerProvider>
+            <ImageProcessingProvider>
               <CustomModalsProvider>
                 <NotificationsProvider>
                   <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
                   <RoutedContextProvider2 />
                 </NotificationsProvider>
               </CustomModalsProvider>
-            </NsfwWorkerProvider>
+            </ImageProcessingProvider>
           </FeatureFlagsProvider>
         </CookiesProvider>
       </SessionProvider>

@@ -1,6 +1,5 @@
 import { ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { env } from '~/env/server.mjs';
 import { Context } from '~/server/createContext';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -9,6 +8,7 @@ import {
   GetReviewImagesSchema,
   GetGalleryImageInput,
   GetImageConnectionsSchema,
+  ImageUpdateSchema,
 } from '~/server/schema/image.schema';
 import { imageGallerySelect } from '~/server/selectors/image.selector';
 import {
@@ -157,6 +157,23 @@ export const getGalleryImagesHandler = async ({
       : parsedItems.sort(sortByIndex);
   } catch (error) {
     throw throwDbError(error);
+  }
+};
+
+export const updateImageHandler = async ({ input }: { input: ImageUpdateSchema }) => {
+  try {
+    const { id, ...data } = input;
+    const image = await updateImageById({
+      id,
+      data,
+      select: { id: true, url: true, name: true, nsfw: true, needsReview: true },
+    });
+    if (!image) throw throwNotFoundError(`No image with id ${id}`);
+
+    return image;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };
 

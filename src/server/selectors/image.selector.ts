@@ -1,13 +1,14 @@
-import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { Prisma, TagTarget } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 
-import { getReactionsSelect } from '~/server/selectors/reaction.selector';
-import { simpleTagSelect } from '~/server/selectors/tag.selector';
-
-import { userWithCosmeticsSelect } from './user.selector';
-import { ImageUploadProps } from '~/server/schema/image.schema';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
+import { ImageUploadProps } from '~/server/schema/image.schema';
+import { isNotTag, isTag } from '~/server/schema/tag.schema';
+import { detectNsfwImage } from '~/utils/image-metadata';
+
+import { getReactionsSelect } from './reaction.selector';
+import { simpleTagSelect } from './tag.selector';
+import { userWithCosmeticsSelect } from './user.selector';
 
 export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   id: true,
@@ -29,10 +30,17 @@ const image = Prisma.validator<Prisma.ImageArgs>()({ select: imageSelect });
 
 export type ImageModel = Prisma.ImageGetPayload<typeof image>;
 
-export const imageGallerySelect = ({ user }: { user?: SessionUser }) =>
+export const imageGallerySelect = ({
+  user,
+  needsReview,
+}: {
+  user?: SessionUser;
+  needsReview?: boolean;
+}) =>
   Prisma.validator<Prisma.ImageSelect>()({
     ...imageSelect,
     createdAt: true,
+    needsReview: true,
     user: { select: userWithCosmeticsSelect },
     connections: {
       select: {
@@ -56,18 +64,19 @@ export const imageGallerySelect = ({ user }: { user?: SessionUser }) =>
       take: !user?.id ? 0 : undefined,
       select: getReactionsSelect,
     },
+    analysis: needsReview ? true : false,
   });
 
 const MINOR_DETECTION_AGE = 20;
 export const prepareCreateImage = (image: ImageUploadProps) => {
-  // const assessedNSFW = image.analysis ? detectNsfwImage(image.analysis) : true; // Err on side of caution
-  // const assessedMinor =
-  //   image.analysis?.faces && image.analysis.faces.some((x) => x.age <= MINOR_DETECTION_AGE);
-  // const needsReview = (image.nsfw === true || assessedNSFW) && assessedMinor;
+  const assessedNSFW = image.analysis ? detectNsfwImage(image.analysis) : true; // Err on side of caution
+  const assessedMinor =
+    image.analysis?.faces && image.analysis.faces.some((x) => x.age <= MINOR_DETECTION_AGE);
+  const needsReview = (image.nsfw === true || assessedNSFW) && assessedMinor;
 
   const payload: Omit<Prisma.ImageCreateInput, 'user'> = {
     ...image,
-    // needsReview,
+    needsReview,
     meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
     generationProcess: image.meta
       ? getImageGenerationProcess(image.meta as Prisma.JsonObject)

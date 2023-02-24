@@ -92,7 +92,6 @@ export function ImageUpload({
     filesHandler,
     removeImage,
     upload,
-    canUseScanner,
     // isCompleted,
     // isUploading,
     // isProcessing,
@@ -172,13 +171,6 @@ export function ImageUpload({
             </div>
           </Group>
         </Dropzone>
-        {!canUseScanner && files.length > 0 ? (
-          <AlertWithIcon color="red" iconColor="red" icon={<IconExclamationCircle />}>
-            The AI system that automatically identifies adult content cannot be run on your device.
-            Please review the content of your images and ensure that any adult content is
-            appropriately flagged.
-          </AlertWithIcon>
-        ) : null}
 
         {isClient && (
           <DndContext
@@ -198,12 +190,16 @@ export function ImageUpload({
                   }}
                 >
                   {files.map((image, index) => {
-                    const showLoading = !!image.file || image.nsfw === undefined;
+                    // const showLoading = !!image.file || image.nsfw === undefined;
+                    const isError = image.status === 'error';
+                    const isComplete = image.status === 'complete';
+                    const isBlocked = image.status === 'blocked';
+                    const showLoading = image.status && !isError && !isComplete && !isBlocked;
 
                     return (
                       // <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
                       <ImageUploadPreview
-                        key={image.url}
+                        key={image.id ?? image.url}
                         image={image}
                         isPrimary={hasPrimaryImage && index === 0}
                         // disabled={hasSelectedFile}
@@ -216,9 +212,7 @@ export function ImageUpload({
                             <Overlay blur={2} zIndex={10} color="#000" />
                             <Stack spacing="xs" sx={{ zIndex: 11 }} align="center">
                               <Loader size="lg" />
-                              {image.status !== 'complete' && (
-                                <Text weight={600}>{image.status}...</Text>
-                              )}
+                              {image.message && <Text weight={600}>{image.message}...</Text>}
                             </Stack>
                           </Center>
                         )}
@@ -234,7 +228,7 @@ export function ImageUpload({
                               <Tooltip label="Toggle NSFW">
                                 <ActionIcon
                                   color={image.nsfw ? 'red' : undefined}
-                                  variant="filled"
+                                  variant={image.nsfw ? 'filled' : 'outline'}
                                   disabled={image.nsfw === undefined}
                                   onClick={() =>
                                     filesHandler.setItem(index, { ...image, nsfw: !image.nsfw })
