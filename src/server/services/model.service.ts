@@ -56,6 +56,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     hidden,
     browsingMode,
     excludedTagIds,
+    excludedUserIds,
     excludedIds,
     checkpointType,
     status,
@@ -115,6 +116,11 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (excludedTagIds && excludedTagIds.length && !username) {
     AND.push({
       tagsOnModels: { every: { tagId: { notIn: excludedTagIds } } },
+    });
+  }
+  if (excludedUserIds && excludedUserIds.length && !username) {
+    AND.push({
+      userId: { notIn: excludedUserIds },
     });
   }
   if (excludedIds) {
