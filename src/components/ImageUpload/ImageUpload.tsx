@@ -199,7 +199,7 @@ export function ImageUpload({
                     return (
                       // <SortableImage key={image.url} id={image.url} disabled={hasSelectedFile}>
                       <ImageUploadPreview
-                        key={image.url}
+                        key={image.id ?? image.url}
                         image={image}
                         isPrimary={hasPrimaryImage && index === 0}
                         // disabled={hasSelectedFile}
@@ -228,7 +228,7 @@ export function ImageUpload({
                               <Tooltip label="Toggle NSFW">
                                 <ActionIcon
                                   color={image.nsfw ? 'red' : undefined}
-                                  variant="filled"
+                                  variant={image.nsfw ? 'filled' : 'outline'}
                                   disabled={image.nsfw === undefined}
                                   onClick={() =>
                                     filesHandler.setItem(index, { ...image, nsfw: !image.nsfw })

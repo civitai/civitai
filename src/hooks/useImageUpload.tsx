@@ -143,7 +143,9 @@ export const useImageUpload = ({ max = 10, value }: { max?: number; value: Custo
 
   const removeImage = (image: ImageUpload) => {
     if (image.previewUrl) URL.revokeObjectURL(image.previewUrl);
-    filesHandler.setState((state) => [...state].filter((x) => x.url !== image.url));
+    filesHandler.setState((state) =>
+      [...state].filter((x) => (image.id ? x.id !== image.id : x.url !== image.url))
+    );
   };
 
   // const hasErrors = files.some((x) => x.status === 'error');
