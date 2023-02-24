@@ -54,14 +54,21 @@ export default function Images() {
   const { ref, inView } = useInView();
   const queryUtils = trpc.useContext();
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetching } =
-    trpc.image.getGalleryImagesInfinite.useInfiniteQuery(
-      { needsReview: true },
-      { getNextPageParam: (lastPage) => lastPage.nextCursor }
-    );
+  const {
+    data,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetching,
+    isFetchingNextPage,
+    isRefetching,
+  } = trpc.image.getGalleryImagesInfinite.useInfiniteQuery(
+    { needsReview: true },
+    { getNextPageParam: (lastPage) => lastPage.nextCursor }
+  );
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
 
-  const previousFetching = usePrevious(isFetching);
+  const previousFetching = usePrevious(isRefetching && !isFetchingNextPage);
 
   const onMutate = async ({ id }: { id: number }) => {
     await queryUtils.image.getGalleryImagesInfinite.cancel();
