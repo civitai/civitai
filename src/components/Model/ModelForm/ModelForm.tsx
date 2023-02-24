@@ -41,7 +41,7 @@ import {
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { useRouter } from 'next/router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
@@ -71,7 +71,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useCatchNavigation } from '~/hooks/useCatchNavigation';
+// import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { isBetweenToday } from '~/utils/date-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -80,6 +80,8 @@ import Link from 'next/link';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { NextLink } from '@mantine/next';
+import { useCatchNavigation } from '~/store/catch-navigation.store';
+import { useS3UploadStore } from '~/store/s3-upload.store';
 
 /**NOTES**
   - If a model depicts an actual person, it cannot have nsfw content
@@ -139,6 +141,7 @@ export function ModelForm({ model }: Props) {
   const mobile = useIsMobile();
   const user = useCurrentUser();
   const editing = !!model;
+  const test = useS3UploadStore((state) => state.upload);
 
   const { data: { items: tags } = { items: [] }, isLoading: loadingTags } =
     trpc.tag.getAll.useQuery(
@@ -195,7 +198,7 @@ export function ModelForm({ model }: Props) {
         // HOTFIX: Casting image.meta type issue with generated prisma schema
         images: images.map((image) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
         // HOTFIX: Casting files to defaultModelFile[] to avoid type confusion and accept room for error
-        files: files.length > 0 ? (files as typeof defaultModelFile[]) : [defaultModelFile],
+        files: files.length > 0 ? (files as (typeof defaultModelFile)[]) : [defaultModelFile],
         earlyAccessTimeFrame:
           version.earlyAccessTimeFrame && features.earlyAccessModel
             ? String(version.earlyAccessTimeFrame)
@@ -222,7 +225,11 @@ export function ModelForm({ model }: Props) {
   });
 
   const { isDirty, isSubmitted, errors } = form.formState;
-  useCatchNavigation({ unsavedChanges: isDirty && !isSubmitted });
+  // useCatchNavigation({ unsavedChanges: isDirty && !isSubmitted });
+  useCatchNavigation({
+    name: 'model-form',
+    predicate: isDirty && !isSubmitted,
+  });
 
   const tagsOnModels = form.watch('tagsOnModels');
 

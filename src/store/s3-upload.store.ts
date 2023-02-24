@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
 import { bytesToKB } from '~/utils/number-helpers';
+import { useCatchNavigationStore } from './catch-navigation.store';
 
 type UploadResult = {
   url: string | null;
@@ -120,6 +121,7 @@ export const useS3UploadStore = create<StoreProps>()(
       clear: (predicate) => {
         set((state) => {
           state.items = predicate ? state.items.filter(predicate) : [];
+          if (state.items.length === 0) deregisterCatchNavigation();
         });
       },
       getStatus: () => {
@@ -146,6 +148,8 @@ export const useS3UploadStore = create<StoreProps>()(
         item?.abort();
       },
       upload: async ({ file, type, options, meta }, cb) => {
+        // register catch navigation if beginning upload queue
+        if (get().items.length === 0) registerCatchNavigation();
         const uuid = uuidv4();
         const filename = encodeURIComponent(file.name);
 
@@ -324,4 +328,16 @@ const pendingTrackedFile: Omit<TrackedFile, 'uuid' | 'file' | 'name'> = {
   status: 'pending',
   abort: () => undefined,
   meta: {},
+};
+
+const registerCatchNavigation = () => {
+  useCatchNavigationStore.getState().register({
+    name: 'file-upload',
+    message: 'Files are still uploading. Upload progress will be lost',
+    predicate: () => useS3UploadStore.getState().getStatus().uploading === 0,
+    event: 'beforeunload',
+  });
+};
+const deregisterCatchNavigation = () => {
+  useCatchNavigationStore.getState().deregister('file-upload');
 };

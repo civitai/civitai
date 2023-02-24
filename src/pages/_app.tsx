@@ -30,6 +30,7 @@ import type { FeatureFlags } from '~/server/services/feature-flags.service';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
 import { isDev, isMaintenanceMode } from '~/env/other';
+import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -91,6 +92,7 @@ function MyApp(props: CustomAppProps) {
   ) : (
     <>
       <ClientHistoryStore />
+      <RegisterCatchNavigation />
       <SessionProvider session={session}>
         <CookiesProvider value={cookies}>
           <FeatureFlagsProvider flags={flags}>
