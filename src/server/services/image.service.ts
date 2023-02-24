@@ -100,17 +100,19 @@ export const getGalleryImages = async <
   const items = await prisma.image.findMany({
     cursor: cursor ? { id: cursor } : undefined,
     take: limit,
-    where: {
-      userId,
-      nsfw:
-        browsingMode === BrowsingMode.All
-          ? undefined
-          : { equals: browsingMode === BrowsingMode.NSFW },
-      tosViolation: !isMod ? false : undefined,
-      needsReview: needsReview ?? false,
-      ...(infinite ? infiniteWhere : finiteWhere),
-    },
-    select: imageGallerySelect({ user }),
+    where: needsReview
+      ? { needsReview: true }
+      : {
+          userId,
+          nsfw:
+            browsingMode === BrowsingMode.All
+              ? undefined
+              : { equals: browsingMode === BrowsingMode.NSFW },
+          tosViolation: !isMod ? false : undefined,
+          needsReview: false,
+          ...(infinite ? infiniteWhere : finiteWhere),
+        },
+    select: imageGallerySelect({ user, needsReview }),
     orderBy: orderBy ?? [
       ...(sort === ImageSort.MostComments
         ? [{ rank: { [`commentCount${period}Rank`]: 'asc' } }]

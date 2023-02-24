@@ -13,6 +13,7 @@ import {
   Menu,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
+import { Prisma } from '@prisma/client';
 import {
   IconDotsVertical,
   IconEye,
@@ -91,7 +92,11 @@ const useImageGuardContext = () => {
   - use case: home page, model card, toggle image - since I don't have all the images yet, I need to be able to still manage nsfw state for all the images without having the knowledge of which images are nsfw
 */
 
-type CustomImageModel = Omit<ImageModel, 'tags'> & { imageNsfw?: boolean; tags?: SimpleTag[] };
+type CustomImageModel = Omit<ImageModel, 'tags'> & {
+  imageNsfw?: boolean;
+  tags?: SimpleTag[];
+  analysis?: Prisma.JsonValue;
+};
 
 type ImageGuardProps = {
   images: CustomImageModel[];

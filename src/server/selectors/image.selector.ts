@@ -30,7 +30,13 @@ const image = Prisma.validator<Prisma.ImageArgs>()({ select: imageSelect });
 
 export type ImageModel = Prisma.ImageGetPayload<typeof image>;
 
-export const imageGallerySelect = ({ user }: { user?: SessionUser }) =>
+export const imageGallerySelect = ({
+  user,
+  needsReview,
+}: {
+  user?: SessionUser;
+  needsReview?: boolean;
+}) =>
   Prisma.validator<Prisma.ImageSelect>()({
     ...imageSelect,
     createdAt: true,
@@ -58,6 +64,7 @@ export const imageGallerySelect = ({ user }: { user?: SessionUser }) =>
       take: !user?.id ? 0 : undefined,
       select: getReactionsSelect,
     },
+    analysis: needsReview ? true : false,
   });
 
 const MINOR_DETECTION_AGE = 20;

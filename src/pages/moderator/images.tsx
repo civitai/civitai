@@ -2,6 +2,7 @@ import {
   ActionIcon,
   AspectRatio,
   Box,
+  Button,
   Card,
   Center,
   Container,
@@ -11,21 +12,26 @@ import {
   Stack,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
-import { IconCheck, IconTrash } from '@tabler/icons';
+import { IconCheck, IconInfoCircle, IconRadar2, IconTrash } from '@tabler/icons';
 import { GetServerSideProps } from 'next';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
+import { ConfirmButton } from '~/components/ConfirmButton/ConfirmButton';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { ImageAnalysisPopover } from '~/components/Image/ImageAnalysis/ImageAnalysis';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { ImageUpdateSchema } from '~/server/schema/image.schema';
+import {
+  ImageAnalysisInput,
+  ImageMetaProps,
+  ImageUpdateSchema,
+} from '~/server/schema/image.schema';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { ImageGetAllInfinite } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
@@ -59,7 +65,7 @@ export default function Images() {
 
   const onMutate = async ({ id }: { id: number }) => {
     await queryUtils.image.getGalleryImagesInfinite.cancel();
-    queryUtils.image.getGalleryImagesInfinite.setInfiniteData({ needsReview: false }, (data) => {
+    queryUtils.image.getGalleryImagesInfinite.setInfiniteData({ needsReview: true }, (data) => {
       if (!data) {
         return {
           pages: [],
@@ -82,13 +88,13 @@ export default function Images() {
   const deleteImageMutation = trpc.image.delete.useMutation({
     onMutate,
     onSuccess() {
-      showSuccessNotification({ message: 'The image has been updated' });
+      showSuccessNotification({ message: 'The image has been deleted' });
     },
   });
   const updateImageMutation = trpc.image.update.useMutation({
     onMutate,
     onSuccess() {
-      showSuccessNotification({ message: 'The image has been deleted' });
+      showSuccessNotification({ message: 'The image has been approved' });
     },
   });
 
@@ -108,10 +114,10 @@ export default function Images() {
       <Grid gutter="xl">
         <Grid.Col>
           <Stack spacing={0}>
-            <Title order={1}>Classified Images</Title>
+            <Title order={1}>Images Needing Review</Title>
             <Text color="dimmed">
-              These are images that have been marked by our AI as NSFW which needs further attention
-              from the mods
+              These are images that have been marked by our AI which needs further attention from
+              the mods
             </Text>
           </Stack>
         </Grid.Col>
@@ -197,45 +203,66 @@ function ImageGridItem({
                   width={450}
                   placeholder="empty"
                 />
+                {image.meta && (
+                  <ImageMetaPopover
+                    meta={image.meta as ImageMetaProps}
+                    generationProcess={image.generationProcess ?? 'txt2img'}
+                  >
+                    <ActionIcon
+                      variant="transparent"
+                      style={{ position: 'absolute', bottom: '5px', right: '5px' }}
+                      size="lg"
+                    >
+                      <IconInfoCircle
+                        color="white"
+                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                        opacity={0.8}
+                        strokeWidth={2.5}
+                        size={26}
+                      />
+                    </ActionIcon>
+                  </ImageMetaPopover>
+                )}
+
+                <ImageAnalysisPopover analysis={image.analysis as ImageAnalysisInput}>
+                  <ActionIcon
+                    variant="transparent"
+                    style={{ position: 'absolute', bottom: '5px', left: '5px' }}
+                    size="lg"
+                  >
+                    <IconRadar2
+                      color="white"
+                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                      opacity={0.8}
+                      strokeWidth={2.5}
+                      size={26}
+                    />
+                  </ActionIcon>
+                </ImageAnalysisPopover>
               </ImageGuard.Safe>
             </Box>
           )}
         />
       </Card.Section>
       <Group position="apart" pt="xs" noWrap grow>
-        <Tooltip label="Delete Image">
-          <ActionIcon
-            variant="filled"
-            color="red"
-            onClick={() => {
-              openConfirmModal({
-                title: 'Delete Image',
-                children: 'Are you sure you want to delete this image?',
-                centered: true,
-                onConfirm: () => {
-                  onDeleteClick(image.id);
-                },
-                labels: { confirm: 'Yes, delete it', cancel: 'Cancel' },
-                confirmProps: { color: 'red' },
-              });
-            }}
-            disabled={!image.needsReview}
-          >
-            <IconTrash size={20} stroke={1.5} />
-          </ActionIcon>
-        </Tooltip>
-        <Tooltip label="Accept Image">
-          <ActionIcon
-            variant="filled"
-            color="green"
-            onClick={() => {
-              onUpdateClick({ id: image.id, needsReview: false });
-            }}
-            disabled={!image.needsReview}
-          >
-            <IconCheck size={20} stroke={1.5} />
-          </ActionIcon>
-        </Tooltip>
+        <ConfirmButton
+          color="red"
+          onConfirmed={() => onDeleteClick(image.id)}
+          disabled={!image.needsReview}
+          size="xs"
+        >
+          <IconTrash size={20} stroke={1.5} />
+        </ConfirmButton>
+        <Button
+          color="green"
+          onClick={() => {
+            onUpdateClick({ id: image.id, needsReview: false });
+          }}
+          disabled={!image.needsReview}
+          size="xs"
+        >
+          <IconCheck size={20} stroke={1.5} />
+        </Button>
       </Group>
     </Card>
   );
