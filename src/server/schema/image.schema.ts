@@ -96,7 +96,7 @@ export const getGalleryImageSchema = z.object({
   infinite: z.boolean().default(true),
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
-  browsingMode: z.nativeEnum(BrowsingMode).optional().default(BrowsingMode.SFW),
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
   tags: z.array(z.number()).optional(),
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
