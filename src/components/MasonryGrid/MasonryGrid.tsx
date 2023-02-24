@@ -8,6 +8,7 @@ import {
   useResizeObserver,
 } from 'masonic';
 import { useRef } from 'react';
+import { usePrevious } from '@mantine/hooks';
 
 export function MasonryGrid<T>({
   items,
@@ -16,7 +17,8 @@ export function MasonryGrid<T>({
   columnWidth = 1200 / maxColumnCount,
   columnGutter,
   filters,
-  previousFetching,
+  isRefetching,
+  isFetchingNextPage,
   ...props
 }: Props<T>) {
   const counterRef = useRef(0);
@@ -24,7 +26,7 @@ export function MasonryGrid<T>({
   const masonryRef = useRef(null);
   const { width, height } = useViewportSize();
   const { offset, width: containerWidth } = useContainerPosition(masonryRef, [width, height]);
-  const dependency = JSON.stringify(filters);
+  const previousFetching = usePrevious(isRefetching && !isFetchingNextPage);
   if (previousFetching) counterRef.current++;
   // when add/edit/delete
   const positioner = usePositioner(
@@ -62,4 +64,6 @@ type Props<T> = Omit<
   columnGutter?: number;
   filters?: Record<string, unknown>;
   previousFetching?: boolean;
+  isRefetching: boolean;
+  isFetchingNextPage: boolean;
 };
