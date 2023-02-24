@@ -206,43 +206,6 @@ ImageGuard.ReportNSFW = function ReportNSFW({
 }) {
   const { image, showReportNsfw } = useImageGuardContentContext();
   if (!showReportNsfw) return null;
-
-  const old = (
-    <ImageGuardPopover>
-      <Tooltip label="Report Adult Content" position="right" withArrow>
-        <ActionIcon
-          // onClick={onClick}
-          size="lg"
-          // loading={isLoading}
-          variant="transparent"
-          color="blue"
-          sx={(theme) => ({
-            cursor: 'pointer',
-            userSelect: 'none',
-            ...(position !== 'static'
-              ? {
-                  position: 'absolute',
-                  top: 5,
-                  left: position === 'top-left' ? 5 : undefined,
-                  right: position === 'top-right' ? 5 : undefined,
-                  zIndex: 10,
-                }
-              : {}),
-            ...(sx && sx instanceof Function ? sx(theme) : sx),
-          })}
-          className={className}
-        >
-          <IconRating18Plus
-            color="white"
-            filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-            opacity={0.8}
-            strokeWidth={2}
-            size={26}
-          />
-        </ActionIcon>
-      </Tooltip>
-    </ImageGuardPopover>
-  );
   return (
     <ReportImageNsfwButton imageId={image.id}>
       {({ onClick, isLoading }) => (
@@ -250,6 +213,7 @@ ImageGuard.ReportNSFW = function ReportNSFW({
           <Menu.Target>
             <ActionIcon
               variant="transparent"
+              loading={isLoading}
               p={0}
               onClick={(e: React.MouseEvent) => {
                 e.preventDefault();

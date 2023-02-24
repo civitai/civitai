@@ -227,6 +227,7 @@ function ReviewCarousel({
     // });
   };
 
+  // this is used to keep content rendered while scrolling - carousel unmounted
   if (!inView && review.images.length > 0)
     return (
       <ImageGuard
@@ -320,6 +321,7 @@ function ReviewCarousel({
                     withMeta
                   />
                 )}
+                <ImageGuard.ReportNSFW />
               </ImageGuard.Safe>
             </Carousel.Slide>
           )}
