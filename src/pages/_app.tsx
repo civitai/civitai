@@ -93,11 +93,9 @@ function MyApp(props: CustomAppProps) {
     <>
       <ClientHistoryStore />
       <SessionProvider session={session}>
-        {/* {flags.civitaiLink && <CivitaiLinkProvider />} */}
         <CookiesProvider value={cookies}>
           <FeatureFlagsProvider flags={flags}>
             <ImageProcessingProvider>
-              {/* TODO.civitai-link - dont' use provider if they don't have the flag */}
               <CivitaiLinkProvider>
                 <CustomModalsProvider>
                   <NotificationsProvider>

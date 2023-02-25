@@ -42,6 +42,7 @@ import {
 } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitaiLinkSvg } from '~/components/CivitaiLink/CivitaiLinkSvg';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
 
@@ -311,6 +312,8 @@ const useStyles = createStyles((theme) => ({
 function LinkButton() {
   // only show the connected indicator if there are any instances
   const { status } = useCivitaiLink();
+  const features = useFeatureFlags();
+  if (!features.civitaiLink) return null;
   const color = civitaiLinkStatusColors[status];
 
   return (

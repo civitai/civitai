@@ -21,8 +21,9 @@ import {
   Instance,
 } from '~/workers/civitai-link-worker-types';
 import { MantineColor } from '@mantine/styles';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
-type CivitaiLinkStatus = typeof statuses[number];
+type CivitaiLinkStatus = (typeof statuses)[number];
 const statuses = [
   'not-connected',
   'no-instances',
@@ -55,7 +56,11 @@ type CivitaiLinkState = {
   renameInstance: (id: number, name: string) => Promise<void>;
   selectInstance: (id: number) => Promise<void>;
   deselectInstance: () => Promise<void>;
-  runCommand: (command: CommandRequest) => Promise<unknown>;
+  runCommand: (command: CommandRequest) => Promise<{
+    promise: Promise<unknown>;
+    id: string;
+    cancel: () => void;
+  }>;
 };
 
 const CivitaiLinkCtx = createContext<CivitaiLinkState>({} as any);
@@ -101,7 +106,7 @@ const commandPromises: Record<
 > = {};
 
 export const useCivitaiLink = () => useContext(CivitaiLinkCtx);
-export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode }) => {
+const Provider = ({ children }: { children: React.ReactNode }) => {
   const workerRef = useRef<SharedWorker>();
   const workerPromise = useRef<Promise<SharedWorker>>();
   const [socketConnected, setSocketConnected] = useState(false);
@@ -207,8 +212,12 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
     });
 
     await workerReq({ type: 'command', payload });
+    const cancel = () => {
+      if (!commandPromises[payload.id]) return;
+      runCommand({ type: 'activities:cancel', activityId: payload.id });
+    };
 
-    return promise;
+    return { promise, id: payload.id, cancel };
   };
 
   const status = useMemo((): CivitaiLinkStatus => {
@@ -246,3 +255,31 @@ export const CivitaiLinkProvider = ({ children }: { children: React.ReactNode })
     </CivitaiLinkCtx.Provider>
   );
 };
+
+export function CivitaiLinkProvider({ children }: { children: React.ReactElement }) {
+  const flags = useFeatureFlags();
+
+  return flags.civitaiLink ? (
+    <Provider>{children}</Provider>
+  ) : (
+    <CivitaiLinkCtx.Provider
+      value={{
+        instances: [],
+        instance: undefined,
+        connected: false,
+        socketConnected: false,
+        resources: [],
+        error: 'Civitai Link is not enabled',
+        status: 'not-connected',
+        createInstance: () => Promise.resolve(),
+        deleteInstance: () => Promise.resolve(),
+        renameInstance: () => Promise.resolve(),
+        selectInstance: () => Promise.resolve(),
+        deselectInstance: () => Promise.resolve(),
+        runCommand: () => Promise.resolve({ promise: Promise.resolve(), id: '', cancel: () => {} }),
+      }}
+    >
+      {children}
+    </CivitaiLinkCtx.Provider>
+  );
+}

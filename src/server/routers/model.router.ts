@@ -4,6 +4,7 @@ import { env } from '~/env/server.mjs';
 import {
   createModelHandler,
   deleteModelHandler,
+  getDownloadCommandHandler,
   getModelDetailsForReviewHandler,
   getModelHandler,
   getModelReportDetailsHandler,
@@ -20,6 +21,7 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteModelSchema,
   getAllModelsSchema,
+  getDownloadSchema,
   ModelInput,
   modelSchema,
 } from '~/server/schema/model.schema';
@@ -109,4 +111,5 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .query(getModelDetailsForReviewHandler),
   restore: protectedProcedure.input(getByIdSchema).mutation(restoreModelHandler),
+  getDownloadCommand: protectedProcedure.input(getDownloadSchema).query(getDownloadCommandHandler),
 });

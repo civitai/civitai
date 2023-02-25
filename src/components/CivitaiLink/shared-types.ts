@@ -43,7 +43,10 @@ export type ResourceType =
   | 'CheckpointConfig'
   | 'TextualInversion'
   | 'Hypernetwork'
-  | 'AestheticGradient';
+  | 'AestheticGradient'
+  | 'VAE'
+  | 'Controlnet'
+  | 'Poses';
 
 type CommandBase = {
   id: string;
@@ -63,8 +66,8 @@ export type CommandResourcesAdd = {
     hash: string;
     name: string;
     modelName: string;
-    modelVersionName: string;
-    previewImage: string;
+    modelVersionName?: string;
+    previewImage?: string;
     url: string;
   };
 };
@@ -80,7 +83,7 @@ export type CommandResourcesRemove = {
     type: ResourceType;
     hash: string;
     modelName: string;
-    modelVersionName: string;
+    modelVersionName?: string;
   };
 };
 

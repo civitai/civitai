@@ -13,7 +13,6 @@ import {
   Rating,
   Stack,
   Text,
-  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
 import { ModelStatus } from '@prisma/client';
@@ -31,7 +30,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import React, { useState, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { CivitaiLinkQuickAdd } from '~/components/CivitaiLink/CivitaiLinkQuickAdd';
+import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
+import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
@@ -409,35 +409,50 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                   mx="xs"
                   position="apart"
                   sx={{
-                    alignSelf: 'flex-end',
                     zIndex: 10,
-                    borderRadius: '50%',
                   }}
                 >
-                  <CivitaiLinkQuickAdd modelId={data.id} hashes={data.hashes} />
+                  <CivitiaLinkManageButton
+                    modelId={id}
+                    modelName={name}
+                    modelType={data.type}
+                    hashes={data.hashes}
+                  >
+                    {({ color, onClick, ref, icon }) => (
+                      <ActionIcon
+                        component="button"
+                        ref={ref}
+                        radius="lg"
+                        variant="filled"
+                        size="lg"
+                        color={color}
+                        sx={(theme) => ({
+                          opacity: 0.8,
+                          boxShadow:
+                            '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 8px 15px -5px',
+                          transition: 'opacity .25s ease',
+                          position: 'relative',
+
+                          '&:hover': {
+                            opacity: 1,
+                          },
+                        })}
+                        onClick={onClick}
+                      >
+                        {icon}
+                      </ActionIcon>
+                    )}
+                  </CivitiaLinkManageButton>
                   {data.user.image && (
-                    <Tooltip
+                    <CivitaiTooltip
                       position="left"
+                      transition="slide-left"
+                      variant="smallRounded"
                       label={
                         <Text size="xs" weight={500}>
                           {data.user.username}
                         </Text>
                       }
-                      offset={5}
-                      radius="lg"
-                      transition="slide-left"
-                      transitionDuration={500}
-                      openDelay={100}
-                      closeDelay={250}
-                      styles={{
-                        tooltip: {
-                          maxWidth: 200,
-                          backgroundColor: 'rgba(0,0,0,.5)',
-                          padding: '1px 10px 2px',
-                          zIndex: 9,
-                        },
-                      }}
-                      multiline
                     >
                       <Box
                         sx={{
@@ -448,6 +463,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                           e.stopPropagation();
                           push(`/user/${data.user.username}`);
                         }}
+                        ml="auto"
                       >
                         <UserAvatar
                           size="md"
@@ -455,7 +471,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                           avatarProps={{ className: classes.userAvatar }}
                         />
                       </Box>
-                    </Tooltip>
+                    </CivitaiTooltip>
                   )}
                 </Group>
 

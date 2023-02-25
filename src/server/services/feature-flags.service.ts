@@ -4,7 +4,7 @@ import { isDev } from '~/env/other';
 
 /** 'dev' AND ('mod' OR 'public' OR etc...)  */
 const featureAvailability = ['dev', 'mod', 'public', 'founder'] as const;
-type FeatureAvailability = typeof featureAvailability[number];
+type FeatureAvailability = (typeof featureAvailability)[number];
 
 const createTypedDictionary = <T extends Record<string, FeatureAvailability[]>>(dictionary: T) =>
   dictionary as { [K in keyof T]: FeatureAvailability[] };
@@ -15,7 +15,7 @@ const featureFlags = createTypedDictionary({
   apiKeys: ['public'],
   ambientCard: ['public'],
   gallery: ['mod', 'founder'],
-  civitaiLink: ['dev', 'mod'],
+  civitaiLink: ['mod'],
   stripe: ['mod'],
 });
 

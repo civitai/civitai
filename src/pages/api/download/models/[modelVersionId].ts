@@ -124,7 +124,7 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
       },
     });
   } catch (error) {
-    return res.status(500).json({ error: 'Invalid database operation', cause: error });
+    // Do nothing if we can't track the download
   }
 
   const fileName = getDownloadFilename({ model: modelVersion.model, modelVersion, file });

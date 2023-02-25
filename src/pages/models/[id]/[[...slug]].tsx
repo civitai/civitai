@@ -94,6 +94,8 @@ import { Announcements } from '~/components/Announcements/Announcements';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { ModelById } from '~/types/router';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
+import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 
 //TODO - Break model query into multiple queries
 /*
@@ -209,6 +211,7 @@ export default function ModelDetail({
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();
+  const { connected: civitaiLinked } = useCivitaiLink();
 
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
 
@@ -706,8 +709,23 @@ export default function ModelDetail({
                       )}
                     </Stack>
                   )}
-
-                  <RunButton modelVersionId={latestVersion.id} />
+                  {civitaiLinked ? (
+                    <CivitiaLinkManageButton
+                      modelId={model.id}
+                      modelVersionId={latestVersion.id}
+                      modelName={model.name}
+                      modelType={model.type}
+                      hashes={latestVersion.hashes}
+                    >
+                      {({ color, onClick, ref, icon }) => (
+                        <Button ref={ref} color={color} onClick={onClick} px={0} w={36}>
+                          {icon}
+                        </Button>
+                      )}
+                    </CivitiaLinkManageButton>
+                  ) : (
+                    <RunButton modelVersionId={latestVersion.id} />
+                  )}
                   <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
                     <div>
                       <LoginRedirect reason="favorite-model">
