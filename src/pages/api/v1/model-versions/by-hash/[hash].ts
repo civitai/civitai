@@ -19,7 +19,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   if (!hash) return res.status(400).json({ error: 'Missing hash' });
 
   const { modelVersion } = (await prisma.modelFile.findFirst({
-    where: { hashes: { some: { hash } } },
+    where: { hashes: { some: { hash } }, modelVersion: { model: { status: 'Published' } } },
     take: 1,
     select: {
       modelVersion: {
