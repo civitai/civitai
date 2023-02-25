@@ -48,6 +48,7 @@ import {
   ResponseResourcesAdd,
 } from '~/components/CivitaiLink/shared-types';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -101,9 +102,11 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           else return 0;
         });
 
-        const hashes = version.files.map((file) =>
-          file.hashes.find((x) => x.type === ModelHashType.SHA256)?.hash.toLowerCase()
-        );
+        const hashes = version.files
+          .map((file) =>
+            file.hashes.find((x) => x.type === ModelHashType.SHA256)?.hash.toLowerCase()
+          )
+          .filter(isDefined);
 
         return {
           ...version,

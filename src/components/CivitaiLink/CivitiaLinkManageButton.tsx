@@ -11,7 +11,7 @@ export const CivitiaLinkManageButton = ({
   children,
   ...managerProps
 }: { children: (props: ChildFuncProps) => JSX.Element } & CivitaiLinkResourceManagerProps) => {
-  const { hovered, ref } = useHover();
+  const { hovered, ref } = useHover<HTMLButtonElement>();
 
   return (
     <CivitaiLinkResourceManager {...managerProps}>
