@@ -40,7 +40,7 @@ export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }
       queryUtils.user.getHiddenUsers.setData(undefined, context?.prevHidden);
     },
     async onSettled() {
-      await queryUtils.user.getHiddenUsers.invalidate();
+      // await queryUtils.user.getHiddenUsers.invalidate();
       await queryUtils.user.getCreator.invalidate();
       await queryUtils.user.getLists.invalidate();
     },

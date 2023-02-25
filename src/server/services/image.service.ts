@@ -109,7 +109,7 @@ export const getGalleryImages = async <
               ? undefined
               : { equals: browsingMode === BrowsingMode.NSFW },
           tosViolation: !isMod ? false : undefined,
-          needsReview: false,
+          OR: [{ needsReview: false }, { userId: user?.id }],
           ...(infinite ? infiniteWhere : finiteWhere),
         },
     select: imageGallerySelect({ user, needsReview }),

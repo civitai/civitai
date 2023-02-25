@@ -1,18 +1,24 @@
 import {
   ActionIcon,
   AspectRatio,
-  Center,
-  createStyles,
-  MantineNumberSize,
   Box,
   BoxProps,
+  Center,
+  createStyles,
+  Group,
+  HoverCard,
+  MantineNumberSize,
+  Stack,
+  Text,
+  ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageModel } from '~/server/selectors/image.selector';
 // import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { EdgeImage, EdgeImageProps } from '~/components/EdgeImage/EdgeImage';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { IconInfoCircle } from '@tabler/icons';
+import { IconAlertTriangle, IconExclamationMark, IconInfoCircle } from '@tabler/icons';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { getClampedSize } from '~/utils/blurhash';
 import { CSSProperties } from 'react';
@@ -30,7 +36,7 @@ type ImagePreviewProps = {
 } & Omit<BoxProps, 'component'>;
 
 export function ImagePreview({
-  image: { url, name, width, height, hash, meta, generationProcess },
+  image: { url, name, width, height, hash, meta, generationProcess, needsReview },
   edgeImageProps = {},
   nsfw,
   aspectRatio,
@@ -63,11 +69,7 @@ export function ImagePreview({
       meta={meta as ImageMetaProps}
       generationProcess={generationProcess ?? 'txt2img'}
     >
-      <ActionIcon
-        variant="transparent"
-        style={{ position: 'absolute', bottom: '5px', right: '5px' }}
-        size="lg"
-      >
+      <ActionIcon variant="transparent" size="lg">
         <IconInfoCircle
           color="white"
           filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
@@ -77,6 +79,26 @@ export function ImagePreview({
         />
       </ActionIcon>
     </ImageMetaPopover>
+  );
+
+  const NeedsReviewBadge = needsReview && (
+    <HoverCard width={200} withArrow>
+      <HoverCard.Target>
+        <ThemeIcon size="lg" color="yellow">
+          <IconAlertTriangle strokeWidth={2.5} size={26} />
+        </ThemeIcon>
+      </HoverCard.Target>
+      <HoverCard.Dropdown p={8}>
+        <Stack spacing={0}>
+          <Text weight="bold" size="xs">
+            Flagged by age detection
+          </Text>
+          <Text size="xs">
+            {`This image won't be visible to other users until it's reviewed by our moderators.`}
+          </Text>
+        </Stack>
+      </HoverCard.Dropdown>
+    </HoverCard>
   );
 
   const edgeImageStyle: CSSProperties = {
@@ -116,7 +138,10 @@ export function ImagePreview({
           {Image}
         </AspectRatio>
       )}
-      {Meta}
+      <Group spacing={4} sx={{ position: 'absolute', bottom: '5px', right: '5px' }}>
+        {NeedsReviewBadge}
+        {Meta}
+      </Group>
     </Box>
   );
 }

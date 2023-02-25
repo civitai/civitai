@@ -116,24 +116,26 @@ export function InfiniteModels({
     if (isHiddenFetched && !excludedIds) setExcludedIds(Hide);
   }, [isHiddenFetched]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const { data: hiddenUsers = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
+    enabled: !showHidden && !!currentUser,
+    cacheTime: Infinity,
+    staleTime: Infinity,
+  });
+  const excludedUserIds = useMemo(() => hiddenUsers.map((item) => item.id), [hiddenUsers]);
+
   const { data, isLoading, fetchNextPage, hasNextPage } = trpc.model.getAll.useInfiniteQuery(
     {
       ...filters,
       ...queryParams,
       excludedTagIds,
+      excludedUserIds,
       excludedIds: queryParams.hidden ? undefined : excludedIds,
     },
     {
-      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+      keepPreviousData: true,
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
     }
   );
-  const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
-    enabled: !showHidden && !!currentUser,
-    cacheTime: Infinity,
-    staleTime: Infinity,
-  });
-  const hiddenUserIds = useMemo(() => hidden.map((item) => item.id), [hidden]);
 
   useEffect(() => {
     if (inView) {
@@ -144,10 +146,7 @@ export function InfiniteModels({
   const isAuthenticated = !!currentUser;
   const models = useMemo(
     () => {
-      const items =
-        data?.pages
-          .flatMap((x) => (!!x ? x.items : []))
-          .filter((item) => !hiddenUserIds.includes(item.user.id)) ?? [];
+      const items = data?.pages.flatMap((x) => x.items) ?? [];
 
       // If current user isn't authenticated make sure they aren't greeted with a blurry wall
       if (delayNsfw && items.length > 0 && !isAuthenticated && items.length <= 100) {
