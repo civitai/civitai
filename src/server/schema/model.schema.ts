@@ -62,7 +62,6 @@ export const getAllModelsSchema = z.object({
   ),
   excludedIds: z.array(z.number()).optional(),
   excludedTagIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
 });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
