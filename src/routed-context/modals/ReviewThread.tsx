@@ -1,6 +1,7 @@
 import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
 import {
   Alert,
+  Anchor,
   AspectRatio,
   Badge,
   Center,
@@ -31,6 +32,7 @@ import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import { ReviewDiscussionMenu } from '~/components/Model/ModelDiscussion/ReviewDiscussionMenu';
 import { IconExclamationCircle } from '@tabler/icons';
+import { NextLink } from '@mantine/next';
 
 const TRANSITION_DURATION = 200;
 
@@ -204,14 +206,27 @@ export default createRoutedContext({
                                   </AspectRatio>
                                 </ImageGuard.Unsafe>
                                 <ImageGuard.Safe>
-                                  <ImagePreview
-                                    image={image}
-                                    aspectRatio={0}
-                                    edgeImageProps={{ height: screenHeight }} // TODO Optimization: look at using width 400, since we already have that in cache
-                                    radius="md"
-                                    withMeta
-                                    onClick={() => handleNavigate(image.id)}
-                                  />
+                                  <Anchor
+                                    component={NextLink}
+                                    href={`/gallery/${image.id}?reviewId=${
+                                      review.id
+                                    }&infinite=false&returnUrl=${encodeURIComponent(
+                                      router.asPath
+                                    )}`}
+                                  >
+                                    <ImagePreview
+                                      image={image}
+                                      aspectRatio={0}
+                                      edgeImageProps={{ height: screenHeight }} // TODO Optimization: look at using width 400, since we already have that in cache
+                                      radius="md"
+                                      withMeta
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        handleNavigate(image.id);
+                                      }}
+                                    />
+                                  </Anchor>
                                 </ImageGuard.Safe>
                               </div>
                             </Center>

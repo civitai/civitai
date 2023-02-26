@@ -10,6 +10,7 @@ import {
   Menu,
   Box,
   AspectRatio,
+  Anchor,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { useRouter } from 'next/router';
@@ -42,6 +43,7 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
+import { NextLink } from '@mantine/next';
 
 const VERSION_IMAGES_LIMIT = 8;
 
@@ -275,53 +277,61 @@ function TabContent({ version, nsfw, type, locked }: TabContentProps) {
                     </AspectRatio>
                   </ImageGuard.Unsafe>
                   <ImageGuard.Safe>
-                    <ImagePreview
-                      key={index}
-                      image={image}
-                      edgeImageProps={{ width: 400 }}
-                      radius="md"
-                      aspectRatio={1}
-                      onClick={() =>
-                        // router.push({
-                        //   pathname: `/gallery/${image.id}`,
-                        //   query: {
-                        //     modelId,
-                        //     modelVersionId: version.id,
-                        //     infinite: false,
-                        //     returnUrl: router.asPath,
-                        //   },
-                        // })
-                        openRoutedContext('galleryDetailModal', {
-                          galleryImageId: image.id,
-                          modelId: version.modelId,
-                          modelVersionId: version.id,
-                          infinite: false,
-                          returnUrl: router.asPath,
-                        })
-                      }
-                      withMeta
-                    />
+                    <Anchor
+                      component={NextLink}
+                      href={`/gallery/${image.id}?modelId=${version.modelId}&modelVersionId=${
+                        version.id
+                      }&infinite=false&returnUrl=${encodeURIComponent(router.asPath)}`}
+                    >
+                      <ImagePreview
+                        image={image}
+                        edgeImageProps={{ width: 400 }}
+                        radius="md"
+                        aspectRatio={1}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openRoutedContext('galleryDetailModal', {
+                            galleryImageId: image.id,
+                            modelId: version.modelId,
+                            modelVersionId: version.id,
+                            infinite: false,
+                            returnUrl: router.asPath,
+                          });
+                        }}
+                        withMeta
+                      />
+                    </Anchor>
                   </ImageGuard.Safe>
                 </Box>
               ) : null
             }
           />
           {versionImages.length > imagesLimit ? (
-            <Button
-              variant="outline"
-              sx={!mobile ? { height: '100%' } : undefined}
-              onClick={() =>
-                openRoutedContext('galleryDetailModal', {
-                  galleryImageId: versionImages[imagesLimit].id,
-                  modelId: version.modelId,
-                  modelVersionId: version.id,
-                  infinite: false,
-                  returnUrl: router.asPath,
-                })
-              }
+            <Anchor
+              component={NextLink}
+              variant="text"
+              href={`/gallery/${versionImages[imagesLimit].id}?modelId=${version.modelId}&modelVersionId=${version.id}&infinite=false&returnUrl=${router.asPath}`}
             >
-              View more
-            </Button>
+              <Button
+                variant="outline"
+                sx={!mobile ? { height: '100%' } : undefined}
+                fullWidth
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openRoutedContext('galleryDetailModal', {
+                    galleryImageId: versionImages[imagesLimit].id,
+                    modelId: version.modelId,
+                    modelVersionId: version.id,
+                    infinite: false,
+                    returnUrl: router.asPath,
+                  });
+                }}
+              >
+                View more
+              </Button>
+            </Anchor>
           ) : null}
         </SimpleGrid>
       </Grid.Col>
