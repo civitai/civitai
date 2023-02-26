@@ -39,8 +39,8 @@ export default ModEndpoint(
       if (!scanResult?.hashes) continue;
 
       await prisma.$transaction([
-        prisma.modelHash.deleteMany({ where: { fileId } }),
-        prisma.modelHash.createMany({
+        prisma.modelFileHash.deleteMany({ where: { fileId } }),
+        prisma.modelFileHash.createMany({
           data: Object.entries(scanResult.hashes)
             .filter(([type, hash]) => hashTypeMap[type.toLowerCase()] && hash)
             .map(([type, hash]) => ({

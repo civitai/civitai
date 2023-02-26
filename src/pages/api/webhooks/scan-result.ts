@@ -88,8 +88,8 @@ export default WebhookEndpoint(async (req, res) => {
   // Update hashes
   if (tasks.includes('Hash') && scanResult.hashes) {
     await prisma.$transaction([
-      prisma.modelHash.deleteMany({ where: { fileId } }), // TODO.justin
-      prisma.modelHash.createMany({
+      prisma.modelFileHash.deleteMany({ where: { fileId } }), // TODO.justin
+      prisma.modelFileHash.createMany({
         data: Object.entries(scanResult.hashes) // TODO.justin
           .filter(([type, val]) => hashTypeMap[type.toLowerCase()] && val)
           .map(([type, hash]) => ({
