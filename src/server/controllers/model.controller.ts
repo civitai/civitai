@@ -346,11 +346,11 @@ export const getModelsWithVersionsHandler = async ({
       items: rawResults.items.map(({ rank, ...model }) => ({
         ...model,
         stats: {
-          downloadCount: rank?.downloadCountAllTime,
-          favoriteCount: rank?.favoriteCountAllTime,
-          commentCount: rank?.commentCountAllTime,
-          ratingCount: rank?.ratingCountAllTime,
-          rating: Number(rank?.ratingAllTime?.toFixed(2)),
+          downloadCount: rank?.downloadCountAllTime ?? 0,
+          favoriteCount: rank?.favoriteCountAllTime ?? 0,
+          commentCount: rank?.commentCountAllTime ?? 0,
+          ratingCount: rank?.ratingCountAllTime ?? 0,
+          rating: Number(rank?.ratingAllTime?.toFixed(2) ?? 0),
         },
       })),
     };
