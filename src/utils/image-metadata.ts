@@ -178,13 +178,16 @@ const encoders = {
 
 // #region [audit]
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const blockedBoth = '\\(|\\)|\\[|\\]|\\{|\\}|:|\\|';
+const tokenRegex = (word: string) =>
+  new RegExp(`(^|\\s|${blockedBoth})${escapeRegex(word)}(\\s|,|$|${blockedBoth})`, 'm');
 const blockedRegex = blocked.map((word) => ({
   word,
-  regex: new RegExp(`(^|\\s|\\(|\\))${escapeRegex(word)}(\\s|,|$|\\(|\\))`, 'm'),
+  regex: tokenRegex(word),
 }));
 const blockedNSFWRegex = blockedNSFW.map((word) => ({
   word,
-  regex: new RegExp(`(^|\\s|\\(|\\))${escapeRegex(word)}(\\s|,|$|\\(|\\))`, 'm'),
+  regex: tokenRegex(word),
 }));
 export const auditMetaData = (
   meta: AsyncReturnType<typeof getMetadata> | undefined,

@@ -1,4 +1,4 @@
-import create from 'zustand';
+import { create } from 'zustand';
 
 // export const getImageMetadata = async (img: HTMLImageElement) => {
 //   const canvas = document.createElement('canvas');

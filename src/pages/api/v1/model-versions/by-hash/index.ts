@@ -25,7 +25,10 @@ export default PublicEndpoint(
       });
 
     const files = await prisma.modelFile.findMany({
-      where: { hashes: { some: { hash: { in: results.data }, type: 'SHA256' } } },
+      where: {
+        hashes: { some: { hash: { in: results.data }, type: 'SHA256' } },
+        modelVersion: { model: { status: 'Published' } },
+      },
       select: {
         modelVersion: {
           select: getModelVersionApiSelect,
