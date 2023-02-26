@@ -334,12 +334,26 @@ export const getModelsWithVersionsHandler = async ({
   const { limit = DEFAULT_PAGE_SIZE, page, ...queryInput } = input;
   const { take, skip } = getPagination(limit, page);
   try {
-    const results = await getModels({
+    const rawResults = await getModels({
       input: { ...queryInput, take, skip },
       user: ctx.user,
       select: getAllModelsWithVersionsSelect,
       count: true,
     });
+
+    const results = {
+      count: rawResults.count,
+      items: rawResults.items.map(({ rank, ...model }) => ({
+        ...model,
+        stats: {
+          downloadCount: rank?.downloadCountAllTime,
+          favoriteCount: rank?.favoriteCountAllTime,
+          commentCount: rank?.commentCountAllTime,
+          ratingCount: rank?.ratingCountAllTime,
+          rating: Number(rank?.ratingAllTime?.toFixed(2)),
+        },
+      })),
+    };
 
     return getPagingData(results, take, page);
   } catch (error) {
