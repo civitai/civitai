@@ -95,7 +95,7 @@ import { Announcements } from '~/components/Announcements/Announcements';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { ModelById } from '~/types/router';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
-import { NextLink } from '@mantine/next';
+import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
 
 //TODO - Break model query into multiple queries
 /*
@@ -949,8 +949,7 @@ function ModelCarousel({
                   </AspectRatio>
                 </ImageGuard.Unsafe>
                 <ImageGuard.Safe>
-                  <Anchor
-                    component={NextLink}
+                  <AnchorNoTravel
                     href={`/gallery/${image.id}?modelId=${model.id}&modelVersionId=${
                       latestVersion.id
                     }&infinite=false&returnUrl=${encodeURIComponent(router.asPath)}`}
@@ -959,22 +958,19 @@ function ModelCarousel({
                       image={image}
                       edgeImageProps={{ width: 400 }}
                       radius="md"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-
+                      onClick={() =>
                         openRoutedContext('galleryDetailModal', {
                           galleryImageId: image.id,
                           modelId: model.id,
                           modelVersionId: latestVersion.id,
                           infinite: false,
                           returnUrl: Router.asPath,
-                        });
-                      }}
+                        })
+                      }
                       style={{ width: '100%' }}
                       withMeta
                     />
-                  </Anchor>
+                  </AnchorNoTravel>
                 </ImageGuard.Safe>
               </div>
             </Center>

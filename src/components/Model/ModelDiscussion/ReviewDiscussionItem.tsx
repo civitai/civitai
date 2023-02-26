@@ -33,7 +33,7 @@ import { trpc } from '~/utils/trpc';
 import Router, { useRouter } from 'next/router';
 import { ReviewDiscussionMenu } from '~/components/Model/ModelDiscussion/ReviewDiscussionMenu';
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
-import { NextLink } from '@mantine/next';
+import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
 
 export function ReviewDiscussionItem({ review, width }: Props) {
   // const { openContext } = useRoutedContext();
@@ -307,8 +307,7 @@ function ReviewCarousel({
               </div>
               <ImageGuard.Safe>
                 {visible && inView && renderIndexes.includes(index) && (
-                  <Anchor
-                    component={NextLink}
+                  <AnchorNoTravel
                     href={`/gallery/${image.id}?reviewId=${
                       review.id
                     }&infinite=false&returnUrl=${encodeURIComponent(router.asPath)}`}
@@ -317,15 +316,11 @@ function ReviewCarousel({
                       image={image}
                       edgeImageProps={{ width: 400 }}
                       aspectRatio={1}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        handleNavigate(image.id);
-                      }}
+                      onClick={() => handleNavigate(image.id)}
                       cropFocus="top"
                       withMeta
                     />
-                  </Anchor>
+                  </AnchorNoTravel>
                 )}
                 <ImageGuard.ReportNSFW />
               </ImageGuard.Safe>
