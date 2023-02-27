@@ -1,4 +1,4 @@
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import chalk from 'chalk';
 import { env } from '~/env/server.mjs';
 import { isDev } from '~/env/other';
@@ -6,7 +6,7 @@ import { isDev } from '~/env/other';
 export async function logToDb(event: string, details: object) {
   if (isDev) return; // Don't log in dev
   try {
-    await prisma.log.createMany({
+    await dbWrite.log.createMany({
       data: {
         event,
         details,

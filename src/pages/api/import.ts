@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { z } from 'zod';
 import { processImport } from '~/server/importers/importRouter';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
@@ -18,7 +18,7 @@ export default ModEndpoint(
     const { source, wait, data } = importSchema.parse(req.query);
     const userId = -1; //Default civitai user id
 
-    const { id } = await prisma.import.create({
+    const { id } = await dbWrite.import.create({
       data: {
         source,
         userId,

@@ -31,6 +31,7 @@ import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import { ReviewDiscussionMenu } from '~/components/Model/ModelDiscussion/ReviewDiscussionMenu';
 import { IconExclamationCircle } from '@tabler/icons';
+import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
 
 const TRANSITION_DURATION = 200;
 
@@ -204,14 +205,22 @@ export default createRoutedContext({
                                   </AspectRatio>
                                 </ImageGuard.Unsafe>
                                 <ImageGuard.Safe>
-                                  <ImagePreview
-                                    image={image}
-                                    aspectRatio={0}
-                                    edgeImageProps={{ height: screenHeight }} // TODO Optimization: look at using width 400, since we already have that in cache
-                                    radius="md"
-                                    withMeta
-                                    onClick={() => handleNavigate(image.id)}
-                                  />
+                                  <AnchorNoTravel
+                                    href={`/gallery/${image.id}?reviewId=${
+                                      review.id
+                                    }&infinite=false&returnUrl=${encodeURIComponent(
+                                      router.asPath
+                                    )}`}
+                                  >
+                                    <ImagePreview
+                                      image={image}
+                                      aspectRatio={0}
+                                      edgeImageProps={{ height: screenHeight }} // TODO Optimization: look at using width 400, since we already have that in cache
+                                      radius="md"
+                                      withMeta
+                                      onClick={() => handleNavigate(image.id)}
+                                    />
+                                  </AnchorNoTravel>
                                 </ImageGuard.Safe>
                               </div>
                             </Center>

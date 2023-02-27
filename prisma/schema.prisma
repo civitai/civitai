@@ -738,6 +738,12 @@ enum TagTarget {
   Image
 }
 
+enum TagType {
+  UserGenerated
+  Label
+  Moderation
+}
+
 model Tag {
   id         Int         @id @default(autoincrement())
   name       String
@@ -745,6 +751,7 @@ model Tag {
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
   target     TagTarget[]
+  type       TagType     @default(UserGenerated)
   unlisted   Boolean     @default(false)
   unfeatured Boolean     @default(false)
   isCategory Boolean     @default(false)
@@ -781,11 +788,13 @@ model TagsOnQuestions {
 }
 
 model TagsOnImage {
-  imageId   Int
-  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  tagId     Int
-  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  imageId    Int
+  image      Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  tagId      Int
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  automated  Boolean  @default(false)
+  confidence Int?
 
   @@id([tagId, imageId])
 }

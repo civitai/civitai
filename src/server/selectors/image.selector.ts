@@ -4,7 +4,7 @@ import { SessionUser } from 'next-auth';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { ImageUploadProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { detectNsfwImage } from '~/utils/image-metadata';
+import { detectNsfwImage, getNeedsReview } from '~/utils/image-metadata';
 
 import { getReactionsSelect } from './reaction.selector';
 import { simpleTagSelect } from './tag.selector';
@@ -20,6 +20,7 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   hash: true,
   meta: true,
   generationProcess: true,
+  needsReview: true,
   tags: { select: { tag: { select: simpleTagSelect } } }, // TODO.posts - remove this. We may  not even need tags initially, but if we do need tags then we probably only need to load them when looking at the image details
   _count: {
     select: {
@@ -73,16 +74,10 @@ export const imageGallerySelect = ({
     analysis: needsReview ? true : false,
   });
 
-const MINOR_DETECTION_AGE = 20;
 export const prepareCreateImage = (image: ImageUploadProps) => {
-  const assessedNSFW = image.analysis ? detectNsfwImage(image.analysis) : true; // Err on side of caution
-  const assessedMinor =
-    image.analysis?.faces && image.analysis.faces.some((x) => x.age <= MINOR_DETECTION_AGE);
-  const needsReview = (image.nsfw === true || assessedNSFW) && assessedMinor;
-
   const payload: Omit<Prisma.ImageCreateInput, 'user'> = {
     ...image,
-    needsReview,
+    needsReview: getNeedsReview(image),
     meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
     generationProcess: image.meta
       ? getImageGenerationProcess(image.meta as Prisma.JsonObject)

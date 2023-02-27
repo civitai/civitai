@@ -3,7 +3,7 @@ import { S3Client } from '@aws-sdk/client-s3';
 import dayjs from 'dayjs';
 
 import { env } from '~/env/server.mjs';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { getGetUrl, getS3Client } from '~/utils/s3-utils';
 
 import { createJob } from './job';
@@ -15,7 +15,7 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
     OR: [{ scanRequestedAt: null }, { scanRequestedAt: { lt: scanCutOff } }],
   };
 
-  const files = await prisma.modelFile.findMany({
+  const files = await dbWrite.modelFile.findMany({
     where,
     select: { modelVersionId: true, type: true, url: true, format: true },
   });
@@ -23,7 +23,7 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
   const s3 = getS3Client();
   for (const file of files) await requestScannerTasks({ file, s3 });
 
-  await prisma.modelFile.updateMany({
+  await dbWrite.modelFile.updateMany({
     where,
     data: {
       scanRequestedAt: new Date(),

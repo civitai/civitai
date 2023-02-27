@@ -3,7 +3,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import { getGetUrl } from '~/utils/s3-utils';
@@ -24,7 +24,7 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
   // Get ip so that we can block exploits we catch
   const ip = requestIp.getClientIp(req);
   const blacklist = (
-    ((await prisma.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ?? ''
+    ((await dbWrite.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ?? ''
   ).split(',');
   if (ip && blacklist.includes(ip)) return res.status(403).json({ error: 'Forbidden' });
 
@@ -41,7 +41,7 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
   if (type) fileWhere.type = type;
   if (format) fileWhere.format = format;
 
-  const modelVersion = await prisma.modelVersion.findFirst({
+  const modelVersion = await dbWrite.modelVersion.findFirst({
     where: { id: modelVersionId },
     select: {
       id: true,
@@ -106,7 +106,7 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
 
   // Track download
   try {
-    await prisma.userActivity.create({
+    await dbWrite.userActivity.create({
       data: {
         userId,
         activity: UserActivityType.ModelDownload,

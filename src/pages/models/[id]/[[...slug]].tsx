@@ -19,6 +19,7 @@ import {
   Rating,
   AspectRatio,
   Paper,
+  Anchor,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { ModelStatus } from '@prisma/client';
@@ -42,7 +43,7 @@ import {
 import startCase from 'lodash/startCase';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
-import Router from 'next/router';
+import Router, { useRouter } from 'next/router';
 import { useEffect, useRef } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -94,6 +95,7 @@ import { Announcements } from '~/components/Announcements/Announcements';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { ModelById } from '~/types/router';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
+import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
 
 //TODO - Break model query into multiple queries
 /*
@@ -184,6 +186,7 @@ const useStyles = createStyles((theme) => ({
   control: {
     minWidth: 56,
     minHeight: 56,
+    borderRadius: '50%',
 
     svg: {
       width: 24,
@@ -907,6 +910,7 @@ function ModelCarousel({
   latestVersion: ModelById['modelVersions'][number];
   mobile?: boolean;
 }) {
+  const router = useRouter();
   const { classes } = useStyles();
   if (!latestVersion.images.length) return null;
 
@@ -945,22 +949,28 @@ function ModelCarousel({
                   </AspectRatio>
                 </ImageGuard.Unsafe>
                 <ImageGuard.Safe>
-                  <ImagePreview
-                    image={image}
-                    edgeImageProps={{ width: 400 }}
-                    radius="md"
-                    onClick={() =>
-                      openRoutedContext('galleryDetailModal', {
-                        galleryImageId: image.id,
-                        modelId: model.id,
-                        modelVersionId: latestVersion.id,
-                        infinite: false,
-                        returnUrl: Router.asPath,
-                      })
-                    }
-                    style={{ width: '100%' }}
-                    withMeta
-                  />
+                  <AnchorNoTravel
+                    href={`/gallery/${image.id}?modelId=${model.id}&modelVersionId=${
+                      latestVersion.id
+                    }&infinite=false&returnUrl=${encodeURIComponent(router.asPath)}`}
+                  >
+                    <ImagePreview
+                      image={image}
+                      edgeImageProps={{ width: 400 }}
+                      radius="md"
+                      onClick={() =>
+                        openRoutedContext('galleryDetailModal', {
+                          galleryImageId: image.id,
+                          modelId: model.id,
+                          modelVersionId: latestVersion.id,
+                          infinite: false,
+                          returnUrl: Router.asPath,
+                        })
+                      }
+                      style={{ width: '100%' }}
+                      withMeta
+                    />
+                  </AnchorNoTravel>
                 </ImageGuard.Safe>
               </div>
             </Center>

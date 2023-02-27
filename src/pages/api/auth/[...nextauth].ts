@@ -10,7 +10,7 @@ import RedditProvider from 'next-auth/providers/reddit';
 import EmailProvider from 'next-auth/providers/email';
 
 import { env } from '~/env/server.mjs';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
 import { sendVerificationRequest } from '~/server/auth/verificationEmail';
 import { refreshToken, invalidateSession } from '~/server/utils/session-helpers';
@@ -19,7 +19,7 @@ import { getSessionUser } from '~/server/services/user.service';
 
 const setUserName = async (email: string) => {
   try {
-    const { username } = await prisma.user.update({
+    const { username } = await dbWrite.user.update({
       where: { email },
       data: {
         username: `${email.split('@')[0]}${getRandomInt(100, 999)}`,
@@ -40,7 +40,7 @@ const { hostname } = new URL(env.NEXTAUTH_URL);
 const cookieName = `${cookiePrefix}civitai-token`;
 
 export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
-  adapter: PrismaAdapter(prisma),
+  adapter: PrismaAdapter(dbWrite),
   session: {
     strategy: 'jwt',
     maxAge: 30 * 24 * 60 * 60, // 30 days

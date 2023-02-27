@@ -1,10 +1,11 @@
 import { Prisma } from '@prisma/client';
+import { SessionUser } from 'next-auth';
 
 import { imageSelect } from '~/server/selectors/image.selector';
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
-export const reviewDetailSelect = (includeNSFW = true) =>
+export const reviewDetailSelect = (includeNSFW = true, user?: SessionUser) =>
   Prisma.validator<Prisma.ReviewSelect>()({
     id: true,
     createdAt: true,
@@ -34,7 +35,11 @@ export const reviewDetailSelect = (includeNSFW = true) =>
         },
       },
       where: {
-        image: { nsfw: includeNSFW ? undefined : false, tosViolation: false, needsReview: false },
+        image: {
+          nsfw: includeNSFW ? undefined : false,
+          tosViolation: false,
+          OR: [{ needsReview: false }, { userId: user?.id }],
+        },
       },
     },
     reactions: {

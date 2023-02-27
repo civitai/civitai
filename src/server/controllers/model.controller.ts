@@ -1,7 +1,7 @@
 import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { DeleteModelSchema, GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
@@ -43,7 +43,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const model = await getModel({
       input,
       user: ctx.user,
-      select: modelWithDetailsSelect(showNsfw),
+      select: modelWithDetailsSelect(showNsfw, ctx.user),
     });
     if (!model) {
       throw throwNotFoundError(`No model with id ${input.id}`);
@@ -137,7 +137,12 @@ export const getModelsInfiniteHandler = async ({
           earlyAccessTimeFrame: true,
           createdAt: true,
           images: {
-            where: { image: { tosViolation: false, needsReview: false } },
+            where: {
+              image: {
+                tosViolation: false,
+                OR: [{ needsReview: false }, { userId: ctx.user?.id }],
+              },
+            },
             orderBy: prioritizeSafeImages
               ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
               : [{ index: 'asc' }],
@@ -329,12 +334,26 @@ export const getModelsWithVersionsHandler = async ({
   const { limit = DEFAULT_PAGE_SIZE, page, ...queryInput } = input;
   const { take, skip } = getPagination(limit, page);
   try {
-    const results = await getModels({
+    const rawResults = await getModels({
       input: { ...queryInput, take, skip },
       user: ctx.user,
       select: getAllModelsWithVersionsSelect,
       count: true,
     });
+
+    const results = {
+      count: rawResults.count,
+      items: rawResults.items.map(({ rank, ...model }) => ({
+        ...model,
+        stats: {
+          downloadCount: rank?.downloadCountAllTime ?? 0,
+          favoriteCount: rank?.favoriteCountAllTime ?? 0,
+          commentCount: rank?.commentCountAllTime ?? 0,
+          ratingCount: rank?.ratingCountAllTime ?? 0,
+          rating: Number(rank?.ratingAllTime?.toFixed(2) ?? 0),
+        },
+      })),
+    };
 
     return getPagingData(results, take, page);
   } catch (error) {
@@ -345,7 +364,7 @@ export const getModelsWithVersionsHandler = async ({
 // TODO - TEMP HACK for reporting modal
 export const getModelReportDetailsHandler = async ({ input: { id } }: { input: GetByIdInput }) => {
   try {
-    return await prisma.model.findUnique({
+    return await dbWrite.model.findUnique({
       where: { id },
       select: { userId: true, reportStats: { select: { ownershipPending: true } } },
     });

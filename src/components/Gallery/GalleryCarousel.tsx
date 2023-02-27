@@ -162,6 +162,7 @@ const useStyles = createStyles((theme, _props, getRef) => {
     next: { ref: getRef('next') },
     control: {
       position: 'absolute',
+      borderRadius: '50%',
       // top: 0,
       // bottom: 0,
       top: '50%',

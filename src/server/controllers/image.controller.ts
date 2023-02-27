@@ -2,7 +2,7 @@ import { getImageDetail } from './../services/image.service';
 import { ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetModelVersionImagesSchema,
@@ -65,7 +65,7 @@ export const getGalleryImageDetailHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const item = await prisma.image.findUnique({
+    const item = await dbWrite.image.findUnique({
       where: { id },
       // TODO.gallery - If the gallery is infinite, use the current gallery filters. If the gallery is finite, use MetricTimeFrame.AllTime
       select: imageGallerySelect({ user: ctx.user }),

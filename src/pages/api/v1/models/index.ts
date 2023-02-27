@@ -32,6 +32,12 @@ export default MixedAuthEndpoint(async function handler(
     const { items, ...metadata } = await apiCaller.model.getAllWithVersions(req.query);
     const { nextPage, prevPage, baseUrl } = getPaginationLinks({ ...metadata, req });
 
+    const preferredFormat = {
+      type: user?.preferredPrunedModel ? 'Pruned Model' : undefined,
+      format: user?.preferredModelFormat,
+    };
+    const primaryFileOnly = req.query.primaryFileOnly === 'true';
+
     res.status(200).json({
       items: items.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
         ...model,
@@ -42,8 +48,9 @@ export default MixedAuthEndpoint(async function handler(
         tags: tagsOnModels.map(({ tag }) => tag.name),
         modelVersions: modelVersions
           .map(({ images, files, ...version }) => {
-            const primaryFile = getPrimaryFile(files);
+            const primaryFile = getPrimaryFile(files, preferredFormat);
             if (!primaryFile) return null;
+            if (primaryFileOnly) files = [primaryFile];
 
             return {
               ...version,
@@ -57,6 +64,7 @@ export default MixedAuthEndpoint(async function handler(
                   format: file.format,
                   primary: primaryFile.id === file.id,
                 })}`,
+                primary: primaryFile.id === file.id ? true : undefined,
               })),
               images: images.map(({ image: { url, ...image } }) => ({
                 url: getEdgeUrl(url, { width: 450 }),

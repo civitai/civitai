@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
 import { resModelVersionDetails } from '~/pages/api/v1/model-versions/[id]';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { getModelVersionApiSelect } from '~/server/selectors/modelVersion.selector';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -18,8 +18,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   const { hash } = results.data;
   if (!hash) return res.status(400).json({ error: 'Missing hash' });
 
-  const { modelVersion } = (await prisma.modelFile.findFirst({
-    where: { hashes: { some: { hash } } },
+  const { modelVersion } = (await dbWrite.modelFile.findFirst({
+    where: { hashes: { some: { hash } }, modelVersion: { model: { status: 'Published' } } },
     take: 1,
     select: {
       modelVersion: {

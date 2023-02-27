@@ -1,7 +1,7 @@
 import { isNotTag } from './../schema/tag.schema';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { Prisma, TagTarget } from '@prisma/client';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import {
   GetQuestionsInput,
   SetQuestionAnswerInput,
@@ -34,7 +34,7 @@ export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
         ? { none: {} }
         : undefined,
   };
-  const items = await prisma.question.findMany({
+  const items = await dbWrite.question.findMany({
     take,
     skip,
     select,
@@ -46,7 +46,7 @@ export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
       { createdAt: 'desc' },
     ],
   });
-  const count = await prisma.question.count({ where });
+  const count = await dbWrite.question.count({ where });
   return getPagingData({ items, count }, take, page);
 };
 
@@ -57,7 +57,7 @@ export const getQuestionDetail = async <TSelect extends Prisma.QuestionSelect>({
   id: number;
   select: TSelect;
 }) => {
-  return await prisma.question.findUnique({ where: { id }, select });
+  return await dbWrite.question.findUnique({ where: { id }, select });
 };
 
 export const upsertQuestion = async ({
@@ -70,7 +70,7 @@ export const upsertQuestion = async ({
   const tagsToCreate = tags?.filter(isNotTag) ?? [];
   const tagsToUpdate = tags?.filter(isTag) ?? [];
 
-  return await prisma.$transaction(async (tx) => {
+  return await dbWrite.$transaction(async (tx) => {
     if (tags)
       await tx.tag.updateMany({
         where: {
@@ -140,9 +140,9 @@ export const upsertQuestion = async ({
 };
 
 export const deleteQuestion = async ({ id }: GetByIdInput) => {
-  await prisma.question.delete({ where: { id } });
+  await dbWrite.question.delete({ where: { id } });
 };
 
 export const setQuestionAnswer = async ({ id, answerId }: SetQuestionAnswerInput) => {
-  await prisma.question.update({ where: { id }, data: { selectedAnswerId: answerId } });
+  await dbWrite.question.update({ where: { id }, data: { selectedAnswerId: answerId } });
 };

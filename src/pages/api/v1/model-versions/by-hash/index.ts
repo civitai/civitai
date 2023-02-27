@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { isProd } from '~/env/other';
 import { prepareModelVersionResponse } from '~/pages/api/v1/model-versions/[id]';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { getModelVersionApiSelect } from '~/server/selectors/modelVersion.selector';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -24,8 +24,11 @@ export default PublicEndpoint(
         error: `Request must include an array of SHA256 Hashes. ${results.error.message}`,
       });
 
-    const files = await prisma.modelFile.findMany({
-      where: { hashes: { some: { hash: { in: results.data }, type: 'SHA256' } } },
+    const files = await dbWrite.modelFile.findMany({
+      where: {
+        hashes: { some: { hash: { in: results.data }, type: 'SHA256' } },
+        modelVersion: { model: { status: 'Published' } },
+      },
       select: {
         modelVersion: {
           select: getModelVersionApiSelect,

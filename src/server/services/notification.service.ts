@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import {
   GetUserNotificationsSchema,
   MarkReadNotificationInput,
@@ -24,7 +24,7 @@ export const getUserNotifications = async <TSelect extends Prisma.NotificationSe
     userId,
     viewedAt: unread ? { equals: null } : undefined,
   };
-  const notificationQuery = prisma.notification.findMany({
+  const notificationQuery = dbWrite.notification.findMany({
     take: limit,
     cursor: cursor ? { id: cursor } : undefined,
     where,
@@ -33,9 +33,9 @@ export const getUserNotifications = async <TSelect extends Prisma.NotificationSe
   });
 
   if (count) {
-    const [items, count] = await prisma.$transaction([
+    const [items, count] = await dbWrite.$transaction([
       notificationQuery,
-      prisma.notification.count({ where }),
+      dbWrite.notification.count({ where }),
     ]);
 
     return { items, count };
@@ -50,7 +50,7 @@ export const createUserNotificationSetting = async ({
   toggle,
   ...data
 }: ToggleNotificationSettingInput) => {
-  return prisma.userNotificationSettings.create({ data });
+  return dbWrite.userNotificationSettings.create({ data });
 };
 
 export const updateUserNoticationById = ({
@@ -59,16 +59,16 @@ export const updateUserNoticationById = ({
   data,
   all = false,
 }: MarkReadNotificationInput & { data: Prisma.NotificationUpdateInput }) => {
-  return prisma.notification.updateMany({
+  return dbWrite.notification.updateMany({
     where: { id: !all ? id : undefined, userId, viewedAt: { equals: null } },
     data,
   });
 };
 
 export const deleteUserNotificationSetting = ({ type, userId }: ToggleNotificationSettingInput) => {
-  return prisma.userNotificationSettings.deleteMany({ where: { type, userId } });
+  return dbWrite.userNotificationSettings.deleteMany({ where: { type, userId } });
 };
 
 export const createNotification = (data: Prisma.NotificationCreateArgs['data']) => {
-  return prisma.notification.create({ data });
+  return dbWrite.notification.create({ data });
 };

@@ -86,12 +86,12 @@ const automaticSDParser = createMetadataParser(
     }
 
     // Extract prompts
-    const [prompt, negativePrompt] = metaLines
+    const [prompt, ...negativePrompt] = metaLines
       .join('\n')
       .split('Negative prompt:')
       .map((x) => x.trim());
     metadata.prompt = prompt;
-    metadata.negativePrompt = negativePrompt;
+    metadata.negativePrompt = negativePrompt.join(' ').trim();
 
     // Extract resources
     const extranets = [...prompt.matchAll(automaticExtraNetsRegex)];
@@ -178,13 +178,16 @@ const encoders = {
 
 // #region [audit]
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const blockedBoth = '\\(|\\)|\\[|\\]|\\{|\\}|:|\\|';
+const tokenRegex = (word: string) =>
+  new RegExp(`(^|\\s|${blockedBoth})${escapeRegex(word)}(\\s|,|$|${blockedBoth})`, 'm');
 const blockedRegex = blocked.map((word) => ({
   word,
-  regex: new RegExp(`(^|\\s|\\(|\\))${escapeRegex(word)}(\\s|,|$|\\(|\\))`, 'm'),
+  regex: tokenRegex(word),
 }));
 const blockedNSFWRegex = blockedNSFW.map((word) => ({
   word,
-  regex: new RegExp(`(^|\\s|\\(|\\))${escapeRegex(word)}(\\s|,|$|\\(|\\))`, 'm'),
+  regex: tokenRegex(word),
 }));
 export const auditMetaData = (
   meta: AsyncReturnType<typeof getMetadata> | undefined,
@@ -202,5 +205,20 @@ export const auditMetaData = (
 export const detectNsfwImage = ({ porn, hentai, sexy }: ImageAnalysisInput) => {
   const isNSFW = porn + hentai + sexy * 0.5 > 0.6; // If the sum of sketchy probabilities is greater than 0.6, it's NSFW
   return isNSFW;
+};
+
+const MINOR_DETECTION_AGE = 20;
+export const getNeedsReview = ({
+  nsfw,
+  analysis,
+}: {
+  nsfw?: boolean;
+  analysis?: ImageAnalysisInput;
+}) => {
+  const assessedNSFW = analysis ? detectNsfwImage(analysis) : true; // Err on side of caution
+  const assessedMinor = analysis?.faces && analysis.faces.some((x) => x.age <= MINOR_DETECTION_AGE);
+  const needsReview = (nsfw === true || assessedNSFW) && assessedMinor;
+
+  return needsReview;
 };
 // #endregion

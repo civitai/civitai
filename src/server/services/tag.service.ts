@@ -1,11 +1,11 @@
 import { ModelStatus, Prisma } from '@prisma/client';
 import { TagSort } from '~/server/common/enums';
 
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { GetTagsInput } from '~/server/schema/tag.schema';
 
 export const getTagWithModelCount = async ({ name }: { name: string }) => {
-  return await prisma.tag.findFirst({
+  return await dbWrite.tag.findFirst({
     where: {
       name: { equals: name, mode: 'insensitive' },
     },
@@ -46,7 +46,7 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
     isCategory: categories,
   };
 
-  const items = await prisma.tag.findMany({
+  const items = await dbWrite.tag.findMany({
     take,
     skip,
     select,
@@ -57,7 +57,7 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
         : [{ rank: { modelCountAllTimeRank: 'asc' } as const }]),
     ],
   });
-  const count = await prisma.tag.count({ where });
+  const count = await dbWrite.tag.count({ where });
 
   return { items, count };
 };

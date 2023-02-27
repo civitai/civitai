@@ -401,6 +401,8 @@ export function ModelForm({ model }: Props) {
         break;
       case 'Hypernetwork':
       case 'AestheticGradient':
+      case 'Controlnet':
+      case 'Poses':
         modelVersions.forEach((_, index) => {
           form.setValue(`modelVersions.${index}.trainedWords`, []);
           form.setValue(`modelVersions.${index}.skipTrainedWords`, true);
@@ -467,7 +469,6 @@ export function ModelForm({ model }: Props) {
                           value: type,
                         }))}
                         onChange={handleModelTypeChange}
-                        disabled={editing}
                         withAsterisk
                       />
                       {type === 'Checkpoint' && (
@@ -508,6 +509,7 @@ export function ModelForm({ model }: Props) {
                     name="tagsOnModels"
                     label="Tags"
                     placeholder="e.g.: portraits, landscapes, anime, etc."
+                    limit={50}
                     data={tagsData}
                     getCreateLabel={(query) => `+ Create ${query} tag`}
                     onCreate={(query) => {

@@ -1,5 +1,6 @@
 import { Carousel } from '@mantine/carousel';
 import {
+  Anchor,
   AspectRatio,
   Badge,
   Button,
@@ -29,9 +30,10 @@ import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { ReviewGetAllItem } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import Router from 'next/router';
+import Router, { useRouter } from 'next/router';
 import { ReviewDiscussionMenu } from '~/components/Model/ModelDiscussion/ReviewDiscussionMenu';
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
+import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
 
 export function ReviewDiscussionItem({ review, width }: Props) {
   // const { openContext } = useRoutedContext();
@@ -206,7 +208,7 @@ function ReviewCarousel({
   visible: boolean;
 }) {
   const [renderIndexes, setRenderIndexes] = useState([0]);
-  // const router = useRouter();
+  const router = useRouter();
 
   const hasMultipleImages = review.images.length > 1;
 
@@ -217,16 +219,9 @@ function ReviewCarousel({
       infinite: false,
       returnUrl: Router.asPath,
     });
-    // router.push({
-    //   pathname: `/gallery/${imageId}`,
-    //   query: {
-    //     reviewId: review.id,
-    //     infinite: false,
-    //     returnUrl: router.asPath,
-    //   },
-    // });
   };
 
+  // this is used to keep content rendered while scrolling - carousel unmounted
   if (!inView && review.images.length > 0)
     return (
       <ImageGuard
@@ -288,6 +283,7 @@ function ReviewCarousel({
           control: {
             width: 32,
             height: 32,
+            borderRadius: '50%',
           },
         }}
       >
@@ -311,15 +307,22 @@ function ReviewCarousel({
               </div>
               <ImageGuard.Safe>
                 {visible && inView && renderIndexes.includes(index) && (
-                  <ImagePreview
-                    image={image}
-                    edgeImageProps={{ width: 400 }}
-                    aspectRatio={1}
-                    onClick={() => handleNavigate(image.id)}
-                    cropFocus="top"
-                    withMeta
-                  />
+                  <AnchorNoTravel
+                    href={`/gallery/${image.id}?reviewId=${
+                      review.id
+                    }&infinite=false&returnUrl=${encodeURIComponent(router.asPath)}`}
+                  >
+                    <ImagePreview
+                      image={image}
+                      edgeImageProps={{ width: 400 }}
+                      aspectRatio={1}
+                      onClick={() => handleNavigate(image.id)}
+                      cropFocus="top"
+                      withMeta
+                    />
+                  </AnchorNoTravel>
                 )}
+                <ImageGuard.ReportNSFW />
               </ImageGuard.Safe>
             </Carousel.Slide>
           )}
