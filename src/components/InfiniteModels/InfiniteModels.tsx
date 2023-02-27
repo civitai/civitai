@@ -126,6 +126,7 @@ export function InfiniteModels({
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+      trpc: { context: { skipBatch: true } },
     }
   );
   const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
