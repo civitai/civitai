@@ -1,5 +1,5 @@
 import { createJob } from './job';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('update-metrics', 'blue');
@@ -11,7 +11,7 @@ const RANK_UPDATE_DELAY = 1000 * 60 * 60; // 60 minutes
 export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async () => {
   // Get the last time this ran from the KeyValue store
   // --------------------------------------
-  const dates = await prisma.keyValue.findMany({
+  const dates = await dbWrite.keyValue.findMany({
     where: { key: { in: [METRIC_LAST_UPDATED_KEY, RANK_LAST_UPDATED_KEY] } },
   });
   const lastUpdateDate = new Date(
@@ -28,7 +28,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         ? ['ModelMetric', 'modelId', 'affected_models', 'model_id']
         : ['ModelVersionMetric', 'modelVersionId', 'affected_versions', 'model_version_id'];
 
-    await prisma.$executeRawUnsafe(`
+    await dbWrite.$executeRawUnsafe(`
         -- Get all user activities that have happened since then that affect metrics
         WITH recent_activities AS
         (
@@ -274,11 +274,11 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         `);
 
     if (target === 'versions')
-      await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Model'`);
+      await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Model'`);
   };
 
   const updateUserMetrics = async () => {
-    await prisma.$executeRawUnsafe(`
+    await dbWrite.$executeRawUnsafe(`
       WITH recent_engagements AS
       (
         SELECT
@@ -509,11 +509,11 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("userId", timeframe) DO UPDATE
         SET "followerCount" = EXCLUDED."followerCount", "followingCount" = EXCLUDED."followingCount", "hiddenCount" = EXCLUDED."hiddenCount", "uploadCount" = EXCLUDED."uploadCount", "reviewCount" = EXCLUDED."reviewCount", "answerCount" = EXCLUDED."answerCount", "answerAcceptCount" = EXCLUDED."answerAcceptCount";
     `);
-    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'User'`);
+    await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'User'`);
   };
 
   const updateQuestionMetrics = async () => {
-    await prisma.$executeRawUnsafe(`
+    await dbWrite.$executeRawUnsafe(`
       WITH recent_engagements AS
       (
         SELECT
@@ -641,11 +641,11 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("questionId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "answerCount" = EXCLUDED."answerCount";
     `);
-    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Question'`);
+    await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Question'`);
   };
 
   const updateAnswerMetrics = async () => {
-    await prisma.$executeRawUnsafe(`
+    await dbWrite.$executeRawUnsafe(`
       WITH recent_engagements AS
       (
         SELECT
@@ -796,11 +796,11 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("answerId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "checkCount" = EXCLUDED."checkCount", "crossCount" = EXCLUDED."crossCount";
     `);
-    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Answer'`);
+    await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Answer'`);
   };
 
   const updateTagMetrics = async () => {
-    await prisma.$executeRawUnsafe(`
+    await dbWrite.$executeRawUnsafe(`
       -- Get all engagements that have happened since then that affect metrics
       WITH recent_engagements AS
       (
@@ -940,11 +940,11 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("tagId", timeframe) DO UPDATE
         SET "followerCount" = EXCLUDED."followerCount", "modelCount" = EXCLUDED."modelCount", "hiddenCount" = EXCLUDED."hiddenCount";
     `);
-    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Tag'`);
+    await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Tag'`);
   };
 
   const updateImageMetrics = async () => {
-    await prisma.$executeRawUnsafe(`
+    await dbWrite.$executeRawUnsafe(`
       WITH recent_engagements AS
       (
         SELECT
@@ -1110,23 +1110,23 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount";
     `);
 
-    await prisma.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Image'`);
+    await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Image'`);
   };
 
   const refreshModelRank = async () =>
-    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelRank"');
+    await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelRank"');
 
   const refreshVersionModelRank = async () =>
-    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelVersionRank"');
+    await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelVersionRank"');
 
   const refreshTagRank = async () =>
-    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "TagRank"');
+    await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "TagRank"');
 
   const refreshUserRank = async () =>
-    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "UserRank"');
+    await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "UserRank"');
 
   const refreshImageRank = async () =>
-    await prisma.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ImageRank"');
+    await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ImageRank"');
 
   const clearDayMetrics = async () =>
     await Promise.all(
@@ -1136,7 +1136,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         `UPDATE "QuestionMetric" SET "answerCount" = 0, "commentCount" = 0, "heartCount" = 0 WHERE timeframe = 'Day';`,
         `UPDATE "AnswerMetric" SET "heartCount" = 0, "checkCount" = 0, "crossCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
         `UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
-      ].map((x) => prisma.$executeRawUnsafe(x))
+      ].map((x) => dbWrite.$executeRawUnsafe(x))
     );
 
   // If this is the first metric update of the day, reset the day metrics
@@ -1162,7 +1162,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
 
   // Update the last update time
   // --------------------------------------------
-  await prisma?.keyValue.upsert({
+  await dbWrite?.keyValue.upsert({
     where: { key: METRIC_LAST_UPDATED_KEY },
     create: { key: METRIC_LAST_UPDATED_KEY, value: new Date().getTime() },
     update: { value: new Date().getTime() },
@@ -1175,7 +1175,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
     await refreshImageRank();
     await refreshUserRank();
     log('Updated ranks');
-    await prisma?.keyValue.upsert({
+    await dbWrite?.keyValue.upsert({
       where: { key: RANK_LAST_UPDATED_KEY },
       create: { key: RANK_LAST_UPDATED_KEY, value: new Date().getTime() },
       update: { value: new Date().getTime() },
@@ -1186,7 +1186,7 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
 type MetricUpdateType = 'Model' | 'ModelVersion' | 'Answer' | 'Question' | 'User' | 'Tag' | 'Image';
 export const queueMetricUpdate = async (type: MetricUpdateType, id: number) => {
   try {
-    await prisma.metricUpdateQueue.createMany({ data: { type, id } });
+    await dbWrite.metricUpdateQueue.createMany({ data: { type, id } });
   } catch (e) {
     // Ignore duplicate errors
   }

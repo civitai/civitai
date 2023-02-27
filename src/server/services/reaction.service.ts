@@ -1,6 +1,6 @@
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { ToggleReactionInput, ReactionEntityType } from './../schema/reaction.schema';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { queueMetricUpdate } from '~/server/jobs/update-metrics';
 
 export const toggleReaction = async ({
@@ -22,22 +22,22 @@ const getReaction = async ({
 }: ToggleReactionInput & { userId: number }) => {
   switch (entityType) {
     case 'question':
-      return await prisma.questionReaction.findFirst({
+      return await dbWrite.questionReaction.findFirst({
         where: { userId, reaction, questionId: entityId },
         select: { id: true },
       });
     case 'answer':
-      return await prisma.answerReaction.findFirst({
+      return await dbWrite.answerReaction.findFirst({
         where: { userId, reaction, answerId: entityId },
         select: { id: true },
       });
     case 'comment':
-      return await prisma.commentV2Reaction.findFirst({
+      return await dbWrite.commentV2Reaction.findFirst({
         where: { userId, reaction, commentId: entityId },
         select: { id: true },
       });
     case 'image':
-      return await prisma.imageReaction.findFirst({
+      return await dbWrite.imageReaction.findFirst({
         where: { userId, reaction, imageId: entityId },
         select: { id: true },
       });
@@ -57,18 +57,18 @@ const deleteReaction = async ({
 }) => {
   switch (entityType) {
     case 'question':
-      await prisma.questionReaction.deleteMany({ where: { id } });
+      await dbWrite.questionReaction.deleteMany({ where: { id } });
       await queueMetricUpdate('Question', entityId);
       return;
     case 'answer':
-      await prisma.answerReaction.deleteMany({ where: { id } });
+      await dbWrite.answerReaction.deleteMany({ where: { id } });
       await queueMetricUpdate('Answer', entityId);
       return;
     case 'comment':
-      await prisma.commentV2Reaction.deleteMany({ where: { id } });
+      await dbWrite.commentV2Reaction.deleteMany({ where: { id } });
       return;
     case 'image':
-      await prisma.imageReaction.deleteMany({ where: { id } });
+      await dbWrite.imageReaction.deleteMany({ where: { id } });
       await queueMetricUpdate('Image', entityId);
       return;
     default:
@@ -83,22 +83,22 @@ const createReaction = async ({
 }: ToggleReactionInput & { userId: number }) => {
   switch (entityType) {
     case 'question':
-      return await prisma.questionReaction.create({
+      return await dbWrite.questionReaction.create({
         data: { ...data, questionId: entityId },
         select: { reaction: true },
       });
     case 'answer':
-      return await prisma.answerReaction.create({
+      return await dbWrite.answerReaction.create({
         data: { ...data, answerId: entityId },
         select: { reaction: true },
       });
     case 'comment':
-      return await prisma.commentV2Reaction.create({
+      return await dbWrite.commentV2Reaction.create({
         data: { ...data, commentId: entityId },
         select: { reaction: true },
       });
     case 'image':
-      return await prisma.imageReaction.create({
+      return await dbWrite.imageReaction.create({
         data: { ...data, imageId: entityId },
         select: { reaction: true },
       });

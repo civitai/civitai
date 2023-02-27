@@ -1,5 +1,5 @@
 import { createJob } from './job';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 
 export const deliverCosmetics = createJob(
   'deliver-cosmetics',
@@ -10,14 +10,14 @@ export const deliverCosmetics = createJob(
     const key = 'last-cosmetic-delivery';
     const lastDelivered = new Date(
       ((
-        await prisma.keyValue.findUnique({
+        await dbWrite.keyValue.findUnique({
           where: { key },
         })
       )?.value as number) ?? 0
     ).toISOString();
 
     const deliverPurchasedCosmetics = async () =>
-      prisma.$executeRawUnsafe(`
+      dbWrite.$executeRawUnsafe(`
       -- Deliver purchased cosmetics
       with recent_purchases AS (
         SELECT
@@ -42,7 +42,7 @@ export const deliverCosmetics = createJob(
     `);
 
     const revokeMembershipLimitedCosmetics = async () =>
-      prisma.$executeRawUnsafe(`
+      dbWrite.$executeRawUnsafe(`
         -- Revoke member limited cosmetics
         WITH to_revoke AS (
           SELECT
@@ -69,7 +69,7 @@ export const deliverCosmetics = createJob(
     // Update the last time this ran in the KeyValue store
     // --------------------------------------------
     const value = new Date().getTime();
-    await prisma.keyValue.upsert({
+    await dbWrite.keyValue.upsert({
       where: { key },
       update: { value },
       create: { key, value },

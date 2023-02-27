@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { z } from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { Prisma } from '@prisma/client';
@@ -34,7 +34,7 @@ export default ModEndpoint(
       return;
     }
 
-    const modelFiles = await prisma.modelFile.findMany({
+    const modelFiles = await dbWrite.modelFile.findMany({
       where: { OR },
       select: { modelVersionId: true, type: true, url: true, format: true },
     });

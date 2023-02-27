@@ -1,4 +1,4 @@
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { ModelVersionEngagementType, Prisma } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -12,7 +12,7 @@ export const getModelVersion = async <TSelect extends Prisma.ModelVersionSelect>
   user?: SessionUser;
   select: TSelect;
 }) => {
-  const model = await prisma.modelVersion.findUnique({ where: { id }, select });
+  const model = await dbWrite.modelVersion.findUnique({ where: { id }, select });
   return model;
 };
 
@@ -21,7 +21,7 @@ export const getModelVersionRunStrategies = async ({
 }: {
   modelVersionId: number;
 }) =>
-  prisma.runStrategy.findMany({
+  dbWrite.runStrategy.findMany({
     where: { modelVersionId },
     select: {
       id: true,
@@ -33,7 +33,7 @@ export const getVersionById = <TSelect extends Prisma.ModelVersionSelect>({
   id,
   select,
 }: GetByIdInput & { select: TSelect }) => {
-  return prisma.modelVersion.findUnique({ where: { id }, select });
+  return dbWrite.modelVersion.findUnique({ where: { id }, select });
 };
 
 export const toggleModelVersionEngagement = async ({
@@ -45,18 +45,18 @@ export const toggleModelVersionEngagement = async ({
   versionId: number;
   type: ModelVersionEngagementType;
 }) => {
-  const engagement = await prisma.modelVersionEngagement.findUnique({
+  const engagement = await dbWrite.modelVersionEngagement.findUnique({
     where: { userId_modelVersionId: { userId, modelVersionId: versionId } },
     select: { type: true },
   });
 
   if (engagement) {
     if (engagement.type === type)
-      await prisma.modelVersionEngagement.delete({
+      await dbWrite.modelVersionEngagement.delete({
         where: { userId_modelVersionId: { userId, modelVersionId: versionId } },
       });
     else if (engagement.type !== type)
-      await prisma.modelVersionEngagement.update({
+      await dbWrite.modelVersionEngagement.update({
         where: { userId_modelVersionId: { userId, modelVersionId: versionId } },
         data: { type },
       });
@@ -64,7 +64,7 @@ export const toggleModelVersionEngagement = async ({
     return;
   }
 
-  await prisma.modelVersionEngagement.create({ data: { type, modelVersionId: versionId, userId } });
+  await dbWrite.modelVersionEngagement.create({ data: { type, modelVersionId: versionId, userId } });
   return;
 };
 

@@ -11,7 +11,7 @@ import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { AnswerDetail } from '~/components/Questions/AnswerDetail';
 import { AnswerForm } from '~/components/Questions/AnswerForm';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { slugit } from '~/utils/string-helpers';
 import React from 'react';
 import { QuestionDetails } from '~/components/Questions/QuestionDetails';
@@ -32,7 +32,7 @@ export const getServerSideProps: GetServerSideProps<{
     };
 
   if (!questionTitle) {
-    const question = await prisma.question.findUnique({
+    const question = await dbWrite.question.findUnique({
       where: { id: questionId },
       select: { title: true },
     });

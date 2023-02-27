@@ -15,7 +15,7 @@ import {
   unpublishModelHandler,
   updateModelHandler,
 } from '~/server/controllers/model.controller';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteModelSchema,
@@ -43,7 +43,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   let ownerId = userId;
   if (id) {
     const isModerator = ctx?.user?.isModerator;
-    ownerId = (await prisma.model.findUnique({ where: { id } }))?.userId ?? 0;
+    ownerId = (await dbWrite.model.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator) {
       if (ownerId !== userId) throw throwAuthorizationError();
     }

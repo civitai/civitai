@@ -1,5 +1,5 @@
 import { createJob } from './job';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { ImportStatus } from '@prisma/client';
 import dayjs from 'dayjs';
 import { chunk } from 'lodash';
@@ -10,7 +10,7 @@ export const processImportsJob = createJob(
   '1 */1 * * *',
   async () => {
     // Get pending import jobs that are older than 30 minutes
-    const importJobs = await prisma.import.findMany({
+    const importJobs = await dbWrite.import.findMany({
       where: {
         status: ImportStatus.Pending,
         createdAt: { lt: dayjs().add(-30, 'minutes').toDate() },

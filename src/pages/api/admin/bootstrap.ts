@@ -1,10 +1,10 @@
 import { initStripePrices, initStripeProducts } from '~/server/services/stripe.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 
 async function populateRedisCache() {
-  const toInvalidate = await prisma.sessionInvalidation.groupBy({
+  const toInvalidate = await dbWrite.sessionInvalidation.groupBy({
     by: ['userId'],
     _max: { invalidatedAt: true },
   });

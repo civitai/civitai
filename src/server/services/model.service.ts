@@ -6,7 +6,7 @@ import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
@@ -26,7 +26,7 @@ export const getModel = <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   select: TSelect;
 }) => {
-  return prisma.model.findFirst({
+  return dbWrite.model.findFirst({
     where: {
       id,
       OR: !user?.isModerator
@@ -157,7 +157,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     modelVersions: baseModels?.length ? { some: { baseModel: { in: baseModels } } } : undefined,
   };
 
-  const items = await prisma.model.findMany({
+  const items = await dbWrite.model.findMany({
     take,
     skip,
     where,
@@ -179,7 +179,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   });
 
   if (count) {
-    const count = await prisma.model.count({ where });
+    const count = await dbWrite.model.count({ where });
     return { items, count };
   }
 
@@ -187,7 +187,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
 };
 
 export const getModelVersionsMicro = ({ id }: { id: number }) => {
-  return prisma.modelVersion.findMany({
+  return dbWrite.modelVersion.findMany({
     where: { modelId: id },
     orderBy: { index: 'asc' },
     select: { id: true, name: true },
@@ -195,25 +195,25 @@ export const getModelVersionsMicro = ({ id }: { id: number }) => {
 };
 
 export const updateModelById = ({ id, data }: { id: number; data: Prisma.ModelUpdateInput }) => {
-  return prisma.model.update({
+  return dbWrite.model.update({
     where: { id },
     data,
   });
 };
 
 export const deleteModelById = ({ id }: GetByIdInput) => {
-  return prisma.model.update({
+  return dbWrite.model.update({
     where: { id },
     data: { deletedAt: new Date(), status: 'Deleted' },
   });
 };
 
 export const restoreModelById = ({ id }: GetByIdInput) => {
-  return prisma.model.update({ where: { id }, data: { deletedAt: null, status: 'Draft' } });
+  return dbWrite.model.update({ where: { id }, data: { deletedAt: null, status: 'Draft' } });
 };
 
 export const permaDeleteModelById = ({ id }: GetByIdInput) => {
-  return prisma.model.delete({ where: { id } });
+  return dbWrite.model.delete({ where: { id } });
 };
 
 const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
@@ -263,7 +263,7 @@ export const createModel = async ({
     .flatMap((version) => version.images)
     .every((image) => image.nsfw);
 
-  return prisma.$transaction(async (tx) => {
+  return dbWrite.$transaction(async (tx) => {
     if (tagsOnModels)
       await tx.tag.updateMany({
         where: {
@@ -343,14 +343,14 @@ export const updateModel = async ({
   ...data
 }: ModelInput & { id: number; userId: number }) => {
   const parsedModelVersions = prepareModelVersions(modelVersions);
-  const currentModel = await prisma.model.findUnique({
+  const currentModel = await dbWrite.model.findUnique({
     where: { id },
     select: { status: true, publishedAt: true },
   });
   if (!currentModel) return currentModel;
 
   // Get currentVersions to compare files and images
-  const currentVersions = await prisma.modelVersion.findMany({
+  const currentVersions = await dbWrite.modelVersion.findMany({
     where: { modelId: id },
     orderBy: { index: 'asc' },
     select: {
@@ -407,7 +407,7 @@ export const updateModel = async ({
   const tagsToUpdate = tagsOnModels?.filter(isTag) ?? [];
 
   if (tagsOnModels)
-    await prisma.tag.updateMany({
+    await dbWrite.tag.updateMany({
       where: {
         name: { in: tagsOnModels.map((x) => x.name.toLowerCase().trim()) },
         NOT: { target: { has: TagTarget.Model } },
@@ -415,7 +415,7 @@ export const updateModel = async ({
       data: { target: { push: TagTarget.Model } },
     });
 
-  return prisma.model.update({
+  return dbWrite.model.update({
     where: { id },
     data: {
       ...data,

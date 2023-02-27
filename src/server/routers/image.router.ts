@@ -9,7 +9,7 @@ import {
   setTosViolationHandler,
   updateImageHandler,
 } from '~/server/controllers/image.controller';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   getGalleryImageSchema,
@@ -30,7 +30,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   let ownerId = userId;
   if (id) {
     const isModerator = ctx?.user?.isModerator;
-    ownerId = (await prisma.image.findUnique({ where: { id } }))?.userId ?? 0;
+    ownerId = (await dbWrite.image.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator) {
       if (ownerId !== userId) throw throwAuthorizationError();
     }

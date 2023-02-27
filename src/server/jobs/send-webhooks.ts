@@ -1,5 +1,5 @@
 import { createJob } from './job';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { webhookProcessors } from '~/server/webhooks/utils.webhooks';
 
 const WEBHOOKS_LAST_SENT_KEY = 'last-sent-webhooks';
@@ -10,13 +10,13 @@ export const sendWebhooksJob = createJob(
     // Get the last run time from keyValue
     const lastSent = new Date(
       ((
-        await prisma.keyValue.findUnique({
+        await dbWrite.keyValue.findUnique({
           where: { key: WEBHOOKS_LAST_SENT_KEY },
         })
       )?.value as number) ?? 0
     ).toISOString();
 
-    const registeredWebhooks = await prisma.webhook.findMany({
+    const registeredWebhooks = await dbWrite.webhook.findMany({
       where: { active: true },
       select: { notifyOn: true, url: true },
     });
@@ -25,7 +25,7 @@ export const sendWebhooksJob = createJob(
     if (registeredWebhooks.length > 0) {
       // Enqueue webhook requests
       for (const [type, { getData }] of Object.entries(webhookProcessors)) {
-        const data = await getData?.({ lastSent, prisma });
+        const data = await getData?.({ lastSent, prisma: dbWrite });
         if (!data) continue;
         for (const webhook of registeredWebhooks) {
           if (!webhook.notifyOn.includes(type)) continue;
@@ -49,7 +49,7 @@ export const sendWebhooksJob = createJob(
 
     // Update the last sent time
     // --------------------------------------------
-    await prisma?.keyValue.upsert({
+    await dbWrite?.keyValue.upsert({
       where: { key: WEBHOOKS_LAST_SENT_KEY },
       create: { key: WEBHOOKS_LAST_SENT_KEY, value: new Date().getTime() },
       update: { value: new Date().getTime() },
