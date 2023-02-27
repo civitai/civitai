@@ -331,12 +331,15 @@ const pendingTrackedFile: Omit<TrackedFile, 'uuid' | 'file' | 'name'> = {
 };
 
 const registerCatchNavigation = () => {
-  useCatchNavigationStore.getState().register({
-    name: 'file-upload',
-    message: 'Files are still uploading. Upload progress will be lost',
-    predicate: () => useS3UploadStore.getState().getStatus().uploading === 0,
-    event: 'beforeunload',
-  });
+  const { handlers, register } = useCatchNavigationStore.getState();
+  const index = handlers.findIndex((x) => x.name === 'file-upload');
+  if (index === -1)
+    register({
+      name: 'file-upload',
+      message: 'Files are still uploading. Upload progress will be lost',
+      predicate: () => useS3UploadStore.getState().getStatus().uploading === 0,
+      event: 'beforeunload',
+    });
 };
 const deregisterCatchNavigation = () => {
   useCatchNavigationStore.getState().deregister('file-upload');

@@ -28,17 +28,14 @@ export function ToggleLockComments({
     entityId,
     entityType,
   });
-  const { mutate, isLoading } = trpc.commentv2.toggleLockThread.useMutation();
-  const handleClick = () =>
-    mutate(
-      { entityId, entityType },
-      {
-        onSuccess: async () => {
-          await queryUtils.commentv2.getThreadDetails.invalidate({ entityType, entityId });
-          onSuccess?.();
-        },
-      }
-    );
+  const { mutate, isLoading } = trpc.commentv2.toggleLockThread.useMutation({
+    onSuccess: async () => {
+      await queryUtils.commentv2.getThreadDetails.invalidate({ entityType, entityId });
+      onSuccess?.();
+    },
+  });
+
+  const handleClick = () => mutate({ entityId, entityType });
 
   if (!thread) return null;
 

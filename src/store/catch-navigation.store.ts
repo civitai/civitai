@@ -9,6 +9,7 @@ type Handler = {
   predicate: boolean | (() => boolean);
   event?: 'beforeunload' | 'routeChangeStart';
 };
+
 type StoreState = {
   handlers: Handler[];
   register: ({ name, message, predicate, event }: Handler) => void;

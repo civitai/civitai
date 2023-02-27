@@ -1,13 +1,21 @@
+import { isImageResource } from './../schema/image.schema';
 import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
 import { BrowsingMode, ImageSort } from '~/server/common/enums';
+import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { prisma } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetGalleryImageInput, GetImageConnectionsSchema } from '~/server/schema/image.schema';
+import {
+  CreateImageInput,
+  GetGalleryImageInput,
+  GetImageConnectionsSchema,
+  UpdateImageInput,
+} from '~/server/schema/image.schema';
 import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
 import { decreaseDate } from '~/utils/date-helpers';
+import { simpleTagSelect } from '~/server/selectors/tag.selector';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await prisma.imagesOnModels.findMany({
@@ -140,6 +148,7 @@ export const deleteImageById = ({ id }: GetByIdInput) => {
   return prisma.image.delete({ where: { id } });
 };
 
+// consider refactoring this endoint to only allow for updating `needsReview`, because that is all this endpoint is being used for...
 export const updateImageById = <TSelect extends Prisma.ImageSelect>({
   id,
   select,
@@ -192,6 +201,67 @@ export const getImageConnectionsById = ({ id, modelId, reviewId }: GetImageConne
               }
             : undefined,
           review: reviewId ? { select: { id: true } } : undefined,
+        },
+      },
+    },
+  });
+};
+
+export const createImage = async (image: CreateImageInput & { userId: number }) => {
+  return await prisma.image.create({
+    data: {
+      ...image,
+      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      generationProcess: image.meta
+        ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
+        : null,
+      resources: image?.resources
+        ? {
+            create: image.resources.map((resource) => resource),
+          }
+        : undefined,
+    },
+  });
+};
+
+export const updateImage = async (image: UpdateImageInput) => {
+  await prisma.image.update({
+    where: { id: image.id },
+    data: {
+      ...image,
+      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      resources: image?.resources
+        ? {
+            deleteMany: {
+              NOT: image.resources.filter(isImageResource).map(({ id }) => ({ id })),
+            },
+            connectOrCreate: image.resources.filter(isImageResource).map((resource) => ({
+              where: { id: resource.id },
+              create: resource,
+            })),
+          }
+        : undefined,
+    },
+  });
+};
+
+export const getImageDetail = async ({ id }: GetByIdInput) => {
+  return await prisma.image.findUnique({
+    where: { id },
+    select: {
+      resources: {
+        select: {
+          id: true,
+          modelVersion: { select: { id: true, name: true } },
+          name: true,
+          detected: true,
+        },
+      },
+      tags: {
+        select: {
+          tag: {
+            select: simpleTagSelect,
+          },
         },
       },
     },

@@ -20,7 +20,13 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   hash: true,
   meta: true,
   generationProcess: true,
-  tags: { select: { tag: { select: simpleTagSelect } } },
+  tags: { select: { tag: { select: simpleTagSelect } } }, // TODO.posts - remove this. We may  not even need tags initially, but if we do need tags then we probably only need to load them when looking at the image details
+  _count: {
+    select: {
+      resources: true,
+      tags: true,
+    },
+  },
 });
 
 const { id, name, ...imageSelectWithoutId } = imageSelect;
@@ -93,6 +99,7 @@ export const prepareCreateImage = (image: ImageUploadProps) => {
           })),
         }
       : undefined,
+    resources: undefined, // TODO.posts - this is a temp value to stop typescript from complaining
   };
 
   return payload;
@@ -120,6 +127,7 @@ export const prepareUpdateImage = (image: ImageUploadProps) => {
           // })),
         }
       : undefined,
+    resources: undefined, // TODO.posts - this is a temp value to stop typescript from complaining
   };
   return payload;
 };

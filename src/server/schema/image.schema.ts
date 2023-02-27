@@ -38,6 +38,7 @@ export const imageAnalysisSchema = z.object({
   faces: z.array(faceDetectionSchema).optional(),
 });
 
+// #region [Image Resource]
 export type ImageResourceUpsertInput = z.infer<typeof imageResourceUpsertSchema>;
 export const imageResourceUpsertSchema = z.object({
   id: z.number().optional(),
@@ -45,6 +46,13 @@ export const imageResourceUpsertSchema = z.object({
   name: z.string().optional(),
   detected: z.boolean().optional(),
 });
+export const isImageResource = (
+  tag: ImageResourceUpsertInput
+): tag is Omit<ImageResourceUpsertInput, 'id'> & { id: number } => !!tag.id;
+export const isNotImageResource = (
+  tag: ImageResourceUpsertInput
+): tag is Omit<ImageResourceUpsertInput, 'id'> & { id: undefined } => !tag.id;
+// #endregion
 
 export const imageSchema = z.object({
   id: z.number().optional(),
@@ -123,3 +131,37 @@ export const getImageConnectionsSchema = z.object({
   reviewId: z.number().nullish(),
 });
 export type GetImageConnectionsSchema = z.infer<typeof getImageConnectionsSchema>;
+
+export type CreateImageInput = z.infer<typeof createImageSchema>;
+export const createImageSchema = z.object({
+  name: z.string().nullish(),
+  url: z
+    .string()
+    .url()
+    .or(z.string().uuid('One of the files did not upload properly, please try again')),
+  meta: z.preprocess((value) => {
+    if (typeof value !== 'object') return null;
+    if (value && !Object.keys(value).length) return null;
+    return value;
+  }, imageMetaSchema.nullish()),
+  hash: z.string().nullish(),
+  height: z.number().nullish(),
+  width: z.number().nullish(),
+  nsfw: z.boolean().optional(),
+  analysis: imageAnalysisSchema.optional(),
+  resources: z.array(imageResourceUpsertSchema).optional(),
+  postId: z.number().optional(),
+});
+
+export type UpdateImageInput = z.infer<typeof updateImageSchema>;
+export const updateImageSchema = z.object({
+  id: z.number(),
+  meta: z.preprocess((value) => {
+    if (typeof value !== 'object') return null;
+    if (value && !Object.keys(value).length) return null;
+    return value;
+  }, imageMetaSchema.nullish()),
+  hideMeta: z.boolean().optional(),
+  nsfw: z.boolean().optional(),
+  resources: z.array(imageResourceUpsertSchema).optional(),
+});

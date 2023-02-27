@@ -629,12 +629,13 @@ model ReviewReaction {
 }
 
 model Post {
-  id     Int          @id @default(autoincrement())
-  nsfw   Boolean      @default(false)
-  title  String?
-  detail String?
-  images Image[]
-  tags   TagsOnPost[]
+  id             Int          @id @default(autoincrement())
+  nsfw           Boolean      @default(false)
+  title          String?
+  detail         String?
+  modelVersionId Int?
+  images         Image[]
+  tags           TagsOnPost[]
 }
 
 enum ImageGenerationProcess {
@@ -664,6 +665,7 @@ model Image {
   postId            Int?
   post              Post?                   @relation(fields: [postId], references: [id], onDelete: Cascade)
   needsReview       Boolean                 @default(false)
+  hideMeta          Boolean                 @default(false)
 
   imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?
