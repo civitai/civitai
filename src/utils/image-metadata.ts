@@ -86,12 +86,12 @@ const automaticSDParser = createMetadataParser(
     }
 
     // Extract prompts
-    const [prompt, negativePrompt] = metaLines
+    const [prompt, ...negativePrompt] = metaLines
       .join('\n')
       .split('Negative prompt:')
       .map((x) => x.trim());
     metadata.prompt = prompt;
-    metadata.negativePrompt = negativePrompt;
+    metadata.negativePrompt = negativePrompt.join(' ').trim();
 
     // Extract resources
     const extranets = [...prompt.matchAll(automaticExtraNetsRegex)];
