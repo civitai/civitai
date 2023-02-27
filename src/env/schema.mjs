@@ -42,6 +42,9 @@ export const serverSchema = z.object({
   S3_UPLOAD_ENDPOINT: z.string().url(),
   S3_UPLOAD_BUCKET: z.string(),
   S3_SETTLED_BUCKET: z.string(),
+  S3_FORCE_PATH_STYLE: z
+    .preprocess((val) => val === true || val === 'true', z.boolean())
+    .default(false),
   CF_ACCOUNT_ID: z.string(),
   CF_IMAGES_TOKEN: z.string(),
   JOB_TOKEN: z.string(),

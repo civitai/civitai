@@ -21,3 +21,40 @@ services:
     volumes:
       - ./redis/data:/data
     restart: unless-stopped
+  minio:
+    image: minio/minio
+    container_name: minio
+    ports:
+      - 9000:9000
+      - 9001:9001
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - ./minio/data:/data
+    command: minio server /data --console-address ":9001"
+    restart: unless-stopped
+  createbuckets:
+    image: minio/mc
+    container_name: createbuckets
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc config host add minio http://minio:9000 minioadmin minioadmin &&
+      /usr/bin/mc mb minio/modelshare &&
+      /usr/bin/mc policy set public minio/modelshare &&
+      /usr/bin/mc mb minio/settled &&
+      /usr/bin/mc policy set public minio/settled &&
+      exit 0"
+    restart: unless-stopped
+  maildev:
+    image: maildev/maildev
+    container_name: maildev
+    environment:
+      - MAILDEV_SMTP_PORT=1025
+      - MAILDEV_WEB_PORT=1080
+    ports:
+      - 1025:1025
+      - 1080:1080
+    restart: unless-stopped
