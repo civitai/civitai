@@ -114,6 +114,7 @@ model User {
   imageConnections    ImageConnection[]
   purchases           Purchase[]
   cosmetics           UserCosmetic[]
+  PostReaction        PostReaction[]
 }
 
 model CustomerSubscription {
@@ -393,6 +394,8 @@ model ModelVersion {
   downloads        DownloadHistory[]
   imageConnections ImageConnection[]
   imageResources   ImageResource[]
+  posts            Post[]
+  reviewsV2        ReviewV2[]
 }
 
 enum ModelVersionEngagementType {
@@ -607,6 +610,16 @@ model Review {
   imageConnections ImageConnection[]
 }
 
+model ReviewV2 {
+  id             Int          @id @default(autoincrement())
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  rating         Int
+  details        String
+  threadId       Int?
+  thread         Thread?      @relation(fields: [threadId], references: [id])
+}
+
 enum ReviewReactions {
   Like
   Dislike
@@ -629,13 +642,18 @@ model ReviewReaction {
 }
 
 model Post {
-  id             Int          @id @default(autoincrement())
-  nsfw           Boolean      @default(false)
+  id             Int           @id @default(autoincrement())
+  nsfw           Boolean       @default(false)
   title          String?
   detail         String?
+  scanned        Boolean       @default(false)
   modelVersionId Int?
-  images         Image[]
-  tags           TagsOnPost[]
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
+
+  images    Image[]
+  tags      TagsOnPost[]
+  reactions PostReaction[]
+  thread    Thread?
 }
 
 enum ImageGenerationProcess {
@@ -666,6 +684,8 @@ model Image {
   post              Post?                   @relation(fields: [postId], references: [id], onDelete: Cascade)
   needsReview       Boolean                 @default(false)
   hideMeta          Boolean                 @default(false)
+  index             Int?
+  scanned           Boolean                 @default(false)
 
   imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?
@@ -1070,8 +1090,11 @@ model Thread {
   answer     Answer?   @relation(fields: [answerId], references: [id], onDelete: SetNull)
   imageId    Int?      @unique
   image      Image?    @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  postId     Int?      @unique
+  post       Post?     @relation(fields: [postId], references: [id], onDelete: SetNull)
 
   comments CommentV2[]
+  ReviewV2 ReviewV2[]
 }
 
 model QuestionReaction {
@@ -1124,6 +1147,19 @@ model ImageReaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([imageId, userId, reaction])
+}
+
+model PostReaction {
+  id        Int             @id @default(autoincrement())
+  postId    Int
+  post      Post            @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([postId, userId, reaction])
 }
 
 enum TagEngagementType {
