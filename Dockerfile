@@ -43,9 +43,6 @@ RUN \
 FROM node:18-alpine3.16 AS runner
 WORKDIR /app
 
-# Install PM2 to manage node processes
-RUN npm install pm2 --location=global
-
 ENV NODE_ENV production
 
 # ENV NEXT_TELEMETRY_DISABLED 1
@@ -64,4 +61,4 @@ USER nextjs
 EXPOSE 3000
 ENV PORT 3000
 
-CMD ["pm2-runtime", "node", "--", "server.js"]
+CMD ["node", "server.js"]
