@@ -2,6 +2,7 @@
   Warnings:
 
   - A unique constraint covering the columns `[postId]` on the table `Thread` will be added. If there are existing duplicate values, this will fail.
+  - Added the required column `userId` to the `Post` table without a default value. This is not possible if the table is not empty.
 
 */
 -- AlterTable
@@ -11,7 +12,8 @@ ADD COLUMN     "scanned" BOOLEAN NOT NULL DEFAULT false;
 
 -- AlterTable
 ALTER TABLE "Post" ADD COLUMN     "modelVersionId" INTEGER,
-ADD COLUMN     "scanned" BOOLEAN NOT NULL DEFAULT false;
+ADD COLUMN     "scanned" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "userId" INTEGER NOT NULL;
 
 -- AlterTable
 ALTER TABLE "Thread" ADD COLUMN     "postId" INTEGER;
@@ -50,6 +52,9 @@ ALTER TABLE "ReviewV2" ADD CONSTRAINT "ReviewV2_modelVersionId_fkey" FOREIGN KEY
 
 -- AddForeignKey
 ALTER TABLE "ReviewV2" ADD CONSTRAINT "ReviewV2_threadId_fkey" FOREIGN KEY ("threadId") REFERENCES "Thread"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Post" ADD CONSTRAINT "Post_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Post" ADD CONSTRAINT "Post_modelVersionId_fkey" FOREIGN KEY ("modelVersionId") REFERENCES "ModelVersion"("id") ON DELETE SET NULL ON UPDATE CASCADE;

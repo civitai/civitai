@@ -114,7 +114,8 @@ model User {
   imageConnections    ImageConnection[]
   purchases           Purchase[]
   cosmetics           UserCosmetic[]
-  PostReaction        PostReaction[]
+  postReactions       PostReaction[]
+  posts               Post[]
 }
 
 model CustomerSubscription {
@@ -647,6 +648,8 @@ model Post {
   title          String?
   detail         String?
   scanned        Boolean       @default(false)
+  userId         Int
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   modelVersionId Int?
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
 
