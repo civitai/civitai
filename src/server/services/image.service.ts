@@ -3,14 +3,14 @@ import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
 import { BrowsingMode, ImageSort } from '~/server/common/enums';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetGalleryImageInput, GetImageConnectionsSchema } from '~/server/schema/image.schema';
 import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
 import { decreaseDate } from '~/utils/date-helpers';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
-  const result = await prisma.imagesOnModels.findMany({
+  const result = await dbWrite.imagesOnModels.findMany({
     where: { modelVersionId, image: { tosViolation: false, needsReview: false } },
     select: { image: { select: imageSelect } },
   });
@@ -18,7 +18,7 @@ export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId
 };
 
 export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
-  const result = await prisma.imagesOnReviews.findMany({
+  const result = await dbWrite.imagesOnReviews.findMany({
     where: { reviewId, image: { tosViolation: false, needsReview: false } },
     select: { image: { select: imageSelect } },
   });
@@ -97,7 +97,7 @@ export const getGalleryImages = async <
   if (canViewNsfw && !browsingMode) browsingMode = BrowsingMode.All;
   else if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
 
-  const items = await prisma.image.findMany({
+  const items = await dbWrite.image.findMany({
     cursor: cursor ? { id: cursor } : undefined,
     take: limit,
     where: needsReview
@@ -137,7 +137,7 @@ export const getGalleryImages = async <
 };
 
 export const deleteImageById = ({ id }: GetByIdInput) => {
-  return prisma.image.delete({ where: { id } });
+  return dbWrite.image.delete({ where: { id } });
 };
 
 export const updateImageById = <TSelect extends Prisma.ImageSelect>({
@@ -149,7 +149,7 @@ export const updateImageById = <TSelect extends Prisma.ImageSelect>({
   data: Prisma.ImageUpdateArgs['data'];
   select: TSelect;
 }) => {
-  return prisma.image.update({ where: { id }, data, select });
+  return dbWrite.image.update({ where: { id }, data, select });
 };
 
 export const updateImageReportStatusByReason = ({
@@ -161,14 +161,14 @@ export const updateImageReportStatusByReason = ({
   reason: ReportReason;
   status: ReportStatus;
 }) => {
-  return prisma.report.updateMany({
+  return dbWrite.report.updateMany({
     where: { reason, image: { imageId: id } },
     data: { status },
   });
 };
 
 export const getImageConnectionsById = ({ id, modelId, reviewId }: GetImageConnectionsSchema) => {
-  return prisma.image.findUnique({
+  return dbWrite.image.findUnique({
     where: { id },
     select: {
       connections: {

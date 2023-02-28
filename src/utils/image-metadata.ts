@@ -68,30 +68,53 @@ const automaticSDKeyMap = new Map<string, keyof ImageMetaProps>([
   ['Sampler', 'sampler'],
   ['Steps', 'steps'],
 ]);
+const getSDKey = (key: string) => automaticSDKeyMap.get(key.trim()) ?? key.trim();
 const automaticSDParser = createMetadataParser(
   (meta: string) => meta.includes('Steps: '),
   (meta: string) => {
     const metadata: ImageMetaProps = {};
     if (!meta) return metadata;
     const metaLines = meta.split('\n');
-    const fineDetails =
-      metaLines
-        .pop()
-        ?.split(',')
-        .map((x) => x.split(':')) ?? [];
-    for (const [k, v] of fineDetails) {
-      if (!v) continue;
-      const propKey = automaticSDKeyMap.get(k.trim()) ?? k.trim();
-      metadata[propKey] = v.trim();
+
+    // Extract fine details
+    let currentKey = '';
+    const parts = metaLines.pop()?.split(':') ?? [];
+    for (const part of parts) {
+      const priorValueEnd = part.lastIndexOf(',');
+      if (parts[parts.length - 1] === part) {
+        metadata[currentKey] = part.trim();
+      } else if (priorValueEnd !== -1) {
+        metadata[currentKey] = part.slice(0, priorValueEnd).trim();
+        currentKey = getSDKey(part.slice(priorValueEnd + 1));
+      } else currentKey = getSDKey(part);
     }
 
     // Extract prompts
-    const [prompt, negativePrompt] = metaLines
+    const [prompt, ...negativePrompt] = metaLines
       .join('\n')
       .split('Negative prompt:')
       .map((x) => x.trim());
     metadata.prompt = prompt;
-    metadata.negativePrompt = negativePrompt;
+    metadata.negativePrompt = negativePrompt.join(' ').trim();
+
+    // Extract resource hashes
+    if (metadata['Resources']) {
+      const hashes: string[] = metadata['Resources']
+        ? JSON.parse(metadata['Resources'] as string)
+        : [];
+      if (hashes.length) metadata.hashes = hashes;
+      delete metadata['Resources'];
+    }
+
+    if (metadata['Hashed Negative prompt']) {
+      metadata.negativePromptHashed = JSON.parse(metadata['Hashed Negative prompt'] as string);
+      delete metadata['Hashed Negative prompt'];
+    }
+
+    if (metadata['Hashed prompt']) {
+      metadata.promptHashed = JSON.parse(metadata['Hashed prompt'] as string);
+      delete metadata['Hashed prompt'];
+    }
 
     // Extract resources
     const extranets = [...prompt.matchAll(automaticExtraNetsRegex)];

@@ -19,6 +19,7 @@ import {
   Rating,
   AspectRatio,
   Paper,
+  Anchor,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { ModelStatus } from '@prisma/client';
@@ -42,7 +43,7 @@ import {
 import startCase from 'lodash/startCase';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
-import Router from 'next/router';
+import Router, { useRouter } from 'next/router';
 import { useEffect, useRef } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -94,6 +95,7 @@ import { Announcements } from '~/components/Announcements/Announcements';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { ModelById } from '~/types/router';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
+import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 
@@ -463,6 +465,36 @@ export default function ModelDetail({
     },
   ];
 
+  const primaryFileDetails = primaryFile && (
+    <Group position="apart" noWrap spacing={0}>
+      <VerifiedText file={primaryFile} />
+      <Text size="xs" color="dimmed">
+        {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+        {primaryFile.format}
+      </Text>
+    </Group>
+  );
+
+  const downloadMenuItems = latestVersion?.files.map((file, index) => (
+    <Menu.Item
+      key={index}
+      component="a"
+      py={4}
+      icon={<VerifiedText file={file} iconOnly />}
+      href={createModelFileDownloadUrl({
+        versionId: latestVersion.id,
+        type: file.type,
+        format: file.format,
+      })}
+      download
+    >
+      {`${startCase(file.type)}${
+        ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.format : ''
+      } (${formatKBytes(file.sizeKB)})`}
+    </Menu.Item>
+  ));
+  const displayCivitaiLink = civitaiLinked && latestVersion?.hashes.length > 0;
+
   return (
     <>
       {meta}
@@ -640,56 +672,51 @@ export default function ModelDetail({
                 </Box>
                 <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
                   {latestVersion.canDownload ? (
-                    <Stack sx={{ flex: 1 }} spacing={4}>
-                      <MultiActionButton
-                        component="a"
-                        href={createModelFileDownloadUrl({
-                          versionId: latestVersion.id,
-                          primary: true,
-                        })}
-                        leftIcon={<IconDownload size={16} />}
-                        disabled={!primaryFile}
-                        menuItems={
-                          latestVersion?.files.length > 1
-                            ? latestVersion?.files.map((file, index) => (
-                                <Menu.Item
-                                  key={index}
-                                  component="a"
-                                  py={4}
-                                  icon={<VerifiedText file={file} iconOnly />}
-                                  href={createModelFileDownloadUrl({
-                                    versionId: latestVersion.id,
-                                    type: file.type,
-                                    format: file.format,
-                                  })}
-                                  download
-                                >
-                                  {`${startCase(file.type)}${
-                                    ['Model', 'Pruned Model'].includes(file.type)
-                                      ? ' ' + file.format
-                                      : ''
-                                  } (${formatKBytes(file.sizeKB)})`}
-                                </Menu.Item>
-                              ))
-                            : []
-                        }
-                        menuTooltip="Other Downloads"
-                        download
-                      >
-                        <Text align="center">
-                          {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
-                        </Text>
-                      </MultiActionButton>
-                      {primaryFile && (
-                        <Group position="apart" noWrap spacing={0}>
-                          <VerifiedText file={primaryFile} />
-                          <Text size="xs" color="dimmed">
-                            {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                            {primaryFile.format}
+                    displayCivitaiLink ? (
+                      <Stack sx={{ flex: 1 }} spacing={4}>
+                        <CivitiaLinkManageButton
+                          modelId={model.id}
+                          modelVersionId={latestVersion.id}
+                          modelName={model.name}
+                          modelType={model.type}
+                          hashes={latestVersion.hashes}
+                          noTooltip
+                        >
+                          {({ color, onClick, ref, icon, label }) => (
+                            <Button
+                              ref={ref}
+                              color={color}
+                              onClick={onClick}
+                              leftIcon={icon}
+                              disabled={!primaryFile}
+                            >
+                              {label}
+                            </Button>
+                          )}
+                        </CivitiaLinkManageButton>
+                        {primaryFileDetails}
+                      </Stack>
+                    ) : (
+                      <Stack sx={{ flex: 1 }} spacing={4}>
+                        <MultiActionButton
+                          component="a"
+                          href={createModelFileDownloadUrl({
+                            versionId: latestVersion.id,
+                            primary: true,
+                          })}
+                          leftIcon={<IconDownload size={16} />}
+                          disabled={!primaryFile}
+                          menuItems={downloadMenuItems.length > 1 ? downloadMenuItems : []}
+                          menuTooltip="Other Downloads"
+                          download
+                        >
+                          <Text align="center">
+                            {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
                           </Text>
-                        </Group>
-                      )}
-                    </Stack>
+                        </MultiActionButton>
+                        {primaryFileDetails}
+                      </Stack>
+                    )
                   ) : (
                     <Stack sx={{ flex: 1 }} spacing={4}>
                       <JoinPopover>
@@ -699,31 +726,30 @@ export default function ModelDetail({
                           </Text>
                         </Button>
                       </JoinPopover>
-                      {primaryFile && (
-                        <Group position="apart" noWrap spacing={0}>
-                          <VerifiedText file={primaryFile} />
-                          <Text size="xs" color="dimmed">
-                            {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                            {primaryFile.format}
-                          </Text>
-                        </Group>
-                      )}
+                      {primaryFileDetails}
                     </Stack>
                   )}
-                  {civitaiLinked ? (
-                    <CivitiaLinkManageButton
-                      modelId={model.id}
-                      modelVersionId={latestVersion.id}
-                      modelName={model.name}
-                      modelType={model.type}
-                      hashes={latestVersion.hashes}
-                    >
-                      {({ color, onClick, ref, icon }) => (
-                        <Button ref={ref} color={color} onClick={onClick} px={0} w={36}>
-                          {icon}
-                        </Button>
-                      )}
-                    </CivitiaLinkManageButton>
+                  {displayCivitaiLink ? (
+                    latestVersion.canDownload ? (
+                      <Menu position="bottom-end">
+                        <Menu.Target>
+                          <Tooltip label="Download options" withArrow>
+                            <Button px={0} w={36} variant="light">
+                              <IconDownload />
+                            </Button>
+                          </Tooltip>
+                        </Menu.Target>
+                        <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
+                      </Menu>
+                    ) : (
+                      <JoinPopover>
+                        <Tooltip label="Download options" withArrow>
+                          <Button px={0} w={36} variant="light">
+                            <IconDownload />
+                          </Button>
+                        </Tooltip>
+                      </JoinPopover>
+                    )
                   ) : (
                     <RunButton modelVersionId={latestVersion.id} />
                   )}
@@ -845,6 +871,8 @@ export default function ModelDetail({
                 <ModelVersions
                   type={model.type}
                   items={model.modelVersions}
+                  modelId={model.id}
+                  modelName={model.name}
                   initialTab={latestVersion?.id.toString()}
                   nsfw={model.nsfw}
                   locked={model.locked}
@@ -926,6 +954,7 @@ function ModelCarousel({
   latestVersion: ModelById['modelVersions'][number];
   mobile?: boolean;
 }) {
+  const router = useRouter();
   const { classes } = useStyles();
   if (!latestVersion.images.length) return null;
 
@@ -964,22 +993,28 @@ function ModelCarousel({
                   </AspectRatio>
                 </ImageGuard.Unsafe>
                 <ImageGuard.Safe>
-                  <ImagePreview
-                    image={image}
-                    edgeImageProps={{ width: 400 }}
-                    radius="md"
-                    onClick={() =>
-                      openRoutedContext('galleryDetailModal', {
-                        galleryImageId: image.id,
-                        modelId: model.id,
-                        modelVersionId: latestVersion.id,
-                        infinite: false,
-                        returnUrl: Router.asPath,
-                      })
-                    }
-                    style={{ width: '100%' }}
-                    withMeta
-                  />
+                  <AnchorNoTravel
+                    href={`/gallery/${image.id}?modelId=${model.id}&modelVersionId=${
+                      latestVersion.id
+                    }&infinite=false&returnUrl=${encodeURIComponent(router.asPath)}`}
+                  >
+                    <ImagePreview
+                      image={image}
+                      edgeImageProps={{ width: 400 }}
+                      radius="md"
+                      onClick={() =>
+                        openRoutedContext('galleryDetailModal', {
+                          galleryImageId: image.id,
+                          modelId: model.id,
+                          modelVersionId: latestVersion.id,
+                          infinite: false,
+                          returnUrl: Router.asPath,
+                        })
+                      }
+                      style={{ width: '100%' }}
+                      withMeta
+                    />
+                  </AnchorNoTravel>
                 </ImageGuard.Safe>
               </div>
             </Center>

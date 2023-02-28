@@ -2,7 +2,7 @@ import { modelHashSelect } from './../selectors/modelHash.selector';
 import { ModelStatus, ModelHashType, Prisma, UserActivityType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -361,12 +361,26 @@ export const getModelsWithVersionsHandler = async ({
   const { limit = DEFAULT_PAGE_SIZE, page, ...queryInput } = input;
   const { take, skip } = getPagination(limit, page);
   try {
-    const results = await getModels({
+    const rawResults = await getModels({
       input: { ...queryInput, take, skip },
       user: ctx.user,
       select: getAllModelsWithVersionsSelect,
       count: true,
     });
+
+    const results = {
+      count: rawResults.count,
+      items: rawResults.items.map(({ rank, ...model }) => ({
+        ...model,
+        stats: {
+          downloadCount: rank?.downloadCountAllTime ?? 0,
+          favoriteCount: rank?.favoriteCountAllTime ?? 0,
+          commentCount: rank?.commentCountAllTime ?? 0,
+          ratingCount: rank?.ratingCountAllTime ?? 0,
+          rating: Number(rank?.ratingAllTime?.toFixed(2) ?? 0),
+        },
+      })),
+    };
 
     return getPagingData(results, take, page);
   } catch (error) {
@@ -377,7 +391,7 @@ export const getModelsWithVersionsHandler = async ({
 // TODO - TEMP HACK for reporting modal
 export const getModelReportDetailsHandler = async ({ input: { id } }: { input: GetByIdInput }) => {
   try {
-    return await prisma.model.findUnique({
+    return await dbWrite.model.findUnique({
       where: { id },
       select: { userId: true, reportStats: { select: { ownershipPending: true } } },
     });
@@ -403,7 +417,7 @@ export const getDownloadCommandHandler = async ({
 
     const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
 
-    const modelVersion = await prisma.modelVersion.findFirst({
+    const modelVersion = await dbWrite.modelVersion.findFirst({
       where: { modelId, id: modelVersionId },
       select: {
         id: true,
@@ -453,7 +467,7 @@ export const getDownloadCommandHandler = async ({
       isMod || modelVersion?.model?.status === 'Published' || modelVersion.model.userId === userId;
     if (!canDownload) throw throwNotFoundError();
 
-    await prisma.userActivity.create({
+    await dbWrite.userActivity.create({
       data: {
         userId,
         activity: UserActivityType.ModelDownload,
@@ -501,7 +515,9 @@ export const getDownloadCommandHandler = async ({
     }
 
     return { commands };
-  } catch (error) {}
+  } catch (error) {
+    throwDbError(error);
+  }
 };
 
 export const getModelDetailsForReviewHandler = async ({

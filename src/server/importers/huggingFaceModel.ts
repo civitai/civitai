@@ -1,7 +1,7 @@
 import { ImportStatus, ModelType, Prisma } from '@prisma/client';
 
 import { createImporter } from '~/server/importers/importer';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { uploadViaUrl } from '~/utils/cf-images-utils';
 import { markdownToHtml } from '~/utils/markdown-helpers';
 import { bytesToKB } from '~/utils/number-helpers';
@@ -48,7 +48,7 @@ export async function importModelFromHuggingFace(
   }));
 
   // check for previous models imported from same hfModel.id
-  let model = await prisma.model.findFirst({
+  let model = await dbWrite.model.findFirst({
     where: { fromImport: { source } },
     select: { id: true, modelVersions: { select: { files: true, images: true } } },
   });
@@ -127,7 +127,7 @@ export async function importModelFromHuggingFace(
     }
   }
 
-  await prisma.$transaction(
+  await dbWrite.$transaction(
     async (tx) => {
       // if it doesn't exist, create it
       if (!model) {

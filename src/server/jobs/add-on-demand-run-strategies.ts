@@ -1,11 +1,11 @@
 import { createJob } from './job';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 
 export const addOnDemandRunStrategiesJob = createJob(
   'add-on-demand-run-strategies',
   '33 * * * *',
   async () => {
-    await prisma.$transaction(async (tx) => {
+    await dbWrite.$transaction(async (tx) => {
       // Add new
       await tx.$executeRawUnsafe(`
         INSERT INTO "RunStrategy" ("partnerId", "modelVersionId", "url")

@@ -1,5 +1,5 @@
 import { hfModelImporter } from '~/server/importers/huggingFaceModel';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { ImportStatus, Prisma } from '@prisma/client';
 import { hfAuthorImporter } from '~/server/importers/huggingFaceAuthor';
 import { ImportDependency, ImportRunInput } from '~/server/importers/importer';
@@ -12,7 +12,7 @@ export async function processImport(input: ImportRunInput) {
   const importer = importers.find((i) => i.canHandle(source));
 
   const updateStatus = async (status: ImportStatus, data: any = null) => { // eslint-disable-line
-    await prisma.import.update({
+    await dbWrite.import.update({
       where: { id },
       data: { status, data: data ?? Prisma.JsonNull },
     });
@@ -40,7 +40,7 @@ async function processDependencies(
 ) {
   // Add the import jobs
   for (const batch of chunk(deps, 900)) {
-    await prisma.import.createMany({
+    await dbWrite.import.createMany({
       data: batch.map(({ source, data }) => ({
         source,
         userId,
@@ -50,7 +50,7 @@ async function processDependencies(
     });
   }
 
-  const childJobs = await prisma.import.findMany({
+  const childJobs = await dbWrite.import.findMany({
     where: {
       parentId,
     },

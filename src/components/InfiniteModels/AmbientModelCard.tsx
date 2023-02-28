@@ -417,6 +417,11 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                     modelName={name}
                     modelType={data.type}
                     hashes={data.hashes}
+                    tooltipProps={{
+                      position: 'right',
+                      transition: 'slide-right',
+                      variant: 'smallRounded',
+                    }}
                   >
                     {({ color, onClick, ref, icon }) => (
                       <ActionIcon

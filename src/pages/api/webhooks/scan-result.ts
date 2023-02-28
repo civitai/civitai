@@ -9,7 +9,7 @@ import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
-import { prisma } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { ScannerTasks } from '~/server/jobs/scan-files';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { bytesToKB } from '~/utils/number-helpers';
@@ -25,7 +25,7 @@ export default WebhookEndpoint(async (req, res) => {
   const where: Prisma.ModelFileFindUniqueArgs['where'] = {
     modelVersionId_type_format: { modelVersionId, type, format },
   };
-  const { url, id: fileId, name } = (await prisma.modelFile.findUnique({ where })) ?? {};
+  const { url, id: fileId, name } = (await dbWrite.modelFile.findUnique({ where })) ?? {};
   if (!url || !fileId) return res.status(404).json({ error: 'File not found' });
 
   const data: Prisma.ModelFileUpdateInput = {};
@@ -62,7 +62,7 @@ export default WebhookEndpoint(async (req, res) => {
       const { url: s3Url } = await getGetUrl(baseUrl);
       const { headers } = await fetch(s3Url, { method: 'HEAD' });
       const sizeKB = bytesToKB(parseInt(headers.get('Content-Length') ?? '0'));
-      await prisma.modelFile.create({
+      await dbWrite.modelFile.create({
         data: {
           name: convertedName,
           sizeKB,
@@ -83,14 +83,14 @@ export default WebhookEndpoint(async (req, res) => {
   }
 
   // Update if we made changes...
-  if (Object.keys(data).length > 0) await prisma.modelFile.update({ where, data });
+  if (Object.keys(data).length > 0) await dbWrite.modelFile.update({ where, data });
 
   // Update hashes
   if (tasks.includes('Hash') && scanResult.hashes) {
-    await prisma.$transaction([
-      prisma.modelFileHash.deleteMany({ where: { fileId } }), // TODO.justin
-      prisma.modelFileHash.createMany({
-        data: Object.entries(scanResult.hashes) // TODO.justin
+    await dbWrite.$transaction([
+      dbWrite.modelFileHash.deleteMany({ where: { fileId } }),
+      dbWrite.modelFileHash.createMany({
+        data: Object.entries(scanResult.hashes)
           .filter(([type, val]) => hashTypeMap[type.toLowerCase()] && val)
           .map(([type, hash]) => ({
             fileId,
@@ -108,18 +108,18 @@ const hashTypeMap: Record<string, string> = {};
 for (const t of Object.keys(ModelHashType)) hashTypeMap[t.toLowerCase()] = t;
 
 async function unpublish(modelVersionId: number) {
-  await prisma.modelVersion.update({
+  await dbWrite.modelVersion.update({
     where: { id: modelVersionId },
     data: { status: ModelStatus.Draft },
   });
 
   const { modelId } =
-    (await prisma.modelVersion.findUnique({
+    (await dbWrite.modelVersion.findUnique({
       where: { id: modelVersionId },
       select: { modelId: true },
     })) ?? {};
   if (modelId) {
-    const modelVersionCount = await prisma.model.findUnique({
+    const modelVersionCount = await dbWrite.model.findUnique({
       where: { id: modelId },
       select: {
         _count: {
@@ -133,7 +133,7 @@ async function unpublish(modelVersionId: number) {
     });
 
     if (modelVersionCount?._count.modelVersions === 0)
-      await prisma.model.update({
+      await dbWrite.model.update({
         where: { id: modelId },
         data: { status: ModelStatus.Unpublished },
       });

@@ -1,6 +1,6 @@
 import { showNotification } from '@mantine/notifications';
 import { ModelType } from '@prisma/client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CommandResourcesAdd } from '~/components/CivitaiLink/shared-types';
 import { ModelHashModel } from '~/server/selectors/modelHash.selector';
@@ -15,6 +15,7 @@ export function CivitaiLinkResourceManager({
   modelVersionId,
   hashes,
   children,
+  fallback,
 }: {
   modelId: number;
   modelName: string;
@@ -22,11 +23,12 @@ export function CivitaiLinkResourceManager({
   modelVersionId?: number;
   hashes: string[];
   children: (props: CivitaiLinkResourceManagerChildrenFunction) => JSX.Element;
+  fallback?: JSX.Element;
 }) {
   const { connected, resources, runCommand } = useCivitaiLink();
   const resource = resources.find(({ hash }) => hashes.some((x) => x === hash));
   const [cancels, setCancels] = useState<Array<() => void>>([]);
-  const { data, refetch, isFetched } = trpc.model.getDownloadCommand.useQuery(
+  const { data, refetch, isFetched, isFetching } = trpc.model.getDownloadCommand.useQuery(
     { modelId, modelVersionId },
     {
       enabled: false,
@@ -35,7 +37,10 @@ export function CivitaiLinkResourceManager({
       },
     }
   );
-  if (!connected || !supportedModelTypes.includes(modelType)) return null;
+
+  if (!connected || !supportedModelTypes.includes(modelType) || !hashes || !hashes.length)
+    return fallback ?? null;
+
   const runAddCommands = async (commands: CommandResourcesAdd[] | undefined) => {
     if (!commands) return;
     const addCancels: typeof cancels = [];
@@ -73,7 +78,7 @@ export function CivitaiLinkResourceManager({
     cancelDownload,
     resource,
     hasResource: !!resource,
-    downloading: resource?.downloading ?? false,
+    downloading: (isFetching || resource?.downloading) ?? false,
   });
 }
 
