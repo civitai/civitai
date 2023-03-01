@@ -3,13 +3,22 @@ import { Dropzone, DropzoneProps, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { IconUpload, IconX, IconPhoto } from '@tabler/icons';
 
 export function ImageDropzone({
-  disabled,
+  disabled: initialDisabled,
   max = 10,
   hasError,
+  onDrop,
+  count,
   ...props
-}: DropzoneProps & { max?: number; hasError?: boolean }) {
+}: Omit<DropzoneProps, 'children'> & { max?: number; hasError?: boolean; count: number }) {
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
+
+  const canAddFiles = max - count > 0;
+  const disabled = !canAddFiles || initialDisabled;
+  const handleDrop = (files: File[]) => {
+    onDrop?.(files.slice(0, max - count));
+  };
+
   return (
     <Dropzone
       {...props}
@@ -18,7 +27,8 @@ export function ImageDropzone({
       classNames={{
         root: hasError ? classes.error : undefined,
       }}
-      disabled={disabled}
+      disabled={!canAddFiles || disabled}
+      onDrop={handleDrop}
     >
       <Group position="center" spacing="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
         <Dropzone.Accept>

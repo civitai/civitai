@@ -1,3 +1,4 @@
+import { postRouter } from './post.router';
 import { modelVersionRouter } from './model-version.router';
 import { partnerRouter } from './partner.router';
 import { userLinkRouter } from './user-link.router';
@@ -43,6 +44,7 @@ export const appRouter = router({
   commentv2: commentv2Router,
   reaction: reactionRouter,
   stripe: stripeRouter,
+  post: postRouter,
 });
 
 // export type definition of API

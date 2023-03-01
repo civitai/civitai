@@ -148,9 +148,9 @@ export const createImageSchema = z.object({
   height: z.number().nullish(),
   width: z.number().nullish(),
   nsfw: z.boolean().optional(),
-  analysis: imageAnalysisSchema.optional(),
-  resources: z.array(imageResourceUpsertSchema).optional(),
+  resources: z.array(z.string()).optional(),
   postId: z.number().optional(),
+  index: z.number(),
 });
 
 export type UpdateImageInput = z.infer<typeof updateImageSchema>;

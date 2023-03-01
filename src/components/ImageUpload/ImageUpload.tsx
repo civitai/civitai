@@ -55,7 +55,6 @@ import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview'
 import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { useImageUpload } from '~/hooks/useImageUpload';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { trpc } from '~/utils/trpc';
 import { SimpleTag } from '~/server/selectors/tag.selector';

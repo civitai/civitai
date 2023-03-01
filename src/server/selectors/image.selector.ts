@@ -4,7 +4,7 @@ import { SessionUser } from 'next-auth';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { ImageUploadProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { detectNsfwImage, getNeedsReview } from '~/utils/image-metadata';
+import { getNeedsReview } from '~/utils/image-metadata';
 
 import { getReactionsSelect } from './reaction.selector';
 import { simpleTagSelect } from './tag.selector';
@@ -21,6 +21,7 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   meta: true,
   generationProcess: true,
   needsReview: true,
+  index: true,
   tags: { select: { tag: { select: simpleTagSelect } } }, // TODO.posts - remove this. We may  not even need tags initially, but if we do need tags then we probably only need to load them when looking at the image details
   _count: {
     select: {

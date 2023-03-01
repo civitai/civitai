@@ -27,6 +27,7 @@ export async function getMetadata(file: File) {
 
   const metadata = parseMetadata(generationDetails);
   const result = imageMetaSchema.safeParse(metadata);
+  console.log({ metadata, result });
   return result.success ? result.data : {};
 }
 

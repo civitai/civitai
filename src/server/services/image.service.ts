@@ -207,7 +207,23 @@ export const getImageConnectionsById = ({ id, modelId, reviewId }: GetImageConne
   });
 };
 
-export const createImage = async (image: CreateImageInput & { userId: number }) => {
+export const createImage = async ({
+  resources,
+  ...image
+}: CreateImageInput & { userId: number }) => {
+  const autoResources = !!resources?.length
+    ? await dbRead?.modelHash.findMany({
+        where: { hash: { in: resources, mode: 'insensitive' } },
+        select: {
+          file: {
+            select: {
+              modelVersionId: true,
+            },
+          },
+        },
+      })
+    : [];
+
   return await dbWrite.image.create({
     data: {
       ...image,
@@ -215,12 +231,16 @@ export const createImage = async (image: CreateImageInput & { userId: number }) 
       generationProcess: image.meta
         ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
         : null,
-      resources: image?.resources
+      resources: autoResources
         ? {
-            create: image.resources.map((resource) => resource),
+            create: autoResources.map((item) => ({
+              modelVersionId: item.file.modelVersionId,
+              detected: true,
+            })),
           }
         : undefined,
     },
+    select: imageSelect,
   });
 };
 
