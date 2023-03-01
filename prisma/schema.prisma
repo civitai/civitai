@@ -328,6 +328,7 @@ model Model {
   reportStats      ModelReportStat?
   downloads        DownloadHistory[]
   imageConnections ImageConnection[]
+  hashes           ModelHash[]
 }
 
 model License {
@@ -392,6 +393,7 @@ model ModelVersion {
   rank             ModelVersionRank?
   downloads        DownloadHistory[]
   imageConnections ImageConnection[]
+  hashes           ModelHash[]
 }
 
 enum ModelVersionEngagementType {
@@ -417,7 +419,7 @@ enum ModelHashType {
   BLAKE3
 }
 
-model ModelHash {
+model ModelFileHash {
   file      ModelFile     @relation(fields: [fileId], references: [id], onDelete: Cascade)
   fileId    Int
   type      ModelHashType
@@ -458,7 +460,7 @@ model ModelFile {
   scannedAt         DateTime?
   scanRequestedAt   DateTime?
   rawScanResult     Json?
-  hashes            ModelHash[]
+  hashes            ModelFileHash[]
 
   @@unique([modelVersionId, type, format])
 }
@@ -1624,4 +1626,14 @@ model ImageModHelper {
   image           Image    @relation(fields: [imageId], references: [id], onDelete: NoAction)
   assessedNSFW    Boolean? @default(false)
   nsfwReportCount Int      @default(0)
+}
+
+/// @view
+model ModelHash {
+  modelId        Int           @id
+  model          Model         @relation(fields: [modelId], references: [id])
+  modelVersionId Int
+  modelVersion   ModelVersion  @relation(fields: [modelVersionId], references: [id])
+  hashType       ModelHashType
+  hash           String
 }

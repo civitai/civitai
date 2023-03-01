@@ -18,7 +18,7 @@ const viewRegex = new RegExp(`\n?${ANNOTATION}\nmodel ([a-zA-Z]+) {[^}]+}\n?`, '
 const modelNames = [...schema.matchAll(viewRegex)].map(([_, name]) => name);
 let modifiedSchema = schema.replace(viewRegex, '');
 for (const modelName of modelNames) {
-  const modelRegex = new RegExp(`^.+${modelName}.*\n?`, 'gm');
+  const modelRegex = new RegExp(`^.+${modelName}(\\[\\]|\\n|\\?).*\n?`, 'gm');
   modifiedSchema = modifiedSchema.replace(modelRegex, '');
 }
 await writeFile(SCHEMA, modifiedSchema, 'utf-8');

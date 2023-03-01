@@ -30,6 +30,7 @@ import type { FeatureFlags } from '~/server/services/feature-flags.service';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
 import { isDev, isMaintenanceMode } from '~/env/other';
+import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { MetaPWA } from '~/components/Meta/MetaPWA';
 
 dayjs.extend(duration);
@@ -96,12 +97,14 @@ function MyApp(props: CustomAppProps) {
         <CookiesProvider value={cookies}>
           <FeatureFlagsProvider flags={flags}>
             <ImageProcessingProvider>
-              <CustomModalsProvider>
-                <NotificationsProvider>
-                  <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                  <RoutedContextProvider2 />
-                </NotificationsProvider>
-              </CustomModalsProvider>
+              <CivitaiLinkProvider>
+                <CustomModalsProvider>
+                  <NotificationsProvider>
+                    <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                    <RoutedContextProvider2 />
+                  </NotificationsProvider>
+                </CustomModalsProvider>
+              </CivitaiLinkProvider>
             </ImageProcessingProvider>
           </FeatureFlagsProvider>
         </CookiesProvider>
