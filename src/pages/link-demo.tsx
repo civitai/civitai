@@ -1,10 +1,30 @@
-import { Button, Code, Container, Group, Stack } from '@mantine/core';
+import {
+  Box,
+  Button,
+  Code,
+  Container,
+  Group,
+  Stack,
+  Title,
+  Text,
+  Divider,
+  Tabs,
+  List,
+  CopyButton,
+  Center,
+  Tooltip,
+  Loader,
+} from '@mantine/core';
+import { IconCheck, IconCopy, IconPlayerPlay, IconVideo } from '@tabler/icons';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink, useCivitaiLinkStore } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { CivitaiLinkSvg } from '~/components/CivitaiLink/CivitaiLinkSvg';
 import { Meta } from '~/components/Meta/Meta';
+import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 
 function Home() {
   // const activities = useCivitaiLinkStore((state) => state.activities);
-  const { resources, connected, runCommand } = useCivitaiLink();
+  const { resources, connected, runCommand, instance } = useCivitaiLink();
 
   const handleRunDownload = async () => {
     runCommand({
@@ -69,6 +89,68 @@ function Home() {
   return (
     <>
       <Container size="xl">
+        <Stack spacing={4}>
+          <Title order={3} mb={0} sx={{ lineHeight: 1 }}>
+            Link your account
+          </Title>
+          <Text mb="md" color="dimmed">
+            Time to connect your Stable Diffusion instance to your Civitai Account.
+          </Text>
+          <List type="ordered">
+            <List.Item>
+              In your{' '}
+              <Text td="underline" component="span">
+                SD Settings
+              </Text>
+              , open the{' '}
+              <Text td="underline" component="span">
+                Civitai
+              </Text>{' '}
+              tab
+            </List.Item>
+            <List.Item>
+              Paste the Link Key below into the{' '}
+              <Text td="underline" component="span">
+                Link Key
+              </Text>{' '}
+              field
+            </List.Item>
+            <List.Item>
+              <Text td="underline" component="span">
+                Save
+              </Text>{' '}
+              your settings
+            </List.Item>
+          </List>
+          <Stack align="center" spacing={5} my="lg">
+            <Title order={4}>Link Key</Title>
+            {instance?.key ? (
+              <CopyButton value={instance.key}>
+                {({ copied, copy }) => (
+                  <Tooltip label="copy">
+                    <Button
+                      variant="default"
+                      onClick={copy}
+                      size="lg"
+                      px="sm"
+                      rightIcon={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                    >
+                      {!copied ? instance.key : 'Copied'}
+                    </Button>
+                  </Tooltip>
+                )}
+              </CopyButton>
+            ) : (
+              <Button variant="default" size="lg" px="sm">
+                <Group spacing="xs" align="center">
+                  <Loader size="sm" />
+                  <span>Generating key</span>
+                </Group>
+              </Button>
+            )}
+          </Stack>
+        </Stack>
+
         <h1>Connected</h1>
         {connected ? 'true' : 'false'}
         {connected && (

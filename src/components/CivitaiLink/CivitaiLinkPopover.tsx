@@ -21,7 +21,7 @@ import {
   CopyButton,
   ColorSwatch,
   useMantineTheme,
-  Badge,
+  List,
 } from '@mantine/core';
 import {
   IconDownload,
@@ -33,8 +33,10 @@ import {
   IconLinkOff,
   IconCheck,
   IconCopy,
+  IconAlertTriangle,
 } from '@tabler/icons';
 import { useCallback, useState } from 'react';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import {
   civitaiLinkStatusColors,
   useCivitaiLink,
@@ -79,7 +81,7 @@ function LinkDropdown() {
             Civitai Link
           </Title>
           {canToggleManageInstances && (
-            <Tooltip label="manage instances">
+            <Tooltip label="Manage instances">
               <ActionIcon onClick={handleManageClick}>
                 <IconSettings size={20} />
               </ActionIcon>
@@ -149,7 +151,13 @@ function InstancesManager() {
       <Group position="apart" p="xs">
         <Text weight={500}>Stable Diffusion Instances</Text>
         {showControls && (
-          <Button compact leftIcon={<IconPlus size={18} />} onClick={handleAddClick}>
+          <Button
+            compact
+            size="xs"
+            variant="outline"
+            leftIcon={<IconPlus size={18} />}
+            onClick={handleAddClick}
+          >
             Add Instance
           </Button>
         )}
@@ -207,13 +215,21 @@ function BigIndicator() {
 function GetStarted() {
   return (
     <>
-      <Stack p="xs">
+      <Stack py="sm" px="lg" spacing={4}>
         <Center p="md" pb={0}>
           <CivitaiLinkSvg />
         </Center>
-        <Text size="sm">
-          Manage your Automatic1111 Stable Diffusion instance right from Civitai. Add and remove
-          resources while you browse the site. More to come soon!
+        <Text my="xs">
+          Interact with your{' '}
+          <Text
+            component="a"
+            variant="link"
+            href="https://github.com/AUTOMATIC1111/stable-diffusion-webui"
+            target="_blank"
+          >
+            Automatic1111 Stable Diffusion
+          </Text>{' '}
+          instance in realtime from Civitai
         </Text>
       </Stack>
       <Divider />
@@ -235,13 +251,43 @@ function GetReconnected() {
   const handleGenerateKey = () => createInstance(instance?.id ?? undefined);
 
   return (
-    <Stack p="xs" spacing="xs">
-      <Alert color="yellow">{`Couldn't connect to SD instance!`}</Alert>
-      <Title size="sm">Troubleshooting</Title>
-      <ul style={{ margin: 0, paddingLeft: 20 }}>
-        <li>Make sure your SD instance is up and running.</li>
-        <li>
-          <Text>
+    <>
+      <AlertWithIcon
+        iconColor="yellow"
+        icon={<IconAlertTriangle />}
+        radius={0}
+        size="md"
+        color="yellow"
+      >{`Couldn't connect to SD instance!`}</AlertWithIcon>
+      <Stack p="sm" spacing={4}>
+        {instance?.key && (
+          <Stack spacing={0} align="center" mb="md">
+            <Text size="md" weight={700}>
+              Link Key
+            </Text>
+            <CopyButton value={instance.key}>
+              {({ copied, copy }) => (
+                <Tooltip label="Copy" withinPortal>
+                  <Button
+                    onClick={copy}
+                    variant="default"
+                    size="lg"
+                    px="sm"
+                    rightIcon={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                  >
+                    {!copied ? instance.key : 'Copied'}
+                  </Button>
+                </Tooltip>
+              )}
+            </CopyButton>
+          </Stack>
+        )}
+        <Text size="md" weight={500}>
+          Troubleshooting
+        </Text>
+        <List type="unordered">
+          <List.Item>Make sure your SD instance is up and running.</List.Item>
+          <List.Item>
             If your instance is running and you are still unable to connect,{' '}
             <Text
               variant="link"
@@ -252,36 +298,10 @@ function GetReconnected() {
               generate a new connection key
             </Text>{' '}
             and add it to your SD instance.
-          </Text>
-        </li>
-      </ul>
-      {instance?.key && (
-        <Center pb="md">
-          <Stack spacing={0}>
-            <Text size="xs" align="center" weight={500}>
-              KEY
-            </Text>
-            <CopyButton value={instance.key}>
-              {({ copied, copy }) => (
-                <Tooltip label="Copy" withinPortal>
-                  <Badge
-                    onClick={copy}
-                    color="violet"
-                    size="lg"
-                    rightSection={
-                      <Center>{copied ? <IconCheck size={16} /> : <IconCopy size={16} />}</Center>
-                    }
-                    sx={{ textTransform: 'none', cursor: 'pointer' }}
-                  >
-                    {!copied ? instance.key : 'Copied'}
-                  </Badge>
-                </Tooltip>
-              )}
-            </CopyButton>
-          </Stack>
-        </Center>
-      )}
-    </Stack>
+          </List.Item>
+        </List>
+      </Stack>
+    </>
   );
 }
 
