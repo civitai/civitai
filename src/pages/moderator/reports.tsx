@@ -352,7 +352,7 @@ function ReportDetails({ report }: { report: ReportDetail }) {
                     key={cuid}
                     component="a"
                     variant="link"
-                    href={getEdgeUrl(cuid, { width: 450 })}
+                    href={getEdgeUrl(cuid, { width: 450, name: cuid })}
                     target="_blank"
                     rel="noreferrer"
                   >

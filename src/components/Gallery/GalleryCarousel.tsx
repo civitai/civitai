@@ -127,6 +127,7 @@ export function GalleryCarousel({
                 <ImageGuard.Safe>
                   <EdgeImage
                     src={image.url}
+                    name={image.name ?? image.id.toString()}
                     alt={image.name ?? undefined}
                     style={{ maxHeight: '100%', maxWidth: '100%' }}
                     width={image.width ?? 1200}
