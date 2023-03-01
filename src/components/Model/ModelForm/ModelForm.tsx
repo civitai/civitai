@@ -187,23 +187,22 @@ export function ModelForm({ model }: Props) {
     type: model?.type ?? ModelType.Checkpoint,
     status: model?.status ?? ModelStatus.Published,
     tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
-    modelVersions: model?.modelVersions.map(
-      ({ trainedWords, images, files, baseModel, ...version }) => ({
-        ...version,
-        uuid: uuidv4(),
-        baseModel: (baseModel as BaseModel) ?? defaultModelVersion.baseModel,
-        trainedWords: trainedWords,
-        skipTrainedWords: !trainedWords.length,
-        // HOTFIX: Casting image.meta type issue with generated prisma schema
-        images: images.map((image) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
-        // HOTFIX: Casting files to defaultModelFile[] to avoid type confusion and accept room for error
-        files: files.length > 0 ? (files as (typeof defaultModelFile)[]) : [defaultModelFile],
-        earlyAccessTimeFrame:
-          version.earlyAccessTimeFrame && features.earlyAccessModel
-            ? String(version.earlyAccessTimeFrame)
-            : '0',
-      })
-    ) ?? [defaultModelVersion],
+    modelVersions: model?.modelVersions.map(({ images, files, baseModel, ...version }) => ({
+      ...version,
+      uuid: uuidv4(),
+      baseModel: (baseModel as BaseModel) ?? defaultModelVersion.baseModel,
+      skipTrainedWords:
+        !version.trainedWords.length ||
+        !['Checkpoint', 'TextualInversion', 'LORA'].includes(model?.type ?? ''),
+      // HOTFIX: Casting image.meta type issue with generated prisma schema
+      images: images.map((image) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
+      // HOTFIX: Casting files to defaultModelFile[] to avoid type confusion and accept room for error
+      files: files.length > 0 ? (files as (typeof defaultModelFile)[]) : [defaultModelFile],
+      earlyAccessTimeFrame:
+        version.earlyAccessTimeFrame && features.earlyAccessModel
+          ? String(version.earlyAccessTimeFrame)
+          : '0',
+    })) ?? [defaultModelVersion],
   };
 
   const form = useForm({
@@ -389,6 +388,7 @@ export function ModelForm({ model }: Props) {
           const trainedWords = modelVersion.trainedWords ?? [];
           const [firstWord] = trainedWords;
 
+          form.setValue(`modelVersions.${index}.skipTrainedWords`, false);
           if (firstWord) form.setValue(`modelVersions.${index}.trainedWords`, [firstWord]);
         });
         break;
@@ -533,7 +533,13 @@ export function ModelForm({ model }: Props) {
                   size="xs"
                   leftIcon={<IconPlus size={16} />}
                   variant="outline"
-                  onClick={() => prepend({ ...defaultModelVersion, uuid: uuidv4() })}
+                  onClick={() =>
+                    prepend({
+                      ...defaultModelVersion,
+                      uuid: uuidv4(),
+                      skipTrainedWords: !acceptsTrainedWords,
+                    })
+                  }
                   compact
                 >
                   Add Version
@@ -543,7 +549,7 @@ export function ModelForm({ model }: Props) {
               {modelVersions.map((version, index) => {
                 const trainedWords = form.watch(`modelVersions.${index}.trainedWords`) ?? [];
                 const skipTrainedWords =
-                  !isTextualInversion &&
+                  !acceptsTrainedWords &&
                   (form.watch(`modelVersions.${index}.skipTrainedWords`) ?? false);
                 const name = form.watch(`modelVersions.${index}.name`) ?? '';
                 const showEarlyAccess =
