@@ -144,6 +144,7 @@ export function Lightbox({
                             <ImageGuard.Safe>
                               <EdgeImage
                                 src={image.url}
+                                name={image.name ?? image.id.toString()}
                                 alt={image.name ?? undefined}
                                 style={{ maxHeight: '100vh', maxWidth: '100vw' }}
                                 width={width}

@@ -18,7 +18,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
         username,
         modelCount: models.length ? models.length : undefined,
         link: `${baseUrl.origin}/api/v1/models?username=${username}`,
-        image: image ? getEdgeUrl(image, { width: 96 }) : undefined,
+        image: image ? getEdgeUrl(image, { width: 96, name: username }) : undefined,
       })),
       metadata: {
         ...metadata,

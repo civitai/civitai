@@ -395,6 +395,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                     <ImageGuard.Safe>
                       <EdgeImage
                         src={image.url}
+                        name={image.name ?? image.id.toString()}
                         alt={image.name ?? undefined}
                         width={450}
                         placeholder="empty"

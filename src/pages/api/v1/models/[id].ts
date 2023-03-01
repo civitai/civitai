@@ -55,8 +55,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
               primary: primaryFile.id === file.id,
             })}`,
           })),
-          images: images.map(({ image: { url, ...image } }) => ({
-            url: getEdgeUrl(url, { width: 450 }),
+          images: images.map(({ image: { url, id, ...image } }) => ({
+            url: getEdgeUrl(url, { width: 450, name: id.toString() }),
             ...image,
           })),
           downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({

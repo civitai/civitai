@@ -165,7 +165,12 @@ export default function UserPage({
               {user.image && (
                 <div className={classes.outsideImage}>
                   <AspectRatio ratio={1 / 1} className={classes.image}>
-                    <EdgeImage src={user.image} width={128} alt={user.username ?? ''} />
+                    <EdgeImage
+                      src={user.image}
+                      name={user.username}
+                      width={128}
+                      alt={user.username ?? ''}
+                    />
                   </AspectRatio>
                 </div>
               )}
@@ -174,7 +179,12 @@ export default function UserPage({
                   {user.image && (
                     <div className={classes.insideImage}>
                       <AspectRatio ratio={1 / 1} className={classes.image}>
-                        <EdgeImage src={user.image} width={128} alt={user.username ?? ''} />
+                        <EdgeImage
+                          src={user.image}
+                          name={user.username}
+                          width={128}
+                          alt={user.username ?? ''}
+                        />
                       </AspectRatio>
                     </div>
                   )}

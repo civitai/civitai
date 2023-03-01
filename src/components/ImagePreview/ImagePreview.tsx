@@ -36,7 +36,7 @@ type ImagePreviewProps = {
 } & Omit<BoxProps, 'component'>;
 
 export function ImagePreview({
-  image: { url, name, width, height, hash, meta, generationProcess, needsReview },
+  image: { id, url, name, width, height, hash, meta, generationProcess, needsReview },
   edgeImageProps = {},
   nsfw,
   aspectRatio,
@@ -114,6 +114,7 @@ export function ImagePreview({
   ) : (
     <EdgeImage
       src={url}
+      name={name ?? id.toString()}
       alt={name ?? undefined}
       {...edgeImageProps}
       onClick={onClick}
