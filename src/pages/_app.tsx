@@ -30,6 +30,7 @@ import type { FeatureFlags } from '~/server/services/feature-flags.service';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
 import { isDev, isMaintenanceMode } from '~/env/other';
+import { MetaPWA } from '~/components/Meta/MetaPWA';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -112,9 +113,8 @@ function MyApp(props: CustomAppProps) {
     <>
       <Head>
         <title>Civitai | Share your models</title>
-        <meta name="viewport" content="maximum-scale=1, initial-scale=1, width=device-width" />
-        <link rel="manifest" href="/site.webmanifest" />
         <script defer data-domain="civitai.com" src="https://plausible.io/js/script.js"></script>
+        <MetaPWA />
       </Head>
 
       <ColorSchemeProvider
