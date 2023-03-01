@@ -44,6 +44,7 @@ export const modelVersionUpsertSchema = z.object({
 
 export type ModelVersionUpsertInput = z.infer<typeof modelVersionUpsertSchema2>;
 export const modelVersionUpsertSchema2 = z.object({
+  modelId: z.number(),
   id: z.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
   baseModel: z.enum(constants.baseModels),
@@ -53,5 +54,8 @@ export const modelVersionUpsertSchema2 = z.object({
   steps: z.number().min(0).nullish(),
   epochs: z.number().min(0).max(100000).nullish(),
   trainedWords: z.array(z.string()).default([]),
-  earlyAccessTimeFrame: z.number().min(0).max(5).optional(),
+  earlyAccessTimeFrame: z.preprocess(
+    (value) => (value ? Number(value) : 0),
+    z.number().min(0).max(5).optional()
+  ),
 });

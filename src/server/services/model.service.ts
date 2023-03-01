@@ -8,7 +8,7 @@ import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
+import { GetAllModelsOutput, ModelInput, ModelUpsertInput } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import {
   imageSelect,
@@ -238,6 +238,19 @@ const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
         return preparedFile;
       }),
     };
+  });
+};
+
+export const upsertModel = ({
+  id,
+  tagsOnModels,
+  ...data
+}: ModelUpsertInput & { userId: number }) => {
+  // TODO.posts: Add tagsOnModels
+  return dbWrite.model.upsert({
+    where: { id: id ?? -1 },
+    create: { ...data },
+    update: { ...data },
   });
 };
 

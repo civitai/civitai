@@ -176,7 +176,7 @@ export function AppHeader() {
   const links: MenuLink[] = useMemo(
     () => [
       {
-        href: '/models/create',
+        href: '/models/new',
         visible: !isMuted,
         loginRedirect: 'upload-model',
         label: (
@@ -326,7 +326,7 @@ export function AppHeader() {
                 <Button
                   className={classes.links}
                   component={NextLink}
-                  href="/models/create"
+                  href="/models/new"
                   variant="filled"
                   size="xs"
                   pl={5}
