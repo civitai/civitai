@@ -540,7 +540,7 @@ const MasonryItem = ({
                       <ImageGuard.Safe>
                         <EdgeImage
                           src={image.url}
-                          name={image.name ?? image.id}
+                          name={image.name ?? image.id.toString()}
                           alt={image.name ?? undefined}
                           width={450}
                           placeholder="empty"
