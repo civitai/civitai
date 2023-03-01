@@ -4,15 +4,16 @@ import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
 import { bytesToKB } from '~/utils/number-helpers';
 import { useCatchNavigationStore } from './catch-navigation.store';
+import negate from 'lodash/negate';
 
 type UploadResult = {
-  url: string | null;
+  url: string;
   bucket: string;
   key: string;
   name: string;
   size: number;
-  meta: Record<string, unknown>;
   uuid: string;
+  meta?: Record<string, unknown>;
 };
 
 type RequestOptions = {
@@ -44,7 +45,7 @@ type TrackedFile = {
   status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
   abort: () => void;
   uuid: string;
-  meta: Record<string, unknown>;
+  meta?: Record<string, unknown>;
 };
 
 type UploadStatus = 'pending' | 'error' | 'success' | 'aborted';
@@ -68,11 +69,11 @@ type StoreProps = {
     args: {
       file: File;
       type: UploadType;
-      meta: Record<string, unknown>;
+      meta?: Record<string, unknown>;
       options?: UploadToS3Options;
     },
     cb?: ({ url, bucket, key, name, size }: UploadResult) => void
-  ) => Promise<UploadResult>;
+  ) => Promise<UploadResult | undefined>;
 };
 
 export const useS3UploadStore = create<StoreProps>()(
@@ -88,12 +89,13 @@ export const useS3UploadStore = create<StoreProps>()(
         bucket,
         key,
       }: {
-        url: string | null;
+        url: string;
         bucket: string;
         key: string;
       }
     ): UploadResult {
       const items = get().items;
+      console.log({ items });
       const index = items.findIndex((x) => x.uuid === uuid);
       if (index === -1) throw new Error('index out of bounds');
       const item = items[index];
@@ -117,10 +119,10 @@ export const useS3UploadStore = create<StoreProps>()(
     }
 
     return {
-      items: [],
+      items: [] as TrackedFile[],
       clear: (predicate) => {
         set((state) => {
-          state.items = predicate ? state.items.filter(predicate) : [];
+          state.items = predicate ? state.items.filter(negate(predicate)) : [];
           if (state.items.length === 0) deregisterCatchNavigation();
         });
       },
@@ -139,7 +141,9 @@ export const useS3UploadStore = create<StoreProps>()(
           const items = get().items;
           const index = items.findIndex((x) => x.uuid === uuid);
           if (index === -1) throw new Error('index out of bounds');
-          state.items[index].meta = dispatch(state.items[index].meta);
+
+          const { meta } = state.items[index];
+          if (meta) state.items[index].meta = dispatch(meta);
         });
       },
       abort: (uuid) => {
@@ -297,15 +301,16 @@ export const useS3UploadStore = create<StoreProps>()(
             if (uploadStatus !== 'success') {
               updateFile(uuid, { status: uploadStatus, file: undefined });
               await abortUpload();
-              const payload = preparePayload(uuid, { url: null, bucket, key });
-              cb?.(payload);
-              return payload;
+              return;
+              // const payload = preparePayload(uuid, { url: null, bucket, key });
+              // cb?.(payload);
+              // return payload;
             }
           }
 
           // Complete the multipart upload
           await completeUpload();
-          await updateFile(uuid, { status: 'success' });
+          updateFile(uuid, { status: 'success' });
 
           const url = urls[0].url.split('?')[0];
           const payload = preparePayload(uuid, { url, bucket, key });

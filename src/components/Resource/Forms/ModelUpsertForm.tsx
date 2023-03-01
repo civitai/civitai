@@ -1,15 +1,4 @@
-import {
-  Alert,
-  Button,
-  Divider,
-  Grid,
-  Group,
-  Input,
-  Paper,
-  Stack,
-  Text,
-  ThemeIcon,
-} from '@mantine/core';
+import { Alert, Button, Grid, Group, Input, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
 import { CheckpointType, CommercialUse, ModelType, TagTarget } from '@prisma/client';
 import {
   IconCurrencyDollarOff,
@@ -31,7 +20,9 @@ import {
   InputCheckbox,
 } from '~/libs/form';
 import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
+import { showErrorNotification } from '~/utils/notifications';
 import { splitUppercase } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 
 const schema = modelUpsertSchema.refine(
   (data) => (data.type === 'Checkpoint' ? !!data.checkpointType : true),
@@ -41,7 +32,7 @@ const schema = modelUpsertSchema.refine(
   }
 );
 
-export function ModelUpsertForm({ model }: Props) {
+export function ModelUpsertForm({ model, onSubmit }: Props) {
   const { goNext } = useWizardContext();
 
   const defaultValues: ModelUpsertInput = {
@@ -63,7 +54,7 @@ export function ModelUpsertForm({ model }: Props) {
 
   const handleModelTypeChange = (value: ModelType) => {
     // TODO.post - uncomment this code if useForm({ shouldUnregister:false })
-    // form.setValue('checkpointType', null);
+    form.setValue('checkpointType', null);
     switch (value) {
       case 'Checkpoint':
         form.setValue('checkpointType', CheckpointType.Merge);
@@ -73,8 +64,17 @@ export function ModelUpsertForm({ model }: Props) {
     }
   };
 
+  const upsertModelMutation = trpc.model.upsert.useMutation({
+    onSuccess: (data) => {
+      onSubmit(data);
+      goNext();
+    },
+    onError: (error) => {
+      showErrorNotification({ error: new Error(error.message), title: 'Failed to save model' });
+    },
+  });
   const handleSubmit = (data: z.infer<typeof schema>) => {
-    goNext();
+    upsertModelMutation.mutate(data);
   };
 
   return (
@@ -129,7 +129,12 @@ export function ModelUpsertForm({ model }: Props) {
               </Group>
               {errors.checkpointType && <Input.Error>{errors.checkpointType.message}</Input.Error>}
             </Stack>
-            <InputTags name="tagsOnModels" label="Tags" target={[TagTarget.Model]} />
+            <InputTags
+              name="tagsOnModels"
+              label="Tags"
+              description="Search or create tags for your model"
+              target={[TagTarget.Model]}
+            />
             <InputRTE
               name="description"
               label="About your model"
@@ -252,7 +257,9 @@ export function ModelUpsertForm({ model }: Props) {
         </Grid.Col>
         <Grid.Col span={12}>
           <Group position="right">
-            <Button type="submit">Next</Button>
+            <Button type="submit" loading={upsertModelMutation.isLoading}>
+              Next
+            </Button>
           </Group>
         </Grid.Col>
       </Grid>
@@ -261,5 +268,6 @@ export function ModelUpsertForm({ model }: Props) {
 }
 
 type Props = {
+  onSubmit: (data: ModelUpsertInput) => void;
   model?: ModelUpsertInput;
 };

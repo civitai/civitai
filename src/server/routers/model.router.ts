@@ -14,6 +14,7 @@ import {
   restoreModelHandler,
   unpublishModelHandler,
   updateModelHandler,
+  upsertModelHandler,
 } from '~/server/controllers/model.controller';
 import { dbWrite } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
@@ -22,6 +23,7 @@ import {
   getAllModelsSchema,
   ModelInput,
   modelSchema,
+  modelUpsertSchema,
 } from '~/server/schema/model.schema';
 import {
   guardedProcedure,
@@ -90,6 +92,7 @@ export const modelRouter = router({
     .query(getModelsWithVersionsHandler),
   getVersions: publicProcedure.input(getByIdSchema).query(getModelVersionsHandler),
   add: guardedProcedure.input(modelSchema).use(checkFilesExistence).mutation(createModelHandler),
+  upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
   update: protectedProcedure
     .input(modelSchema.extend({ id: z.number() }))
     .use(isOwnerOrModerator)

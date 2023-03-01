@@ -4,7 +4,12 @@ import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { DeleteModelSchema, GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
+import {
+  DeleteModelSchema,
+  GetAllModelsOutput,
+  ModelInput,
+  ModelUpsertInput,
+} from '~/server/schema/model.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   getAllModelsWithVersionsSelect,
@@ -21,6 +26,7 @@ import {
   restoreModelById,
   updateModel,
   updateModelById,
+  upsertModel,
 } from '~/server/services/model.service';
 import {
   throwAuthorizationError,
@@ -249,6 +255,25 @@ export const createModelHandler = async ({
   try {
     const { user } = ctx;
     const model = await createModel({ ...input, userId: user.id });
+
+    return model;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const upsertModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ModelUpsertInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const model = await upsertModel({ ...input, userId });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     return model;
   } catch (error) {

@@ -1,16 +1,18 @@
 import {
-  Input,
-  InputWrapperProps,
+  ActionIcon,
   Autocomplete,
   Badge,
+  Center,
   createStyles,
   Group,
-  Center,
-  ActionIcon,
+  Input,
+  InputWrapperProps,
+  UnstyledButton,
 } from '@mantine/core';
 import { getHotkeyHandler, useDebouncedState, useDisclosure } from '@mantine/hooks';
 import { TagTarget } from '@prisma/client';
 import { IconPlus, IconX } from '@tabler/icons';
+import { useMemo } from 'react';
 
 import { trpc } from '~/utils/trpc';
 
@@ -31,16 +33,17 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
   const [search, setSearch] = useDebouncedState<string>('', 300);
   const [adding, { open, close }] = useDisclosure(false);
 
-  //TODO.tags - default query trending tags
-  const { data, isFetching } = trpc.tag.getAll.useQuery(
-    { limit: 10, entityType: target, query: search.trim().toLowerCase() },
-    { enabled: !!search.length }
-  );
+  const { data, isFetching } = trpc.tag.getAll.useQuery({
+    limit: 10,
+    entityType: target,
+    query: search.trim().toLowerCase(),
+  });
 
   const handleAddTag = (item: { id?: number; value: string }) => {
     const updated = [...value, { id: item.id, name: item.value }];
     onChange?.(updated);
     setSearch('');
+    close();
   };
   const handleRemoveTag = (index: number) => {
     const updated = [...value];
@@ -48,9 +51,32 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
     onChange?.(updated);
   };
 
+  const selectedTags = useMemo(() => value.map((tag) => tag.name), [value]);
+  const isNewTag = search && !selectedTags.includes(search.trim().toLowerCase());
+
   return (
     <Input.Wrapper {...props}>
       <Group mt={5}>
+        {value.map((tag, index) => (
+          <Badge
+            key={tag.id ?? index}
+            size="lg"
+            sx={{ paddingRight: 5 }}
+            rightSection={
+              <ActionIcon
+                size="xs"
+                color="blue"
+                radius="xl"
+                variant="transparent"
+                onClick={() => handleRemoveTag(index)}
+              >
+                <IconX />
+              </ActionIcon>
+            }
+          >
+            {tag.name}
+          </Badge>
+        ))}
         <Badge
           size="lg"
           className={classes.badge}
@@ -76,9 +102,42 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
           {adding ? (
             <Autocomplete
               variant="unstyled"
-              data={data?.items?.map((tag) => ({ id: tag.id, value: tag.name })) ?? []}
+              classNames={{ dropdown: classes.dropdown }}
+              data={
+                data?.items
+                  ?.filter((tag) => !selectedTags.includes(tag.name))
+                  .map((tag) => ({
+                    id: tag.id,
+                    value: tag.name,
+                    group: !search ? 'Trending tags' : undefined,
+                  })) ?? []
+              }
               onChange={setSearch}
-              nothingFound={isFetching ? 'Loading...' : 'Nothing found'}
+              onKeyDown={getHotkeyHandler([
+                [
+                  'Enter',
+                  () => {
+                    if (!isNewTag) return;
+                    const exisiting =
+                      data && data.items.find((tag) => tag.name === search.trim().toLowerCase());
+                    handleAddTag({ id: exisiting?.id, value: exisiting?.name ?? search });
+                  },
+                ],
+              ])}
+              nothingFound={
+                isFetching ? (
+                  'Searching...'
+                ) : isNewTag ? (
+                  <UnstyledButton
+                    className={classes.createOption}
+                    onClick={() => handleAddTag({ value: search })}
+                  >
+                    {`+ Create tag "${search}"`}
+                  </UnstyledButton>
+                ) : (
+                  'Nothing found'
+                )
+              }
               placeholder="Type to search..."
               onItemSubmit={handleAddTag}
               onBlur={() => {
@@ -92,37 +151,29 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
             <IconPlus />
           )}
         </Badge>
-        {value.map((tag, index) => (
-          <Badge
-            key={tag.id}
-            size="lg"
-            sx={{ paddingRight: 5 }}
-            rightSection={
-              <ActionIcon
-                size="xs"
-                color="blue"
-                radius="xl"
-                variant="transparent"
-                onClick={() => handleRemoveTag(index)}
-              >
-                <IconX />
-              </ActionIcon>
-            }
-          >
-            {tag.name}
-          </Badge>
-        ))}
       </Group>
     </Input.Wrapper>
   );
 }
 
-const useStyles = createStyles(() => ({
+const useStyles = createStyles((theme) => ({
   badge: {
     textTransform: 'none',
     cursor: 'pointer',
   },
   inner: {
     display: 'flex',
+  },
+  createOption: {
+    fontSize: theme.fontSizes.sm,
+    padding: theme.spacing.xs,
+    borderRadius: theme.radius.sm,
+
+    '&:hover': {
+      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[1],
+    },
+  },
+  dropdown: {
+    maxWidth: '300px !important',
   },
 }));
