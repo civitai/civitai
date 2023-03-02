@@ -1,23 +1,20 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 
-export const deliverCosmetics = createJob(
-  'deliver-cosmetics',
-  '*/1 * * * *',
-  async () => {
-    // Get the last time this ran from the KeyValue store
-    // --------------------------------------
-    const key = 'last-cosmetic-delivery';
-    const lastDelivered = new Date(
-      ((
-        await dbWrite.keyValue.findUnique({
-          where: { key },
-        })
-      )?.value as number) ?? 0
-    ).toISOString();
+export const deliverCosmetics = createJob('deliver-cosmetics', '*/1 * * * *', async () => {
+  // Get the last time this ran from the KeyValue store
+  // --------------------------------------
+  const key = 'last-cosmetic-delivery';
+  const lastDelivered = new Date(
+    ((
+      await dbWrite.keyValue.findUnique({
+        where: { key },
+      })
+    )?.value as number) ?? 0
+  ).toISOString();
 
-    const deliverPurchasedCosmetics = async () =>
-      dbWrite.$executeRawUnsafe(`
+  const deliverPurchasedCosmetics = async () =>
+    dbWrite.$executeRawUnsafe(`
       -- Deliver purchased cosmetics
       with recent_purchases AS (
         SELECT
@@ -41,8 +38,8 @@ export const deliverCosmetics = createJob(
       WHERE NOT EXISTS (SELECT 1 FROM "UserCosmetic" uc WHERE uc."cosmeticId" = c.id AND uc."userId" = p."userId");
     `);
 
-    const revokeMembershipLimitedCosmetics = async () =>
-      dbWrite.$executeRawUnsafe(`
+  const revokeMembershipLimitedCosmetics = async () =>
+    dbWrite.$executeRawUnsafe(`
         -- Revoke member limited cosmetics
         WITH to_revoke AS (
           SELECT
@@ -61,21 +58,17 @@ export const deliverCosmetics = createJob(
         );
       `);
 
-    // Deliver cosmetics
-    // --------------------------------------------
-    await deliverPurchasedCosmetics();
-    await revokeMembershipLimitedCosmetics();
+  // Deliver cosmetics
+  // --------------------------------------------
+  await deliverPurchasedCosmetics();
+  await revokeMembershipLimitedCosmetics();
 
-    // Update the last time this ran in the KeyValue store
-    // --------------------------------------------
-    const value = new Date().getTime();
-    await dbWrite.keyValue.upsert({
-      where: { key },
-      update: { value },
-      create: { key, value },
-    });
-  },
-  {
-    shouldWait: false,
-  }
-);
+  // Update the last time this ran in the KeyValue store
+  // --------------------------------------------
+  const value = new Date().getTime();
+  await dbWrite.keyValue.upsert({
+    where: { key },
+    update: { value },
+    create: { key, value },
+  });
+});

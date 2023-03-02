@@ -8,27 +8,30 @@ const METRIC_LAST_UPDATED_KEY = 'last-metrics-update';
 const RANK_LAST_UPDATED_KEY = 'last-rank-update';
 const RANK_UPDATE_DELAY = 1000 * 60 * 60; // 60 minutes
 
-export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async () => {
-  // Get the last time this ran from the KeyValue store
-  // --------------------------------------
-  const dates = await dbWrite.keyValue.findMany({
-    where: { key: { in: [METRIC_LAST_UPDATED_KEY, RANK_LAST_UPDATED_KEY] } },
-  });
-  const lastUpdateDate = new Date(
-    (dates.find((d) => d.key === METRIC_LAST_UPDATED_KEY)?.value as number) ?? 0
-  );
-  const lastRankDate = new Date(
-    (dates?.find((d) => d.key === RANK_LAST_UPDATED_KEY)?.value as number) ?? 0
-  );
-  const lastUpdate = lastUpdateDate.toISOString();
+export const updateMetricsJob = createJob(
+  'update-metrics',
+  '*/1 * * * *',
+  async () => {
+    // Get the last time this ran from the KeyValue store
+    // --------------------------------------
+    const dates = await dbWrite.keyValue.findMany({
+      where: { key: { in: [METRIC_LAST_UPDATED_KEY, RANK_LAST_UPDATED_KEY] } },
+    });
+    const lastUpdateDate = new Date(
+      (dates.find((d) => d.key === METRIC_LAST_UPDATED_KEY)?.value as number) ?? 0
+    );
+    const lastRankDate = new Date(
+      (dates?.find((d) => d.key === RANK_LAST_UPDATED_KEY)?.value as number) ?? 0
+    );
+    const lastUpdate = lastUpdateDate.toISOString();
 
-  const updateModelMetrics = async (target: 'models' | 'versions') => {
-    const [tableName, tableId, viewName, viewId] =
-      target === 'models'
-        ? ['ModelMetric', 'modelId', 'affected_models', 'model_id']
-        : ['ModelVersionMetric', 'modelVersionId', 'affected_versions', 'model_version_id'];
+    const updateModelMetrics = async (target: 'models' | 'versions') => {
+      const [tableName, tableId, viewName, viewId] =
+        target === 'models'
+          ? ['ModelMetric', 'modelId', 'affected_models', 'model_id']
+          : ['ModelVersionMetric', 'modelVersionId', 'affected_versions', 'model_version_id'];
 
-    await dbWrite.$executeRawUnsafe(`
+      await dbWrite.$executeRawUnsafe(`
         -- Get all user activities that have happened since then that affect metrics
         WITH recent_activities AS
         (
@@ -273,12 +276,12 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
           SET "downloadCount" = EXCLUDED."downloadCount", "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating, "favoriteCount" = EXCLUDED."favoriteCount", "commentCount" = EXCLUDED."commentCount";
         `);
 
-    if (target === 'versions')
-      await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Model'`);
-  };
+      if (target === 'versions')
+        await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Model'`);
+    };
 
-  const updateUserMetrics = async () => {
-    await dbWrite.$executeRawUnsafe(`
+    const updateUserMetrics = async () => {
+      await dbWrite.$executeRawUnsafe(`
       WITH recent_engagements AS
       (
         SELECT
@@ -509,11 +512,11 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("userId", timeframe) DO UPDATE
         SET "followerCount" = EXCLUDED."followerCount", "followingCount" = EXCLUDED."followingCount", "hiddenCount" = EXCLUDED."hiddenCount", "uploadCount" = EXCLUDED."uploadCount", "reviewCount" = EXCLUDED."reviewCount", "answerCount" = EXCLUDED."answerCount", "answerAcceptCount" = EXCLUDED."answerAcceptCount";
     `);
-    await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'User'`);
-  };
+      await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'User'`);
+    };
 
-  const updateQuestionMetrics = async () => {
-    await dbWrite.$executeRawUnsafe(`
+    const updateQuestionMetrics = async () => {
+      await dbWrite.$executeRawUnsafe(`
       WITH recent_engagements AS
       (
         SELECT
@@ -641,11 +644,11 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("questionId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "answerCount" = EXCLUDED."answerCount";
     `);
-    await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Question'`);
-  };
+      await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Question'`);
+    };
 
-  const updateAnswerMetrics = async () => {
-    await dbWrite.$executeRawUnsafe(`
+    const updateAnswerMetrics = async () => {
+      await dbWrite.$executeRawUnsafe(`
       WITH recent_engagements AS
       (
         SELECT
@@ -796,11 +799,11 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("answerId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "checkCount" = EXCLUDED."checkCount", "crossCount" = EXCLUDED."crossCount";
     `);
-    await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Answer'`);
-  };
+      await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Answer'`);
+    };
 
-  const updateTagMetrics = async () => {
-    await dbWrite.$executeRawUnsafe(`
+    const updateTagMetrics = async () => {
+      await dbWrite.$executeRawUnsafe(`
       -- Get all engagements that have happened since then that affect metrics
       WITH recent_engagements AS
       (
@@ -940,11 +943,11 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
       ON CONFLICT ("tagId", timeframe) DO UPDATE
         SET "followerCount" = EXCLUDED."followerCount", "modelCount" = EXCLUDED."modelCount", "hiddenCount" = EXCLUDED."hiddenCount";
     `);
-    await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Tag'`);
-  };
+      await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Tag'`);
+    };
 
-  const updateImageMetrics = async () => {
-    await dbWrite.$executeRawUnsafe(`
+    const updateImageMetrics = async () => {
+      await dbWrite.$executeRawUnsafe(`
       WITH recent_engagements AS
       (
         SELECT
@@ -1110,78 +1113,82 @@ export const updateMetricsJob = createJob('update-metrics', '*/1 * * * *', async
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount";
     `);
 
-    await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Image'`);
-  };
+      await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Image'`);
+    };
 
-  const refreshModelRank = async () =>
-    await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelRank"');
+    const refreshModelRank = async () =>
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelRank"');
 
-  const refreshVersionModelRank = async () =>
-    await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelVersionRank"');
+    const refreshVersionModelRank = async () =>
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelVersionRank"');
 
-  const refreshTagRank = async () =>
-    await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "TagRank"');
+    const refreshTagRank = async () =>
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "TagRank"');
 
-  const refreshUserRank = async () =>
-    await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "UserRank"');
+    const refreshUserRank = async () =>
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "UserRank"');
 
-  const refreshImageRank = async () =>
-    await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ImageRank"');
+    const refreshImageRank = async () =>
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ImageRank"');
 
-  const clearDayMetrics = async () =>
-    await Promise.all(
-      [
-        `UPDATE "ModelMetric" SET "downloadCount" = 0, "ratingCount" = 0, rating = 0, "favoriteCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
-        `UPDATE "ModelVersionMetric" SET "downloadCount" = 0, "ratingCount" = 0, rating = 0, "favoriteCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
-        `UPDATE "QuestionMetric" SET "answerCount" = 0, "commentCount" = 0, "heartCount" = 0 WHERE timeframe = 'Day';`,
-        `UPDATE "AnswerMetric" SET "heartCount" = 0, "checkCount" = 0, "crossCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
-        `UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
-      ].map((x) => dbWrite.$executeRawUnsafe(x))
-    );
+    const clearDayMetrics = async () =>
+      await Promise.all(
+        [
+          `UPDATE "ModelMetric" SET "downloadCount" = 0, "ratingCount" = 0, rating = 0, "favoriteCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
+          `UPDATE "ModelVersionMetric" SET "downloadCount" = 0, "ratingCount" = 0, rating = 0, "favoriteCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
+          `UPDATE "QuestionMetric" SET "answerCount" = 0, "commentCount" = 0, "heartCount" = 0 WHERE timeframe = 'Day';`,
+          `UPDATE "AnswerMetric" SET "heartCount" = 0, "checkCount" = 0, "crossCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
+          `UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
+        ].map((x) => dbWrite.$executeRawUnsafe(x))
+      );
 
-  // If this is the first metric update of the day, reset the day metrics
-  // -------------------------------------------------------------------
-  if (lastUpdateDate.getDate() !== new Date().getDate()) {
-    await clearDayMetrics();
-    log('Cleared day metrics');
-  }
+    // If this is the first metric update of the day, reset the day metrics
+    // -------------------------------------------------------------------
+    if (lastUpdateDate.getDate() !== new Date().getDate()) {
+      await clearDayMetrics();
+      log('Cleared day metrics');
+    }
 
-  // Update all affected metrics
-  // --------------------------------------------
-  await updateModelMetrics('models');
-  await updateModelMetrics('versions');
-  await updateAnswerMetrics();
-  await updateQuestionMetrics();
-  await updateUserMetrics();
-  await updateTagMetrics();
-  await updateImageMetrics();
-  await refreshModelRank();
-  await refreshVersionModelRank();
-  await refreshTagRank();
-  log('Updated metrics');
+    // Update all affected metrics
+    // --------------------------------------------
+    await updateModelMetrics('models');
+    await updateModelMetrics('versions');
+    await updateAnswerMetrics();
+    await updateQuestionMetrics();
+    await updateUserMetrics();
+    await updateTagMetrics();
+    await updateImageMetrics();
+    await refreshModelRank();
+    await refreshVersionModelRank();
+    await refreshTagRank();
+    log('Updated metrics');
 
-  // Update the last update time
-  // --------------------------------------------
-  await dbWrite?.keyValue.upsert({
-    where: { key: METRIC_LAST_UPDATED_KEY },
-    create: { key: METRIC_LAST_UPDATED_KEY, value: new Date().getTime() },
-    update: { value: new Date().getTime() },
-  });
-
-  // Check if we need to update the slow ranks
-  // --------------------------------------------
-  const shouldUpdateRanks = lastRankDate.getTime() + RANK_UPDATE_DELAY <= new Date().getTime();
-  if (shouldUpdateRanks) {
-    await refreshImageRank();
-    await refreshUserRank();
-    log('Updated ranks');
+    // Update the last update time
+    // --------------------------------------------
     await dbWrite?.keyValue.upsert({
-      where: { key: RANK_LAST_UPDATED_KEY },
-      create: { key: RANK_LAST_UPDATED_KEY, value: new Date().getTime() },
+      where: { key: METRIC_LAST_UPDATED_KEY },
+      create: { key: METRIC_LAST_UPDATED_KEY, value: new Date().getTime() },
       update: { value: new Date().getTime() },
     });
+
+    // Check if we need to update the slow ranks
+    // --------------------------------------------
+    const shouldUpdateRanks = lastRankDate.getTime() + RANK_UPDATE_DELAY <= new Date().getTime();
+    if (shouldUpdateRanks) {
+      await refreshImageRank();
+      await refreshUserRank();
+      log('Updated ranks');
+      await dbWrite?.keyValue.upsert({
+        where: { key: RANK_LAST_UPDATED_KEY },
+        create: { key: RANK_LAST_UPDATED_KEY, value: new Date().getTime() },
+        update: { value: new Date().getTime() },
+      });
+    }
+  },
+  {
+    lockExpiration: 5 * 60,
   }
-});
+);
 
 type MetricUpdateType = 'Model' | 'ModelVersion' | 'Answer' | 'Question' | 'User' | 'Tag' | 'Image';
 export const queueMetricUpdate = async (type: MetricUpdateType, id: number) => {
