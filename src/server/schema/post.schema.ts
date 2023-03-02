@@ -14,7 +14,13 @@ export const postUpdateSchema = z.object({
   detail: z.string().optional(),
 });
 
-export type AddPostTagSchema = z.infer<typeof addPostTagSchema>;
+export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;
+export const removePostTagSchema = z.object({
+  postId: z.number(),
+  id: z.number(),
+});
+
+export type AddPostTagInput = z.infer<typeof addPostTagSchema>;
 export const addPostTagSchema = z.object({
   postId: z.number(),
   id: z.number().optional(),
@@ -38,4 +44,10 @@ export const addPostImageSchema = z.object({
     if (value && !Object.keys(value).length) return null;
     return value;
   }, imageMetaSchema.nullish()),
+});
+
+export type ReorderPostImagesInput = z.infer<typeof reorderPostImagesSchema>;
+export const reorderPostImagesSchema = z.object({
+  id: z.number(),
+  imageIds: z.number().array(),
 });

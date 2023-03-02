@@ -21,7 +21,6 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   meta: true,
   generationProcess: true,
   needsReview: true,
-  index: true,
   tags: { select: { tag: { select: simpleTagSelect } } }, // TODO.posts - remove this. We may  not even need tags initially, but if we do need tags then we probably only need to load them when looking at the image details
   _count: {
     select: {

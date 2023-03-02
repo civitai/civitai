@@ -1,32 +1,47 @@
-import { imageSelect } from './../selectors/image.selector';
-import { userWithCosmeticsSelect } from './../selectors/user.selector';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { GetByIdInput } from './../schema/base.schema';
 import {
   PostUpdateInput,
-  AddPostTagSchema,
+  AddPostTagInput,
   AddPostImageInput,
   PostCreateInput,
+  ReorderPostImagesInput,
+  RemovePostTagInput,
 } from './../schema/post.schema';
 import { dbWrite } from '~/server/db/client';
 import { TagType, TagTarget, Prisma } from '@prisma/client';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
+import { postImageSelect, postSelect } from '~/server/selectors/post.selector';
 
-/** used for post detail and create services */
-const postImageSelect = imageSelect;
+export const getPost = async ({ id }: GetByIdInput) => {
+  const post = await dbWrite.post.findUnique({
+    where: { id },
+    select: postSelect,
+  });
+  if (!post) throw throwNotFoundError();
+  return {
+    ...post,
+    tags: post.tags.flatMap((x) => x.tag),
+  };
+};
 
 export const createPost = async ({
   userId,
   modelVersionId,
 }: PostCreateInput & { userId: number }) => {
-  return await dbWrite.post.create({ data: { userId, modelVersionId } });
+  return await dbWrite.post.create({ data: { userId, modelVersionId }, select: postSelect });
 };
 
 export const updatePost = async (data: PostUpdateInput) => {
   await dbWrite.post.update({ where: { id: data.id }, data });
 };
 
-export const updatePostTags = async ({ postId, id, name: initialName }: AddPostTagSchema) => {
-  const name = initialName.toLowerCase();
+export const deletePost = async ({ id }: GetByIdInput) => {
+  await dbWrite.post.delete({ where: { id } });
+};
+
+export const addPostTag = async ({ postId, id, name: initialName }: AddPostTagInput) => {
+  const name = initialName.toLowerCase().trim();
   if (!id) {
     return await dbWrite.tag.create({
       data: {
@@ -41,6 +56,7 @@ export const updatePostTags = async ({ postId, id, name: initialName }: AddPostT
       },
     });
   } else {
+    // TODO.posts - revisit this. When a user is adding tags, will we display tags that aren't TagTarget.Post? If so, then we need to rethink this
     return await dbWrite.tag.update({
       where: { id },
       data: {
@@ -55,17 +71,8 @@ export const updatePostTags = async ({ postId, id, name: initialName }: AddPostT
   }
 };
 
-export const getPost = async ({ id }: GetByIdInput) => {
-  return await dbWrite.post.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      title: true,
-      scanned: true,
-      user: { select: userWithCosmeticsSelect },
-      images: { select: postImageSelect },
-    },
-  });
+export const removePostTag = async ({ postId, id }: RemovePostTagInput) => {
+  await dbWrite.tagsOnPost.delete({ where: { tagId_postId: { tagId: id, postId } } });
 };
 
 export const addPostImage = async ({
@@ -103,4 +110,14 @@ export const addPostImage = async ({
     },
     select: postImageSelect,
   });
+};
+
+export const reorderPostImages = async ({ imageIds }: ReorderPostImagesInput) => {
+  const transaction = dbWrite.$transaction(
+    imageIds.map((id, index) =>
+      dbWrite.image.update({ where: { id }, data: { index }, select: postImageSelect })
+    )
+  );
+
+  return transaction;
 };

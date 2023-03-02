@@ -1,34 +1,33 @@
-import { useEffect } from 'react';
-import { useRouter } from 'next/router';
 import { PostEditLayout } from '~/components/Post/PostEditLayout';
-import { usePostImagesContext } from '~/components/Post/PostImagesProvider';
-import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { trpc } from '~/utils/trpc';
+import { useEditPostContext } from '~/components/Post/EditPostProvider';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { isNumber } from '~/utils/type-guards';
+import { Container, Title, Stack } from '@mantine/core';
+import EditPostImages from '~/components/Post/EditPostImages';
 
 export default function PostEdit() {
-  const router = useRouter();
-  const postId = Number(router.query.postId);
-  const { upload, items, handlers } = usePostImagesContext();
-  const queryUtils = trpc.useContext();
-
-  const { data, isLoading } = trpc.post.get.useQuery({ id: postId });
-
-  useEffect(() => {
-    // only allow syncing items with data when items haven't already been set
-    if (!items.length && !!data) {
-      handlers.setState(data.images.map((image) => ({ type: 'image', ...image })));
-    }
-  }, [data]); //eslint-disable-line
-
-  const handleDrop = (files: File[]) => upload(postId, files);
-
+  const id = useEditPostContext((state) => state.id);
   return (
-    <>
-      {/* Title input */}
-      <ImageDropzone onDrop={handleDrop} count={items.length} />
-      {/* List images */}
-    </>
+    <Container>
+      <Stack>
+        <Title>PostId: {id}</Title>
+        <EditPostImages />
+      </Stack>
+    </Container>
   );
 }
 
 PostEdit.getLayout = PostEditLayout;
+
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  prefetch: 'always',
+  resolver: async ({ ctx, ssg }) => {
+    const params = (ctx.params ?? {}) as { postId: string };
+    const id = Number(params.postId);
+    if (!isNumber(id)) return { notFound: true };
+
+    await ssg?.post.get.prefetch({ id });
+  },
+});

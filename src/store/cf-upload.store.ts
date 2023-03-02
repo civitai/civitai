@@ -38,7 +38,7 @@ type StoreProps = {
       file: File;
       meta: T;
     },
-    cb?: ({ url, id, meta }: UploadResult<T>) => void
+    cb?: ({ url, id, meta }: UploadResult<T>) => Promise<void>
   ) => Promise<UploadResult<T>>;
 };
 
@@ -139,8 +139,8 @@ export const useCFUploadStore = create<StoreProps>()(
           formData.append('file', file);
           xhr.send(formData);
         });
-        const payload = { url: url.split('?')[0], id, meta, uuid };
-        cb?.(payload);
+        const payload = { url: url.split('?')[0], id, meta, uuid } as any;
+        await cb?.(payload);
         return payload;
       },
     };

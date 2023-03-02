@@ -17,12 +17,19 @@ export const getServerProxySSGHelpers = async (
   return ssg;
 };
 
-export function createServerSideProps<P>({ resolver, useSSG }: CreateServerSidePropsProps<P>) {
+export function createServerSideProps<P>({
+  resolver,
+  useSSG,
+  prefetch = 'once',
+}: CreateServerSidePropsProps<P>) {
   return async (context: GetServerSidePropsContext) => {
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
     const session = await getServerAuthSession(context);
 
-    const ssg = useSSG && !isClient ? await getServerProxySSGHelpers(context, session) : undefined;
+    const ssg =
+      useSSG && (prefetch === 'always' || !isClient)
+        ? await getServerProxySSGHelpers(context, session)
+        : undefined;
     const result = (await resolver({
       ctx: context,
       isClient,
@@ -55,6 +62,7 @@ type GetPropsFnResult<P> = {
 
 type CreateServerSidePropsProps<P> = {
   useSSG?: boolean;
+  prefetch?: 'always' | 'once';
   resolver: (
     context: CustomGetServerSidePropsContext
   ) => Promise<GetServerSidePropsResult<P> | void>;

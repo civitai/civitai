@@ -1,6 +1,21 @@
 import { GetByIdInput } from './../schema/base.schema';
-import { PostUpdateInput, AddPostImageInput } from './../schema/post.schema';
-import { createPost, getPost, updatePost, addPostImage } from './../services/post.service';
+import {
+  PostUpdateInput,
+  AddPostImageInput,
+  ReorderPostImagesInput,
+  AddPostTagInput,
+  RemovePostTagInput,
+} from './../schema/post.schema';
+import {
+  createPost,
+  getPost,
+  updatePost,
+  addPostImage,
+  reorderPostImages,
+  deletePost,
+  addPostTag,
+  removePostTag,
+} from './../services/post.service';
 import { TRPCError } from '@trpc/server';
 import { PostCreateInput } from '~/server/schema/post.schema';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
@@ -53,6 +68,66 @@ export const addPostImageHandler = async ({
 }) => {
   try {
     return await addPostImage({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const reorderPostImagesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ReorderPostImagesInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await reorderPostImages({ ...input });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const deletePostHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await deletePost({ ...input });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const addPostTagHandler = async ({
+  input,
+  ctx,
+}: {
+  input: AddPostTagInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await addPostTag({ ...input });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const removePostTagHandler = async ({
+  input,
+  ctx,
+}: {
+  input: RemovePostTagInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await removePostTag({ ...input });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
