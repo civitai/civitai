@@ -19,7 +19,7 @@ import {
   protectedProcedure,
   guardedProcedure,
 } from '~/server/trpc';
-import { dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
@@ -31,7 +31,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   let ownerId = userId;
   if (id) {
     const isModerator = ctx?.user?.isModerator;
-    ownerId = (await dbWrite.commentV2.findUnique({ where: { id } }))?.userId ?? 0;
+    ownerId = (await dbRead.commentV2.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator) {
       if (ownerId !== userId) throw throwAuthorizationError();
     }

@@ -2,7 +2,7 @@ import { modelHashSelect } from './../selectors/modelHash.selector';
 import { ModelStatus, ModelHashType, Prisma, UserActivityType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -391,7 +391,7 @@ export const getModelsWithVersionsHandler = async ({
 // TODO - TEMP HACK for reporting modal
 export const getModelReportDetailsHandler = async ({ input: { id } }: { input: GetByIdInput }) => {
   try {
-    return await dbWrite.model.findUnique({
+    return await dbRead.model.findUnique({
       where: { id },
       select: { userId: true, reportStats: { select: { ownershipPending: true } } },
     });

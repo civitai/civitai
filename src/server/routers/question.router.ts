@@ -4,7 +4,7 @@ import { getQuestionsSchema, upsertQuestionSchema } from '../schema/question.sch
 import { getByIdSchema } from '~/server/schema/base.schema';
 
 import { middleware, router, publicProcedure, protectedProcedure } from '~/server/trpc';
-import { dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
   deleteQuestionHandler,
@@ -22,7 +22,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   let ownerId = userId;
   if (id) {
     const isModerator = ctx?.user?.isModerator;
-    ownerId = (await dbWrite.question.findUnique({ where: { id } }))?.userId ?? 0;
+    ownerId = (await dbRead.question.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator) {
       if (ownerId !== userId) throw throwAuthorizationError();
     }

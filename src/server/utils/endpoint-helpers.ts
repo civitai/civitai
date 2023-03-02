@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { env } from '~/env/server.mjs';
 import { Partner } from '@prisma/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
@@ -136,7 +136,7 @@ export function PartnerEndpoint(
     if (!req.query.token || Array.isArray(req.query.token))
       return res.status(401).json({ error: 'Unauthorized' });
     const token = generateSecretHash(req.query.token);
-    const partner = await dbWrite.partner.findUnique({ where: { token } });
+    const partner = await dbRead.partner.findUnique({ where: { token } });
     if (!partner) return res.status(401).json({ error: 'Unauthorized', message: 'Bad token' });
 
     await handler(req, res, partner);
