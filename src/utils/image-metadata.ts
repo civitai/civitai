@@ -25,7 +25,12 @@ export async function getMetadata(file: File) {
     generationDetails = exif.parameters;
   }
 
-  const metadata = parseMetadata(generationDetails);
+  let metadata = {};
+  try {
+    metadata = parseMetadata(generationDetails);
+  } catch (e: any) { //eslint-disable-line
+    console.error('Error parsing metadata', e);
+  }
   const result = imageMetaSchema.safeParse(metadata);
   return result.success ? result.data : {};
 }
