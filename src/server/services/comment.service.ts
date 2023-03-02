@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { queueMetricUpdate } from '~/server/jobs/update-metrics';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -30,7 +30,7 @@ export const getComments = <TSelect extends Prisma.CommentSelect>({
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
-  return dbWrite.comment.findMany({
+  return dbRead.comment.findMany({
     take: limit,
     skip,
     cursor: cursor ? { id: cursor } : undefined,
@@ -65,14 +65,14 @@ export const getCommentById = <TSelect extends Prisma.CommentSelect>({
 }: GetByIdInput & { select: TSelect; user?: SessionUser }) => {
   const isMod = user?.isModerator ?? false;
 
-  return dbWrite.comment.findFirst({
+  return dbRead.comment.findFirst({
     where: { id, tosViolation: !isMod ? false : undefined },
     select,
   });
 };
 
 export const getCommentReactions = ({ commentId }: GetCommentReactionsSchema) => {
-  return dbWrite.commentReaction.findMany({
+  return dbRead.commentReaction.findMany({
     where: { commentId },
     select: getReactionsSelect,
   });
@@ -87,7 +87,7 @@ export const getUserReactionByCommentId = ({
   userId: number;
   commentId: number;
 }) => {
-  return dbWrite.commentReaction.findFirst({ where: { reaction, userId, commentId } });
+  return dbRead.commentReaction.findFirst({ where: { reaction, userId, commentId } });
 };
 
 export const createOrUpdateComment = ({

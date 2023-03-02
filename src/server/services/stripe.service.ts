@@ -2,7 +2,7 @@ import { isFutureDate } from '~/utils/date-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import * as Schema from '../schema/stripe.schema';
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { Stripe } from 'stripe';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -13,7 +13,7 @@ const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
 
 export const getPlans = async () => {
-  const products = await dbWrite.product.findMany({
+  const products = await dbRead.product.findMany({
     where: { active: true, prices: { some: { type: 'recurring', active: true } } },
     select: {
       id: true,
@@ -51,7 +51,7 @@ export const getPlans = async () => {
 };
 
 export const getUserSubscription = async ({ userId }: Schema.GetUserSubscriptionInput) => {
-  const subscription = await dbWrite.customerSubscription.findUnique({
+  const subscription = await dbRead.customerSubscription.findUnique({
     where: { userId },
     select: {
       id: true,

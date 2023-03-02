@@ -6,7 +6,7 @@ import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
@@ -26,7 +26,7 @@ export const getModel = <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   select: TSelect;
 }) => {
-  return dbWrite.model.findFirst({
+  return dbRead.model.findFirst({
     where: {
       id,
       OR: !user?.isModerator
@@ -157,7 +157,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     modelVersions: baseModels?.length ? { some: { baseModel: { in: baseModels } } } : undefined,
   };
 
-  const items = await dbWrite.model.findMany({
+  const items = await dbRead.model.findMany({
     take,
     skip,
     where,
@@ -179,7 +179,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   });
 
   if (count) {
-    const count = await dbWrite.model.count({ where });
+    const count = await dbRead.model.count({ where });
     return { items, count };
   }
 
@@ -187,7 +187,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
 };
 
 export const getModelVersionsMicro = ({ id }: { id: number }) => {
-  return dbWrite.modelVersion.findMany({
+  return dbRead.modelVersion.findMany({
     where: { modelId: id },
     orderBy: { index: 'asc' },
     select: { id: true, name: true },

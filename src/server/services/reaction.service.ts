@@ -1,6 +1,6 @@
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { ToggleReactionInput, ReactionEntityType } from './../schema/reaction.schema';
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { queueMetricUpdate } from '~/server/jobs/update-metrics';
 
 export const toggleReaction = async ({
@@ -22,22 +22,22 @@ const getReaction = async ({
 }: ToggleReactionInput & { userId: number }) => {
   switch (entityType) {
     case 'question':
-      return await dbWrite.questionReaction.findFirst({
+      return await dbRead.questionReaction.findFirst({
         where: { userId, reaction, questionId: entityId },
         select: { id: true },
       });
     case 'answer':
-      return await dbWrite.answerReaction.findFirst({
+      return await dbRead.answerReaction.findFirst({
         where: { userId, reaction, answerId: entityId },
         select: { id: true },
       });
     case 'comment':
-      return await dbWrite.commentV2Reaction.findFirst({
+      return await dbRead.commentV2Reaction.findFirst({
         where: { userId, reaction, commentId: entityId },
         select: { id: true },
       });
     case 'image':
-      return await dbWrite.imageReaction.findFirst({
+      return await dbRead.imageReaction.findFirst({
         where: { userId, reaction, imageId: entityId },
         select: { id: true },
       });

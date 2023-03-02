@@ -1,4 +1,4 @@
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import {
   AddAPIKeyInput,
   DeleteAPIKeyInput,
@@ -9,7 +9,7 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 
 export function getApiKey({ id }: GetAPIKeyInput) {
-  return dbWrite.apiKey.findUnique({
+  return dbRead.apiKey.findUnique({
     where: { id },
     select: {
       scope: true,
@@ -19,7 +19,7 @@ export function getApiKey({ id }: GetAPIKeyInput) {
 }
 
 export function getUserApiKeys({ take, skip, userId }: GetUserAPIKeysInput & { userId: number }) {
-  return dbWrite.apiKey.findMany({
+  return dbRead.apiKey.findMany({
     take,
     skip,
     where: { userId },
