@@ -208,7 +208,7 @@ export const getModelsInfiniteHandler = async ({
   return {
     nextCursor,
     items: items.map(({ modelVersions, reportStats, publishedAt, hashes, ...model }) => {
-      const rank = model.rank as Record<string, number>;
+      const rank = model.rank; // NOTE: null before metrics kick in
       const latestVersion = modelVersions[0];
       const { tags, ...image } = latestVersion.images[0]?.image ?? {};
       const earlyAccess =
@@ -223,11 +223,11 @@ export const getModelsInfiniteHandler = async ({
         ...model,
         hashes: hashes.map((hash) => hash.hash.toLowerCase()),
         rank: {
-          downloadCount: rank[`downloadCount${input.period}`],
-          favoriteCount: rank[`favoriteCount${input.period}`],
-          commentCount: rank[`commentCount${input.period}`],
-          ratingCount: rank[`ratingCount${input.period}`],
-          rating: rank[`rating${input.period}`],
+          downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
+          favoriteCount: rank?.[`favoriteCount${input.period}`] ?? 0,
+          commentCount: rank?.[`commentCount${input.period}`] ?? 0,
+          ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
+          rating: rank?.[`rating${input.period}`] ?? 0,
         },
         image,
         earlyAccess,
