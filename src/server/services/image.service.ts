@@ -190,8 +190,8 @@ export const getImageConnectionsById = ({ id, modelId, reviewId }: GetImageConne
                   },
                 },
               }
-            : undefined,
-          review: reviewId ? { select: { id: true } } : undefined,
+            : false,
+          review: reviewId ? { select: { id: true } } : false,
         },
       },
     },
