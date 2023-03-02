@@ -164,7 +164,7 @@ function MyApp(props: CustomAppProps) {
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
   const isClient = appContext.ctx?.req?.url?.startsWith('/_next/data');
-  if (isClient) return initialProps;
+  // if (isClient) return initialProps;
 
   const { pageProps, ...appProps } = initialProps;
   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx);
@@ -182,7 +182,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       ...appProps,
     };
   } else {
-    const session = typeof window === 'undefined' ? await getSession(appContext.ctx) : undefined;
+    const session = !isClient ? await getSession(appContext.ctx) : undefined;
     const flags = getFeatureFlags({ user: session?.user });
     return {
       pageProps: {

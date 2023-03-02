@@ -27,7 +27,6 @@ import {
 import { useEffect, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
-import { CivitaiLinkSvg } from '~/components/CivitaiLink/CivitaiLinkSvg';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 
