@@ -173,6 +173,7 @@ export const getImageConnectionsById = ({ id, modelId, reviewId }: GetImageConne
     select: {
       connections: {
         select: {
+          imageId: true,
           model: modelId
             ? {
                 select: {
@@ -190,8 +191,8 @@ export const getImageConnectionsById = ({ id, modelId, reviewId }: GetImageConne
                   },
                 },
               }
-            : false,
-          review: reviewId ? { select: { id: true } } : false,
+            : undefined,
+          review: reviewId ? { select: { id: true } } : undefined,
         },
       },
     },
