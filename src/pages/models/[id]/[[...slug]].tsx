@@ -98,6 +98,7 @@ import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
+import truncate from 'lodash/truncate';
 
 //TODO - Break model query into multiple queries
 /*
@@ -359,7 +360,7 @@ export default function ModelDetail({
   const meta = (
     <Meta
       title={`${model.name} | Stable Diffusion ${model.type} | Civitai`}
-      description={removeTags(model.description ?? '')}
+      description={truncate(removeTags(model.description ?? ''), { length: 150 })}
       image={
         nsfw || latestVersion?.images[0]?.url == null
           ? undefined
