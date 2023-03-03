@@ -356,6 +356,23 @@ export const toggleBlockedTag = async ({
   return dbWrite.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
 };
 
+export const updateAccountScope = async ({
+  userId,
+  provider,
+  scope,
+}: {
+  userId: number;
+  provider: string;
+  scope: string;
+}) => {
+  const account = await dbWrite.account.findFirst({
+    where: { userId, provider },
+    select: { id: true, scope: true },
+  });
+  if (account && account.scope != scope)
+    await dbWrite.account.update({ where: { id: account.id }, data: { scope } });
+};
+
 export const getSessionUser = async ({ userId, token }: { userId?: number; token?: string }) => {
   if (!userId && !token) return undefined;
   const where: Prisma.UserWhereInput = { deletedAt: null };
