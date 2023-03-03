@@ -14,6 +14,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { redis } from '~/server/redis/client';
 import { removeDisconnectedImages } from '~/server/jobs/remove-disconnected-images';
+import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 
 const jobs = [
   scanFilesJob,
@@ -25,6 +26,7 @@ const jobs = [
   deliverCosmetics,
   selectFeaturedImages,
   removeDisconnectedImages,
+  pushDiscordMetadata,
 ];
 
 const log = createLogger('jobs', 'green');
