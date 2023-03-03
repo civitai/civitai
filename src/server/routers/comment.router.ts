@@ -12,7 +12,7 @@ import {
   toggleReactionHandler,
   upsertCommentHandler,
 } from '~/server/controllers/comment.controller';
-import { dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   CommentUpsertInput,
@@ -38,7 +38,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
   let ownerId: number = userId;
   if (id) {
     const isModerator = ctx?.user?.isModerator;
-    ownerId = (await dbWrite.comment.findUnique({ where: { id } }))?.userId ?? 0;
+    ownerId = (await dbRead.comment.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator && ownerId) {
       if (ownerId !== userId) throw throwAuthorizationError();
     }
@@ -68,10 +68,10 @@ const isLocked = middleware(async ({ ctx, next, input }) => {
     });
 
   const { id, modelId } = input as CommentUpsertInput;
-  const model = await dbWrite.model.findUnique({ where: { id: modelId } });
+  const model = await dbRead.model.findUnique({ where: { id: modelId } });
   if (model?.locked) throw new TRPCError({ code: 'FORBIDDEN', message: 'Model is locked' });
 
-  const comment = await dbWrite.comment.findFirst({ where: { id } });
+  const comment = await dbRead.comment.findFirst({ where: { id } });
   return next({
     ctx: {
       ...ctx,

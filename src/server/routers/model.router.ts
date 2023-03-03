@@ -4,6 +4,7 @@ import { env } from '~/env/server.mjs';
 import {
   createModelHandler,
   deleteModelHandler,
+  getDownloadCommandHandler,
   getModelDetailsForReviewHandler,
   getModelHandler,
   getModelReportDetailsHandler,
@@ -16,11 +17,12 @@ import {
   updateModelHandler,
   upsertModelHandler,
 } from '~/server/controllers/model.controller';
-import { dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteModelSchema,
   getAllModelsSchema,
+  getDownloadSchema,
   ModelInput,
   modelSchema,
   modelUpsertSchema,
@@ -45,7 +47,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   let ownerId = userId;
   if (id) {
     const isModerator = ctx?.user?.isModerator;
-    ownerId = (await dbWrite.model.findUnique({ where: { id } }))?.userId ?? 0;
+    ownerId = (await dbRead.model.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator) {
       if (ownerId !== userId) throw throwAuthorizationError();
     }
@@ -112,4 +114,5 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .query(getModelDetailsForReviewHandler),
   restore: protectedProcedure.input(getByIdSchema).mutation(restoreModelHandler),
+  getDownloadCommand: protectedProcedure.input(getDownloadSchema).query(getDownloadCommandHandler),
 });

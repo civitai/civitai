@@ -31,6 +31,8 @@ import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
 import { isDev, isMaintenanceMode } from '~/env/other';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
+import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { MetaPWA } from '~/components/Meta/MetaPWA';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -97,12 +99,14 @@ function MyApp(props: CustomAppProps) {
         <CookiesProvider value={cookies}>
           <FeatureFlagsProvider flags={flags}>
             <ImageProcessingProvider>
-              <CustomModalsProvider>
-                <NotificationsProvider>
-                  <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                  <RoutedContextProvider2 />
-                </NotificationsProvider>
-              </CustomModalsProvider>
+              <CivitaiLinkProvider>
+                <CustomModalsProvider>
+                  <NotificationsProvider>
+                    <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                    <RoutedContextProvider2 />
+                  </NotificationsProvider>
+                </CustomModalsProvider>
+              </CivitaiLinkProvider>
             </ImageProcessingProvider>
           </FeatureFlagsProvider>
         </CookiesProvider>
@@ -114,9 +118,8 @@ function MyApp(props: CustomAppProps) {
     <>
       <Head>
         <title>Civitai | Share your models</title>
-        <meta name="viewport" content="maximum-scale=1, initial-scale=1, width=device-width" />
-        <link rel="manifest" href="/site.webmanifest" />
         <script defer data-domain="civitai.com" src="https://plausible.io/js/script.js"></script>
+        <MetaPWA />
       </Head>
 
       <ColorSchemeProvider
@@ -163,7 +166,7 @@ function MyApp(props: CustomAppProps) {
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
   const isClient = appContext.ctx?.req?.url?.startsWith('/_next/data');
-  if (isClient) return initialProps;
+  // if (isClient) return initialProps;
 
   const { pageProps, ...appProps } = initialProps;
   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx);
@@ -181,7 +184,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       ...appProps,
     };
   } else {
-    const session = typeof window === 'undefined' ? await getSession(appContext.ctx) : undefined;
+    const session = !isClient ? await getSession(appContext.ctx) : undefined;
     const flags = getFeatureFlags({ user: session?.user });
     return {
       pageProps: {

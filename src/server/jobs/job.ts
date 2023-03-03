@@ -6,21 +6,23 @@ export type Job = {
 };
 
 export type JobOptions = {
-  shouldWait?: boolean;
+  shouldWait: boolean;
+  lockExpiration: number;
 };
 
 export function createJob(
   name: string,
   cron: string,
   fn: () => Promise<void>,
-  options: JobOptions = {}
+  options: Partial<JobOptions> = {}
 ) {
   return {
     name,
     cron,
     run: fn,
     options: {
-      shouldWait: true,
+      shouldWait: false,
+      lockExpiration: 2 * 60,
       ...options,
     },
   } as Job;

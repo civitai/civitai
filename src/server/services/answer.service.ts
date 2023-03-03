@@ -1,20 +1,20 @@
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAnswersInput, UpsertAnswerInput, AnswerVoteInput } from './../schema/answer.schema';
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { Prisma } from '@prisma/client';
 
 export const getAnswers = async <TSelect extends Prisma.AnswerSelect>({
   questionId,
   select,
 }: GetAnswersInput & { select: TSelect }) => {
-  return await dbWrite.answer.findMany({ where: { questionId }, select });
+  return await dbRead.answer.findMany({ where: { questionId }, select });
 };
 
 export const getAnswerDetail = async <TSelect extends Prisma.AnswerSelect>({
   id,
   select,
 }: GetByIdInput & { select: TSelect }) => {
-  return await dbWrite.answer.findUnique({ where: { id }, select });
+  return await dbRead.answer.findUnique({ where: { id }, select });
 };
 
 export const upsertAnswer = async ({ userId, ...data }: UpsertAnswerInput & { userId: number }) => {

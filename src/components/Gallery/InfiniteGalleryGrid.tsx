@@ -194,6 +194,7 @@ function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
                   <ImageGuard.Safe>
                     <EdgeImage
                       src={image.url}
+                      name={image.name ?? image.id.toString()}
                       alt={image.name ?? undefined}
                       width={450}
                       placeholder="empty"

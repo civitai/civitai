@@ -12,7 +12,7 @@ import {
   moderateImageHandler,
   updateImageHandler,
 } from '~/server/controllers/image.controller';
-import { dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   getGalleryImageSchema,
@@ -33,7 +33,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   let ownerId = userId;
   if (id) {
     const isModerator = ctx?.user?.isModerator;
-    ownerId = (await dbWrite.image.findUnique({ where: { id } }))?.userId ?? 0;
+    ownerId = (await dbRead.image.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator) {
       if (ownerId !== userId) throw throwAuthorizationError();
     }

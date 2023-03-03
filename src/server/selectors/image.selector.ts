@@ -3,7 +3,7 @@ import { SessionUser } from 'next-auth';
 
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { ImageUploadProps } from '~/server/schema/image.schema';
-import { isNotTag, isTag } from '~/server/schema/tag.schema';
+import { isTag } from '~/server/schema/tag.schema';
 import { getNeedsReview } from '~/utils/image-metadata';
 
 import { getReactionsSelect } from './reaction.selector';
@@ -30,8 +30,8 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   },
 });
 
-const { id, name, ...imageSelectWithoutId } = imageSelect;
-export { imageSelectWithoutId };
+const { name, ...imageSelectWithoutName } = imageSelect;
+export { imageSelectWithoutName };
 
 const image = Prisma.validator<Prisma.ImageArgs>()({ select: imageSelect });
 

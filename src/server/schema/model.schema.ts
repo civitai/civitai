@@ -4,6 +4,7 @@ import {
   MetricTimeframe,
   CommercialUse,
   CheckpointType,
+  ModelFileFormat,
 } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
@@ -114,3 +115,11 @@ export const modelUpsertSchema = licensingSchema.extend({
   poi: z.boolean().optional(),
   locked: z.boolean().optional(),
 });
+
+export const getDownloadSchema = z.object({
+  modelId: z.preprocess((val) => Number(val), z.number()),
+  modelVersionId: z.preprocess((val) => Number(val), z.number()).optional(),
+  type: z.enum(constants.modelFileTypes).optional(),
+  format: z.nativeEnum(ModelFileFormat).optional(),
+});
+export type GetDownloadSchema = z.infer<typeof getDownloadSchema>;

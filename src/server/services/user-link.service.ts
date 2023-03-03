@@ -2,11 +2,11 @@ import { GetByIdInput } from './../schema/base.schema';
 import { isDefined } from '~/utils/type-guards';
 import { UpsertManyUserLinkParams, UpsertUserLinkParams } from './../schema/user-link.schema';
 
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { SessionUser } from 'next-auth';
 
 export const getUserLinks = async ({ userId }: { userId: number }) => {
-  return await dbWrite.userLink.findMany({
+  return await dbRead.userLink.findMany({
     where: { userId },
     select: {
       id: true,

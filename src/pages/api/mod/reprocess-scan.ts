@@ -39,8 +39,8 @@ export default ModEndpoint(
       if (!scanResult?.hashes) continue;
 
       await dbWrite.$transaction([
-        dbWrite.modelHash.deleteMany({ where: { fileId } }),
-        dbWrite.modelHash.createMany({
+        dbWrite.modelFileHash.deleteMany({ where: { fileId } }),
+        dbWrite.modelFileHash.createMany({
           data: Object.entries(scanResult.hashes)
             .filter(([type, hash]) => hashTypeMap[type.toLowerCase()] && hash)
             .map(([type, hash]) => ({

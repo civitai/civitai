@@ -88,8 +88,8 @@ export default WebhookEndpoint(async (req, res) => {
   // Update hashes
   if (tasks.includes('Hash') && scanResult.hashes) {
     await dbWrite.$transaction([
-      dbWrite.modelHash.deleteMany({ where: { fileId } }),
-      dbWrite.modelHash.createMany({
+      dbWrite.modelFileHash.deleteMany({ where: { fileId } }),
+      dbWrite.modelFileHash.createMany({
         data: Object.entries(scanResult.hashes)
           .filter(([type, val]) => hashTypeMap[type.toLowerCase()] && val)
           .map(([type, hash]) => ({

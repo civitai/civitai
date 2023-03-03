@@ -1,7 +1,8 @@
-import { ModelStatus } from '@prisma/client';
+import { modelHashSelect } from './../selectors/modelHash.selector';
+import { ModelStatus, ModelHashType, Prisma, UserActivityType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -9,6 +10,7 @@ import {
   GetAllModelsOutput,
   ModelInput,
   ModelUpsertInput,
+  GetDownloadSchema,
 } from '~/server/schema/model.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
@@ -40,6 +42,15 @@ import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { constants, ModelFileType } from '~/server/common/constants';
 import { BrowsingMode } from '~/server/common/enums';
+import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
+import { getGetUrl } from '~/utils/s3-utils';
+import {
+  CommandResourcesAdd,
+  ResourceType,
+  ResponseResourcesAdd,
+} from '~/components/CivitaiLink/shared-types';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -93,8 +104,15 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           else return 0;
         });
 
+        const hashes = version.files
+          .map((file) =>
+            file.hashes.find((x) => x.type === ModelHashType.SHA256)?.hash.toLowerCase()
+          )
+          .filter(isDefined);
+
         return {
           ...version,
+          hashes,
           images,
           earlyAccessDeadline,
           canDownload,
@@ -176,6 +194,10 @@ export const getModelsInfiniteHandler = async ({
         },
       },
       user: { select: simpleUserSelect },
+      hashes: {
+        select: modelHashSelect,
+        where: { hashType: ModelHashType.SHA256 },
+      },
     },
   });
 
@@ -187,8 +209,8 @@ export const getModelsInfiniteHandler = async ({
 
   return {
     nextCursor,
-    items: items.map(({ modelVersions, reportStats, publishedAt, ...model }) => {
-      const rank = model.rank as Record<string, number>;
+    items: items.map(({ modelVersions, reportStats, publishedAt, hashes, ...model }) => {
+      const rank = model.rank; // NOTE: null before metrics kick in
       const latestVersion = modelVersions[0];
       const { tags, ...image } = latestVersion.images[0]?.image ?? {};
       const earlyAccess =
@@ -201,12 +223,13 @@ export const getModelsInfiniteHandler = async ({
       if (model.nsfw && !env.SHOW_SFW_IN_NSFW) image.nsfw = true;
       return {
         ...model,
+        hashes: hashes.map((hash) => hash.hash.toLowerCase()),
         rank: {
-          downloadCount: rank[`downloadCount${input.period}`],
-          favoriteCount: rank[`favoriteCount${input.period}`],
-          commentCount: rank[`commentCount${input.period}`],
-          ratingCount: rank[`ratingCount${input.period}`],
-          rating: rank[`rating${input.period}`],
+          downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
+          favoriteCount: rank?.[`favoriteCount${input.period}`] ?? 0,
+          commentCount: rank?.[`commentCount${input.period}`] ?? 0,
+          ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
+          rating: rank?.[`rating${input.period}`] ?? 0,
         },
         image,
         earlyAccess,
@@ -389,11 +412,133 @@ export const getModelsWithVersionsHandler = async ({
 // TODO - TEMP HACK for reporting modal
 export const getModelReportDetailsHandler = async ({ input: { id } }: { input: GetByIdInput }) => {
   try {
-    return await dbWrite.model.findUnique({
+    return await dbRead.model.findUnique({
       where: { id },
       select: { userId: true, reportStats: { select: { ownershipPending: true } } },
     });
   } catch (error) {}
+};
+
+const additionalFiles: { [k in ModelFileType]?: ResourceType } = {
+  Config: 'CheckpointConfig',
+  VAE: 'VAE',
+  Negative: 'TextualInversion',
+};
+export const getDownloadCommandHandler = async ({
+  input: { modelId, modelVersionId, type, format },
+  ctx,
+}: {
+  input: GetDownloadSchema;
+  ctx: Context;
+}) => {
+  try {
+    const fileWhere: Prisma.ModelFileWhereInput = {};
+    if (type) fileWhere.type = type;
+    if (format) fileWhere.format = format;
+
+    const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
+
+    const modelVersion = await dbWrite.modelVersion.findFirst({
+      where: { modelId, id: modelVersionId },
+      select: {
+        id: true,
+        model: {
+          select: { id: true, name: true, type: true, status: true, userId: true },
+        },
+        images: {
+          select: {
+            image: { select: { url: true } },
+          },
+          orderBy: prioritizeSafeImages
+            ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
+            : [{ index: 'asc' }],
+          take: 1,
+        },
+        name: true,
+        trainedWords: true,
+        createdAt: true,
+        files: {
+          where: fileWhere,
+          select: {
+            url: true,
+            name: true,
+            type: true,
+            format: true,
+            hashes: { select: { hash: true }, where: { type: 'SHA256' } },
+          },
+        },
+      },
+    });
+
+    if (!modelVersion) throw throwNotFoundError();
+    const { model, files } = modelVersion;
+
+    const file =
+      type != null || format != null
+        ? files[0]
+        : getPrimaryFile(files, {
+            type: ctx.user?.preferredPrunedModel ? 'Pruned Model' : undefined,
+            format: ctx.user?.preferredModelFormat,
+          });
+    if (!file) throw throwNotFoundError();
+
+    const isMod = ctx.user?.isModerator;
+    const userId = ctx.user?.id;
+    const canDownload =
+      isMod || modelVersion?.model?.status === 'Published' || modelVersion.model.userId === userId;
+    if (!canDownload) throw throwNotFoundError();
+
+    await dbWrite.userActivity.create({
+      data: {
+        userId,
+        activity: UserActivityType.ModelDownload,
+        details: {
+          modelId: modelVersion.model.id,
+          modelVersionId: modelVersion.id,
+        },
+      },
+    });
+
+    const fileName = getDownloadFilename({ model, modelVersion, file });
+    const { url } = await getGetUrl(file.url, { fileName });
+
+    const commands: CommandResourcesAdd[] = [];
+    commands.push({
+      type: 'resources:add',
+      resource: {
+        type: model.type,
+        hash: file.hashes[0].hash,
+        name: fileName,
+        modelName: model.name,
+        modelVersionName: modelVersion.name,
+        previewImage: modelVersion.images[0]?.image?.url,
+        url,
+      },
+    });
+
+    // Add additional files
+    for (const [type, resourceType] of Object.entries(additionalFiles)) {
+      const additionalFile = files.find((f) => f.type === type);
+      if (!additionalFile) continue;
+
+      const additionalFileName = getDownloadFilename({ model, modelVersion, file: additionalFile });
+      commands.push({
+        type: 'resources:add',
+        resource: {
+          type: resourceType,
+          hash: additionalFile.hashes[0].hash,
+          name: additionalFileName,
+          modelName: model.name,
+          modelVersionName: modelVersion.name,
+          url: (await getGetUrl(additionalFile.url, { fileName: additionalFileName })).url,
+        },
+      });
+    }
+
+    return { commands };
+  } catch (error) {
+    throwDbError(error);
+  }
 };
 
 export const getModelDetailsForReviewHandler = async ({

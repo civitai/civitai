@@ -43,7 +43,7 @@ export default MixedAuthEndpoint(async function handler(
         ...model,
         creator: {
           username: user.username,
-          image: user.image ? getEdgeUrl(user.image, { width: 96 }) : null,
+          image: user.image ? getEdgeUrl(user.image, { width: 96, name: user.username }) : null,
         },
         tags: tagsOnModels.map(({ tag }) => tag.name),
         modelVersions: modelVersions
@@ -66,8 +66,8 @@ export default MixedAuthEndpoint(async function handler(
                 })}`,
                 primary: primaryFile.id === file.id ? true : undefined,
               })),
-              images: images.map(({ image: { url, ...image } }) => ({
-                url: getEdgeUrl(url, { width: 450 }),
+              images: images.map(({ image: { url, id, ...image } }) => ({
+                url: getEdgeUrl(url, { width: 450, name: id.toString() }),
                 ...image,
               })),
               downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({

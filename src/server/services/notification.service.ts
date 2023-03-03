@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import {
   GetUserNotificationsSchema,
   MarkReadNotificationInput,
@@ -24,7 +24,7 @@ export const getUserNotifications = async <TSelect extends Prisma.NotificationSe
     userId,
     viewedAt: unread ? { equals: null } : undefined,
   };
-  const notificationQuery = dbWrite.notification.findMany({
+  const notificationQuery = dbRead.notification.findMany({
     take: limit,
     cursor: cursor ? { id: cursor } : undefined,
     where,
@@ -33,9 +33,9 @@ export const getUserNotifications = async <TSelect extends Prisma.NotificationSe
   });
 
   if (count) {
-    const [items, count] = await dbWrite.$transaction([
+    const [items, count] = await dbRead.$transaction([
       notificationQuery,
-      dbWrite.notification.count({ where }),
+      dbRead.notification.count({ where }),
     ]);
 
     return { items, count };

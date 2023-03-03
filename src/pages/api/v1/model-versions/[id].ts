@@ -6,7 +6,7 @@ import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { isProd } from '~/env/other';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import {
   getModelVersionApiSelect,
   ModelVersionApiReturn,
@@ -26,7 +26,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   const { id } = results.data;
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });
 
-  const modelVersion = await dbWrite.modelVersion.findFirst({
+  const modelVersion = await dbRead.modelVersion.findFirst({
     where: { id },
     select: getModelVersionApiSelect,
   });
@@ -54,8 +54,8 @@ export function prepareModelVersionResponse(modelVersion: ModelVersionApiReturn,
         primary: primaryFile.id === file.id,
       })}`,
     })),
-    images: images.map(({ image: { url, ...image } }) => ({
-      url: getEdgeUrl(url, { width: 450 }),
+    images: images.map(({ image: { url, id, ...image } }) => ({
+      url: getEdgeUrl(url, { width: 450, name: id.toString() }),
       ...image,
     })),
     downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({

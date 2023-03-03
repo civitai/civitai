@@ -5,7 +5,7 @@ import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { BrowsingMode, ImageSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CreateImageInput,
@@ -18,7 +18,7 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
-  const result = await dbWrite.imagesOnModels.findMany({
+  const result = await dbRead.imagesOnModels.findMany({
     where: { modelVersionId, image: { tosViolation: false, needsReview: false } },
     select: { image: { select: imageSelect } },
   });
@@ -26,7 +26,7 @@ export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId
 };
 
 export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
-  const result = await dbWrite.imagesOnReviews.findMany({
+  const result = await dbRead.imagesOnReviews.findMany({
     where: { reviewId, image: { tosViolation: false, needsReview: false } },
     select: { image: { select: imageSelect } },
   });
@@ -105,7 +105,7 @@ export const getGalleryImages = async <
   if (canViewNsfw && !browsingMode) browsingMode = BrowsingMode.All;
   else if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
 
-  const items = await dbWrite.image.findMany({
+  const items = await dbRead.image.findMany({
     cursor: cursor ? { id: cursor } : undefined,
     take: limit,
     where: needsReview
@@ -177,7 +177,7 @@ export const updateImageReportStatusByReason = ({
 };
 
 export const getImageConnectionsById = ({ id, modelId, reviewId }: GetImageConnectionsSchema) => {
-  return dbWrite.image.findUnique({
+  return dbRead.image.findUnique({
     where: { id },
     select: {
       connections: {

@@ -37,6 +37,7 @@ import {
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { useMemo, useState } from 'react';
 
 import { ListSearch } from '~/components/ListSearch/ListSearch';
@@ -353,7 +354,7 @@ export function AppHeader() {
                 Sign In
               </Button>
             ) : null}
-
+            {currentUser && <CivitaiLinkPopover />}
             {currentUser?.showNsfw && <BlurToggle />}
             {currentUser && <NotificationBell />}
             <Menu
@@ -410,7 +411,8 @@ export function AppHeader() {
           </Group>
         </Grid.Col>
         <Grid.Col span="auto" className={classes.burger}>
-          <Group>
+          <Group spacing={4} noWrap>
+            {currentUser && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
             <Burger
               opened={burgerOpened}

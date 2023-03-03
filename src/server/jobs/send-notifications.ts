@@ -1,12 +1,13 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { notificationBatches } from '~/server/notifications/utils.notifications';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('send-notifications', 'blue');
 
 const NOTIFICATIONS_LAST_SENT_KEY = 'last-sent-notifications';
-export const sendNotificationsJob = createJob(
-  'send-notifications',
-  '*/1 * * * *',
-  async () => {
+export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *', async () => {
+  try {
     // Get the last run time from keyValue
     const lastSent = new Date(
       ((
@@ -28,7 +29,7 @@ export const sendNotificationsJob = createJob(
       });
       await Promise.all(promises);
     }
-    console.log('sent notifications');
+    log('sent notifications');
 
     // Update the last sent time
     // --------------------------------------------
@@ -37,8 +38,7 @@ export const sendNotificationsJob = createJob(
       create: { key: NOTIFICATIONS_LAST_SENT_KEY, value: new Date().getTime() },
       update: { value: new Date().getTime() },
     });
-  },
-  {
-    shouldWait: false,
+  } catch {
+    log('failed to send notifications');
   }
-);
+});

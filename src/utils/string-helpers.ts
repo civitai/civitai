@@ -81,3 +81,7 @@ export function postgresSlugify(str: string) {
     .replace(/[^a-zA-Z0-9_]/g, '')
     .toLowerCase();
 }
+
+export function titleCase(val: string) {
+  return val[0].toUpperCase() + val.slice(1).toLowerCase();
+}
