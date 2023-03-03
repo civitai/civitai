@@ -2,6 +2,9 @@ import { REST } from '@discordjs/rest';
 import { Routes } from 'discord-api-types/v10';
 import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('discord', 'magenta');
 
 function getDiscordClient() {
   if (!env.DISCORD_BOT_TOKEN) throw new Error('No discord bot token found');
@@ -60,6 +63,7 @@ const pushMetadata = async ({
   username: string;
 } & TokenRequest &
   Record<DiscordMetadataKeys, unknown>) => {
+  log(`Pushing metadata for ${username}`);
   access_token = await getUserToken({ user_id, access_token, refresh_token, expires_at });
   const userClient = new REST({ version: '10', authPrefix: 'Bearer' }).setToken(access_token);
   const res = await userClient.put(Routes.userApplicationRoleConnection(env.DISCORD_CLIENT_ID), {
@@ -67,8 +71,7 @@ const pushMetadata = async ({
       platform_name: 'Civitai',
       platform_username: username,
       metadata: {
-        // supporter: metadata.supporter,
-        supporter: true,
+        supporter: metadata.supporter,
         last_donation: metadata.last_donation ?? undefined,
         last_image: metadata.last_image ?? undefined,
         last_upload: metadata.last_upload ?? undefined,
@@ -76,6 +79,7 @@ const pushMetadata = async ({
       },
     },
   });
+  log(`Pushed metadata for ${username}`);
 
   return res;
 };
@@ -206,6 +210,7 @@ const registerMetadata = async () => {
   const res = await discord.put(Routes.applicationRoleConnectionMetadata(env.DISCORD_CLIENT_ID), {
     body: appMetadata,
   });
+  log(`Registered ${appMetadata.length} metadata`);
   return res;
 };
 
