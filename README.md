@@ -91,7 +91,7 @@ Don't forget to give the project a star! Thanks again!
 
 ## Sponsors
 
-Support this project by becoming a sponsor. Your logo will show up here with a link to your website.
+Support this project by becoming a sponsor. Your logo will show here with a link to your website.
 
 ## License
 Apache License 2.0 - Please have a look at the [LICENSE](/LICENSE) for more details.
