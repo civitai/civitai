@@ -3,12 +3,14 @@ import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { PostEditLayout } from '~/components/Post/PostEditLayout';
 import { usePostImagesContext } from '~/components/Post/PostImagesProvider';
 import { trpc } from '~/utils/trpc';
-import { Container } from '@mantine/core';
+import { Container, Stack } from '@mantine/core';
 import { useEditPostContext } from '~/components/Post/EditPostProvider';
 
 export default function PostCreate() {
   const router = useRouter();
-  const modelVersionId = Number(router.query.modelVersionId);
+  const modelVersionId = router.query.modelVersionId
+    ? Number(router.query.modelVersionId)
+    : undefined;
   const { mutate, isLoading } = trpc.post.create.useMutation();
   const images = useEditPostContext((state) => state.images);
   const upload = useEditPostContext((state) => state.upload);
@@ -18,6 +20,7 @@ export default function PostCreate() {
       { modelVersionId },
       {
         onSuccess: async (response) => {
+          console.log({ response });
           const postId = response.id;
           router.push(`/posts/${postId}/edit`);
           upload(postId, files);
@@ -27,7 +30,7 @@ export default function PostCreate() {
   };
 
   return (
-    <Container size="xl">
+    <Container size="xs">
       <ImageDropzone onDrop={handleDrop} loading={isLoading} count={images.length} />
     </Container>
   );

@@ -57,11 +57,9 @@ export const RegisterCatchNavigation = ({
 }) => {
   // start processing your handlers with a first-in first-out approach
   const handlers = useCatchNavigationStore((state) => state.handlers);
-  console.log({ handlers });
 
   useEffect(() => {
     const reversed = [...handlers].reverse();
-    console.log({ reversed });
     function handleBeforeUnload(event: BeforeUnloadEvent) {
       const index = reversed
         .filter((x) => x.event !== 'routeChangeStart')

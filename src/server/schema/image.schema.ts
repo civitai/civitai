@@ -14,6 +14,7 @@ export const imageMetaSchema = z
     steps: stringToNumber,
     sampler: z.string(),
     seed: stringToNumber,
+    hashes: z.string().array(),
   })
   .partial()
   .passthrough();

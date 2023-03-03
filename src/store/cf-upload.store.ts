@@ -45,10 +45,10 @@ type StoreProps = {
 export const useCFUploadStore = create<StoreProps>()(
   immer((set, get) => {
     function updateFile(uuid: string, trackedFile: Partial<TrackedFile>) {
+      console.log('updating', uuid, trackedFile);
       set((state) => {
         const index = state.items.findIndex((x) => x.uuid === uuid);
-        if (index === -1) throw new Error('index out of bounds');
-        state.items[index] = { ...state.items[index], ...trackedFile };
+        if (index > -1) state.items[index] = { ...state.items[index], ...trackedFile };
       });
     }
 

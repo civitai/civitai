@@ -9,7 +9,7 @@ import EditPostImages from '~/components/Post/EditPostImages';
 export default function PostEdit() {
   const id = useEditPostContext((state) => state.id);
   return (
-    <Container>
+    <Container size="xs">
       <Stack>
         <Title>PostId: {id}</Title>
         <EditPostImages />

@@ -31,7 +31,7 @@ export type ImageUpload = {
 type ImageProps = { type: 'image'; data: PostImage } | { type: 'upload'; data: ImageUpload };
 
 type EditPostProps = {
-  // objectUrls: string[];
+  objectUrls: string[];
   id: number;
   title?: string;
   nsfw: boolean;
@@ -48,8 +48,9 @@ interface EditPostState extends EditPostProps {
   // addFiles: (files: File[]) => Promise<ImageUpload[]>;
   /** usefull for removing files that were unable to finish uploading */
   removeFile: (uuid: string) => void;
+  removeImage: (id: number) => void;
   /** used to clean up object urls */
-  // cleanup: () => void;
+  cleanup: () => void;
 }
 
 type EditPostStore = ReturnType<typeof createEditPostStore>;
@@ -122,7 +123,7 @@ const createEditPostStore = ({
               })
             );
             set((state) => {
-              // state.objectUrls = toUpload.map((x) => x.url);
+              state.objectUrls = toUpload.map((x) => x.url);
               state.images = state.images.concat(
                 toUpload.map((data) => ({ type: 'upload', data }))
               );
@@ -138,9 +139,12 @@ const createEditPostStore = ({
                       (x) => x.type === 'upload' && x.data.uuid === data.uuid
                     );
                     if (index === -1) throw new Error('index out of bounds');
-                    state.images[index] = { type: 'image', data: result };
+                    state.images[index] = {
+                      type: 'image',
+                      data: { ...result, previewUrl: data.url },
+                    };
                   });
-                  URL.revokeObjectURL(data.url);
+                  // URL.revokeObjectURL(data.url);
                 })
             );
           },
@@ -173,12 +177,20 @@ const createEditPostStore = ({
               state.images.splice(index, 1);
             });
           },
-          // cleanup: () => {
-          //   const objectUrls = get().objectUrls;
-          //   for (const url of objectUrls) {
-          //     URL.revokeObjectURL(url);
-          //   }
-          // },
+          removeImage: (id) => {
+            set((state) => {
+              const index = state.images.findIndex((x) => x.type === 'image' && x.data.id === id);
+              if (index === -1) throw new Error('index out of bounds');
+              state.images.splice(index, 1);
+            });
+          },
+          cleanup: () => {
+            const objectUrls = get().objectUrls;
+            console.log('running cleanup', objectUrls);
+            for (const url of objectUrls) {
+              URL.revokeObjectURL(url);
+            }
+          },
         };
       })
     )
@@ -193,7 +205,6 @@ export const EditPostProvider = ({
   children: React.ReactNode;
   post?: PostDetail;
 }) => {
-  const queryUtils = trpc.useContext();
   const { mutateAsync } = trpc.post.addImage.useMutation();
 
   const upload = useCFUploadStore((state) => state.upload);
@@ -211,18 +222,15 @@ export const EditPostProvider = ({
   }
 
   useEffect(() => {
-    Router.beforePopState(({ as }) => {
-      if (as !== Router.asPath) {
-        const id = post?.id;
-        if (id) {
-          queryUtils.post.get.invalidate({ id });
-          // TODO.posts - additional post invalidation here
-        }
-      }
-      return true;
-    });
-    return () => Router.beforePopState(() => true);
-  }, [post?.id]); //eslint-disable-line
+    const cleanup = storeRef.current?.getState().cleanup;
+    window.addEventListener('beforeunload', cleanup);
+    Router.events.on('routeChangeStart', cleanup);
+
+    return () => {
+      window.removeEventListener('beforeunload', cleanup);
+      Router.events.off('routeChangeStart', cleanup);
+    };
+  });
 
   return <EditPostContext.Provider value={storeRef.current}>{children}</EditPostContext.Provider>;
 };
@@ -236,7 +244,7 @@ export function useEditPostContext<T>(selector: (state: EditPostState) => T) {
 const getImageDataFromFile = async (file: File) => {
   const url = URL.createObjectURL(file);
   const meta = await getMetadata(file);
-  const resources: string[] = []; // TODO - get resources
+  const resources = meta.hashes;
   const img = await loadImage(url);
   const hashResult = blurHashImage(img);
   const auditResult = await auditMetaData(meta, false);

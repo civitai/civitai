@@ -20,7 +20,8 @@ export const postImageSelect = Prisma.validator<Prisma.ImageSelect>()({
     },
   },
 });
-export type PostImage = Prisma.ImageGetPayload<typeof postImage>;
+type PostImageNavigationProps = { previewUrl?: string };
+export type PostImage = Prisma.ImageGetPayload<typeof postImage> & PostImageNavigationProps;
 const postImage = Prisma.validator<Prisma.ImageArgs>()({ select: postImageSelect });
 
 export const postSelect = Prisma.validator<Prisma.PostSelect>()({
@@ -30,7 +31,10 @@ export const postSelect = Prisma.validator<Prisma.PostSelect>()({
   scanned: true,
   modelVersionId: true,
   user: { select: userWithCosmeticsSelect },
-  images: { select: postImageSelect },
+  images: {
+    orderBy: { index: 'asc' },
+    select: postImageSelect,
+  },
   tags: { select: { tag: { select: simpleTagSelect } } },
 });
 
