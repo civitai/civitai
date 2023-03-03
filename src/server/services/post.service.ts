@@ -12,6 +12,7 @@ import { dbWrite } from '~/server/db/client';
 import { TagType, TagTarget, Prisma } from '@prisma/client';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { postImageSelect, postSelect } from '~/server/selectors/post.selector';
+import { ModelFileType } from '~/server/common/constants';
 
 export const getPost = async ({ id }: GetByIdInput) => {
   const post = await dbWrite.post.findUnique({
@@ -75,23 +76,27 @@ export const removePostTag = async ({ postId, id }: RemovePostTagInput) => {
   await dbWrite.tagsOnPost.delete({ where: { tagId_postId: { tagId: id, postId } } });
 };
 
+const toInclude: ModelFileType[] = ['Model', 'Pruned Model', 'Negative'];
 export const addPostImage = async ({
   resources,
   ...image
 }: AddPostImageInput & { userId: number }) => {
   const autoResources = !!resources?.length
-    ? await dbWrite?.modelHash.findMany({
-        where: { hash: { in: resources, mode: 'insensitive' } },
-        select: {
-          file: {
-            select: {
-              modelVersionId: true,
+    ? await dbWrite.modelFile.findMany({
+        where: {
+          type: { in: toInclude },
+          hashes: {
+            some: {
+              hash: { in: resources, mode: 'insensitive' },
             },
           },
         },
+        select: {
+          modelVersionId: true,
+        },
       })
     : [];
-
+  const uniqueResources = [...new Set(autoResources)];
   return await dbWrite.image.create({
     data: {
       ...image,
@@ -99,10 +104,10 @@ export const addPostImage = async ({
       generationProcess: image.meta
         ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
         : null,
-      resources: !!autoResources.length
+      resources: !!uniqueResources.length
         ? {
-            create: autoResources.map((item) => ({
-              modelVersionId: item.file.modelVersionId,
+            create: uniqueResources.map((item) => ({
+              modelVersionId: item.modelVersionId,
               detected: true,
             })),
           }

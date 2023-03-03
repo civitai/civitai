@@ -45,7 +45,6 @@ interface EditPostState extends EditPostProps {
   setTags: (updateFn: (tags: SimpleTag[]) => SimpleTag[]) => void;
   setImages: (updateFn: (images: PostImage[]) => PostImage[]) => void;
   upload: (postId: number, files: File[]) => void;
-  // addFiles: (files: File[]) => Promise<ImageUpload[]>;
   /** usefull for removing files that were unable to finish uploading */
   removeFile: (uuid: string) => void;
   removeImage: (id: number) => void;
@@ -144,30 +143,9 @@ const createEditPostStore = ({
                       data: { ...result, previewUrl: data.url },
                     };
                   });
-                  // URL.revokeObjectURL(data.url);
                 })
             );
           },
-          // addFiles: async (files) => {
-          //   const images = get().images;
-          //   const toUpload = await Promise.all(
-          //     files.map(async (file, i) => {
-          //       const data = await getImageDataFromFile(file);
-          //       return {
-          //         type: 'upload',
-          //         index: images.length + i,
-          //         ...data,
-          //       } as ImageUpload;
-          //     })
-          //   );
-          //   set((state) => {
-          //     state.objectUrls = toUpload.map((x) => x.url);
-          //     state.images = state.images.concat(
-          //       toUpload.map((data) => ({ type: 'upload', data }))
-          //     );
-          //   });
-          //   return toUpload;
-          // },
           removeFile: (uuid) => {
             set((state) => {
               const index = state.images.findIndex(
@@ -222,7 +200,7 @@ export const EditPostProvider = ({
   }
 
   useEffect(() => {
-    const cleanup = storeRef.current?.getState().cleanup;
+    const cleanup = () => storeRef.current?.getState().cleanup();
     window.addEventListener('beforeunload', cleanup);
     Router.events.on('routeChangeStart', cleanup);
 
@@ -249,6 +227,7 @@ const getImageDataFromFile = async (file: File) => {
   const hashResult = blurHashImage(img);
   const auditResult = await auditMetaData(meta, false);
   const blockedFor = !auditResult?.success ? auditResult?.blockedFor : undefined;
+  // const blockedFor = ['test', 'testing'];
 
   return {
     file,

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
+import negate from 'lodash/negate';
 
 type UploadResult<T extends Record<string, unknown>> = {
   url: string;
@@ -56,7 +57,7 @@ export const useCFUploadStore = create<StoreProps>()(
       items: [],
       clear: (predicate) => {
         set((state) => {
-          state.items = predicate ? state.items.filter(predicate) : [];
+          state.items = predicate ? state.items.filter(negate(predicate)) : [];
           // if (state.items.length === 0) deregisterCatchNavigation();
         });
       },
