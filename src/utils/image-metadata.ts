@@ -65,6 +65,7 @@ const decoder = new TextDecoder('utf-8');
 // #endregion
 
 // #region [parsers]
+const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
 const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.]+):([0-9.]+)>/g;
 const automaticNameHash = /([a-zA-Z0-9_\.]+)\(([a-zA-Z0-9]+)\)/;
 const automaticSDKeyMap = new Map<string, keyof ImageMetaProps>([
@@ -81,9 +82,16 @@ const automaticSDParser = createMetadataParser(
     if (!meta) return metadata;
     const metaLines = meta.split('\n');
 
+    // Remove meta keys I wish I hadn't made... :(
+    let detailsLine = metaLines.pop();
+    for (const key of badExtensionKeys) {
+      if (!detailsLine?.includes(key)) continue;
+      detailsLine = detailsLine.split(key)[0];
+    }
+
     // Extract fine details
     let currentKey = '';
-    const parts = metaLines.pop()?.split(':') ?? [];
+    const parts = detailsLine?.split(':') ?? [];
     for (const part of parts) {
       const priorValueEnd = part.lastIndexOf(',');
       if (parts[parts.length - 1] === part) {
