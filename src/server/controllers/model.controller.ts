@@ -90,7 +90,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           : undefined;
         if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
           earlyAccessDeadline = undefined;
-        const canDownload = !earlyAccessDeadline || ctx.user?.tier;
+        const canDownload = !earlyAccessDeadline || !!ctx.user?.tier || !!ctx.user?.isModerator;
 
         // sort version files by file type, 'Model' type goes first
         const files = [...version.files].sort((a, b) => {
