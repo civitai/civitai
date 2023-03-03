@@ -41,7 +41,7 @@ export const isConnected = () =>
  */
 export const tryBasicPublish = async <T extends typeof ingestionMessageSchema>(
   channel: AMQPChannel,
-	topic: string,
+  topic: string,
   message: T
 ): Promise<number> => {
   return channel.basicPublish("amq.topic", topic, JSON.stringify(message), {
