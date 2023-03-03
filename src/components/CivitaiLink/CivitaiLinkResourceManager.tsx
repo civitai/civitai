@@ -1,12 +1,18 @@
 import { showNotification } from '@mantine/notifications';
 import { ModelType } from '@prisma/client';
-import { useEffect, useState } from 'react';
-import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { useCallback } from 'react';
+import { useCivitaiLink, useCivitaiLinkStore } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CommandResourcesAdd } from '~/components/CivitaiLink/shared-types';
 import { ModelHashModel } from '~/server/selectors/modelHash.selector';
 import { trpc } from '~/utils/trpc';
 
-const supportedModelTypes: ModelType[] = ['Checkpoint', 'Hypernetwork', 'TextualInversion', 'LORA'];
+const supportedModelTypes: ModelType[] = [
+  'Checkpoint',
+  'Hypernetwork',
+  'TextualInversion',
+  'LORA',
+  'Controlnet',
+];
 
 export function CivitaiLinkResourceManager({
   modelId,
@@ -27,7 +33,19 @@ export function CivitaiLinkResourceManager({
 }) {
   const { connected, resources, runCommand } = useCivitaiLink();
   const resource = resources.find(({ hash }) => hashes.some((x) => x === hash));
-  const [cancels, setCancels] = useState<Array<() => void>>([]);
+  const activities = useCivitaiLinkStore(
+    useCallback(
+      (state) =>
+        Object.values(state.activities).filter(
+          (x) =>
+            x.status == 'processing' &&
+            x.type == 'resources:add' &&
+            hashes.includes(x.resource.hash)
+        ),
+      [hashes]
+    )
+  );
+  // const activities: Response[] = [];
   const { data, refetch, isFetched, isFetching } = trpc.model.getDownloadCommand.useQuery(
     { modelId, modelVersionId },
     {
@@ -43,12 +61,7 @@ export function CivitaiLinkResourceManager({
 
   const runAddCommands = async (commands: CommandResourcesAdd[] | undefined) => {
     if (!commands) return;
-    const addCancels: typeof cancels = [];
-    for (const command of commands) {
-      const { cancel } = await runCommand(command);
-      addCancels.push(cancel);
-    }
-    setCancels((x) => [...x, ...addCancels]);
+    for (const command of commands) await runCommand(command);
   };
 
   const addResource = () => {
@@ -59,9 +72,8 @@ export function CivitaiLinkResourceManager({
   };
 
   const cancelDownload = () => {
-    if (!resource) return;
-    cancels.map((cancel) => cancel());
-    setCancels([]);
+    if (!resource || !activities.length) return;
+    for (const { id } of activities) runCommand({ type: 'activities:cancel', activityId: id });
   };
 
   const removeResource = async () => {
@@ -72,13 +84,17 @@ export function CivitaiLinkResourceManager({
     });
   };
 
+  const downloading = (isFetching || resource?.downloading) ?? false;
+  const progress =
+    downloading && activities.length ? Math.min(...activities.map((x) => x.progress ?? 0)) : 0;
   return children({
     addResource,
     removeResource,
     cancelDownload,
     resource,
     hasResource: !!resource,
-    downloading: (isFetching || resource?.downloading) ?? false,
+    downloading,
+    progress,
   });
 }
 
@@ -95,6 +111,7 @@ type CivitaiLinkResourceManagerChildrenFunction = {
   removeResource: () => void;
   cancelDownload: () => void;
   resource: ModelHashModel | undefined;
+  progress: number;
   downloading: boolean;
   hasResource: boolean;
 };

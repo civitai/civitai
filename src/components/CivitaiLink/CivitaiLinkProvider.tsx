@@ -133,7 +133,7 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const handleMessage = (msg: string) => {
-      showNotification({ message: msg });
+      showNotification({ message: msg, title: 'Civitai Link', color: 'blue' });
     };
 
     const handleInstance = (payload: Instance) => {

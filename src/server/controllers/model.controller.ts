@@ -447,6 +447,7 @@ export const getDownloadCommandHandler = async ({
           },
         },
       },
+      orderBy: { index: 'asc' },
     });
 
     if (!modelVersion) throw throwNotFoundError();
