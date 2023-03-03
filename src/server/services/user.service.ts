@@ -369,8 +369,11 @@ export const updateAccountScope = async ({
     where: { userId, provider },
     select: { id: true, scope: true },
   });
-  if (account && account.scope != scope)
-    await dbWrite.account.update({ where: { id: account.id }, data: { scope } });
+  if (account && !!account.scope) {
+    const currentScope = account.scope.split(' ');
+    const hasNewScope = scope.split(' ').some((s) => !currentScope.includes(s));
+    if (hasNewScope) await dbWrite.account.update({ where: { id: account.id }, data: { scope } });
+  }
 };
 
 export const getSessionUser = async ({ userId, token }: { userId?: number; token?: string }) => {
