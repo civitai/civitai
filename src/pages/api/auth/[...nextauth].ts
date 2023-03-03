@@ -55,7 +55,7 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   },
   callbacks: {
     async signIn({ account }) {
-      if (account?.provider === 'discord' && account.scope) await updateAccountScope(account);
+      if (account?.provider === 'discord' && !!account.scope) await updateAccountScope(account);
 
       return true;
     },
