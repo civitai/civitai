@@ -1,5 +1,6 @@
 import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { SessionUser } from 'next-auth';
+import { isProd } from '~/env/other';
 
 import { env } from '~/env/server.mjs';
 import { BrowsingMode, ImageSort } from '~/server/common/enums';
@@ -7,6 +8,7 @@ import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetGalleryImageInput, GetImageConnectionsSchema } from '~/server/schema/image.schema';
 import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
+import { deleteImage } from '~/utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
@@ -136,8 +138,14 @@ export const getGalleryImages = async <
   }));
 };
 
-export const deleteImageById = ({ id }: GetByIdInput) => {
-  return dbWrite.image.delete({ where: { id } });
+export const deleteImageById = async ({ id }: GetByIdInput) => {
+  try {
+    const image = await dbRead.image.findUnique({ where: { id }, select: { url: true } });
+    if (isProd && image) await deleteImage(image.url); // Remove from storage
+  } catch {
+    // Ignore errors
+  }
+  return await dbWrite.image.delete({ where: { id } });
 };
 
 export const updateImageById = <TSelect extends Prisma.ImageSelect>({
