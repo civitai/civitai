@@ -1,6 +1,7 @@
 import { isImageResource } from './../schema/image.schema';
 import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { SessionUser } from 'next-auth';
+import { isProd } from '~/env/other';
 
 import { env } from '~/env/server.mjs';
 import { BrowsingMode, ImageSort } from '~/server/common/enums';
@@ -14,6 +15,7 @@ import {
   UpdateImageInput,
 } from '~/server/schema/image.schema';
 import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
+import { deleteImage } from '~/utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 
@@ -144,8 +146,14 @@ export const getGalleryImages = async <
   }));
 };
 
-export const deleteImageById = ({ id }: GetByIdInput) => {
-  return dbWrite.image.delete({ where: { id } });
+export const deleteImageById = async ({ id }: GetByIdInput) => {
+  try {
+    const image = await dbRead.image.findUnique({ where: { id }, select: { url: true } });
+    if (isProd && image) await deleteImage(image.url); // Remove from storage
+  } catch {
+    // Ignore errors
+  }
+  return await dbWrite.image.delete({ where: { id } });
 };
 
 // consider refactoring this endoint to only allow for updating `needsReview`, because that is all this endpoint is being used for...
@@ -182,6 +190,7 @@ export const getImageConnectionsById = ({ id, modelId, reviewId }: GetImageConne
     select: {
       connections: {
         select: {
+          imageId: true,
           model: modelId
             ? {
                 select: {

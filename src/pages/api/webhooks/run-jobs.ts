@@ -12,6 +12,8 @@ import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { updateMetricsJob } from '~/server/jobs/update-metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
+import { redis } from '~/server/redis/client';
+import { removeDisconnectedImages } from '~/server/jobs/remove-disconnected-images';
 
 const jobs = [
   scanFilesJob,
@@ -22,6 +24,7 @@ const jobs = [
   addOnDemandRunStrategiesJob,
   deliverCosmetics,
   selectFeaturedImages,
+  removeDisconnectedImages,
 ];
 
 const log = createLogger('jobs', 'green');

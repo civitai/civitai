@@ -2,6 +2,7 @@ import { initStripePrices, initStripeProducts } from '~/server/services/stripe.s
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
+import { discord } from '~/server/integrations/discord';
 
 async function populateRedisCache() {
   const toInvalidate = await dbWrite.sessionInvalidation.groupBy({
@@ -27,7 +28,8 @@ async function populateRedisCache() {
 export default WebhookEndpoint(async (req, res) => {
   await initStripeProducts();
   await initStripePrices();
-  await populateRedisCache();
+  // await populateRedisCache();
+  await discord.registerMetadata();
 
   res.status(200).json({ ok: true });
 });

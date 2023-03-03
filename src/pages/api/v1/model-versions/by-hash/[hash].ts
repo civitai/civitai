@@ -6,7 +6,9 @@ import { dbRead } from '~/server/db/client';
 import { getModelVersionApiSelect } from '~/server/selectors/modelVersion.selector';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
-const schema = z.object({ hash: z.string() });
+const schema = z.object({
+  hash: z.string().transform((hash) => hash.toUpperCase()),
+});
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const results = schema.safeParse(req.query);

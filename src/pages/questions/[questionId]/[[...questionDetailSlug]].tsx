@@ -15,6 +15,7 @@ import { dbRead } from '~/server/db/client';
 import { slugit } from '~/utils/string-helpers';
 import React from 'react';
 import { QuestionDetails } from '~/components/Questions/QuestionDetails';
+import truncate from 'lodash/truncate';
 
 export const getServerSideProps: GetServerSideProps<{
   id: number;
@@ -90,7 +91,7 @@ export default function QuestionPage(
     <>
       <Meta
         title={`${question.title} | Civitai`}
-        description={removeTags(question.content ?? '')}
+        description={truncate(removeTags(question.content ?? ''), { length: 150 })}
         // TODO - determine if we need to do anything to handle content that has images/videos in it
       />
       <Container pb={60} px="xs">

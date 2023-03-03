@@ -5,9 +5,9 @@ import { isProd } from '~/env/other';
 
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
-  var dbRead: PrismaClient | undefined;
+  var globalDbRead: PrismaClient | undefined;
   // eslint-disable-next-line no-var, vars-on-top
-  var dbWrite: PrismaClient | undefined;
+  var globalDbWrite: PrismaClient | undefined;
 }
 
 const createPrismaClient = ({ readonly }: { readonly: boolean }) => {
@@ -28,8 +28,8 @@ if (isProd) {
   dbRead = createPrismaClient({ readonly: true });
   dbWrite = createPrismaClient({ readonly: false });
 } else {
-  if (!global.dbRead) global.dbRead = createPrismaClient({ readonly: true });
-  if (!global.dbWrite) global.dbWrite = createPrismaClient({ readonly: false });
-  dbRead = global.dbRead;
-  dbWrite = global.dbWrite;
+  if (!global.globalDbRead) global.globalDbRead = createPrismaClient({ readonly: true });
+  if (!global.globalDbWrite) global.globalDbWrite = createPrismaClient({ readonly: false });
+  dbRead = global.globalDbRead;
+  dbWrite = global.globalDbWrite;
 }
