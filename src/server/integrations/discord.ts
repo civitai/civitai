@@ -214,9 +214,43 @@ const registerMetadata = async () => {
   return res;
 };
 
+type Roles = {
+  id: string;
+  name: string;
+};
+const getAllRoles = async () => {
+  const discord = getDiscordClient();
+  if (!env.DISCORD_GUILD_ID) throw new Error('DISCORD_GUILD_ID not set');
+  const res = await discord.get(Routes.guildRoles(env.DISCORD_GUILD_ID));
+  return res as Roles[];
+};
+
+const addRoleToUser = async (user_id: string, role_id: string) => {
+  const discord = getDiscordClient();
+  if (!env.DISCORD_GUILD_ID) throw new Error('DISCORD_GUILD_ID not set');
+  try {
+    await discord.put(Routes.guildMemberRole(env.DISCORD_GUILD_ID, user_id, role_id));
+  } catch (e: any) {
+    if (e.code !== 10007) throw e;
+  }
+};
+
+const removeRoleFromUser = async (user_id: string, role_id: string) => {
+  const discord = getDiscordClient();
+  if (!env.DISCORD_GUILD_ID) throw new Error('DISCORD_GUILD_ID not set');
+  try {
+    await discord.delete(Routes.guildMemberRole(env.DISCORD_GUILD_ID, user_id, role_id));
+  } catch (e: any) {
+    if (e.code !== 10007) throw e;
+  }
+};
+
 export const discord = {
   registerMetadata,
   pushMetadata,
+  getAllRoles,
+  addRoleToUser,
+  removeRoleFromUser,
 };
 
 /*
