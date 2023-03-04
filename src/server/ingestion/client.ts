@@ -95,10 +95,12 @@ export const tryRPC = async (
           return;
         }
 
-				if (msg.properties.correlationId !== id) {
-					reject(`Could not validate the correlationId., ${msg.properties.correlationId}, ${id}`);
-					return;
-				}
+        if (msg.properties.correlationId !== id) {
+          reject(
+            `Could not validate the correlationId., ${msg.properties.correlationId}, ${id}`
+          );
+          return;
+        }
 
         const validation = await responseSchema.safeParseAsync(msg);
 
