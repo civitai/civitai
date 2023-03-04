@@ -48,3 +48,82 @@ export const tryBasicPublish = async <T extends typeof ingestionMessageSchema>(
     contentType: "application/json",
   });
 };
+
+// Very special name for the reply-to mechanics to work
+// https://www.rabbitmq.com/direct-reply-to.html
+const REPLY_QUEUE = "amq.rabbitmq.reply-to";
+
+// Queue name for the RPC messages on the workers
+const SERVER_QUEUE = "rpc.server.queue";
+
+/**
+ * Send a message and get a response from the image ingestion.
+ *
+ * @param message - message to send in the request to the image ingestion worker.
+ * @param id - semi-unique id to validate the message correlation
+ * @param responseSchema - validate the response message into this schema
+ * @returns Promise<typeof responseSchema> - Returns the response or rejects with errors
+ *
+ * Example:
+ *
+ * ```javascript
+ * tryRPC({ source: { ... }, ...}, "id-19284", ingestionMessageSchema).then(resp => {
+ *   console.log("Response: ", resp);
+ * }).catch(err => console.error(error));
+ * ```
+ */
+export const tryRPC = async (
+  message: unknown,
+  id: string,
+  // TODO: hard coded image ingestion here
+  responseSchema: typeof ingestionMessageSchema
+) => {
+  return new Promise(async (resolve, reject) => {
+    const ch = await tryDefaultChannel();
+    if (ch === undefined) {
+      reject("Could not create a default channel");
+      return;
+    }
+
+    const consumer = await ch.basicConsume(
+      REPLY_QUEUE,
+      { noAck: true },
+      async (msg) => {
+        const body = msg.bodyToString();
+        if (body === null) {
+          reject("Could not parse body to string");
+          return;
+        }
+
+				if (msg.properties.correlationId !== id) {
+					reject(`Could not validate the correlationId., ${msg.properties.correlationId}, ${id}`);
+					return;
+				}
+
+        const validation = await responseSchema.safeParseAsync(msg);
+
+        if (validation.success) {
+          resolve(validation.data);
+        } else {
+          reject("Failed to validate response message. Code: 01");
+        }
+
+        await consumer.cancel();
+      }
+    );
+
+    await ch.basicPublish(
+      "",
+      SERVER_QUEUE,
+      JSON.stringify(message),
+      {
+        contentType: "application/json",
+        replyTo: REPLY_QUEUE,
+        correlationId: id,
+      },
+      true
+    );
+
+    await consumer.wait();
+  });
+};
