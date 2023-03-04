@@ -1,5 +1,5 @@
 import z from "zod";
-import { tryBasicPublish, tryDefaultChannel } from "../ingestion/client";
+import { tryDefaultChannel, tryRPC } from "../ingestion/client";
 
 export const ingestionMessageSchema = z.object({
   source: z.object({
@@ -17,19 +17,30 @@ export const ingestionMessageSchema = z.object({
   action: z.string(),
 });
 
+export const ingestionMessageResponseSchema = z.object({
+  imageLabels: z.array(z.object({ Name: z.string(), Confidence: z.number() })),
+  moderationLabels: z.array(
+    z.object({ Name: z.string(), Confidence: z.number() })
+  ),
+});
+
 /**
  * Send message to image ingestion service
- * imageIngestion({ source: {...}, ...})
+ *
+ * ```javascript
+ * try {
+ *   const response = await imageIngestion({ source: {...}, ...}, "imageId-1234")
+ *   console.log(response.imageLabels, response.moderationLabels);
+ * } catch (err) {
+ *   console.log("could not ")
+ * }
+ * ```
  */
 export const imageIngestion = async (
-  message: typeof ingestionMessageSchema
-) => {
-  const channel = await tryDefaultChannel();
-
-  // Could not connect to message queue
-  if (channel === undefined) {
-    return;
-  }
-
-  return tryBasicPublish(channel, "ingestion", message);
+  message: typeof ingestionMessageSchema,
+  id: string
+): Promise<typeof ingestionMessageResponseSchema> => {
+  return tryDefaultChannel().then((channel) =>
+    tryRPC(message, id, ingestionMessageResponseSchema, channel)
+  );
 };

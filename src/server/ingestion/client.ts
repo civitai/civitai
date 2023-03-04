@@ -2,6 +2,7 @@ import { AMQPChannel, AMQPClient } from "@cloudamqp/amqp-client";
 import { env } from "~/env/server.mjs";
 import type { AMQPBaseClient } from "@cloudamqp/amqp-client/types/amqp-base-client";
 import { ingestionMessageSchema } from "../utils/image-ingestion";
+import { z } from "zod";
 
 export const amqp = new AMQPClient(
   env.IMAGE_INGESTION_MESSAGE_QUEUE_SERVER ?? "amqp://localhost"
@@ -59,10 +60,10 @@ const SERVER_QUEUE = "rpc.server.queue";
 /**
  * Send a message and get a response from the image ingestion.
  *
- * @param message - message to send in the request to the image ingestion worker.
- * @param id - semi-unique id to validate the message correlation
- * @param responseSchema - validate the response message into this schema
- * @returns Promise<typeof responseSchema> - Returns the response or rejects with errors
+ * @param message message to send in the request to the image ingestion worker.
+ * @param id semi-unique id to validate the message correlation
+ * @param responseSchema validate the response message into this schema
+ * @returns Promise<T extends z.ZodTypeAny> Returns the response or rejects with errors
  *
  * Example:
  *
@@ -72,14 +73,14 @@ const SERVER_QUEUE = "rpc.server.queue";
  * }).catch(err => console.error(error));
  * ```
  */
-export const tryRPC = async (
+export const tryRPC = async <T extends z.ZodTypeAny>(
   message: unknown,
   id: string,
-  // TODO: hard coded image ingestion here
-  responseSchema: typeof ingestionMessageSchema
-) => {
+  responseSchema: T,
+  channel?: AMQPChannel
+): Promise<T> => {
   return new Promise(async (resolve, reject) => {
-    const ch = await tryDefaultChannel();
+    const ch = (await Promise.resolve(channel)) ?? (await tryDefaultChannel());
     if (ch === undefined) {
       reject("Could not create a default channel");
       return;
@@ -102,13 +103,9 @@ export const tryRPC = async (
           return;
         }
 
-        const validation = await responseSchema.safeParseAsync(msg);
+        const result = await responseSchema.parseAsync(msg);
 
-        if (validation.success) {
-          resolve(validation.data);
-        } else {
-          reject("Failed to validate response message. Code: 01");
-        }
+        resolve(result);
 
         await consumer.cancel();
       }
