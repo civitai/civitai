@@ -10,6 +10,7 @@ declare global {
   var globalDbWrite: PrismaClient | undefined;
 }
 
+const singleClient = env.DATABASE_REPLICA_URL === env.DATABASE_URL;
 const createPrismaClient = ({ readonly }: { readonly: boolean }) => {
   const log: Prisma.LogLevel[] = isProd
     ? ['error']
@@ -25,11 +26,15 @@ export let dbRead: PrismaClient;
 export let dbWrite: PrismaClient;
 
 if (isProd) {
-  dbRead = createPrismaClient({ readonly: true });
   dbWrite = createPrismaClient({ readonly: false });
+  dbRead = singleClient ? dbWrite : createPrismaClient({ readonly: true });
 } else {
-  if (!global.globalDbRead) global.globalDbRead = createPrismaClient({ readonly: true });
   if (!global.globalDbWrite) global.globalDbWrite = createPrismaClient({ readonly: false });
-  dbRead = global.globalDbRead;
+  if (!global.globalDbRead) {
+    global.globalDbRead = singleClient
+      ? global.globalDbWrite
+      : createPrismaClient({ readonly: true });
+  }
   dbWrite = global.globalDbWrite;
+  dbRead = singleClient ? dbWrite : global.globalDbRead;
 }

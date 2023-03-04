@@ -50,7 +50,7 @@ export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
   const linked = account?.scope?.includes('role_connections.write') ?? false;
   if (linked) {
     const metadata = await getUserDiscordMetadata(session.user.id);
-    await discord.pushMetadata(metadata);
+    if (metadata) await discord.pushMetadata(metadata);
   }
   const providers = !linked ? await getProviders() : null;
 
