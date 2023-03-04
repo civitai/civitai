@@ -1,5 +1,5 @@
 import { createStore, useStore } from 'zustand';
-import { createContext, useContext, useRef, useEffect } from 'react';
+import { createContext, useContext, useRef, useEffect, SetStateAction } from 'react';
 import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
 import { PostDetail } from '~/server/controllers/post.controller';
@@ -24,25 +24,27 @@ export type ImageUpload = {
   width: number;
   hash: string;
   index: number;
-  status: 'aborted' | 'uploading';
+  status: 'blocked' | 'uploading';
   message?: string;
   file: File;
 };
 type ImageProps = { type: 'image'; data: PostImage } | { type: 'upload'; data: ImageUpload };
-
+type TagProps = Omit<SimpleTag, 'id'> & { id?: number };
 type EditPostProps = {
   objectUrls: string[];
   id: number;
   title?: string;
   nsfw: boolean;
-  tags: SimpleTag[];
+  tags: TagProps[];
   images: ImageProps[];
+  reorder: boolean;
 };
 
 interface EditPostState extends EditPostProps {
   setTitle: (title?: string) => void;
   toggleNsfw: (value?: boolean) => void;
-  setTags: (updateFn: (tags: SimpleTag[]) => SimpleTag[]) => void;
+  toggleReorder: (value?: boolean) => void;
+  setTags: (dispatch: SetStateAction<TagProps[]>) => void;
   setImages: (updateFn: (images: PostImage[]) => PostImage[]) => void;
   upload: (postId: number, files: File[]) => void;
   /** usefull for removing files that were unable to finish uploading */
@@ -80,6 +82,7 @@ const createEditPostStore = ({
         const initialData = processPost(post);
         return {
           objectUrls: [],
+          reorder: false,
           ...initialData,
           // methods
           setTitle: (title) => {
@@ -92,9 +95,14 @@ const createEditPostStore = ({
               state.nsfw = value ?? !state.nsfw;
             });
           },
-          setTags: (updateFn) => {
+          toggleReorder: (value) => {
             set((state) => {
-              state.tags = updateFn(state.tags);
+              state.reorder = value ?? !state.reorder;
+            });
+          },
+          setTags: (dispatch) => {
+            set((state) => {
+              state.tags = typeof dispatch === 'function' ? dispatch(state.tags) : dispatch;
             });
           },
           setImages: (updateFn) => {
@@ -200,7 +208,12 @@ export const EditPostProvider = ({
   }
 
   useEffect(() => {
-    const cleanup = () => storeRef.current?.getState().cleanup();
+    const cleanup = () => {
+      // removes object urls
+      storeRef.current?.getState().cleanup();
+      // removes tracked files
+      clear();
+    };
     window.addEventListener('beforeunload', cleanup);
     Router.events.on('routeChangeStart', cleanup);
 
@@ -208,7 +221,7 @@ export const EditPostProvider = ({
       window.removeEventListener('beforeunload', cleanup);
       Router.events.off('routeChangeStart', cleanup);
     };
-  });
+  }, []); //eslint-disable-line
 
   return <EditPostContext.Provider value={storeRef.current}>{children}</EditPostContext.Provider>;
 };
@@ -222,7 +235,7 @@ export function useEditPostContext<T>(selector: (state: EditPostState) => T) {
 const getImageDataFromFile = async (file: File) => {
   const url = URL.createObjectURL(file);
   const meta = await getMetadata(file);
-  const resources = meta.hashes;
+  const resources = meta.hashes ? Object.values(meta.hashes) : [];
   const img = await loadImage(url);
   const hashResult = blurHashImage(img);
   const auditResult = await auditMetaData(meta, false);
@@ -237,7 +250,7 @@ const getImageDataFromFile = async (file: File) => {
     url,
     resources,
     ...hashResult,
-    status: blockedFor ? 'aborted' : 'uploading',
+    status: blockedFor ? 'blocked' : 'uploading',
     message: blockedFor?.filter(isDefined).join(', '),
   };
 };

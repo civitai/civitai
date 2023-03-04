@@ -34,7 +34,13 @@ export const createPost = async ({
 };
 
 export const updatePost = async (data: PostUpdateInput) => {
-  await dbWrite.post.update({ where: { id: data.id }, data });
+  await dbWrite.post.update({
+    where: { id: data.id },
+    data: {
+      ...data,
+      title: data.title !== undefined ? (data.title.length > 0 ? data.title : null) : undefined,
+    },
+  });
 };
 
 export const deletePost = async ({ id }: GetByIdInput) => {
@@ -120,7 +126,7 @@ export const addPostImage = async ({
 export const reorderPostImages = async ({ imageIds }: ReorderPostImagesInput) => {
   const transaction = dbWrite.$transaction(
     imageIds.map((id, index) =>
-      dbWrite.image.update({ where: { id }, data: { index }, select: postImageSelect })
+      dbWrite.image.update({ where: { id }, data: { index }, select: { id: true } })
     )
   );
 

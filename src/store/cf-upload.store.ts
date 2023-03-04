@@ -46,7 +46,7 @@ type StoreProps = {
 export const useCFUploadStore = create<StoreProps>()(
   immer((set, get) => {
     function updateFile(uuid: string, trackedFile: Partial<TrackedFile>) {
-      console.log('updating', uuid, trackedFile);
+      // console.log('updating', uuid, trackedFile);
       set((state) => {
         const index = state.items.findIndex((x) => x.uuid === uuid);
         if (index > -1) state.items[index] = { ...state.items[index], ...trackedFile };
@@ -77,6 +77,11 @@ export const useCFUploadStore = create<StoreProps>()(
       },
       upload: async ({ file, meta }, cb) => {
         const uuid = uuidv4();
+
+        set((state) => {
+          state.items.push({ ...pendingTrackedFile, uuid, file, meta });
+        });
+
         const filename = encodeURIComponent(file.name);
         const res = await fetch('/api/image-upload', {
           method: 'POST',
@@ -147,3 +152,13 @@ export const useCFUploadStore = create<StoreProps>()(
     };
   })
 );
+
+const pendingTrackedFile: Omit<TrackedFile, 'uuid' | 'file' | 'meta'> = {
+  progress: 0,
+  uploaded: 0,
+  size: 0,
+  speed: 0,
+  timeRemaining: 0,
+  status: 'pending',
+  abort: () => undefined,
+};

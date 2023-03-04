@@ -1,10 +1,9 @@
 import { useRouter } from 'next/router';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { PostEditLayout } from '~/components/Post/PostEditLayout';
-import { usePostImagesContext } from '~/components/Post/PostImagesProvider';
+import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import { trpc } from '~/utils/trpc';
-import { Container, Stack } from '@mantine/core';
-import { useEditPostContext } from '~/components/Post/EditPostProvider';
+import { Container } from '@mantine/core';
+import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 
 export default function PostCreate() {
   const router = useRouter();

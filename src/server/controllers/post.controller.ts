@@ -38,7 +38,7 @@ export const createPostHandler = async ({
 
 export const updatePostHandler = async ({ input }: { input: PostUpdateInput }) => {
   try {
-    return await updatePost(input);
+    await updatePost(input);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

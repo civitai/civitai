@@ -1,6 +1,6 @@
 import { useRouter } from 'next/router';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
-import { EditPostProvider } from '~/components/Post/EditPostProvider';
+import { EditPostProvider } from './EditPostProvider';
 import { trpc } from '~/utils/trpc';
 import { useEffect } from 'react';
 
