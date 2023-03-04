@@ -91,6 +91,7 @@ function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
   const { classes, cx } = useStyles();
   const items = useCFUploadStore((state) => state.items);
   const trackedFile = items.find((x) => x.meta.uuid === uuid);
+  console.log({ trackedFile });
   const removeFile = useEditPostContext((state) => state.removeFile);
   return (
     <Card className={classes.container} withBorder p={0}>

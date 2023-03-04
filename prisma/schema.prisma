@@ -686,7 +686,7 @@ model Image {
   generationProcess ImageGenerationProcess?
   featuredAt        DateTime?
   postId            Int?
-  post              Post?                   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  post              Post?                   @relation(fields: [postId], references: [id], onDelete: SetNull)
   needsReview       Boolean                 @default(false)
   hideMeta          Boolean                 @default(false)
   index             Int?

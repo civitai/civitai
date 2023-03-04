@@ -2,13 +2,15 @@ import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isNumber } from '~/utils/type-guards';
-import { Container, Title, Stack, Grid, Button, UnstyledButton } from '@mantine/core';
+import { Container, Title, Stack, Grid, Button } from '@mantine/core';
 import { EditPostImages } from '~/components/Post/Edit/EditPostImages';
 import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
 import { EditPostTitle } from '~/components/Post/Edit/EditPostTitle';
 import { ReorderImages, ReorderImagesButton } from '~/components/Post/Edit/ReorderImages';
+import { DeletePostButton } from '~/components/Post/DeletePostButton';
 
 export default function PostEdit() {
+  const id = useEditPostContext((state) => state.id);
   const reorder = useEditPostContext((state) => state.reorder);
   return (
     <Container>
@@ -26,6 +28,13 @@ export default function PostEdit() {
                 </Button>
               )}
             </ReorderImagesButton>
+            <DeletePostButton postId={id}>
+              {({ onClick, isLoading }) => (
+                <Button color="red" variant="filled" onClick={onClick} loading={isLoading}>
+                  Delete Post
+                </Button>
+              )}
+            </DeletePostButton>
           </Stack>
         </Grid.Col>
         <Grid.Col md={8} sm={6} orderSm={1}>

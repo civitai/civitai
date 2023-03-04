@@ -19,7 +19,6 @@ export default function PostCreate() {
       { modelVersionId },
       {
         onSuccess: async (response) => {
-          console.log({ response });
           const postId = response.id;
           router.push(`/posts/${postId}/edit`);
           upload(postId, files);
