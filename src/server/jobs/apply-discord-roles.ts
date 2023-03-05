@@ -41,10 +41,10 @@ const applyDiscordActivityRoles = createJob(
       );
 
       const newEntusiasts = [...enthusiast].filter((u) => !existingEntusiasts.includes(u));
-      addRoleToAccounts(enthusiastRole, newEntusiasts);
+      await addRoleToAccounts(enthusiastRole, newEntusiasts);
 
       const removedEntusiasts = existingEntusiasts.filter((u) => !enthusiast.has(u));
-      removeRoleFromAccounts(enthusiastRole, removedEntusiasts);
+      await removeRoleFromAccounts(enthusiastRole, removedEntusiasts);
     }
 
     const creatorRole = discordRoles.find((r) => r.name === 'Creator');
@@ -81,10 +81,10 @@ const applyDiscordActivityRoles = createJob(
       );
 
       const newCreators = [...creator].filter((u) => !existingCreators.includes(u));
-      addRoleToAccounts(creatorRole, newCreators);
+      await addRoleToAccounts(creatorRole, newCreators);
 
       const removedCreators = existingCreators.filter((u) => !creator.has(u));
-      removeRoleFromAccounts(creatorRole, removedCreators);
+      await removeRoleFromAccounts(creatorRole, removedCreators);
     }
   }
 );
@@ -133,24 +133,24 @@ const applyDiscordLeadboardRoles = createJob(
     const newTop100 = top100
       .filter((u) => !existingTop100.includes(u.providerAccountId))
       .map((u) => u.providerAccountId);
-    addRoleToAccounts(top100Role, newTop100);
+    await addRoleToAccounts(top100Role, newTop100);
 
     const removedTop100 = existingTop100.filter(
       (u) => !top100.map((u) => u.providerAccountId).includes(u)
     );
-    removeRoleFromAccounts(top100Role, removedTop100);
+    await removeRoleFromAccounts(top100Role, removedTop100);
 
     // Get the new users in the top 10 and the users that are no longer in the top 10
     const newTop10 = top100
       .filter((u) => u.rank && u.rank <= 10)
       .filter((u) => !existingTop10.includes(u.providerAccountId))
       .map((u) => u.providerAccountId);
-    addRoleToAccounts(top10Role, newTop10);
+    await addRoleToAccounts(top10Role, newTop10);
 
     const removedTop10 = existingTop10.filter(
       (u) => !top100.map((u) => u.providerAccountId).includes(u)
     );
-    removeRoleFromAccounts(top10Role, removedTop10);
+    await removeRoleFromAccounts(top10Role, removedTop10);
   }
 );
 
@@ -196,7 +196,7 @@ const applyDiscordPaidRoles = createJob('apply-discord-paid-roles', '*/10 * * * 
           },
         })
       )?.map((s) => s.user.accounts[0].providerAccountId) ?? [];
-    addRoleToAccounts(supporterRole, newSupporters);
+    await addRoleToAccounts(supporterRole, newSupporters);
 
     // Remove the supporter role from any expired supporters
     const expiredSupporters =
@@ -223,7 +223,7 @@ const applyDiscordPaidRoles = createJob('apply-discord-paid-roles', '*/10 * * * 
           },
         })
       )?.map((s) => s.user.accounts[0].providerAccountId) ?? [];
-    removeRoleFromAccounts(supporterRole, expiredSupporters);
+    await removeRoleFromAccounts(supporterRole, expiredSupporters);
   }
 
   // Apply the Donator Role
@@ -262,10 +262,10 @@ const applyDiscordPaidRoles = createJob('apply-discord-paid-roles', '*/10 * * * 
     );
 
     const newDonators = [...donators].filter((u) => !existingDonators.includes(u));
-    addRoleToAccounts(donatorRole, newDonators);
+    await addRoleToAccounts(donatorRole, newDonators);
 
     const removedDonators = existingDonators.filter((u) => !donators.has(u));
-    removeRoleFromAccounts(donatorRole, removedDonators);
+    await removeRoleFromAccounts(donatorRole, removedDonators);
   }
 
   // Update the last pushed time
