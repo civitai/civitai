@@ -41,17 +41,19 @@ type EditPostProps = {
 };
 
 interface EditPostState extends EditPostProps {
+  // setInitialData: (post: PostDetail) => void;
   setTitle: (title?: string) => void;
   toggleNsfw: (value?: boolean) => void;
   toggleReorder: (value?: boolean) => void;
   setTags: (dispatch: SetStateAction<TagProps[]>) => void;
   setImages: (updateFn: (images: PostImage[]) => PostImage[]) => void;
-  upload: (postId: number, files: File[]) => void;
+  upload: (postId: number, files: File[]) => Promise<void>;
   /** usefull for removing files that were unable to finish uploading */
   removeFile: (uuid: string) => void;
   removeImage: (id: number) => void;
   /** used to clean up object urls */
   cleanup: () => void;
+  reset: (post?: PostDetail) => void;
 }
 
 type EditPostStore = ReturnType<typeof createEditPostStore>;
@@ -85,6 +87,11 @@ const createEditPostStore = ({
           reorder: false,
           ...initialData,
           // methods
+          // setInitialData: (post) => {
+          //   set((state) => {
+          //     state = { ...state, ...processPost(post) };
+          //   });
+          // },
           setTitle: (title) => {
             set((state) => {
               state.title = title;
@@ -130,7 +137,7 @@ const createEditPostStore = ({
               })
             );
             set((state) => {
-              state.objectUrls = toUpload.map((x) => x.url);
+              state.objectUrls = [...state.objectUrls, ...toUpload.map((x) => x.url)];
               state.images = state.images.concat(
                 toUpload.map((data) => ({ type: 'upload', data }))
               );
@@ -172,10 +179,25 @@ const createEditPostStore = ({
           },
           cleanup: () => {
             const objectUrls = get().objectUrls;
-            console.log('running cleanup', objectUrls);
             for (const url of objectUrls) {
               URL.revokeObjectURL(url);
             }
+          },
+          reset: (post) => {
+            const storeId = get().id;
+            console.log(storeId, post?.id);
+            if (storeId === post?.id) return;
+            console.log('reset');
+            get().cleanup();
+            set((state) => {
+              const data = processPost(post);
+              state.id = data.id;
+              state.title = data.title;
+              state.nsfw = data.nsfw;
+              state.tags = data.tags;
+              state.images = data.images;
+              state.objectUrls = [];
+            });
           },
         };
       })
@@ -208,20 +230,16 @@ export const EditPostProvider = ({
   }
 
   useEffect(() => {
-    const cleanup = () => {
-      // removes object urls
-      storeRef.current?.getState().cleanup();
-      // removes tracked files
-      clear();
-    };
-    window.addEventListener('beforeunload', cleanup);
-    Router.events.on('routeChangeStart', cleanup);
-
     return () => {
-      window.removeEventListener('beforeunload', cleanup);
-      Router.events.off('routeChangeStart', cleanup);
+      storeRef.current?.getState().cleanup(); // removes object urls
+      clear(); // removes tracked files
     };
   }, []); //eslint-disable-line
+
+  useEffect(() => {
+    console.log({ post });
+    storeRef.current?.getState().reset(post);
+  }, [post]); //eslint-disable-line
 
   return <EditPostContext.Provider value={storeRef.current}>{children}</EditPostContext.Provider>;
 };

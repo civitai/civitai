@@ -1,4 +1,4 @@
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwNotFoundError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { GetByIdInput } from './../schema/base.schema';
 import {
   PostUpdateInput,
@@ -19,6 +19,7 @@ export const getPost = async ({ id }: GetByIdInput) => {
     where: { id },
     select: postSelect,
   });
+  console.log({ id });
   if (!post) throw throwNotFoundError();
   return {
     ...post,
@@ -30,7 +31,14 @@ export const createPost = async ({
   userId,
   modelVersionId,
 }: PostCreateInput & { userId: number }) => {
-  return await dbWrite.post.create({ data: { userId, modelVersionId }, select: postSelect });
+  const result = await dbWrite.post.create({
+    data: { userId, modelVersionId },
+    select: postSelect,
+  });
+  return {
+    ...result,
+    tags: result.tags.flatMap((x) => x.tag),
+  };
 };
 
 export const updatePost = async (data: PostUpdateInput) => {

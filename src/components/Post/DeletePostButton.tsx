@@ -21,11 +21,7 @@ export function DeletePostButton({
   const queryUtils = trpc.useContext();
   const { mutate, isLoading } = trpc.post.delete.useMutation({
     async onSuccess(_, { id }) {
-      router.push('/').then(() => {
-        queryUtils.post.get.invalidate({ id });
-        // TODO.posts - invalidate any other post caches
-        // TODO.posts - figure out why deleting and changing route causes this error: `Rendered fewer hooks than expected`
-      });
+      router.push('/');
     },
     onError(error: any) {
       showErrorNotification({ error: new Error(error.message) });
@@ -44,7 +40,9 @@ export function DeletePostButton({
       ),
       labels: { cancel: `Cancel`, confirm: `Delete Post Only` },
       confirmProps: { color: 'red' },
-      onConfirm: () => mutate({ id: postId }),
+      onConfirm: () => {
+        mutate({ id: postId });
+      },
     });
   };
 

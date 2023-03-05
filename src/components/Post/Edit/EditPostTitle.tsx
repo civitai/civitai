@@ -4,23 +4,33 @@ import { useEditPostContext } from './EditPostProvider';
 import { trpc } from '~/utils/trpc';
 import { useEffect, useRef } from 'react';
 
+let timer: NodeJS.Timeout | undefined;
+const debounce = (func: () => void, timeout = 1000) => {
+  if (timer) clearTimeout(timer);
+  timer = setTimeout(() => {
+    func();
+  }, timeout);
+};
+
 const charLimit = 255;
 export function EditPostTitle() {
   const id = useEditPostContext((state) => state.id);
   const title = useEditPostContext((state) => state.title ?? '');
   const setTitle = useEditPostContext((state) => state.setTitle);
-  const [debounced] = useDebouncedValue(title, 1000);
+  // const [debounced] = useDebouncedValue(title, 1000);
   const { mutate, isLoading } = trpc.post.update.useMutation();
   // const ref = useRef<HTMLSpanElement>(null);
 
   const handleChange = (title: string) => {
     const clipped = title.length > charLimit ? title.substring(0, charLimit) : title;
     setTitle(clipped);
+    debounce(() => mutate({ id, title: clipped }));
   };
 
-  useDidUpdate(() => {
-    mutate({ id, title: debounced });
-  }, [debounced, id]);
+  // useDidUpdate(() => {
+  //   console.log('did update');
+  //   mutate({ id, title: debounced });
+  // }, [debounced, id]);
 
   // useEffect(() => {
   //   const onPaste = (e: ClipboardEvent) => {

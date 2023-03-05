@@ -1,7 +1,5 @@
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { isNumber } from '~/utils/type-guards';
 import { Container, Title, Stack, Grid, Button } from '@mantine/core';
 import { EditPostImages } from '~/components/Post/Edit/EditPostImages';
 import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
@@ -49,15 +47,3 @@ export default function PostEdit() {
 }
 
 PostEdit.getLayout = PostEditLayout;
-
-export const getServerSideProps = createServerSideProps({
-  useSSG: true,
-  prefetch: 'always',
-  resolver: async ({ ctx, ssg }) => {
-    const params = (ctx.params ?? {}) as { postId: string };
-    const id = Number(params.postId);
-    if (!isNumber(id)) return { notFound: true };
-
-    await ssg?.post.get.prefetch({ id });
-  },
-});

@@ -11,17 +11,21 @@ export default function PostCreate() {
     ? Number(router.query.modelVersionId)
     : undefined;
   const { mutate, isLoading } = trpc.post.create.useMutation();
+  const reset = useEditPostContext((state) => state.reset);
   const images = useEditPostContext((state) => state.images);
   const upload = useEditPostContext((state) => state.upload);
+  const queryUtils = trpc.useContext();
 
   const handleDrop = (files: File[]) => {
     mutate(
       { modelVersionId },
       {
         onSuccess: async (response) => {
+          reset();
           const postId = response.id;
-          router.push(`/posts/${postId}/edit`);
+          queryUtils.post.get.setData({ id: postId }, () => response);
           upload(postId, files);
+          router.push(`/posts/${postId}/edit`);
         },
       }
     );

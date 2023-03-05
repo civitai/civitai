@@ -135,6 +135,15 @@ export function AppFooter() {
           >
             API
           </Button>
+          <Button
+            component={NextLink}
+            prefetch={false}
+            href="/posts/create"
+            {...buttonProps}
+            px={mobile ? 5 : 'xs'}
+          >
+            Create Post
+          </Button>
         </Group>
         <Button
           component="a"
