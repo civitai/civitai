@@ -13,7 +13,7 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { isDefined } from '~/utils/type-guards';
-import { AspectRatio, Center, createStyles, Paper } from '@mantine/core';
+import { Center, createStyles, Paper } from '@mantine/core';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useDidUpdate } from '@mantine/hooks';
 import { trpc } from '~/utils/trpc';

@@ -9,9 +9,9 @@ import { devtools } from 'zustand/middleware';
 import { loadImage, blurHashImage } from '~/utils/blurhash';
 import { getMetadata, auditMetaData } from '~/utils/image-metadata';
 import { isDefined } from '~/utils/type-guards';
-import Router from 'next/router';
 import { trpc } from '~/utils/trpc';
 import { useCFUploadStore } from '~/store/cf-upload.store';
+import { PostStatus } from '@prisma/client';
 
 //https://github.com/pmndrs/zustand/blob/main/docs/guides/initialize-state-with-props.md
 export type ImageUpload = {
@@ -35,6 +35,7 @@ type EditPostProps = {
   id: number;
   title?: string;
   nsfw: boolean;
+  status: PostStatus;
   tags: TagProps[];
   images: ImageProps[];
   reorder: boolean;
@@ -44,8 +45,10 @@ interface EditPostState extends EditPostProps {
   // setInitialData: (post: PostDetail) => void;
   setTitle: (title?: string) => void;
   toggleNsfw: (value?: boolean) => void;
+  setStatus: (status: PostStatus) => void;
   toggleReorder: (value?: boolean) => void;
   setTags: (dispatch: SetStateAction<TagProps[]>) => void;
+  setImage: (id: number, updateFn: (images: PostImage) => PostImage) => void;
   setImages: (updateFn: (images: PostImage[]) => PostImage[]) => void;
   upload: (postId: number, files: File[]) => Promise<void>;
   /** usefull for removing files that were unable to finish uploading */
@@ -66,6 +69,7 @@ const processPost = (post?: PostDetail) => {
     id: post?.id ?? 0,
     title: post?.title ?? undefined,
     nsfw: post?.nsfw ?? false,
+    status: post?.status ?? PostStatus.Hidden,
     tags: post?.tags ?? [],
     images: post?.images ? prepareImages(post.images) : [],
   };
@@ -87,11 +91,6 @@ const createEditPostStore = ({
           reorder: false,
           ...initialData,
           // methods
-          // setInitialData: (post) => {
-          //   set((state) => {
-          //     state = { ...state, ...processPost(post) };
-          //   });
-          // },
           setTitle: (title) => {
             set((state) => {
               state.title = title;
@@ -102,6 +101,11 @@ const createEditPostStore = ({
               state.nsfw = value ?? !state.nsfw;
             });
           },
+          setStatus: (status) => {
+            set((state) => {
+              state.status = status;
+            });
+          },
           toggleReorder: (value) => {
             set((state) => {
               state.reorder = value ?? !state.reorder;
@@ -110,6 +114,13 @@ const createEditPostStore = ({
           setTags: (dispatch) => {
             set((state) => {
               state.tags = typeof dispatch === 'function' ? dispatch(state.tags) : dispatch;
+            });
+          },
+          setImage: (id, updateFn) => {
+            set((state) => {
+              const index = state.images.findIndex((x) => x.type === 'image' && x.data.id === id);
+              if (index > -1)
+                state.images[index].data = updateFn(state.images[index].data as PostImage);
             });
           },
           setImages: (updateFn) => {

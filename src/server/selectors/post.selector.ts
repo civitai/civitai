@@ -31,6 +31,7 @@ export const postSelect = Prisma.validator<Prisma.PostSelect>()({
   scanned: true,
   modelVersionId: true,
   user: { select: userWithCosmeticsSelect },
+  status: true,
   images: {
     orderBy: { index: 'asc' },
     select: postImageSelect,

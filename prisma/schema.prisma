@@ -644,6 +644,11 @@ model ReviewReaction {
   @@unique([reviewId, userId, reaction])
 }
 
+enum PostStatus {
+  Public
+  Hidden
+}
+
 model Post {
   id             Int           @id @default(autoincrement())
   nsfw           Boolean       @default(false)
@@ -654,6 +659,7 @@ model Post {
   user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   modelVersionId Int?
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
+  status         PostStatus    @default(Hidden)
 
   images    Image[]
   tags      TagsOnPost[]

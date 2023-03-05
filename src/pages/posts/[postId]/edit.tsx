@@ -1,22 +1,37 @@
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
-import { Container, Title, Stack, Grid, Button } from '@mantine/core';
+import {
+  Container,
+  Title,
+  Stack,
+  Grid,
+  Button,
+  createStyles,
+  Text,
+  Group,
+  Loader,
+} from '@mantine/core';
 import { EditPostImages } from '~/components/Post/Edit/EditPostImages';
 import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
 import { EditPostTitle } from '~/components/Post/Edit/EditPostTitle';
 import { ReorderImages, ReorderImagesButton } from '~/components/Post/Edit/ReorderImages';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
+import { IconArrowsDownUp } from '@tabler/icons';
+import { EditPostControls } from '~/components/Post/Edit/EditPostControls';
+import { useState } from 'react';
 
 export default function PostEdit() {
+  const { classes, cx } = useStyles();
   const id = useEditPostContext((state) => state.id);
   const reorder = useEditPostContext((state) => state.reorder);
+  const [selectedImageId, setSelectedImageId] = useState<number>();
   return (
     <Container>
       <Grid gutter={30}>
         <Grid.Col md={4} sm={6} orderSm={2}>
           <Stack>
             <Title size="sm">POST</Title>
-            <Button>To Community</Button>
+            <EditPostControls />
             <EditPostTags />
 
             <ReorderImagesButton>
@@ -26,6 +41,14 @@ export default function PostEdit() {
                 </Button>
               )}
             </ReorderImagesButton>
+            {/* <ReorderImagesButton>
+              {({ onClick, isLoading, reorder }) => (
+                <Group onClick={onClick} spacing="xs">
+                  {isLoading ? <Loader size="xs" /> : <IconArrowsDownUp size={16} />}
+                  <Text> {reorder ? 'Done rearranging' : 'Rearrange'}</Text>
+                </Group>
+              )}
+            </ReorderImagesButton> */}
             <DeletePostButton postId={id}>
               {({ onClick, isLoading }) => (
                 <Button color="red" variant="filled" onClick={onClick} loading={isLoading}>
@@ -47,3 +70,7 @@ export default function PostEdit() {
 }
 
 PostEdit.getLayout = PostEditLayout;
+
+const useStyles = createStyles((theme) => ({
+  action: {},
+}));

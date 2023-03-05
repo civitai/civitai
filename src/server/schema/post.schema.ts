@@ -1,3 +1,4 @@
+import { PostStatus } from '@prisma/client';
 import { z } from 'zod';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 
@@ -12,6 +13,7 @@ export const postUpdateSchema = z.object({
   nsfw: z.boolean().optional(),
   title: z.string().optional(),
   detail: z.string().optional(),
+  status: z.nativeEnum(PostStatus).optional(),
 });
 
 export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;

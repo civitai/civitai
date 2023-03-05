@@ -150,6 +150,12 @@ function MyApp(props: CustomAppProps) {
                 styles: { leftSection: { lineHeight: 1 } },
                 defaultProps: { radius: 'sm' },
               },
+              Checkbox: {
+                styles: {
+                  input: { cursor: 'pointer' },
+                  label: { cursor: 'pointer' },
+                },
+              },
             },
           }}
           withGlobalStyles
