@@ -214,7 +214,7 @@ const registerMetadata = async () => {
   return res;
 };
 
-type Roles = {
+export type DiscordRole = {
   id: string;
   name: string;
 };
@@ -222,7 +222,7 @@ const getAllRoles = async () => {
   const discord = getDiscordClient();
   if (!env.DISCORD_GUILD_ID) throw new Error('DISCORD_GUILD_ID not set');
   const res = await discord.get(Routes.guildRoles(env.DISCORD_GUILD_ID));
-  return res as Roles[];
+  return res as DiscordRole[];
 };
 
 const addRoleToUser = async (user_id: string, role_id: string) => {
