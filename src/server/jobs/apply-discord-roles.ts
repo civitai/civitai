@@ -315,15 +315,16 @@ const addRoleToAccounts = async (role: DiscordRole, providerAccountIds: string[]
   // Update the accounts in the database
   const roleValue = JSON.stringify([role.name]);
   const ids = providerAccountIds.map((id) => `'${id}'`).join(',');
-  await dbWrite.$executeRaw`
+  if (ids.length === 0) return;
+  await dbWrite.$executeRawUnsafe(`
     UPDATE "Account"
     SET metadata = jsonb_set(
       metadata,
       '{roles}',
-      COALESCE(metadata->'roles', '[]'::jsonb) || ${roleValue}::jsonb,
+      COALESCE(metadata->'roles', '[]'::jsonb) || '${roleValue}'::jsonb,
       true
     )
-    WHERE "providerAccountId" IN (${ids})`;
+    WHERE "providerAccountId" IN (${ids})`);
 };
 
 const removeRoleFromAccounts = async (role: DiscordRole, providerAccountIds: string[]) => {
@@ -337,14 +338,15 @@ const removeRoleFromAccounts = async (role: DiscordRole, providerAccountIds: str
 
   // Update the accounts in the database
   const ids = providerAccountIds.map((id) => `'${id}'`).join(',');
-  await dbWrite.$executeRaw`
+  if (ids.length === 0) return;
+  await dbWrite.$executeRawUnsafe(`
     UPDATE "Account"
     SET metadata = jsonb_set(
       metadata,
       '{roles}',
-      COALESCE(metadata->'roles', '[]'::jsonb) - ${role.name},
+      COALESCE(metadata->'roles', '[]'::jsonb) - '${role.name}',
       true
     )
-    WHERE "providerAccountId" IN (${ids})`;
+    WHERE "providerAccountId" IN (${ids})`);
 };
 // #endregion
