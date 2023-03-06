@@ -1639,5 +1639,6 @@ model ModelHash {
   modelVersionId Int
   modelVersion   ModelVersion  @relation(fields: [modelVersionId], references: [id])
   hashType       ModelHashType
+  fileType       String
   hash           String
 }
