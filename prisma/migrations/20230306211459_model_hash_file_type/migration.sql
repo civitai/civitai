@@ -1,6 +1,6 @@
 -- Add View
-CREATE
-OR REPLACE VIEW "ModelHash" AS
+DROP VIEW IF EXISTS "ModelHash";
+CREATE VIEW "ModelHash" AS
 SELECT
   m.id "modelId",
   mv.id "modelVersionId",
@@ -13,4 +13,4 @@ FROM
   JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id
   JOIN "ModelFileHash" mh ON mh."fileId" = mf.id
 WHERE
-  mf.type = 'Model'
+  mf.type IN ('Model', 'Pruned Model');

@@ -72,12 +72,14 @@ const completeStatus: ResponseStatus[] = ['success', 'error'];
 type CivitaiLinkStore = {
   ids: string[];
   activities: Record<string, Response>;
+  activityProgress: number | null;
   setActivities: (activities: Response[]) => void;
 };
 export const useCivitaiLinkStore = create<CivitaiLinkStore>()(
   immer((set) => ({
     ids: [],
     activities: {},
+    activityProgress: null,
     setActivities: (activities: Response[]) =>
       set((state) => {
         const ids = activities.map((x) => x.id);
@@ -88,12 +90,21 @@ export const useCivitaiLinkStore = create<CivitaiLinkStore>()(
           return !activity ? acc : { ...acc, [id]: activity };
         }, {});
 
+        let minProgress: number | undefined;
         for (const id in dict) {
           const prevActivity = state.activities[id];
           const activity = dict[id];
           const inProgress =
             !finalStatus.includes(activity.status) || activity.status !== prevActivity?.status;
-          if (inProgress) state.activities[id] = activity;
+          if (inProgress) {
+            state.activities[id] = activity;
+            if (
+              activity.status === 'processing' &&
+              activity.progress &&
+              (minProgress === undefined || activity.progress < minProgress)
+            )
+              minProgress = activity.progress;
+          }
 
           const hasCompleted =
             prevActivity &&
@@ -112,6 +123,8 @@ export const useCivitaiLinkStore = create<CivitaiLinkStore>()(
             }
           }
         }
+
+        state.activityProgress = minProgress ?? null;
       }),
   }))
 );
