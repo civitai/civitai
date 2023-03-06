@@ -68,6 +68,7 @@ const CivitaiLinkCtx = createContext<CivitaiLinkState>({} as any);
 
 // #region zu store
 const finalStatus: ResponseStatus[] = ['canceled', 'success', 'error'];
+const completeStatus: ResponseStatus[] = ['success', 'error'];
 type CivitaiLinkStore = {
   ids: string[];
   activities: Record<string, Response>;
@@ -88,12 +89,28 @@ export const useCivitaiLinkStore = create<CivitaiLinkStore>()(
         }, {});
 
         for (const id in dict) {
+          const prevActivity = state.activities[id];
           const activity = dict[id];
-          if (
-            !finalStatus.includes(activity.status) ||
-            activity.status !== state.activities[id]?.status
-          )
-            state.activities[id] = activity;
+          const inProgress =
+            !finalStatus.includes(activity.status) || activity.status !== prevActivity?.status;
+          if (inProgress) state.activities[id] = activity;
+
+          const hasCompleted =
+            prevActivity &&
+            !finalStatus.includes(prevActivity.status) &&
+            completeStatus.includes(activity.status);
+          if (hasCompleted) {
+            const inError = activity.status === 'error';
+            if (activity.type === 'resources:add') {
+              showNotification({
+                title: 'Civitai Link',
+                message: `${inError ? 'Failed ' : ''}Added ${
+                  activity.resource.modelName
+                } to SD Instance`,
+                color: inError ? 'red' : 'green',
+              });
+            }
+          }
         }
       }),
   }))
@@ -143,6 +160,8 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
 
     const handleActivities = (activities: ActivitiesResponse[]) => {
       const sorted = activities.sort((a, b) => {
+        if (b.status === 'processing' && a.status !== 'processing') return 1;
+        if (a.status === 'processing' && b.status !== 'processing') return -1;
         const aDate = new Date(a.createdAt ?? new Date());
         const bDate = new Date(b.createdAt ?? new Date());
         return bDate.getTime() - aDate.getTime();
