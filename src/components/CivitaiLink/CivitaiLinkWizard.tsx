@@ -15,12 +15,14 @@ import {
   Divider,
   Tabs,
   Code,
+  AspectRatio,
 } from '@mantine/core';
 import { openContextModal } from '@mantine/modals';
 import {
   IconCheck,
   IconChevronRight,
   IconCirclePlus,
+  IconClock,
   IconCopy,
   IconPlayerPlay,
 } from '@tabler/icons';
@@ -29,6 +31,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
+import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 
 const { openModal, Modal } = createContextModal({
   name: 'civitai-link-wizard',
@@ -70,6 +73,10 @@ const { openModal, Modal } = createContextModal({
               </Title>
               <Text>{`Civitai Link allows you to interact with your Stable Diffusion instance in realtime wherever it is from any device.`}</Text>
 
+              <AspectRatio ratio={16 / 9}>
+                <YoutubeEmbed videoId="MaSRXvM05x4" />
+              </AspectRatio>
+
               <Divider
                 mt="lg"
                 mb={5}
@@ -80,7 +87,14 @@ const { openModal, Modal } = createContextModal({
                 }
               />
               <PlanBenefitList
-                benefits={[{ content: 'Add & remove resources' }, { content: 'Generate images' }]}
+                benefits={[
+                  { content: 'Add & remove resources' },
+                  {
+                    content: 'Generate images (coming soon)',
+                    icon: <IconClock size={18} />,
+                    iconColor: 'yellow',
+                  },
+                ]}
               />
               <Divider
                 mt="lg"
@@ -157,7 +171,7 @@ const { openModal, Modal } = createContextModal({
                     <Text
                       component="a"
                       variant="link"
-                      href="https://youtube.com/civitai"
+                      href="https://youtu.be/fs-Zs-fvxb0"
                       target="_blank"
                     >
                       our video guide
