@@ -201,10 +201,10 @@ export const updateModelById = ({ id, data }: { id: number; data: Prisma.ModelUp
   });
 };
 
-export const deleteModelById = ({ id }: GetByIdInput) => {
+export const deleteModelById = ({ id, userId }: GetByIdInput & { userId: number }) => {
   return dbWrite.model.update({
     where: { id },
-    data: { deletedAt: new Date(), status: 'Deleted' },
+    data: { deletedAt: new Date(), status: 'Deleted', deletedBy: userId },
   });
 };
 
@@ -212,7 +212,7 @@ export const restoreModelById = ({ id }: GetByIdInput) => {
   return dbWrite.model.update({ where: { id }, data: { deletedAt: null, status: 'Draft' } });
 };
 
-export const permaDeleteModelById = ({ id }: GetByIdInput) => {
+export const permaDeleteModelById = ({ id }: GetByIdInput & { userId: number }) => {
   return dbWrite.model.delete({ where: { id } });
 };
 
