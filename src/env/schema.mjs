@@ -64,6 +64,7 @@ export const serverSchema = z.object({
     const str = String(value);
     return str.split(',');
   }, z.array(z.string())),
+  IMAGE_INGESTION_MESSAGE_QUEUE_SERVER: z.string().optional()
 });
 
 /**
