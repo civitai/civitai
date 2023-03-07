@@ -1,3 +1,4 @@
+import { PostStatus } from '@prisma/client';
 import { GetByIdInput } from './../schema/base.schema';
 import {
   PostUpdateInput,
@@ -5,20 +6,27 @@ import {
   ReorderPostImagesInput,
   AddPostTagInput,
   RemovePostTagInput,
+  UpdatePostImageInput,
 } from './../schema/post.schema';
 import {
   createPost,
-  getPost,
+  getPostDetail,
   updatePost,
   addPostImage,
   reorderPostImages,
   deletePost,
   addPostTag,
   removePostTag,
+  getPostEditDetail,
+  updatePostImage,
 } from './../services/post.service';
 import { TRPCError } from '@trpc/server';
 import { PostCreateInput } from '~/server/schema/post.schema';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwDbError,
+  throwNotFoundError,
+  throwAuthorizationError,
+} from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
 
 export const createPostHandler = async ({
@@ -48,10 +56,26 @@ export const updatePostHandler = async ({ input }: { input: PostUpdateInput }) =
 export type PostDetail = AsyncReturnType<typeof getPostHandler>;
 export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
-    const post = await getPost(input);
+    const post = await getPostDetail({ ...input, userId: ctx.user?.id });
     if (!post) throw throwNotFoundError();
     const isOwnerOrModerator = post.user.id === ctx.user?.id || ctx.user?.isModerator;
-    if (!post.scanned && !isOwnerOrModerator) throw throwNotFoundError();
+    // TODO.posts - additional view logic
+    const canView = isOwnerOrModerator || (post.scanned && post.status === PostStatus.Public);
+    if (!canView) throw throwNotFoundError();
+    return post;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export type PostEditDetail = AsyncReturnType<typeof getPostEditHandler>;
+export const getPostEditHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
+  try {
+    const post = await getPostEditDetail(input);
+    if (!post) throw throwNotFoundError();
+    const isOwnerOrModerator = post.userId === ctx.user?.id || ctx.user?.isModerator;
+    if (!isOwnerOrModerator) throw throwAuthorizationError();
     return post;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -68,6 +92,20 @@ export const addPostImageHandler = async ({
 }) => {
   try {
     return await addPostImage({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const updatePostImageHandler = async ({
+  input,
+}: {
+  input: UpdatePostImageInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await updatePostImage({ ...input });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

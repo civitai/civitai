@@ -9,6 +9,8 @@ import {
   deletePostHandler,
   addPostTagHandler,
   removePostTagHandler,
+  getPostEditHandler,
+  updatePostImageHandler,
 } from './../controllers/post.controller';
 import {
   postCreateSchema,
@@ -17,6 +19,7 @@ import {
   reorderPostImagesSchema,
   addPostTagSchema,
   removePostTagSchema,
+  updatePostImageSchema,
 } from './../schema/post.schema';
 import { dbWrite } from '~/server/db/client';
 import { router, protectedProcedure, middleware } from '~/server/trpc';
@@ -49,6 +52,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 
 export const postRouter = router({
   get: publicProcedure.input(getByIdSchema).query(getPostHandler),
+  getEdit: protectedProcedure.input(getByIdSchema).query(getPostEditHandler),
   create: protectedProcedure.input(postCreateSchema).mutation(createPostHandler),
   update: protectedProcedure
     .input(postUpdateSchema)
@@ -62,6 +66,10 @@ export const postRouter = router({
     .input(addPostImageSchema)
     .use(isOwnerOrModerator)
     .mutation(addPostImageHandler),
+  updateImage: protectedProcedure
+    .input(updatePostImageSchema)
+    .use(isOwnerOrModerator)
+    .mutation(updatePostImageHandler),
   reorderImages: protectedProcedure
     .input(reorderPostImagesSchema)
     .use(isOwnerOrModerator)

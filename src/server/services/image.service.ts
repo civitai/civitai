@@ -5,11 +5,9 @@ import { isProd } from '~/env/other';
 
 import { env } from '~/env/server.mjs';
 import { BrowsingMode, ImageSort } from '~/server/common/enums';
-import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
-  CreateImageInput,
   GetGalleryImageInput,
   GetImageConnectionsSchema,
   UpdateImageInput,
@@ -213,43 +211,6 @@ export const getImageConnectionsById = ({ id, modelId, reviewId }: GetImageConne
         },
       },
     },
-  });
-};
-
-export const createImage = async ({
-  resources,
-  ...image
-}: CreateImageInput & { userId: number }) => {
-  const autoResources = !!resources?.length
-    ? await dbRead?.modelHash.findMany({
-        where: { hash: { in: resources, mode: 'insensitive' } },
-        select: {
-          file: {
-            select: {
-              modelVersionId: true,
-            },
-          },
-        },
-      })
-    : [];
-
-  return await dbWrite.image.create({
-    data: {
-      ...image,
-      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      generationProcess: image.meta
-        ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
-        : null,
-      resources: autoResources
-        ? {
-            create: autoResources.map((item) => ({
-              modelVersionId: item.file.modelVersionId,
-              detected: true,
-            })),
-          }
-        : undefined,
-    },
-    select: imageSelect,
   });
 };
 

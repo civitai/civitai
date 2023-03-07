@@ -2,7 +2,7 @@ import { createStore, useStore } from 'zustand';
 import { createContext, useContext, useRef, useEffect, SetStateAction } from 'react';
 import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
-import { PostDetail } from '~/server/controllers/post.controller';
+import { PostEditDetail } from '~/server/controllers/post.controller';
 import { SimpleTag } from '~/server/selectors/tag.selector';
 import { PostImage } from '~/server/selectors/post.selector';
 import { devtools } from 'zustand/middleware';
@@ -33,16 +33,17 @@ type TagProps = Omit<SimpleTag, 'id'> & { id?: number };
 type EditPostProps = {
   objectUrls: string[];
   id: number;
+  modelVersionId?: number;
   title?: string;
   nsfw: boolean;
   status: PostStatus;
   tags: TagProps[];
   images: ImageProps[];
   reorder: boolean;
+  selectedImageId?: number;
 };
 
 interface EditPostState extends EditPostProps {
-  // setInitialData: (post: PostDetail) => void;
   setTitle: (title?: string) => void;
   toggleNsfw: (value?: boolean) => void;
   setStatus: (status: PostStatus) => void;
@@ -50,13 +51,17 @@ interface EditPostState extends EditPostProps {
   setTags: (dispatch: SetStateAction<TagProps[]>) => void;
   setImage: (id: number, updateFn: (images: PostImage) => PostImage) => void;
   setImages: (updateFn: (images: PostImage[]) => PostImage[]) => void;
-  upload: (postId: number, files: File[]) => Promise<void>;
+  setSelectedImageId: (id?: number) => void;
+  upload: (
+    { postId, modelVersionId }: { postId: number; modelVersionId?: number },
+    files: File[]
+  ) => Promise<void>;
   /** usefull for removing files that were unable to finish uploading */
   removeFile: (uuid: string) => void;
   removeImage: (id: number) => void;
   /** used to clean up object urls */
   cleanup: () => void;
-  reset: (post?: PostDetail) => void;
+  reset: (post?: PostEditDetail) => void;
 }
 
 type EditPostStore = ReturnType<typeof createEditPostStore>;
@@ -64,7 +69,7 @@ type EditPostStore = ReturnType<typeof createEditPostStore>;
 const prepareImages = (images: PostImage[]) =>
   images.map((image): ImageProps => ({ type: 'image', data: image }));
 
-const processPost = (post?: PostDetail) => {
+const processPost = (post?: PostEditDetail) => {
   return {
     id: post?.id ?? 0,
     title: post?.title ?? undefined,
@@ -72,15 +77,18 @@ const processPost = (post?: PostDetail) => {
     status: post?.status ?? PostStatus.Hidden,
     tags: post?.tags ?? [],
     images: post?.images ? prepareImages(post.images) : [],
+    modelVersionId: post?.modelVersionId ?? undefined,
   };
 };
+
+type HandleUploadArgs = { postId: number; modelVersionId?: number };
 
 const createEditPostStore = ({
   post,
   handleUpload,
 }: {
-  post?: PostDetail;
-  handleUpload: (postId: number, toUpload: ImageUpload) => Promise<PostImage>;
+  post?: PostEditDetail;
+  handleUpload: (args: HandleUploadArgs, toUpload: ImageUpload) => Promise<PostImage>;
 }) => {
   return createStore<EditPostState>()(
     devtools(
@@ -91,50 +99,48 @@ const createEditPostStore = ({
           reorder: false,
           ...initialData,
           // methods
-          setTitle: (title) => {
+          setTitle: (title) =>
             set((state) => {
               state.title = title;
-            });
-          },
-          toggleNsfw: (value) => {
+            }),
+          toggleNsfw: (value) =>
             set((state) => {
               state.nsfw = value ?? !state.nsfw;
-            });
-          },
-          setStatus: (status) => {
+            }),
+          setStatus: (status) =>
             set((state) => {
               state.status = status;
-            });
-          },
-          toggleReorder: (value) => {
+            }),
+          toggleReorder: (value) =>
             set((state) => {
               state.reorder = value ?? !state.reorder;
-            });
-          },
-          setTags: (dispatch) => {
+            }),
+          setTags: (dispatch) =>
             set((state) => {
               state.tags = typeof dispatch === 'function' ? dispatch(state.tags) : dispatch;
-            });
-          },
-          setImage: (id, updateFn) => {
+            }),
+          setImage: (id, updateFn) =>
             set((state) => {
               const index = state.images.findIndex((x) => x.type === 'image' && x.data.id === id);
               if (index > -1)
                 state.images[index].data = updateFn(state.images[index].data as PostImage);
-            });
-          },
-          setImages: (updateFn) => {
+            }),
+          setImages: (updateFn) =>
             set((state) => {
               // only allow calling setImages if uploads are finished
               if (state.images.every((x) => x.type === 'image')) {
                 const images = state.images.map(({ data }) => data as PostImage);
                 state.images = prepareImages(updateFn(images));
               }
-            });
-          },
-          upload: async (postId, files) => {
+            }),
+          setSelectedImageId: (id) =>
+            set((state) => {
+              state.selectedImageId = id;
+            }),
+          upload: async ({ postId, modelVersionId }, files) => {
             set((state) => {
               state.id = postId;
+              state.modelVersionId = modelVersionId;
             });
             const images = get().images;
             const toUpload = await Promise.all(
@@ -158,7 +164,7 @@ const createEditPostStore = ({
                 // do not upload images that have been rejected due to image prompt keywords
                 .filter((x) => x.status === 'uploading')
                 .map(async (data) => {
-                  const result = await handleUpload(postId, data);
+                  const result = await handleUpload({ postId, modelVersionId }, data);
                   set((state) => {
                     const index = state.images.findIndex(
                       (x) => x.type === 'upload' && x.data.uuid === data.uuid
@@ -172,22 +178,20 @@ const createEditPostStore = ({
                 })
             );
           },
-          removeFile: (uuid) => {
+          removeFile: (uuid) =>
             set((state) => {
               const index = state.images.findIndex(
                 (x) => x.type === 'upload' && x.data.uuid === uuid
               );
               if (index === -1) throw new Error('index out of bounds');
               state.images.splice(index, 1);
-            });
-          },
-          removeImage: (id) => {
+            }),
+          removeImage: (id) =>
             set((state) => {
               const index = state.images.findIndex((x) => x.type === 'image' && x.data.id === id);
               if (index === -1) throw new Error('index out of bounds');
               state.images.splice(index, 1);
-            });
-          },
+            }),
           cleanup: () => {
             const objectUrls = get().objectUrls;
             for (const url of objectUrls) {
@@ -196,9 +200,7 @@ const createEditPostStore = ({
           },
           reset: (post) => {
             const storeId = get().id;
-            console.log(storeId, post?.id);
             if (storeId === post?.id) return;
-            console.log('reset');
             get().cleanup();
             set((state) => {
               const data = processPost(post);
@@ -208,6 +210,7 @@ const createEditPostStore = ({
               state.tags = data.tags;
               state.images = data.images;
               state.objectUrls = [];
+              state.modelVersionId = data.modelVersionId;
             });
           },
         };
@@ -222,17 +225,20 @@ export const EditPostProvider = ({
   post,
 }: {
   children: React.ReactNode;
-  post?: PostDetail;
+  post?: PostEditDetail;
 }) => {
   const { mutateAsync } = trpc.post.addImage.useMutation();
 
   const upload = useCFUploadStore((state) => state.upload);
   const clear = useCFUploadStore((state) => state.clear);
 
-  const handleUpload = async (postId: number, { file, ...data }: ImageUpload) => {
+  const handleUpload = async (
+    { postId, modelVersionId }: HandleUploadArgs,
+    { file, ...data }: ImageUpload
+  ) => {
     const { url, id, uuid, meta } = await upload<typeof data>({ file, meta: data });
     clear((item) => item.uuid === uuid);
-    return await mutateAsync({ ...meta, url: id, postId });
+    return await mutateAsync({ ...meta, url: id, postId, modelVersionId });
   };
 
   const storeRef = useRef<EditPostStore>();
@@ -248,7 +254,6 @@ export const EditPostProvider = ({
   }, []); //eslint-disable-line
 
   useEffect(() => {
-    console.log({ post });
     storeRef.current?.getState().reset(post);
   }, [post]); //eslint-disable-line
 

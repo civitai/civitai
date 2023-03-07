@@ -11,7 +11,6 @@ import {
   GetImageConnectionsSchema,
   ImageUpdateSchema,
   UpdateImageInput,
-  CreateImageInput,
 } from '~/server/schema/image.schema';
 import { imageGallerySelect } from '~/server/selectors/image.selector';
 import {
@@ -22,7 +21,6 @@ import {
   updateImageById,
   updateImageReportStatusByReason,
   getImageConnectionsById,
-  createImage,
   updateImage,
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -257,21 +255,6 @@ export const getImageConnectionDataHandler = async ({
 
     const { connections } = image;
     return connections;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
-
-export const createImageHandler = async ({
-  input,
-  ctx,
-}: {
-  input: CreateImageInput;
-  ctx: DeepNonNullable<Context>;
-}) => {
-  try {
-    return await createImage({ ...input, userId: ctx.user.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

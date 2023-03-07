@@ -660,6 +660,8 @@ model Post {
   modelVersionId Int?
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
   status         PostStatus    @default(Hidden)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   images    Image[]
   tags      TagsOnPost[]

@@ -6,14 +6,17 @@ import { tagSchema } from '~/server/schema/tag.schema';
 
 const stringToNumber = z.preprocess((value) => Number(value), z.number());
 
-export const imageMetaSchema = z
-  .object({
-    prompt: z.string(),
-    negativePrompt: z.string(),
-    cfgScale: stringToNumber,
-    steps: stringToNumber,
-    sampler: z.string(),
-    seed: stringToNumber,
+export const imageGenerationSchema = z.object({
+  prompt: z.string(),
+  negativePrompt: z.string(),
+  cfgScale: stringToNumber,
+  steps: stringToNumber,
+  sampler: z.string(),
+  seed: stringToNumber,
+});
+
+export const imageMetaSchema = imageGenerationSchema
+  .extend({
     hashes: z.record(z.string()),
   })
   .partial()
@@ -48,11 +51,11 @@ export const imageResourceUpsertSchema = z.object({
   detected: z.boolean().optional(),
 });
 export const isImageResource = (
-  tag: ImageResourceUpsertInput
-): tag is Omit<ImageResourceUpsertInput, 'id'> & { id: number } => !!tag.id;
+  entity: ImageResourceUpsertInput
+): entity is Omit<ImageResourceUpsertInput, 'id'> & { id: number } => !!entity.id;
 export const isNotImageResource = (
-  tag: ImageResourceUpsertInput
-): tag is Omit<ImageResourceUpsertInput, 'id'> & { id: undefined } => !tag.id;
+  entity: ImageResourceUpsertInput
+): entity is Omit<ImageResourceUpsertInput, 'id'> & { id: undefined } => !entity.id;
 // #endregion
 
 export const imageSchema = z.object({
@@ -132,27 +135,6 @@ export const getImageConnectionsSchema = z.object({
   reviewId: z.number().nullish(),
 });
 export type GetImageConnectionsSchema = z.infer<typeof getImageConnectionsSchema>;
-
-export type CreateImageInput = z.infer<typeof createImageSchema>;
-export const createImageSchema = z.object({
-  name: z.string().nullish(),
-  url: z
-    .string()
-    .url()
-    .or(z.string().uuid('One of the files did not upload properly, please try again')),
-  meta: z.preprocess((value) => {
-    if (typeof value !== 'object') return null;
-    if (value && !Object.keys(value).length) return null;
-    return value;
-  }, imageMetaSchema.nullish()),
-  hash: z.string().nullish(),
-  height: z.number().nullish(),
-  width: z.number().nullish(),
-  nsfw: z.boolean().optional(),
-  resources: z.array(z.string()).optional(),
-  postId: z.number().optional(),
-  index: z.number(),
-});
 
 export type UpdateImageInput = z.infer<typeof updateImageSchema>;
 export const updateImageSchema = z.object({

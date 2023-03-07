@@ -15,6 +15,7 @@ import {
   Center,
   Popover,
   Code,
+  BadgeProps,
 } from '@mantine/core';
 import { PostImage } from '~/server/selectors/post.selector';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
@@ -30,13 +31,15 @@ import {
 } from '@tabler/icons';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { useCFUploadStore } from '~/store/cf-upload.store';
+import { EditImageDrawer } from '~/components/Post/Edit/EditImageDrawer';
 
 export function EditPostImages() {
-  const id = useEditPostContext((state) => state.id);
+  const postId = useEditPostContext((state) => state.id);
+  const modelVersionId = useEditPostContext((state) => state.modelVersionId);
   const upload = useEditPostContext((state) => state.upload);
   const images = useEditPostContext((state) => state.images);
 
-  const handleDrop = async (files: File[]) => upload(id, files);
+  const handleDrop = async (files: File[]) => upload({ postId, modelVersionId }, files);
 
   return (
     <Stack>
@@ -48,6 +51,7 @@ export function EditPostImages() {
           </Fragment>
         ))}
       </Stack>
+      <EditImageDrawer />
     </Stack>
   );
 }
@@ -64,11 +68,14 @@ function ImageController({
   meta,
   generationProcess,
   needsReview,
-  _count,
+  resources,
 }: PostImage) {
   const { classes, cx } = useStyles();
   const [withBorder, setWithBorder] = useState(false);
   const removeImage = useEditPostContext((state) => state.removeImage);
+  const setSelectedImageId = useEditPostContext((state) => state.setSelectedImageId);
+  const handleSelectImageClick = () => setSelectedImageId(id);
+
   return (
     <Card className={classes.container} withBorder={withBorder} p={0}>
       <EdgeImage
@@ -77,50 +84,25 @@ function ImageController({
         width={width ?? 1200}
         onLoad={() => setWithBorder(true)}
       />
-      {/* Option 1 */}
-      {/* <>
-        <Group className={cx(classes.header, classes.content)} spacing={6} p="xs" position="right">
-          <Badge
-            size="lg"
-            className={classes.floatingBadge}
-            color={!_count.resources ? 'red' : undefined}
-          >
-            Resources: {_count.resources}
-          </Badge>
-          <Menu position="bottom-end">
-            <Menu.Target>
-              <ActionIcon size="lg" variant="transparent" p={0}>
-                <IconDotsVertical
-                  size={24}
-                  color="#fff"
-                  style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                />
-              </ActionIcon>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
-                {({ onClick, isLoading }) => (
-                  <Menu.Item color="red" onClick={onClick}>
-                    Delete image
-                  </Menu.Item>
-                )}
-              </DeleteImage>
-            </Menu.Dropdown>
-          </Menu>
-        </Group>
-      </> */}
-      {/* Option 2 */}
       <>
         <Group className={cx(classes.footer, classes.content)} spacing={6} p="xs" position="right">
           {meta ? (
-            <ReadyBadge>Generation Data</ReadyBadge>
+            <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
+              Generation Data
+            </Badge>
           ) : (
-            <WarningBadge>Missing Generation Data</WarningBadge>
+            <Badge {...warningBadgeProps} onClick={handleSelectImageClick}>
+              Missing Generation Data
+            </Badge>
           )}
-          {_count.resources ? (
-            <ReadyBadge>Resources: {_count.resources}</ReadyBadge>
+          {resources.length ? (
+            <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
+              Resources: {resources.length}
+            </Badge>
           ) : (
-            <BlockingBadge>Missing Resources</BlockingBadge>
+            <Badge {...blockingBadgeProps} onClick={handleSelectImageClick}>
+              Missing Resources
+            </Badge>
           )}
         </Group>
         <Menu position="bottom-end">
@@ -134,6 +116,7 @@ function ImageController({
             </ActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
+            <Menu.Item onClick={handleSelectImageClick}>Edit image</Menu.Item>
             <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
               {({ onClick, isLoading }) => (
                 <Menu.Item color="red" onClick={onClick}>
@@ -145,51 +128,6 @@ function ImageController({
         </Menu>
       </>
     </Card>
-  );
-}
-
-function ReadyBadge({ children }: { children: React.ReactNode }) {
-  return (
-    <Badge
-      color="green"
-      leftSection={
-        <Center>
-          <IconCheck size={16} />
-        </Center>
-      }
-    >
-      {children}
-    </Badge>
-  );
-}
-
-function WarningBadge({ children }: { children: React.ReactNode }) {
-  return (
-    <Badge
-      color="yellow"
-      leftSection={
-        <Center>
-          <IconExclamationMark size={16} />
-        </Center>
-      }
-    >
-      {children}
-    </Badge>
-  );
-}
-
-function BlockingBadge({ children }: { children: React.ReactNode }) {
-  return (
-    <Badge
-      color="red"
-      leftSection={
-        <Center>
-          <IconExclamationCircle size={16} />
-        </Center>
-      }
-    >
-      {children}
-    </Badge>
   );
 }
 
@@ -308,3 +246,37 @@ const useStyles = createStyles((theme) => {
     },
   };
 });
+
+const sharedBadgeProps: Partial<BadgeProps> = {
+  sx: () => ({ cursor: 'pointer' }),
+};
+
+const readyBadgeProps: Partial<BadgeProps> = {
+  ...sharedBadgeProps,
+  color: 'green',
+  leftSection: (
+    <Center>
+      <IconCheck size={16} />
+    </Center>
+  ),
+};
+
+const warningBadgeProps: Partial<BadgeProps> = {
+  ...sharedBadgeProps,
+  color: 'yellow',
+  leftSection: (
+    <Center>
+      <IconExclamationMark size={16} />
+    </Center>
+  ),
+};
+
+const blockingBadgeProps: Partial<BadgeProps> = {
+  ...sharedBadgeProps,
+  color: 'red',
+  leftSection: (
+    <Center>
+      <IconExclamationCircle size={16} />
+    </Center>
+  ),
+};

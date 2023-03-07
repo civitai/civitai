@@ -23,9 +23,9 @@ export default function PostCreate() {
         onSuccess: async (response) => {
           reset();
           const postId = response.id;
-          queryUtils.post.get.setData({ id: postId }, () => response);
-          upload(postId, files);
-          router.push(`/posts/${postId}/edit`);
+          queryUtils.post.getEdit.setData({ id: postId }, () => response);
+          upload({ postId, modelVersionId }, files);
+          router.push({ pathname: `/posts/${postId}/edit` });
         },
       }
     );
@@ -39,3 +39,8 @@ export default function PostCreate() {
 }
 
 PostCreate.getLayout = PostEditLayout;
+
+/*  TODO.posts - add to migration
+UPDATE "Tag" SET target = array_append(target, 'Post')
+WHERE 'Image' = ANY(Target);
+*/

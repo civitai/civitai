@@ -43,7 +43,7 @@ export function EditPostTags() {
     <Stack>
       <MultiSelect
         label="Categories"
-        data={data?.items.map((tag) => tag.name) ?? []}
+        data={data?.items.map((tag) => tag.name).sort() ?? []}
         value={tags.filter((x) => x.isCategory).map((x) => x.name)}
         onChange={handleSetCategories}
         rightSection={

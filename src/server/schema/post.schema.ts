@@ -1,3 +1,4 @@
+import { imageResourceUpsertSchema } from './image.schema';
 import { PostStatus } from '@prisma/client';
 import { z } from 'zod';
 import { imageMetaSchema } from '~/server/schema/image.schema';
@@ -40,12 +41,26 @@ export const addPostImageSchema = z.object({
   nsfw: z.boolean().optional(),
   resources: z.array(z.string()).optional(),
   postId: z.number(),
+  modelVersionId: z.number().optional(),
   index: z.number(),
   meta: z.preprocess((value) => {
     if (typeof value !== 'object') return null;
     if (value && !Object.keys(value).length) return null;
     return value;
   }, imageMetaSchema.nullish()),
+});
+
+export type UpdatePostImageInput = z.infer<typeof updatePostImageSchema>;
+export const updatePostImageSchema = z.object({
+  id: z.number(),
+  meta: z.preprocess((value) => {
+    if (typeof value !== 'object') return null;
+    if (value && !Object.keys(value).length) return null;
+    return value;
+  }, imageMetaSchema.nullish()),
+  hideMeta: z.boolean().optional(),
+  nsfw: z.boolean().optional(),
+  resources: z.array(imageResourceUpsertSchema),
 });
 
 export type ReorderPostImagesInput = z.infer<typeof reorderPostImagesSchema>;

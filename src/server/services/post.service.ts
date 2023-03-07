@@ -1,9 +1,13 @@
-import { throwNotFoundError, throwBadRequestError } from '~/server/utils/errorHandling';
+import { isNotImageResource } from './../schema/image.schema';
+import { editPostSelect } from './../selectors/post.selector';
+import { isDefined } from '~/utils/type-guards';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { GetByIdInput } from './../schema/base.schema';
 import {
   PostUpdateInput,
   AddPostTagInput,
   AddPostImageInput,
+  UpdatePostImageInput,
   PostCreateInput,
   ReorderPostImagesInput,
   RemovePostTagInput,
@@ -11,15 +15,27 @@ import {
 import { dbWrite } from '~/server/db/client';
 import { TagType, TagTarget, Prisma } from '@prisma/client';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
-import { postImageSelect, postSelect } from '~/server/selectors/post.selector';
+import { editPostImageSelect, getPostDetailSelect } from '~/server/selectors/post.selector';
 import { ModelFileType } from '~/server/common/constants';
+import { isImageResource } from '~/server/schema/image.schema';
 
-export const getPost = async ({ id }: GetByIdInput) => {
+export const getPostDetail = async ({ id, userId }: GetByIdInput & { userId?: number }) => {
   const post = await dbWrite.post.findUnique({
     where: { id },
-    select: postSelect,
+    select: getPostDetailSelect({ userId }),
   });
-  console.log({ id });
+  if (!post) throw throwNotFoundError();
+  return {
+    ...post,
+    tags: post.tags.flatMap((x) => x.tag),
+  };
+};
+
+export const getPostEditDetail = async ({ id }: GetByIdInput) => {
+  const post = await dbWrite.post.findUnique({
+    where: { id },
+    select: editPostSelect,
+  });
   if (!post) throw throwNotFoundError();
   return {
     ...post,
@@ -33,7 +49,7 @@ export const createPost = async ({
 }: PostCreateInput & { userId: number }) => {
   const result = await dbWrite.post.create({
     data: { userId, modelVersionId },
-    select: postSelect,
+    select: editPostSelect,
   });
   return {
     ...result,
@@ -93,6 +109,7 @@ export const removePostTag = async ({ postId, id }: RemovePostTagInput) => {
 const toInclude: ModelFileType[] = ['Model', 'Pruned Model', 'Negative'];
 export const addPostImage = async ({
   resources,
+  modelVersionId,
   ...image
 }: AddPostImageInput & { userId: number }) => {
   const autoResources = !!resources?.length
@@ -110,7 +127,12 @@ export const addPostImage = async ({
         },
       })
     : [];
-  const uniqueResources = [...new Set(autoResources)];
+
+  const uniqueResources = [
+    modelVersionId,
+    ...new Set(autoResources.map((x) => x.modelVersionId)),
+  ].filter(isDefined);
+
   return await dbWrite.image.create({
     data: {
       ...image,
@@ -120,14 +142,34 @@ export const addPostImage = async ({
         : null,
       resources: !!uniqueResources.length
         ? {
-            create: uniqueResources.map((item) => ({
-              modelVersionId: item.modelVersionId,
+            create: uniqueResources.map((modelVersionId) => ({
+              modelVersionId,
               detected: true,
             })),
           }
         : undefined,
     },
-    select: postImageSelect,
+    select: editPostImageSelect,
+  });
+};
+
+export const updatePostImage = async (image: UpdatePostImageInput) => {
+  const updateResources = image.resources.filter(isImageResource);
+  const createResources = image.resources.filter(isNotImageResource);
+
+  return await dbWrite.image.update({
+    where: { id: image.id },
+    data: {
+      ...image,
+      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      resources: {
+        deleteMany: {
+          NOT: updateResources.map((r) => ({ id: r.id })),
+        },
+        createMany: { data: createResources.map((r) => ({ modelVersionId: r.id, name: r.name })) },
+      },
+    },
+    select: editPostImageSelect,
   });
 };
 

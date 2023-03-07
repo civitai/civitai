@@ -1,5 +1,5 @@
-import { createImageHandler, getImageDetailHandler } from './../controllers/image.controller';
-import { updateImageSchema, createImageSchema } from './../schema/image.schema';
+import { getImageDetailHandler } from './../controllers/image.controller';
+import { updateImageSchema } from './../schema/image.schema';
 import {
   deleteImageHandler,
   getGalleryImageDetailHandler,
@@ -70,7 +70,6 @@ export const imageRouter = router({
     .use(isOwnerOrModerator)
     .mutation(deleteImageHandler),
   setTosViolation: protectedProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
-  create: protectedProcedure.input(createImageSchema).mutation(createImageHandler),
   update: protectedProcedure
     .input(updateImageSchema)
     .use(isOwnerOrModerator)

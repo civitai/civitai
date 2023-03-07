@@ -24,7 +24,6 @@ export default function PostEdit() {
   const { classes, cx } = useStyles();
   const id = useEditPostContext((state) => state.id);
   const reorder = useEditPostContext((state) => state.reorder);
-  const [selectedImageId, setSelectedImageId] = useState<number>();
   return (
     <Container>
       <Grid gutter={30}>

@@ -21,29 +21,27 @@ function LayoutProvider({ children }: { children: any }) {
   const postId = router.query.postId ? Number(router.query.postId) : 0;
   const queryUtils = trpc.useContext();
 
-  const { data, isLoading } = trpc.post.get.useQuery(
+  const { data, isLoading, isRefetching } = trpc.post.getEdit.useQuery(
     { id: postId },
     { enabled: postId > 0, keepPreviousData: false }
   );
 
   useEffect(() => {
-    const handleRouteChange = async (url: string) => {
-      if (url !== router.asPath && postId) {
-        console.log('should invalidate');
-        queryUtils.post.get.invalidate({ id: postId });
+    if (postId) {
+      const handleReturn = async () => {
+        await queryUtils.post.get.invalidate({ id: postId });
+        await queryUtils.post.getEdit.invalidate({ id: postId });
         // TODO.posts - additional post invalidation here
-      }
-    };
-
-    router.events.on('routeChangeStart', handleRouteChange);
-    return () => {
-      router.events.off('routeChangeStart', handleRouteChange);
-    };
-  }, [postId]); //eslint-disable-line
+      };
+      return () => {
+        handleReturn();
+      };
+    }
+  }, [postId]); // eslint-disable-line
 
   const isCreatePage = !postId;
   const is404 = !data && !isLoading && !isCreatePage;
-  const loading = isLoading && !isCreatePage;
+  const loading = (isLoading || isRefetching) && !isCreatePage;
 
   return is404 ? (
     <NotFound />
