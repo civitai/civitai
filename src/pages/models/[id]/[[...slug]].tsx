@@ -19,7 +19,6 @@ import {
   Rating,
   AspectRatio,
   Paper,
-  Anchor,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { ModelStatus } from '@prisma/client';

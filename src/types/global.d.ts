@@ -39,4 +39,19 @@ declare global {
 
   // eslint-disable-next-line no-var, vars-on-top
   var navigation: { currentEntry: { index: number } };
+
+  type TrackedFile = {
+    file: File;
+    progress: number;
+    uploaded: number;
+    size: number;
+    speed: number;
+    timeRemaining: number;
+    name: string;
+    status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
+    abort: () => void;
+    uuid: string;
+    meta?: Record<string, unknown>;
+    id?: number;
+  };
 }

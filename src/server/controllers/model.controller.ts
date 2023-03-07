@@ -212,7 +212,7 @@ export const getModelsInfiniteHandler = async ({
     items: items.map(({ modelVersions, reportStats, publishedAt, hashes, ...model }) => {
       const rank = model.rank; // NOTE: null before metrics kick in
       const latestVersion = modelVersions[0];
-      const { tags, ...image } = latestVersion.images[0]?.image ?? {};
+      const { tags, ...image } = latestVersion?.images[0]?.image ?? {};
       const earlyAccess =
         !latestVersion ||
         isEarlyAccess({
@@ -298,7 +298,10 @@ export const upsertModelHandler = async ({
     const model = await upsertModel({ ...input, userId });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
-    return model;
+    return {
+      ...model,
+      tagsOnModels: model.tagsOnModels?.map(({ tag }) => tag),
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

@@ -1,9 +1,9 @@
-import { Button, Group, Input, Stack, Text } from '@mantine/core';
+import { Group, Input, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
+import { useEffect } from 'react';
 import { z } from 'zod';
 
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { useWizardContext } from '~/components/Resource/Wizard/Wizard';
 import {
   Form,
   InputMultiSelect,
@@ -15,18 +15,25 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BaseModel, constants } from '~/server/common/constants';
 import {
   ModelVersionUpsertInput,
   modelVersionUpsertSchema2,
 } from '~/server/schema/model-version.schema';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
+import { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 const schema = modelVersionUpsertSchema2
   .extend({
     skipTrainedWords: z.boolean().default(false),
+    earlyAccessTimeFrame: z
+      .string()
+      .refine((value) => ['0', '1', '2', '3', '4', '5'].includes(value), {
+        message: 'Invalid value',
+      }),
   })
   .refine((data) => (!data.skipTrainedWords ? data.trainedWords.length > 0 : true), {
     message: 'You need to specify at least one trained word',
@@ -34,8 +41,9 @@ const schema = modelVersionUpsertSchema2
   });
 type Schema = z.infer<typeof schema>;
 
-export function ModelVersionUpsertForm({ model, version, onSubmit }: Props) {
-  const { goNext, goBack } = useWizardContext();
+export function ModelVersionUpsertForm({ model, version, children, onSubmit }: Props) {
+  const features = useFeatureFlags();
+  const queryUtils = trpc.useContext();
 
   const acceptsTrainedWords = ['Checkpoint', 'TextualInversion', 'LORA'].includes(
     model?.type ?? ''
@@ -47,16 +55,18 @@ export function ModelVersionUpsertForm({ model, version, onSubmit }: Props) {
     name: version?.name ?? '',
     baseModel: (version?.baseModel as BaseModel) ?? 'SD 1.5',
     trainedWords: version?.trainedWords ?? [],
-    skipTrainedWords: version?.trainedWords
-      ? !version.trainedWords.length || acceptsTrainedWords
-      : false,
-    earlyAccessTimeFrame: version?.earlyAccessTimeFrame ?? 0,
+    skipTrainedWords: version?.trainedWords ? !version.trainedWords.length : !acceptsTrainedWords,
+    earlyAccessTimeFrame:
+      version?.earlyAccessTimeFrame && features.earlyAccessModel
+        ? String(version.earlyAccessTimeFrame)
+        : '0',
     modelId: model?.id ?? -1,
   };
   const form = useForm({ schema, defaultValues, shouldUnregister: false });
 
   const skipTrainedWords = !isTextualInversion && (form.watch('skipTrainedWords') ?? false);
   const trainedWords = form.watch('trainedWords') ?? [];
+  const { isDirty } = form.formState;
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
     onError(error) {
@@ -67,13 +77,32 @@ export function ModelVersionUpsertForm({ model, version, onSubmit }: Props) {
     },
   });
   const handleSubmit = async (data: Schema) => {
-    const result = await upsertVersionMutation.mutateAsync({
-      ...data,
-      trainedWords: skipTrainedWords ? [] : trainedWords,
-    });
-    onSubmit(result as ModelVersionUpsertInput);
-    goNext();
+    if (isDirty) {
+      const result = await upsertVersionMutation.mutateAsync({
+        ...data,
+        earlyAccessTimeFrame: Number(data.earlyAccessTimeFrame),
+        trainedWords: skipTrainedWords ? [] : trainedWords,
+      });
+      await queryUtils.model.getById.invalidate({ id: result.modelId });
+      onSubmit(result as ModelVersionUpsertInput);
+    } else onSubmit(version as ModelVersionUpsertInput);
   };
+
+  useEffect(() => {
+    if (version)
+      form.reset({
+        ...version,
+        baseModel: version.baseModel as BaseModel,
+        skipTrainedWords: version.trainedWords
+          ? !version.trainedWords.length
+          : !acceptsTrainedWords,
+        earlyAccessTimeFrame:
+          version.earlyAccessTimeFrame && features.earlyAccessModel
+            ? String(version.earlyAccessTimeFrame)
+            : '0',
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version]);
 
   return (
     <>
@@ -191,22 +220,15 @@ export function ModelVersionUpsertForm({ model, version, onSubmit }: Props) {
             />
           </Group>
         </Stack>
-        <Group mt="xl" position="right">
-          <Button variant="default" onClick={goBack}>
-            Back
-          </Button>
-          <Button type="submit" loading={upsertVersionMutation.isLoading}>
-            Next
-          </Button>
-        </Group>
+        {children({ loading: upsertVersionMutation.isLoading })}
       </Form>
-      {/* {modelVersionId && <Files />} */}
     </>
   );
 }
 
 type Props = {
-  onSubmit: (version: ModelVersionUpsertInput) => void;
+  onSubmit: (version?: ModelVersionUpsertInput) => void;
+  children: (data: { loading: boolean }) => React.ReactNode;
   model?: ModelUpsertInput;
-  version?: ModelVersionUpsertInput;
+  version?: ModelById['modelVersions'][number];
 };
