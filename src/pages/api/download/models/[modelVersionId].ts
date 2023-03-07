@@ -87,7 +87,7 @@ export default async function downloadModel(req: NextApiRequest, res: NextApiRes
   }
 
   // Handle early access
-  if (!session?.user?.tier) {
+  if (!session?.user?.tier && !session?.user?.isModerator) {
     const earlyAccessDeadline = getEarlyAccessDeadline({
       versionCreatedAt: modelVersion.createdAt,
       publishedAt: modelVersion.model.publishedAt,

@@ -68,15 +68,18 @@ const CivitaiLinkCtx = createContext<CivitaiLinkState>({} as any);
 
 // #region zu store
 const finalStatus: ResponseStatus[] = ['canceled', 'success', 'error'];
+const completeStatus: ResponseStatus[] = ['success', 'error'];
 type CivitaiLinkStore = {
   ids: string[];
   activities: Record<string, Response>;
+  activityProgress: number | null;
   setActivities: (activities: Response[]) => void;
 };
 export const useCivitaiLinkStore = create<CivitaiLinkStore>()(
   immer((set) => ({
     ids: [],
     activities: {},
+    activityProgress: null,
     setActivities: (activities: Response[]) =>
       set((state) => {
         const ids = activities.map((x) => x.id);
@@ -87,14 +90,41 @@ export const useCivitaiLinkStore = create<CivitaiLinkStore>()(
           return !activity ? acc : { ...acc, [id]: activity };
         }, {});
 
+        let minProgress: number | undefined;
         for (const id in dict) {
+          const prevActivity = state.activities[id];
           const activity = dict[id];
-          if (
-            !finalStatus.includes(activity.status) ||
-            activity.status !== state.activities[id]?.status
-          )
+          const inProgress =
+            !finalStatus.includes(activity.status) || activity.status !== prevActivity?.status;
+          if (inProgress) {
             state.activities[id] = activity;
+            if (
+              activity.status === 'processing' &&
+              activity.progress &&
+              (minProgress === undefined || activity.progress < minProgress)
+            )
+              minProgress = activity.progress;
+          }
+
+          const hasCompleted =
+            prevActivity &&
+            !finalStatus.includes(prevActivity.status) &&
+            completeStatus.includes(activity.status);
+          if (hasCompleted) {
+            const inError = activity.status === 'error';
+            if (activity.type === 'resources:add') {
+              showNotification({
+                title: 'Civitai Link',
+                message: `${inError ? 'Failed ' : ''}Added ${
+                  activity.resource.modelName
+                } to SD Instance`,
+                color: inError ? 'red' : 'green',
+              });
+            }
+          }
         }
+
+        state.activityProgress = minProgress ?? null;
       }),
   }))
 );
@@ -133,7 +163,7 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const handleMessage = (msg: string) => {
-      showNotification({ message: msg, title: 'Civitai Link', color: 'blue' });
+      showNotification({ id: msg, message: msg, title: 'Civitai Link', color: 'blue' });
     };
 
     const handleInstance = (payload: Instance) => {
@@ -143,6 +173,8 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
 
     const handleActivities = (activities: ActivitiesResponse[]) => {
       const sorted = activities.sort((a, b) => {
+        if (b.status === 'processing' && a.status !== 'processing') return 1;
+        if (a.status === 'processing' && b.status !== 'processing') return -1;
         const aDate = new Date(a.createdAt ?? new Date());
         const bDate = new Date(b.createdAt ?? new Date());
         return bDate.getTime() - aDate.getTime();

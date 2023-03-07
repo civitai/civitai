@@ -357,21 +357,23 @@ export const toggleBlockedTag = async ({
 };
 
 export const updateAccountScope = async ({
-  userId,
+  providerAccountId,
   provider,
   scope,
 }: {
-  userId: number;
+  providerAccountId: string;
   provider: string;
-  scope: string;
+  scope?: string;
 }) => {
-  const account = await dbWrite.account.findFirst({
-    where: { userId, provider },
+  if (!scope) return;
+
+  const account = await dbWrite.account.findUnique({
+    where: { provider_providerAccountId: { provider, providerAccountId } },
     select: { id: true, scope: true },
   });
   if (account && !!account.scope) {
     const currentScope = account.scope.split(' ');
-    const hasNewScope = scope.split(' ').some((s) => !currentScope.includes(s));
+    const hasNewScope = scope?.split(' ').some((s) => !currentScope.includes(s));
     if (hasNewScope) await dbWrite.account.update({ where: { id: account.id }, data: { scope } });
   }
 };

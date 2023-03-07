@@ -105,6 +105,9 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         });
 
         const hashes = version.files
+          .filter((file) =>
+            (['Model', 'Pruned Model'] as ModelFileType[]).includes(file.type as ModelFileType)
+          )
           .map((file) =>
             file.hashes.find((x) => x.type === ModelHashType.SHA256)?.hash.toLowerCase()
           )
@@ -196,7 +199,10 @@ export const getModelsInfiniteHandler = async ({
       user: { select: simpleUserSelect },
       hashes: {
         select: modelHashSelect,
-        where: { hashType: ModelHashType.SHA256 },
+        where: {
+          hashType: ModelHashType.SHA256,
+          fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+        },
       },
     },
   });
@@ -364,7 +370,7 @@ export const deleteModelHandler = async ({
     if (permanently && !ctx.user.isModerator) throw throwAuthorizationError();
 
     const deleteModel = permanently ? permaDeleteModelById : deleteModelById;
-    const model = await deleteModel({ id });
+    const model = await deleteModel({ id, userId: ctx.user.id });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
     return model;

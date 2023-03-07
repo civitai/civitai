@@ -61,6 +61,16 @@ export default defineNextConfig({
         destination: 'https://github.com/civitai/civitai/discussions/categories/ideas',
         permanent: true,
       },
+      {
+        source: '/v/civitai-link-intro',
+        destination: 'https://youtu.be/MaSRXvM05x4',
+        permanent: false,
+      },
+      {
+        source: '/v/civitai-link-installation',
+        destination: 'https://youtu.be/fs-Zs-fvxb0',
+        permanent: false,
+      },
     ];
   },
   output: 'standalone',

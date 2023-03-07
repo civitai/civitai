@@ -60,6 +60,7 @@ export function getS3Client() {
     },
     region: env.S3_UPLOAD_REGION,
     endpoint: env.S3_UPLOAD_ENDPOINT,
+    forcePathStyle: env.S3_FORCE_PATH_STYLE,
   });
 }
 
@@ -147,6 +148,13 @@ type GetObjectOptions = {
 const buckets = [env.S3_UPLOAD_BUCKET, env.S3_SETTLED_BUCKET];
 const keyParser = new RegExp(`https:\\/\\/([\\w\\-]*)\\.?${env.CF_ACCOUNT_ID}.*?\\/(.+)`, 'i');
 function parseKey(key: string) {
+  if (env.S3_FORCE_PATH_STYLE) {
+    // e.g. key: https://s3.region.s3originsite.com/bucket/key
+    const url = new URL(key);
+    const [bucket, ...keyParts] = url.pathname.split('/').filter(Boolean);
+    return { key: keyParts.join('/'), bucket };
+  }
+  // e.g. key: https://bucket.s3.region.s3originsite.com/key
   let bucket = null;
   if (key.startsWith('http')) [, bucket, key] = keyParser.exec(key) ?? [, null, key];
   for (const b of buckets) {

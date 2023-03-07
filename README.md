@@ -56,14 +56,22 @@ First, make sure that you have the following installed on your machine:
 
 1. Clone the repository to your local machine.
 1. Run `npm install` in the project directory to install the necessary dependencies.
+1. Spin up required services with `docker-compose up -d`
+    * Note: In addition to postgres and redis, this will also run maildev for email and minio for s3 storage with all necessary buckets automatically created, minio and maildev are not strictly needed but are preferred for testing and development purposes.
 1. Create your `.env` by making a copy of the contents from `.env-example` file.
-1. Spin up the database with `docker-compose up -d`.
+    * Most default values are configured to work with the docker-compose setup, with the exception of the S3 upload key and secret. To generate those, navigate to the minio web interface at [http://localhost:9000](http://localhost:9000) with the default username and password `minioadmin`, and then navigate to the "Access Keys" tab. Click "Create Access Key" and copy the generated key and secret into the `.env` file.
+    * Set `WEBHOOK_TOKEN` to a random string of your choice. This will be used to authenticate requests to the webhook endpoint.
+1. Run `npm run db:migrate` to run all database migrations.
+1. Run `npm run db:generate` to generate the prisma client.
 1. Start the development server by running `npm run dev`.
-1. Visit [http://localhost:3000](http://localhost:3000).
+1. Visit the page `http://localhost:3000/api/webhooks/run-jobs?token=WEBHOOK_TOKEN&run=update-metrics` to start the metrics update job (make sure to substitute `WEBHOOK_TOKEN`)
+1. Finally, visit [http://localhost:3000](http://localhost:3000) to see the website.
+    * Note that account creation will run emails through maildev, which can be accessed at [http://localhost:1080](http://localhost:1080).
+    * Also note that Cloudflare credentials are necessary in order for image uploads to work.
 
 ### Important Scripts
 ```sh
-docker-compose up -d # Spin up db and redis
+docker-compose up -d # Spin up db, redis, maildev, and minio
 
 npm run dev # Start the dev environment
 

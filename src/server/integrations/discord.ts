@@ -66,17 +66,18 @@ const pushMetadata = async ({
   log(`Pushing metadata for ${username}`);
   access_token = await getUserToken({ user_id, access_token, refresh_token, expires_at });
   const userClient = new REST({ version: '10', authPrefix: 'Bearer' }).setToken(access_token);
+
+  // strip keys with null values out of the metadata
+  Object.keys(metadata).forEach(
+    (key: unknown) =>
+      !metadata[key as DiscordMetadataKeys] && delete metadata[key as DiscordMetadataKeys]
+  );
+
   const res = await userClient.put(Routes.userApplicationRoleConnection(env.DISCORD_CLIENT_ID), {
     body: {
       platform_name: 'Civitai',
       platform_username: username,
-      metadata: {
-        supporter: metadata.supporter,
-        last_donation: metadata.last_donation ?? undefined,
-        last_image: metadata.last_image ?? undefined,
-        last_upload: metadata.last_upload ?? undefined,
-        rank: (metadata.rank as number) > 100 ? undefined : metadata.rank,
-      },
+      metadata,
     },
   });
   log(`Pushed metadata for ${username}`);
@@ -116,24 +117,24 @@ const appMetadata = [
   //   type: DiscordMetadataType.number_gt,
   // },
   // // User Type
-  // {
-  //   key: 'user_since',
-  //   name: 'User Since',
-  //   description: 'Days since joining Civitai',
-  //   type: DiscordMetadataType.datetime_gt,
-  // },
+  {
+    key: 'user_since',
+    name: 'User Since',
+    description: 'Days since joining Civitai',
+    type: DiscordMetadataType.datetime_gt,
+  },
   // {
   //   key: 'moderator',
   //   name: 'Moderator',
   //   description: 'Is a moderator',
   //   type: DiscordMetadataType.boolean_eq,
   // },
-  {
-    key: 'supporter',
-    name: 'Supporter',
-    description: 'Is a supporter',
-    type: DiscordMetadataType.boolean_eq,
-  },
+  // {
+  //   key: 'supporter',
+  //   name: 'Supporter',
+  //   description: 'Is a supporter',
+  //   type: DiscordMetadataType.boolean_eq,
+  // },
   // {
   //   key: 'supporter_since',
   //   name: 'Supporter Since',
@@ -146,12 +147,12 @@ const appMetadata = [
   //   description: 'Is a donator',
   //   type: DiscordMetadataType.boolean_eq,
   // },
-  {
-    key: 'last_donation',
-    name: 'Last Donation',
-    description: 'Last donation within last X days',
-    type: DiscordMetadataType.datetime_lt,
-  },
+  // {
+  //   key: 'last_donation',
+  //   name: 'Last Donation',
+  //   description: 'Last donation within last X days',
+  //   type: DiscordMetadataType.datetime_lt,
+  // },
   // // Enthusiast Stats
   // {
   //   key: 'images',
@@ -166,12 +167,12 @@ const appMetadata = [
     type: DiscordMetadataType.datetime_lt,
   },
   // // Creator Stats
-  // {
-  //   key: 'models_uploaded',
-  //   name: 'Resources Uploaded',
-  //   description: 'Resources Uploaded Greater Than',
-  //   type: DiscordMetadataType.number_gt,
-  // },
+  {
+    key: 'models_uploaded',
+    name: 'Resources Uploaded',
+    description: 'Resources Uploaded Greater Than',
+    type: DiscordMetadataType.number_gt,
+  },
   {
     key: 'last_upload',
     name: 'Last Resource Uploaded',
@@ -214,9 +215,43 @@ const registerMetadata = async () => {
   return res;
 };
 
+export type DiscordRole = {
+  id: string;
+  name: string;
+};
+const getAllRoles = async () => {
+  const discord = getDiscordClient();
+  if (!env.DISCORD_GUILD_ID) throw new Error('DISCORD_GUILD_ID not set');
+  const res = await discord.get(Routes.guildRoles(env.DISCORD_GUILD_ID));
+  return res as DiscordRole[];
+};
+
+const addRoleToUser = async (user_id: string, role_id: string) => {
+  const discord = getDiscordClient();
+  if (!env.DISCORD_GUILD_ID) throw new Error('DISCORD_GUILD_ID not set');
+  try {
+    await discord.put(Routes.guildMemberRole(env.DISCORD_GUILD_ID, user_id, role_id));
+  } catch (e: any) {
+    if (e.code !== 10007) throw e;
+  }
+};
+
+const removeRoleFromUser = async (user_id: string, role_id: string) => {
+  const discord = getDiscordClient();
+  if (!env.DISCORD_GUILD_ID) throw new Error('DISCORD_GUILD_ID not set');
+  try {
+    await discord.delete(Routes.guildMemberRole(env.DISCORD_GUILD_ID, user_id, role_id));
+  } catch (e: any) {
+    if (e.code !== 10007) throw e;
+  }
+};
+
 export const discord = {
   registerMetadata,
   pushMetadata,
+  getAllRoles,
+  addRoleToUser,
+  removeRoleFromUser,
 };
 
 /*

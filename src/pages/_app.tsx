@@ -118,7 +118,11 @@ function MyApp(props: CustomAppProps) {
     <>
       <Head>
         <title>Civitai | Share your models</title>
-        <script defer data-domain="civitai.com" src="https://plausible.io/js/script.js"></script>
+        <script
+          defer
+          data-domain="civitai.com"
+          src="https://analytics.civitai.com/js/script.js"
+        ></script>
         <MetaPWA />
       </Head>
 

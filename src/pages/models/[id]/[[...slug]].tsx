@@ -186,10 +186,6 @@ const useStyles = createStyles((theme) => ({
 
   // Increase carousel control arrow size
   control: {
-    minWidth: 56,
-    minHeight: 56,
-    borderRadius: '50%',
-
     svg: {
       width: 24,
       height: 24,
@@ -968,6 +964,7 @@ function ModelCarousel({
       align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
       slidesToScroll={mobile ? 1 : 2}
       withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+      controlSize={56}
       loop
     >
       <ImageGuard
