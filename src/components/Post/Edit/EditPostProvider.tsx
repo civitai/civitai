@@ -237,6 +237,7 @@ export const EditPostProvider = ({
     { file, ...data }: ImageUpload
   ) => {
     const { url, id, uuid, meta } = await upload<typeof data>({ file, meta: data });
+    console.log({ url });
     clear((item) => item.uuid === uuid);
     return await mutateAsync({ ...meta, url: id, postId, modelVersionId });
   };

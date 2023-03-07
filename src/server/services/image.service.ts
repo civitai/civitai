@@ -1,4 +1,4 @@
-import { isImageResource } from './../schema/image.schema';
+import { isImageResource, IngestImageInput, ingestImageSchema } from './../schema/image.schema';
 import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
@@ -13,9 +13,10 @@ import {
   UpdateImageInput,
 } from '~/server/schema/image.schema';
 import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
-import { deleteImage } from '~/utils/cf-images-utils';
+import { deleteImage, getEdgeUrl } from '~/utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
-import { simpleTagSelect } from '~/server/selectors/tag.selector';
+import { simpleTagSelect, imageTagSelect } from '~/server/selectors/tag.selector';
+import { imageIngestion, ingestionMessageSchema } from '~/server/utils/image-ingestion';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -256,4 +257,39 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
       },
     },
   });
+};
+
+export const ingestImage = async ({
+  image,
+  user,
+}: {
+  image: IngestImageInput;
+  user: SessionUser;
+}) => {
+  const { src, id, ...params } = ingestImageSchema.parse(image);
+  const url = getEdgeUrl(src, params);
+
+  try {
+    const payload = await ingestionMessageSchema.parseAsync({
+      source: {
+        type: 'civitai',
+        name: 'Civitai',
+        id,
+        url: '',
+        user: { id: user.id, name: user.username },
+      },
+      image: url,
+      // contentType: 'image/png',
+      action: 'label',
+    });
+
+    const msg = await imageIngestion(payload, `label-imageId-${id}`);
+    const imageTags = await dbWrite.tag.findMany({
+      where: { tagsOnImage: { some: { imageId: id } } },
+      select: imageTagSelect,
+    });
+    return imageTags;
+  } catch (error) {
+    throw new Error('image ingestion failed');
+  }
 };

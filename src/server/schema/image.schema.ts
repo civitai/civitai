@@ -148,3 +148,11 @@ export const updateImageSchema = z.object({
   nsfw: z.boolean().optional(),
   resources: z.array(imageResourceUpsertSchema).optional(),
 });
+
+export type IngestImageInput = z.infer<typeof ingestImageSchema>;
+export const ingestImageSchema = z.object({
+  id: z.number(),
+  src: z.string(),
+  name: z.string().optional(),
+  width: z.number(),
+});
