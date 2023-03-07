@@ -1,4 +1,4 @@
-import { AMQPChannel, AMQPClient } from "@cloudamqp/amqp-client";
+import { AMQPChannel, AMQPClient, AMQPError } from "@cloudamqp/amqp-client";
 import { env } from "~/env/server.mjs";
 import type { AMQPBaseClient } from "@cloudamqp/amqp-client/types/amqp-base-client";
 import { ingestionMessageSchema } from "../utils/image-ingestion";
@@ -50,12 +50,19 @@ export const tryBasicPublish = async <T extends typeof ingestionMessageSchema>(
   });
 };
 
+/**
+ * Wrapper for RPC errors
+ */
+export class RPCError extends Error {}
+
 // Very special name for the reply-to mechanics to work
 // https://www.rabbitmq.com/direct-reply-to.html
 const REPLY_QUEUE = "amq.rabbitmq.reply-to";
 
 // Queue name for the RPC messages on the workers
 const SERVER_QUEUE = "rpc.server.queue";
+
+const RPC_TIMEOUT = env.RPC_TIMEOUT ?? 10_000;
 
 /**
  * Send a message and get a response from the image ingestion.
@@ -77,7 +84,8 @@ export const tryRPC = async <T extends z.ZodTypeAny>(
   message: unknown,
   id: string,
   responseSchema: T,
-  channel?: AMQPChannel
+  channel?: AMQPChannel,
+  timeout = RPC_TIMEOUT
 ): Promise<T> => {
   return new Promise(async (resolve, reject) => {
     const ch = (await Promise.resolve(channel)) ?? (await tryDefaultChannel());
@@ -112,9 +120,9 @@ export const tryRPC = async <T extends z.ZodTypeAny>(
     );
 
     await ch.basicPublish(
-      "",
-      SERVER_QUEUE,
-      JSON.stringify(message),
+      "", // use the direct message
+      SERVER_QUEUE, // send to the server queue
+      JSON.stringify(message), // encode our message to a string
       {
         contentType: "application/json",
         replyTo: REPLY_QUEUE,
@@ -123,6 +131,14 @@ export const tryRPC = async <T extends z.ZodTypeAny>(
       true
     );
 
-    await consumer.wait();
+    try {
+      await consumer.wait(timeout);
+    } catch (e) {
+      if (e instanceof AMQPError) {
+        reject(new RPCError("Timed out for response"));
+      } else {
+        reject(e);
+      }
+    }
   });
 };
