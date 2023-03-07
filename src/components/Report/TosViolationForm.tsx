@@ -5,11 +5,12 @@ import { reportTosViolationDetailsSchema } from '~/server/schema/report.schema';
 
 const violations = [
   'Actual person displayed in NSFW context',
-  'Graphic Violence',
+  'Graphic violence',
   'False impersonation',
   'Deceptive content',
   'Sale of illegal substances',
   'Child abuse and exploitation',
+  'Photorealistic depiction of a minor',
   'Prohibited prompts',
 ];
 
