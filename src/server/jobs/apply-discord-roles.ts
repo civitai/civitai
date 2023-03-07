@@ -4,6 +4,8 @@ import { discord, DiscordRole } from '~/server/integrations/discord';
 import { env } from '~/env/server.mjs';
 import dayjs from 'dayjs';
 
+const ENTHUSIAST_ROLE_CUTOFF = 7; // days
+const CREATOR_ROLE_CUTOFF = 14; // days
 const applyDiscordActivityRoles = createJob(
   'apply-discord-activity-roles',
   '7 */6 * * *',
@@ -14,36 +16,20 @@ const applyDiscordActivityRoles = createJob(
     if (enthusiastRole) {
       const existingEntusiasts = await getAccountsInRole(enthusiastRole);
 
-      const enthusiastCutoff = dayjs().subtract(1, 'week').toDate();
-      const enthusiast = new Set(
+      const enthusiastCutoff = dayjs().subtract(ENTHUSIAST_ROLE_CUTOFF, 'day').toDate();
+      const enthusiasts =
         (
-          await dbRead.image.findMany({
-            where: {
-              createdAt: { gte: enthusiastCutoff },
-              user: {
-                accounts: {
-                  some: { provider: 'discord' },
-                },
-              },
-            },
-            select: {
-              user: {
-                select: {
-                  accounts: {
-                    select: { providerAccountId: true },
-                    where: { provider: 'discord' },
-                  },
-                },
-              },
-            },
-          })
-        ).map((i) => i.user.accounts[0].providerAccountId) ?? []
-      );
+          (await dbRead.$queryRaw`
+        SELECT DISTINCT a."providerAccountId"
+        FROM "Image" i
+        JOIN "Account" a ON a."userId" = i."userId" AND a.provider = 'discord'
+        WHERE i."createdAt" > ${enthusiastCutoff}`) as { providerAccountId: string }[]
+        )?.map((x) => x.providerAccountId) ?? [];
 
-      const newEntusiasts = [...enthusiast].filter((u) => !existingEntusiasts.includes(u));
+      const newEntusiasts = enthusiasts.filter((u) => !existingEntusiasts.includes(u));
       await addRoleToAccounts(enthusiastRole, newEntusiasts);
 
-      const removedEntusiasts = existingEntusiasts.filter((u) => !enthusiast.has(u));
+      const removedEntusiasts = existingEntusiasts.filter((u) => !enthusiasts.includes(u));
       await removeRoleFromAccounts(enthusiastRole, removedEntusiasts);
     }
 
@@ -51,7 +37,7 @@ const applyDiscordActivityRoles = createJob(
     if (creatorRole) {
       const existingCreators = await getAccountsInRole(creatorRole);
 
-      const creatorCutoff = dayjs().subtract(1, 'week').toDate();
+      const creatorCutoff = dayjs().subtract(CREATOR_ROLE_CUTOFF, 'day').toDate();
       const creator = new Set(
         (
           await dbRead.model.findMany({
@@ -154,30 +140,21 @@ const applyDiscordLeadboardRoles = createJob(
   }
 );
 
-const LAST_RUN_KEY = 'last-applied-roles';
 const applyDiscordPaidRoles = createJob('apply-discord-paid-roles', '*/10 * * * *', async () => {
-  // Get the last pushed time from keyValue
-  const lastUpdated = new Date(
-    ((
-      await dbRead.keyValue.findUnique({
-        where: { key: LAST_RUN_KEY },
-      })
-    )?.value as number) ?? 0
-  );
-
   const discordRoles = await discord.getAllRoles();
 
   // Apply the Supporter Role
   // ----------------------------------------
   const supporterRole = discordRoles.find((r) => r.name === 'Supporter');
   if (supporterRole) {
+    const existingSupporters = await getAccountsInRole(supporterRole);
+
     // Add the supporter role to any new supporters
-    const newSupporters =
+    const supporters =
       (
         await dbRead.customerSubscription.findMany({
           where: {
             status: 'active',
-            OR: [{ updatedAt: { gt: lastUpdated } }, { createdAt: { gt: lastUpdated } }],
             user: {
               accounts: {
                 some: { provider: 'discord' },
@@ -196,33 +173,11 @@ const applyDiscordPaidRoles = createJob('apply-discord-paid-roles', '*/10 * * * 
           },
         })
       )?.map((s) => s.user.accounts[0].providerAccountId) ?? [];
+    const newSupporters = supporters.filter((u) => !existingSupporters.includes(u));
     await addRoleToAccounts(supporterRole, newSupporters);
 
     // Remove the supporter role from any expired supporters
-    const expiredSupporters =
-      (
-        await dbRead.customerSubscription.findMany({
-          where: {
-            status: 'canceled',
-            endedAt: { gt: lastUpdated },
-            user: {
-              accounts: {
-                some: { provider: 'discord' },
-              },
-            },
-          },
-          select: {
-            user: {
-              select: {
-                accounts: {
-                  select: { providerAccountId: true },
-                  where: { provider: 'discord' },
-                },
-              },
-            },
-          },
-        })
-      )?.map((s) => s.user.accounts[0].providerAccountId) ?? [];
+    const expiredSupporters = existingSupporters.filter((u) => !supporters.includes(u));
     await removeRoleFromAccounts(supporterRole, expiredSupporters);
   }
 
@@ -267,14 +222,6 @@ const applyDiscordPaidRoles = createJob('apply-discord-paid-roles', '*/10 * * * 
     const removedDonators = existingDonators.filter((u) => !donators.has(u));
     await removeRoleFromAccounts(donatorRole, removedDonators);
   }
-
-  // Update the last pushed time
-  // --------------------------------------------
-  await dbWrite?.keyValue.upsert({
-    where: { key: LAST_RUN_KEY },
-    create: { key: LAST_RUN_KEY, value: new Date().getTime() },
-    update: { value: new Date().getTime() },
-  });
 });
 
 export const applyDiscordRoles = [
