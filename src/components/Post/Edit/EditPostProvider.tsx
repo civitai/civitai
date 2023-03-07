@@ -3,7 +3,7 @@ import { createContext, useContext, useRef, useEffect, SetStateAction } from 're
 import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
 import { PostEditDetail } from '~/server/controllers/post.controller';
-import { SimpleTag } from '~/server/selectors/tag.selector';
+import { ImageTag, SimpleTag } from '~/server/selectors/tag.selector';
 import { PostImage } from '~/server/selectors/post.selector';
 import { devtools } from 'zustand/middleware';
 import { loadImage, blurHashImage } from '~/utils/blurhash';
@@ -164,7 +164,7 @@ const createEditPostStore = ({
                 // do not upload images that have been rejected due to image prompt keywords
                 .filter((x) => x.status === 'uploading')
                 .map(async (data) => {
-                  const result = await handleUpload({ postId, modelVersionId }, data);
+                  const created = await handleUpload({ postId, modelVersionId }, data);
                   set((state) => {
                     const index = state.images.findIndex(
                       (x) => x.type === 'upload' && x.data.uuid === data.uuid
@@ -172,9 +172,23 @@ const createEditPostStore = ({
                     if (index === -1) throw new Error('index out of bounds');
                     state.images[index] = {
                       type: 'image',
-                      data: { ...result, previewUrl: data.url },
+                      data: { ...created, previewUrl: data.url },
                     };
                   });
+                  try {
+                    const imageTags = await ingestImage(created);
+                    set((state) => {
+                      const index = state.images.findIndex(
+                        (x) => x.type === 'image' && x.data.id === created.id
+                      );
+                      if (index === -1) throw new Error('index out of bounds');
+                      (state.images[index].data as PostImage).tags = imageTags.map((tag) => ({
+                        tag,
+                      }));
+                    });
+                  } catch (error) {
+                    console.error(error);
+                  }
                 })
             );
           },
@@ -288,4 +302,14 @@ const getImageDataFromFile = async (file: File) => {
     status: blockedFor ? 'blocked' : 'uploading',
     message: blockedFor?.filter(isDefined).join(', '),
   };
+};
+
+const ingestImage = async (image: PostImage): Promise<ImageTag[]> => {
+  const res = await fetch('/api/image/ingest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(image),
+    credentials: 'include',
+  });
+  return await res.json();
 };

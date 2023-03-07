@@ -13,7 +13,8 @@ import {
   UpdateImageInput,
 } from '~/server/schema/image.schema';
 import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
-import { deleteImage, getEdgeUrl } from '~/utils/cf-images-utils';
+import { deleteImage } from '~/utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
 import { simpleTagSelect, imageTagSelect } from '~/server/selectors/tag.selector';
 import { imageIngestion, ingestionMessageSchema } from '~/server/utils/image-ingestion';

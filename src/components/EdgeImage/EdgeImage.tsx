@@ -1,7 +1,7 @@
 import { createStyles } from '@mantine/core';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { EdgeUrlProps } from '~/utils/cf-images-utils';
-import { getEdgeUrl } from '~/utils/cf-images-utils';
+import { EdgeUrlProps } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 export type EdgeImageProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'loading'>;

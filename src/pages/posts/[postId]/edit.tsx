@@ -18,7 +18,6 @@ import { ReorderImages, ReorderImagesButton } from '~/components/Post/Edit/Reord
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { IconArrowsDownUp } from '@tabler/icons';
 import { EditPostControls } from '~/components/Post/Edit/EditPostControls';
-import { useState } from 'react';
 
 export default function PostEdit() {
   const { classes, cx } = useStyles();

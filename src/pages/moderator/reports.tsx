@@ -42,7 +42,7 @@ import {
   SetReportStatusInput,
 } from '~/server/schema/report.schema';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { GetReportsProps } from '~/server/controllers/report.controller';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';

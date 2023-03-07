@@ -703,6 +703,7 @@ model Image {
   hideMeta          Boolean                 @default(false)
   index             Int?
   scanned           Boolean                 @default(false)
+  mimeType          String?
 
   imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?
