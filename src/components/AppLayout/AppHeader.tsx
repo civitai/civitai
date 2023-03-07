@@ -49,6 +49,7 @@ import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
+import { UploadTracker } from '~/components/Resource/UploadTracker';
 
 const HEADER_HEIGHT = 70;
 
@@ -354,7 +355,12 @@ export function AppHeader() {
                 Sign In
               </Button>
             ) : null}
-            {currentUser && <CivitaiLinkPopover />}
+            {currentUser && (
+              <>
+                <UploadTracker />
+                <CivitaiLinkPopover />
+              </>
+            )}
             {currentUser?.showNsfw && <BlurToggle />}
             {currentUser && <NotificationBell />}
             <Menu

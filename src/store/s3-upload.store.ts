@@ -1,10 +1,12 @@
-import { UploadType } from '~/server/common/enums';
+import negate from 'lodash/negate';
+import { v4 as uuidv4 } from 'uuid';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { v4 as uuidv4 } from 'uuid';
+
+import { UploadType } from '~/server/common/enums';
 import { bytesToKB } from '~/utils/number-helpers';
+
 import { useCatchNavigationStore } from './catch-navigation.store';
-import negate from 'lodash/negate';
 
 type UploadResult = {
   url: string;
@@ -34,24 +36,20 @@ type UseS3UploadOptions = {
   endpointComplete?: string;
 };
 
-type TrackedFile = {
-  file: File;
-  progress: number;
-  uploaded: number;
-  size: number;
-  speed: number;
-  timeRemaining: number;
-  name: string;
-  status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
-  abort: () => void;
-  uuid: string;
-  meta?: Record<string, unknown>;
-};
+type ApiUploadResponse =
+  | {
+      urls: Array<{ url: string; partNumber: number }>;
+      bucket: string;
+      key: string;
+      uploadId?: string;
+    }
+  | { error: string };
 
 type UploadStatus = 'pending' | 'error' | 'success' | 'aborted';
 
 type StoreProps = {
   items: TrackedFile[];
+  setItems: (dispatch: (items: TrackedFile[]) => TrackedFile[]) => void;
   clear: (predicate?: (item: TrackedFile) => boolean) => void;
   getStatus: () => {
     pending: number;
@@ -95,7 +93,6 @@ export const useS3UploadStore = create<StoreProps>()(
       }
     ): UploadResult {
       const items = get().items;
-      console.log({ items });
       const index = items.findIndex((x) => x.uuid === uuid);
       if (index === -1) throw new Error('index out of bounds');
       const item = items[index];
@@ -120,6 +117,12 @@ export const useS3UploadStore = create<StoreProps>()(
 
     return {
       items: [] as TrackedFile[],
+      setItems: (dispatch) => {
+        set((state) => {
+          const items = get().items;
+          state.items = dispatch(items);
+        });
+      },
       clear: (predicate) => {
         set((state) => {
           state.items = predicate ? state.items.filter(negate(predicate)) : [];
@@ -154,7 +157,6 @@ export const useS3UploadStore = create<StoreProps>()(
       upload: async ({ file, type, options, meta }, cb) => {
         // register catch navigation if beginning upload queue
         if (get().items.length === 0) registerCatchNavigation();
-        const uuid = uuidv4();
         const filename = encodeURIComponent(file.name);
 
         const requestExtras = options?.endpoint?.request ?? {
@@ -181,30 +183,42 @@ export const useS3UploadStore = create<StoreProps>()(
           body: JSON.stringify(body),
         });
 
-        const data = await res.json();
+        const data = (await res.json()) as ApiUploadResponse;
 
-        if (data.error) {
+        if ('error' in data) {
           console.error(data.error);
           throw data.error;
         } else {
           const { bucket, key, uploadId, urls } = data;
+          const uuid = uuidv4();
 
           let currentXhr: XMLHttpRequest;
           const abort = () => {
             if (currentXhr) currentXhr.abort();
           };
 
+          let index = -1;
           const trackedFile = {
             ...pendingTrackedFile,
             file,
-            abort,
             size: file.size ? bytesToKB(file.size) : 0,
             uuid,
             meta,
             name: file.name,
           };
+          const existingItem = get().items.find((x, i) => {
+            if (x.file === file) {
+              index = i;
+              return true;
+            }
+
+            return false;
+          });
+          const pendingItem = { ...trackedFile, ...existingItem, abort };
+
           set((state) => {
-            state.items.push(trackedFile);
+            if (index !== -1) state.items[index] = pendingItem;
+            else state.items.push(trackedFile);
           });
 
           // Upload tracking
@@ -217,7 +231,7 @@ export const useS3UploadStore = create<StoreProps>()(
               const speed = uploaded / secondsElapsed;
               const timeRemaining = (size - uploaded) / speed;
               const progress = size ? (uploaded / size) * 100 : 0;
-              updateFile(uuid, {
+              updateFile(pendingItem.uuid, {
                 progress,
                 uploaded,
                 size,
@@ -299,7 +313,13 @@ export const useS3UploadStore = create<StoreProps>()(
 
             // If we failed to upload, abort the whole thing
             if (uploadStatus !== 'success') {
-              updateFile(uuid, { status: uploadStatus, file: undefined });
+              updateFile(pendingItem.uuid, {
+                status: uploadStatus,
+                progress: 0,
+                speed: 0,
+                timeRemaining: 0,
+                uploaded: 0,
+              });
               await abortUpload();
               return;
               // const payload = preparePayload(uuid, { url: null, bucket, key });
@@ -310,10 +330,10 @@ export const useS3UploadStore = create<StoreProps>()(
 
           // Complete the multipart upload
           await completeUpload();
-          updateFile(uuid, { status: 'success' });
+          updateFile(pendingItem.uuid, { status: 'success' });
 
           const url = urls[0].url.split('?')[0];
-          const payload = preparePayload(uuid, { url, bucket, key });
+          const payload = preparePayload(pendingItem.uuid, { url, bucket, key });
 
           cb?.(payload);
           return payload;

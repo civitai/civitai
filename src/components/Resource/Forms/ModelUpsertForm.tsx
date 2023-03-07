@@ -1,4 +1,4 @@
-import { Alert, Button, Grid, Group, Input, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Alert, Grid, Group, Input, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
 import { CheckpointType, CommercialUse, ModelType, TagTarget } from '@prisma/client';
 import {
   IconCurrencyDollarOff,
@@ -7,8 +7,9 @@ import {
   IconShoppingCart,
   IconExclamationMark,
 } from '@tabler/icons';
+import { useEffect } from 'react';
 import { z } from 'zod';
-import { useWizardContext } from '~/components/Resource/Wizard/Wizard';
+
 import {
   useForm,
   Form,
@@ -32,9 +33,7 @@ const schema = modelUpsertSchema.refine(
   }
 );
 
-export function ModelUpsertForm({ model, onSubmit }: Props) {
-  const { goNext } = useWizardContext();
-
+export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const defaultValues: ModelUpsertInput = {
     ...model,
     name: model?.name ?? '',
@@ -46,14 +45,14 @@ export function ModelUpsertForm({ model, onSubmit }: Props) {
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
   };
   const form = useForm({ schema, defaultValues, shouldUnregister: false });
-  const { errors } = form.formState;
-  const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives', 'status']);
-  const nsfwPoi = form.watch(['nsfw', 'poi']);
+  const queryUtils = trpc.useContext();
 
+  const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
+  const nsfwPoi = form.watch(['nsfw', 'poi']);
+  const { isDirty, errors } = form.formState;
   const editing = !!model;
 
   const handleModelTypeChange = (value: ModelType) => {
-    // TODO.post - uncomment this code if useForm({ shouldUnregister:false })
     form.setValue('checkpointType', null);
     switch (value) {
       case 'Checkpoint':
@@ -65,17 +64,23 @@ export function ModelUpsertForm({ model, onSubmit }: Props) {
   };
 
   const upsertModelMutation = trpc.model.upsert.useMutation({
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
+      await queryUtils.model.getById.invalidate({ id: data.id });
       onSubmit(data);
-      goNext();
     },
     onError: (error) => {
       showErrorNotification({ error: new Error(error.message), title: 'Failed to save model' });
     },
   });
   const handleSubmit = (data: z.infer<typeof schema>) => {
-    upsertModelMutation.mutate(data);
+    if (isDirty) upsertModelMutation.mutate(data);
+    else onSubmit(defaultValues);
   };
+
+  useEffect(() => {
+    if (model) form.reset(model);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model]);
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -255,19 +260,16 @@ export function ModelUpsertForm({ model, onSubmit }: Props) {
             )}
           </Stack>
         </Grid.Col>
-        <Grid.Col span={12}>
-          <Group position="right">
-            <Button type="submit" loading={upsertModelMutation.isLoading}>
-              Next
-            </Button>
-          </Group>
-        </Grid.Col>
       </Grid>
+      {typeof children === 'function'
+        ? children({ loading: upsertModelMutation.isLoading })
+        : children}
     </Form>
   );
 }
 
 type Props = {
   onSubmit: (data: ModelUpsertInput) => void;
+  children: React.ReactNode | ((data: { loading: boolean }) => React.ReactNode);
   model?: ModelUpsertInput;
 };
