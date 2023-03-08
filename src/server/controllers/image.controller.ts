@@ -80,7 +80,7 @@ export const getGalleryImageDetailHandler = async ({
         heartCount: stats?.heartCountAllTime,
         commentCount: stats?.commentCountAllTime,
       },
-      tags: tags.map(({ tag }) => tag),
+      tags: tags.map(({ tag, automated }) => ({ ...tag, automated })),
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -148,7 +148,7 @@ export const getGalleryImagesHandler = async ({
     });
     const parsedItems = items.map(({ tags, ...item }) => ({
       ...item,
-      tags: tags.map(({ tag }) => tag),
+      tags: tags.map(({ tag, automated }) => ({ ...tag, automated })),
     }));
 
     const isOwnerOrModerator =
@@ -214,7 +214,7 @@ export const setTosViolationHandler = async ({
         },
       },
     });
-    if (!image) throw throwNotFoundError(`No iamge with id ${id}`);
+    if (!image) throw throwNotFoundError(`No image with id ${id}`);
 
     // Update any TOS Violation reports
     await updateImageReportStatusByReason({

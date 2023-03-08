@@ -254,6 +254,7 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
           tag: {
             select: simpleTagSelect,
           },
+          automated: true,
         },
       },
     },
