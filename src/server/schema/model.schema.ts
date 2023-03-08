@@ -1,5 +1,6 @@
 import {
   ModelType,
+  CategoryType,
   ModelStatus,
   MetricTimeframe,
   CommercialUse,
@@ -39,6 +40,11 @@ export const getAllModelsSchema = z.object({
     .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
     .optional(),
   checkpointType: z.nativeEnum(CheckpointType).optional(),
+  categories: z
+    .union([z.nativeEnum(CategoryType), z.nativeEnum(CategoryType).array()])
+    .optional()
+    .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
+    .optional(),
   baseModels: z
     .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
     .optional()
@@ -80,6 +86,7 @@ export const modelSchema = licensingSchema.extend({
   name: z.string().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema().nullish(),
   type: z.nativeEnum(ModelType),
+  category: z.nativeEnum(CategoryType),
   status: z.nativeEnum(ModelStatus),
   checkpointType: z.nativeEnum(CheckpointType).nullish(),
   tagsOnModels: z.array(tagSchema).nullish(),

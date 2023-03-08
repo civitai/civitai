@@ -49,6 +49,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     username,
     baseModels,
     types,
+    categories,
     sort,
     period = MetricTimeframe.AllTime,
     rating,
@@ -139,6 +140,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
         : undefined,
     user: username || user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
+    category: categories?.length ? { in: categories } : undefined,
     nsfw:
       browsingMode === BrowsingMode.All
         ? undefined

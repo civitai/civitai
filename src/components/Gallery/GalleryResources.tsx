@@ -47,8 +47,13 @@ export function GalleryResources({ imageId, modelId, reviewId }: Props) {
               <Text size="sm" weight={500} lineClamp={1}>
                 {connections.model.name}
               </Text>
+            </Group>
+            <Group spacing={4} position="apart" noWrap>
               <Badge radius="sm" size="sm">
                 {splitUppercase(connections.model.type)}
+              </Badge>
+              <Badge radius="sm" size="sm">
+                {splitUppercase(connections.model.category)}
               </Badge>
             </Group>
             <Group spacing={0} position="apart">

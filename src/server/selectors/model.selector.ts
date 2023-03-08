@@ -114,6 +114,7 @@ export const modelWithDetailsSelect = (includeNSFW = true, user?: SessionUser) =
     poi: true,
     nsfw: true,
     type: true,
+    category: true,
     updatedAt: true,
     deletedAt: true,
     status: true,

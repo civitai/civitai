@@ -5,6 +5,7 @@ import {
   MetricTimeframe,
   ModelStatus,
   ModelType,
+  CategoryType,
 } from '@prisma/client';
 import React, { createContext, useContext } from 'react';
 import { z } from 'zod';
@@ -23,6 +24,7 @@ export const modelFilterSchema = z.object({
   sort: z.nativeEnum(ModelSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
   types: z.nativeEnum(ModelType).array().optional(),
+  categories: z.nativeEnum(CategoryType).array().optional(),
   checkpointType: z.nativeEnum(CheckpointType).optional(),
   baseModels: z.enum(constants.baseModels).array().optional(),
   browsingMode: z.nativeEnum(BrowsingMode).optional(),
@@ -77,6 +79,7 @@ export function parseCookies(
       sort: cookies?.['f_sort'],
       period: cookies?.['f_period'],
       types: cookies?.['f_types'],
+      categories: cookies?.['f_categories'],
       baseModels: cookies?.['f_baseModels'],
       browsingMode: cookies?.['f_browsingMode'],
       status: cookies?.['f_status'],
@@ -110,6 +113,7 @@ const zodParse = z
           sort: z.string(),
           period: z.string(),
           types: z.string(),
+          categories: z.string(),
           baseModels: z.string(),
           browsingMode: z.string(),
           status: z.string(),
