@@ -116,6 +116,8 @@ model User {
   imageConnections    ImageConnection[]
   purchases           Purchase[]
   cosmetics           UserCosmetic[]
+  postReactions       PostReaction[]
+  posts               Post[]
 }
 
 model CustomerSubscription {
@@ -410,6 +412,9 @@ model ModelVersion {
   rank             ModelVersionRank?
   downloads        DownloadHistory[]
   imageConnections ImageConnection[]
+  imageResources   ImageResource[]
+  posts            Post[]
+  reviewsV2        ReviewV2[]
   hashes           ModelHash[]
 }
 
@@ -478,8 +483,6 @@ model ModelFile {
   scanRequestedAt   DateTime?
   rawScanResult     Json?
   hashes            ModelFileHash[]
-
-  @@unique([modelVersionId, type, format])
 }
 
 enum MetricTimeframe {
@@ -627,6 +630,16 @@ model Review {
   imageConnections ImageConnection[]
 }
 
+model ReviewV2 {
+  id             Int          @id @default(autoincrement())
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  rating         Int
+  details        String
+  threadId       Int?
+  thread         Thread?      @relation(fields: [threadId], references: [id])
+}
+
 enum ReviewReactions {
   Like
   Dislike
@@ -646,6 +659,26 @@ model ReviewReaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([reviewId, userId, reaction])
+}
+
+model Post {
+  id             Int           @id @default(autoincrement())
+  nsfw           Boolean       @default(false)
+  title          String?
+  detail         String?
+  userId         Int
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelVersionId Int?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  publishedAt    DateTime?
+
+  images    Image[]
+  tags      TagsOnPost[]
+  reactions PostReaction[]
+  thread    Thread?
+  helper    PostHelper?
 }
 
 enum ImageGenerationProcess {
@@ -672,7 +705,14 @@ model Image {
   analysis          Json?
   generationProcess ImageGenerationProcess?
   featuredAt        DateTime?
+  postId            Int?
+  post              Post?                   @relation(fields: [postId], references: [id], onDelete: SetNull)
   needsReview       Boolean                 @default(false)
+  hideMeta          Boolean                 @default(false)
+  index             Int?
+  scannedAt         DateTime?
+  scanRequestedAt   DateTime?
+  mimeType          String?
 
   imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?
@@ -685,6 +725,19 @@ model Image {
   stats           ImageStat?
   rank            ImageRank?
   modHelper       ImageModHelper?
+  resources       ImageResource[]
+}
+
+model ImageResource {
+  id             Int           @id @default(autoincrement())
+  modelVersionId Int?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  name           String?
+  imageId        Int
+  image          Image         @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  detected       Boolean       @default(false)
+
+  @@unique([modelVersionId, name, imageId])
 }
 
 model ImageMetric {
@@ -730,6 +783,7 @@ enum TagTarget {
   Model
   Question
   Image
+  Post
 }
 
 enum TagType {
@@ -753,6 +807,7 @@ model Tag {
   tagsOnModels   TagsOnModels[]
   tagsOnQuestion TagsOnQuestions[]
   tagsOnImage    TagsOnImage[]
+  tagsOnPosts    TagsOnPost[]
   usersEngaged   TagEngagement[]
   metrics        TagMetric[]
   stats          TagStat?
@@ -790,6 +845,16 @@ model TagsOnImage {
   confidence Int?
 
   @@id([tagId, imageId])
+}
+
+model TagsOnPost {
+  postId    Int
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([tagId, postId])
 }
 
 model TagMetric {
@@ -1053,8 +1118,11 @@ model Thread {
   answer     Answer?   @relation(fields: [answerId], references: [id], onDelete: SetNull)
   imageId    Int?      @unique
   image      Image?    @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  postId     Int?      @unique
+  post       Post?     @relation(fields: [postId], references: [id], onDelete: SetNull)
 
   comments CommentV2[]
+  ReviewV2 ReviewV2[]
 }
 
 model QuestionReaction {
@@ -1107,6 +1175,19 @@ model ImageReaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([imageId, userId, reaction])
+}
+
+model PostReaction {
+  id        Int             @id @default(autoincrement())
+  postId    Int
+  post      Post            @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([postId, userId, reaction])
 }
 
 enum TagEngagementType {
@@ -1654,4 +1735,11 @@ model ModelHash {
   hashType       ModelHashType
   fileType       String
   hash           String
+}
+
+/// @view
+model PostHelper {
+  postId  Int     @id
+  post    Post    @relation(fields: [postId], references: [id], onDelete: NoAction)
+  scanned Boolean
 }
