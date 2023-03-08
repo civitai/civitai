@@ -202,6 +202,9 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
       <Badge className={cx(classes.floatingBadge, classes.typeBadge)} radius="sm" size="sm">
         {splitUppercase(data.type)}
       </Badge>
+      <Badge className={cx(classes.floatingBadge, classes.typeBadge)} radius="sm" size="sm">
+        {splitUppercase(data.category)}
+      </Badge>
       {data.status !== ModelStatus.Published && (
         <Badge className={cx(classes.floatingBadge, classes.statusBadge)} radius="sm" size="sm">
           {data.status}

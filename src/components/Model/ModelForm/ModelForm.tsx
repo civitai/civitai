@@ -20,6 +20,7 @@ import {
   Model,
   ModelStatus,
   ModelType,
+  CategoryType,
   TagTarget,
 } from '@prisma/client';
 import { openConfirmModal } from '@mantine/modals';
@@ -185,6 +186,7 @@ export function ModelForm({ model }: Props) {
     allowNoCredit: model?.allowNoCredit ?? true,
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
     type: model?.type ?? ModelType.Checkpoint,
+    category: CategoryType.Models,
     status: model?.status ?? ModelStatus.Published,
     tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
     modelVersions: model?.modelVersions.map(({ images, files, baseModel, ...version }) => ({
@@ -268,7 +270,12 @@ export function ModelForm({ model }: Props) {
   }, [tagsOnModels, tags]);
 
   const mutating = addMutation.isLoading || updateMutation.isLoading;
-  const [type, allowDerivatives, status] = form.watch(['type', 'allowDerivatives', 'status']);
+  const [type, category, allowDerivatives, status] = form.watch([
+    'type',
+    'category',
+    'allowDerivatives',
+    'status',
+  ]);
 
   const acceptsTrainedWords = ['Checkpoint', 'TextualInversion', 'LORA'].includes(type);
   const isTextualInversion = type === 'TextualInversion';
@@ -497,6 +504,21 @@ export function ModelForm({ model }: Props) {
                     {errors.checkpointType && (
                       <Input.Error>{errors.checkpointType.message}</Input.Error>
                     )}
+                  </Stack>
+                  <Stack spacing={5}>
+                    <Group spacing={8} grow>
+                      <InputSelect
+                        name="category"
+                        label="Category"
+                        placeholder="Category"
+                        data={Object.values(CategoryType).map((cat) => ({
+                          label: splitUppercase(cat),
+                          value: cat,
+                        }))}
+                        withAsterisk
+                      />
+                    </Group>
+                    {errors.category && <Input.Error>{errors.category.message}</Input.Error>}
                   </Stack>
                   <InputMultiSelect
                     name="tagsOnModels"

@@ -188,6 +188,7 @@ export const getImageConnectionsById = ({ id, modelId, reviewId }: GetImageConne
                   id: true,
                   name: true,
                   type: true,
+                  category: true,
                   rank: {
                     select: {
                       downloadCountAllTime: true,

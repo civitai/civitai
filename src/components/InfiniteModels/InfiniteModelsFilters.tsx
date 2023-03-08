@@ -1,6 +1,12 @@
 import { create } from 'zustand';
 import { useEffect } from 'react';
-import { ModelType, MetricTimeframe, CheckpointType, ModelStatus } from '@prisma/client';
+import {
+  ModelType,
+  MetricTimeframe,
+  CheckpointType,
+  ModelStatus,
+  CategoryType,
+} from '@prisma/client';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { splitUppercase } from '~/utils/string-helpers';
@@ -34,6 +40,7 @@ export const useFilters = create<{
   setPeriod: (period?: MetricTimeframe) => void;
   setTypes: (types?: ModelType[]) => void;
   setCheckpointType: (checkpointType?: CheckpointType) => void;
+  setCategories: (categories?: CategoryType[]) => void;
   setBaseModels: (baseModels?: BaseModel[]) => void;
   setBrowsingMode: (browsingMode?: BrowsingMode, keep?: boolean) => void;
   setStatus: (status?: ModelStatus[]) => void;
@@ -62,6 +69,12 @@ export const useFilters = create<{
       set((state) => {
         state.filters.checkpointType = type;
         !!type ? setCookie('f_ckptType', type) : deleteCookie('f_ckptType');
+      });
+    },
+    setCategories: (categories) => {
+      set((state) => {
+        state.filters.categories = categories;
+        !!categories?.length ? setCookie('f_categories', categories) : deleteCookie('f_categories');
       });
     },
     setBaseModels: (baseModels) => {
@@ -159,6 +172,8 @@ export function InfiniteModelsFilter() {
   const defaultBrowsingMode = user?.showNsfw ? BrowsingMode.All : BrowsingMode.SFW;
   const setTypes = useFilters((state) => state.setTypes);
   const types = useFilters((state) => state.filters.types ?? cookies.types ?? []);
+  const setCategories = useFilters((state) => state.setCategories);
+  const categories = useFilters((state) => state.filters.categories ?? cookies.categories ?? []);
   const setStatus = useFilters((state) => state.setStatus);
   const status = useFilters((state) => state.filters.status ?? cookies.status ?? []);
   const setBaseModels = useFilters((state) => state.setBaseModels);
@@ -178,12 +193,14 @@ export function InfiniteModelsFilter() {
 
   const filterLength =
     types.length +
+    categories.length +
     baseModels.length +
     status.length +
     (showNSFWToggle && browsingMode !== defaultBrowsingMode ? 1 : 0) +
     (showCheckpointType && checkpointType !== 'all' ? 1 : 0);
   const handleClear = () => {
     setTypes([]);
+    setCategories([]);
     setBaseModels([]);
     setStatus([]);
     setBrowsingMode(defaultBrowsingMode);
@@ -272,6 +289,20 @@ export function InfiniteModelsFilter() {
             {Object.values(ModelType).map((type, index) => (
               <Chip key={index} value={type} {...chipProps}>
                 {splitUppercase(type)}
+              </Chip>
+            ))}
+          </Chip.Group>
+          <Divider label="Model categories" labelProps={{ weight: 'bold' }} />
+          <Chip.Group
+            spacing={4}
+            value={categories}
+            onChange={(categories: CategoryType[]) => setCategories(categories)}
+            multiple
+            my={4}
+          >
+            {Object.values(CategoryType).map((cat, index) => (
+              <Chip key={index} value={cat} {...chipProps}>
+                {splitUppercase(cat)}
               </Chip>
             ))}
           </Chip.Group>
