@@ -68,3 +68,9 @@ export const reorderPostImagesSchema = z.object({
   id: z.number(),
   imageIds: z.number().array(),
 });
+
+export type GetPostTagsInput = z.infer<typeof getPostTagsSchema>;
+export const getPostTagsSchema = z.object({
+  query: z.string().optional(),
+  limit: z.number().default(10),
+});

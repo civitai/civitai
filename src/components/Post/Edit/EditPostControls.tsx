@@ -25,11 +25,11 @@ function ManagePostStatus() {
   // const id = useEditPostContext((state) => state.id);
   // const status = useEditPostContext((state) => state.status);
   // const setStatus = useEditPostContext((state) => state.setStatus);
-  const { id, tags, images } = useEditPostContext((state) => state);
+  const { id, tags } = useEditPostContext((state) => state);
 
   const { mutate, isLoading } = trpc.post.update.useMutation();
 
-  const canPublish = images.filter((x) => x.type === 'image').length > 0 && tags.length > 0;
+  const canPublish = tags.length > 0;
   // TODO.posts - update status
   // !How do we handle changes after a post has been published?
   const handlePublish = () => {

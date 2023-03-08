@@ -1,4 +1,3 @@
-import { PostStatus } from '@prisma/client';
 import { GetByIdInput } from './../schema/base.schema';
 import {
   PostUpdateInput,
@@ -7,6 +6,7 @@ import {
   AddPostTagInput,
   RemovePostTagInput,
   UpdatePostImageInput,
+  GetPostTagsInput,
 } from './../schema/post.schema';
 import {
   createPost,
@@ -19,6 +19,7 @@ import {
   removePostTag,
   getPostEditDetail,
   updatePostImage,
+  getPostTags,
 } from './../services/post.service';
 import { TRPCError } from '@trpc/server';
 import { PostCreateInput } from '~/server/schema/post.schema';
@@ -60,7 +61,7 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
     if (!post) throw throwNotFoundError();
     const isOwnerOrModerator = post.user.id === ctx.user?.id || ctx.user?.isModerator;
     // TODO.posts - additional view logic
-    const canView = isOwnerOrModerator || (post.scanned && post.status === PostStatus.Public);
+    const canView = isOwnerOrModerator || post.publishedAt;
     if (!canView) throw throwNotFoundError();
     return post;
   } catch (error) {
@@ -83,6 +84,22 @@ export const getPostEditHandler = async ({ input, ctx }: { input: GetByIdInput; 
   }
 };
 
+export const deletePostHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await deletePost({ ...input });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+// #region [post images]
 export const addPostImageHandler = async ({
   input,
   ctx,
@@ -114,7 +131,6 @@ export const updatePostImageHandler = async ({
 
 export const reorderPostImagesHandler = async ({
   input,
-  ctx,
 }: {
   input: ReorderPostImagesInput;
   ctx: DeepNonNullable<Context>;
@@ -126,16 +142,12 @@ export const reorderPostImagesHandler = async ({
     else throw throwDbError(error);
   }
 };
+// #endregion
 
-export const deletePostHandler = async ({
-  input,
-  ctx,
-}: {
-  input: GetByIdInput;
-  ctx: DeepNonNullable<Context>;
-}) => {
+// #region [post tags]
+export const getPostTagsHandler = async ({ input }: { input: GetPostTagsInput }) => {
   try {
-    return await deletePost({ ...input });
+    return await getPostTags({ ...input });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -171,3 +183,4 @@ export const removePostTagHandler = async ({
     else throw throwDbError(error);
   }
 };
+// #endregion

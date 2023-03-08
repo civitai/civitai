@@ -1,5 +1,5 @@
 import { isNotImageResource } from './../schema/image.schema';
-import { editPostSelect } from './../selectors/post.selector';
+import { editPostSelect, postTagSelect } from './../selectors/post.selector';
 import { isDefined } from '~/utils/type-guards';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { GetByIdInput } from './../schema/base.schema';
@@ -11,8 +11,9 @@ import {
   PostCreateInput,
   ReorderPostImagesInput,
   RemovePostTagInput,
+  GetPostTagsInput,
 } from './../schema/post.schema';
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { TagType, TagTarget, Prisma } from '@prisma/client';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { editPostImageSelect, getPostDetailSelect } from '~/server/selectors/post.selector';
@@ -69,6 +70,20 @@ export const updatePost = async (data: PostUpdateInput) => {
 
 export const deletePost = async ({ id }: GetByIdInput) => {
   await dbWrite.post.delete({ where: { id } });
+};
+
+export const getPostTags = async ({ query, limit }: GetPostTagsInput) => {
+  const showTrending = query === undefined || query.length < 2;
+  return await dbRead.tag.findMany({
+    take: limit,
+    where: {
+      name: !showTrending ? query.toLowerCase().trim() : undefined,
+    },
+    select: postTagSelect({ trending: showTrending }),
+    orderBy: {
+      rank: !showTrending ? { postCountAllTimeRank: 'asc' } : { postCountDayRank: 'asc' },
+    },
+  });
 };
 
 export const addPostTag = async ({ postId, id, name: initialName }: AddPostTagInput) => {

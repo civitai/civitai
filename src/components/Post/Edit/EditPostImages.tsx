@@ -47,7 +47,14 @@ export function EditPostImages() {
       <Stack>
         {images.map(({ type, data }, index) => (
           <Fragment key={index}>
-            {type === 'image' ? <ImageController {...data} /> : <ImageUpload {...data} />}
+            {type === 'image' ? (
+              <ImageController
+                image={data}
+                canDelete={images.filter((x) => x.type === 'image').length > 1}
+              />
+            ) : (
+              <ImageUpload {...data} />
+            )}
           </Fragment>
         ))}
       </Stack>
@@ -57,19 +64,25 @@ export function EditPostImages() {
 }
 
 function ImageController({
-  id,
-  url,
-  previewUrl,
-  name,
-  nsfw,
-  width,
-  height,
-  hash,
-  meta,
-  generationProcess,
-  needsReview,
-  resources,
-}: PostImage) {
+  image: {
+    id,
+    url,
+    previewUrl,
+    name,
+    nsfw,
+    width,
+    height,
+    hash,
+    meta,
+    generationProcess,
+    needsReview,
+    resources,
+  },
+  canDelete,
+}: {
+  image: PostImage;
+  canDelete?: boolean;
+}) {
   const { classes, cx } = useStyles();
   const [withBorder, setWithBorder] = useState(false);
   const removeImage = useEditPostContext((state) => state.removeImage);
@@ -117,13 +130,15 @@ function ImageController({
           </Menu.Target>
           <Menu.Dropdown>
             <Menu.Item onClick={handleSelectImageClick}>Edit image</Menu.Item>
-            <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
-              {({ onClick, isLoading }) => (
-                <Menu.Item color="red" onClick={onClick}>
-                  Delete image
-                </Menu.Item>
-              )}
-            </DeleteImage>
+            {canDelete && (
+              <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
+                {({ onClick, isLoading }) => (
+                  <Menu.Item color="red" onClick={onClick}>
+                    Delete image
+                  </Menu.Item>
+                )}
+              </DeleteImage>
+            )}
           </Menu.Dropdown>
         </Menu>
       </>

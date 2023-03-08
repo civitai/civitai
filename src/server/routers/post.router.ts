@@ -11,6 +11,7 @@ import {
   removePostTagHandler,
   getPostEditHandler,
   updatePostImageHandler,
+  getPostTagsHandler,
 } from './../controllers/post.controller';
 import {
   postCreateSchema,
@@ -20,6 +21,7 @@ import {
   addPostTagSchema,
   removePostTagSchema,
   updatePostImageSchema,
+  getPostTagsSchema,
 } from './../schema/post.schema';
 import { dbWrite } from '~/server/db/client';
 import { router, protectedProcedure, middleware } from '~/server/trpc';
@@ -74,6 +76,7 @@ export const postRouter = router({
     .input(reorderPostImagesSchema)
     .use(isOwnerOrModerator)
     .mutation(reorderPostImagesHandler),
+  getTags: publicProcedure.input(getPostTagsSchema).query(getPostTagsHandler),
   addTag: protectedProcedure
     .input(addPostTagSchema)
     .use(isOwnerOrModerator)

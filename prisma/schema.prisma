@@ -1568,6 +1568,11 @@ model TagStat {
   imageCountMonth      Int
   imageCountYear       Int
   imageCountAllTime    Int
+  postCountDay         Int
+  postCountWeek        Int
+  postCountMonth       Int
+  postCountYear        Int
+  postCountAllTime     Int
 }
 
 /// @view
@@ -1594,6 +1599,11 @@ model TagRank {
   imageCountMonthRank      Int
   imageCountYearRank       Int
   imageCountAllTimeRank    Int
+  postCountDayRank         Int
+  postCountWeekRank        Int
+  postCountMonthRank       Int
+  postCountYearRank        Int
+  postCountAllTimeRank     Int
 }
 
 /// @view
