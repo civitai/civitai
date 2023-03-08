@@ -1,7 +1,7 @@
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import {
   UpsertCommentV2Input,
   GetCommentsV2Input,
@@ -52,7 +52,7 @@ export const getComments = async <TSelect extends Prisma.CommentV2Select>({
 }) => {
   const take = limit ?? 20;
 
-  return await dbWrite.commentV2.findMany({
+  return await dbRead.commentV2.findMany({
     take,
     cursor: cursor ? { id: cursor } : undefined,
     where: {
@@ -70,7 +70,7 @@ export const deleteComment = async ({ id }: { id: number }) => {
 };
 
 export const getCommentCount = async ({ entityId, entityType }: CommentConnectorInput) => {
-  return await dbWrite.commentV2.count({
+  return await dbRead.commentV2.count({
     where: {
       thread: {
         [`${entityType}Id`]: entityId,
@@ -80,7 +80,7 @@ export const getCommentCount = async ({ entityId, entityType }: CommentConnector
 };
 
 export const getCommentsThreadDetails = async ({ entityId, entityType }: CommentConnectorInput) => {
-  return await dbWrite.thread.findUnique({
+  return await dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId },
     select: {
       id: true,

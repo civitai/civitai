@@ -5,7 +5,7 @@ import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
 import { ReviewSort } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { queueMetricUpdate } from '~/server/jobs/update-metrics';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -30,7 +30,7 @@ export const getReviews = <TSelect extends Prisma.ReviewSelect>({
   const isMod = user?.isModerator ?? false;
   // const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
 
-  return dbWrite.review.findMany({
+  return dbRead.review.findMany({
     take: limit,
     skip,
     cursor: cursor ? { id: cursor } : undefined,
@@ -71,14 +71,14 @@ export const getReviewById = <TSelect extends Prisma.ReviewSelect>({
 }: GetByIdInput & { select: TSelect; user?: SessionUser }) => {
   const isMod = user?.isModerator ?? false;
 
-  return dbWrite.review.findFirst({
+  return dbRead.review.findFirst({
     where: { id, tosViolation: !isMod ? false : undefined },
     select,
   });
 };
 
 export const getReviewReactions = ({ reviewId }: GetReviewReactionsInput) => {
-  return dbWrite.reviewReaction.findMany({
+  return dbRead.reviewReaction.findMany({
     where: { reviewId },
     select: getReactionsSelect,
   });
@@ -93,7 +93,7 @@ export const getUserReactionByReviewId = ({
   userId: number;
   reviewId: number;
 }) => {
-  return dbWrite.reviewReaction.findFirst({ where: { reaction, userId, reviewId } });
+  return dbRead.reviewReaction.findFirst({ where: { reaction, userId, reviewId } });
 };
 
 export const createOrUpdateReview = async ({

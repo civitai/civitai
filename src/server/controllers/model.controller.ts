@@ -2,7 +2,7 @@ import { modelHashSelect } from './../selectors/modelHash.selector';
 import { ModelStatus, ModelHashType, Prisma, UserActivityType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -90,7 +90,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           : undefined;
         if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
           earlyAccessDeadline = undefined;
-        const canDownload = !earlyAccessDeadline || ctx.user?.tier;
+        const canDownload = !earlyAccessDeadline || !!ctx.user?.tier || !!ctx.user?.isModerator;
 
         // sort version files by file type, 'Model' type goes first
         const files = [...version.files].sort((a, b) => {
@@ -103,6 +103,9 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         });
 
         const hashes = version.files
+          .filter((file) =>
+            (['Model', 'Pruned Model'] as ModelFileType[]).includes(file.type as ModelFileType)
+          )
           .map((file) =>
             file.hashes.find((x) => x.type === ModelHashType.SHA256)?.hash.toLowerCase()
           )
@@ -194,7 +197,10 @@ export const getModelsInfiniteHandler = async ({
       user: { select: simpleUserSelect },
       hashes: {
         select: modelHashSelect,
-        where: { hashType: ModelHashType.SHA256 },
+        where: {
+          hashType: ModelHashType.SHA256,
+          fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+        },
       },
     },
   });
@@ -208,7 +214,7 @@ export const getModelsInfiniteHandler = async ({
   return {
     nextCursor,
     items: items.map(({ modelVersions, reportStats, publishedAt, hashes, ...model }) => {
-      const rank = model.rank as Record<string, number>;
+      const rank = model.rank; // NOTE: null before metrics kick in
       const latestVersion = modelVersions[0];
       const { tags, ...image } = latestVersion.images[0]?.image ?? {};
       const earlyAccess =
@@ -223,11 +229,11 @@ export const getModelsInfiniteHandler = async ({
         ...model,
         hashes: hashes.map((hash) => hash.hash.toLowerCase()),
         rank: {
-          downloadCount: rank[`downloadCount${input.period}`],
-          favoriteCount: rank[`favoriteCount${input.period}`],
-          commentCount: rank[`commentCount${input.period}`],
-          ratingCount: rank[`ratingCount${input.period}`],
-          rating: rank[`rating${input.period}`],
+          downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
+          favoriteCount: rank?.[`favoriteCount${input.period}`] ?? 0,
+          commentCount: rank?.[`commentCount${input.period}`] ?? 0,
+          ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
+          rating: rank?.[`rating${input.period}`] ?? 0,
         },
         image,
         earlyAccess,
@@ -340,7 +346,7 @@ export const deleteModelHandler = async ({
     if (permanently && !ctx.user.isModerator) throw throwAuthorizationError();
 
     const deleteModel = permanently ? permaDeleteModelById : deleteModelById;
-    const model = await deleteModel({ id });
+    const model = await deleteModel({ id, userId: ctx.user.id });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
     return model;
@@ -391,7 +397,7 @@ export const getModelsWithVersionsHandler = async ({
 // TODO - TEMP HACK for reporting modal
 export const getModelReportDetailsHandler = async ({ input: { id } }: { input: GetByIdInput }) => {
   try {
-    return await dbWrite.model.findUnique({
+    return await dbRead.model.findUnique({
       where: { id },
       select: { userId: true, reportStats: { select: { ownershipPending: true } } },
     });
@@ -447,6 +453,7 @@ export const getDownloadCommandHandler = async ({
           },
         },
       },
+      orderBy: { index: 'asc' },
     });
 
     if (!modelVersion) throw throwNotFoundError();

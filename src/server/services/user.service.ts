@@ -1,7 +1,7 @@
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { ModelEngagementType, Prisma, TagEngagementType } from '@prisma/client';
 
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   DeleteUserInput,
@@ -24,7 +24,7 @@ export const getUserCreator = async (where: { username?: string; id?: number }) 
     throw new Error('Must provide username or id');
   }
 
-  return dbWrite.user.findFirst({
+  return dbRead.user.findFirst({
     where: { ...where, deletedAt: null },
     select: {
       id: true,
@@ -81,7 +81,7 @@ export const getUsers = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>(
   select,
   ids,
 }: GetAllUsersInput & { select: TSelect }) => {
-  return dbWrite.user.findMany({
+  return dbRead.user.findMany({
     take: limit,
     select,
     where: {
@@ -102,7 +102,7 @@ export const getUserById = <TSelect extends Prisma.UserSelect = Prisma.UserSelec
   id,
   select,
 }: GetByIdInput & { select: TSelect }) => {
-  return dbWrite.user.findUnique({
+  return dbRead.user.findUnique({
     where: { id },
     select,
   });
@@ -112,7 +112,7 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
   username,
   select,
 }: GetByUsernameSchema & { select: TSelect }) => {
-  return dbWrite.user.findUnique({
+  return dbRead.user.findUnique({
     where: { username },
     select,
   });
@@ -123,14 +123,14 @@ export const updateUserById = ({ id, data }: { id: number; data: Prisma.UserUpda
 };
 
 export const getUserEngagedModels = ({ id }: { id: number }) => {
-  return dbWrite.user.findUnique({
+  return dbRead.user.findUnique({
     where: { id },
     select: { engagedModels: { select: { modelId: true, type: true } } },
   });
 };
 
 export const getUserEngagedModelVersions = ({ id }: { id: number }) => {
-  return dbWrite.user.findUnique({
+  return dbRead.user.findUnique({
     where: { id },
     select: { engagedModelVersions: { select: { modelVersionId: true, type: true } } },
   });
@@ -143,11 +143,11 @@ export const getUserEngagedModelByModelId = ({
   userId: number;
   modelId: number;
 }) => {
-  return dbWrite.modelEngagement.findUnique({ where: { userId_modelId: { userId, modelId } } });
+  return dbRead.modelEngagement.findUnique({ where: { userId_modelId: { userId, modelId } } });
 };
 
 export const getUserTags = ({ userId, type }: { userId: number; type?: TagEngagementType }) => {
-  return dbWrite.tagEngagement.findMany({ where: { userId, type } });
+  return dbRead.tagEngagement.findMany({ where: { userId, type } });
 };
 
 export const getCreators = async <TSelect extends Prisma.UserSelect>({
@@ -178,7 +178,7 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
     id: excludeIds.length ? { notIn: excludeIds } : undefined,
     deletedAt: null,
   };
-  const items = await dbWrite.user.findMany({
+  const items = await dbRead.user.findMany({
     take,
     skip,
     select,
@@ -187,7 +187,7 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
   });
 
   if (count) {
-    const count = await dbWrite.user.count({ where });
+    const count = await dbRead.user.count({ where });
     return { items, count };
   }
 
@@ -195,7 +195,7 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
 };
 
 export const getUserUnreadNotificationsCount = ({ id }: { id: number }) => {
-  return dbWrite.user.findUnique({
+  return dbRead.user.findUnique({
     where: { id },
     select: {
       _count: {
@@ -356,6 +356,28 @@ export const toggleBlockedTag = async ({
   return dbWrite.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
 };
 
+export const updateAccountScope = async ({
+  providerAccountId,
+  provider,
+  scope,
+}: {
+  providerAccountId: string;
+  provider: string;
+  scope?: string;
+}) => {
+  if (!scope) return;
+
+  const account = await dbWrite.account.findUnique({
+    where: { provider_providerAccountId: { provider, providerAccountId } },
+    select: { id: true, scope: true },
+  });
+  if (account && !!account.scope) {
+    const currentScope = account.scope.split(' ');
+    const hasNewScope = scope?.split(' ').some((s) => !currentScope.includes(s));
+    if (hasNewScope) await dbWrite.account.update({ where: { id: account.id }, data: { scope } });
+  }
+};
+
 export const getSessionUser = async ({ userId, token }: { userId?: number; token?: string }) => {
   if (!userId && !token) return undefined;
   const where: Prisma.UserWhereInput = { deletedAt: null };
@@ -384,7 +406,7 @@ export const getUserCosmetics = ({
   userId,
   equipped,
 }: GetUserCosmeticsSchema & { userId: number }) => {
-  return dbWrite.user.findUnique({
+  return dbRead.user.findUnique({
     where: { id: userId },
     select: {
       cosmetics: {

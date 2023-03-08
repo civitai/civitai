@@ -98,6 +98,7 @@ import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
+import truncate from 'lodash/truncate';
 
 //TODO - Break model query into multiple queries
 /*
@@ -186,10 +187,6 @@ const useStyles = createStyles((theme) => ({
 
   // Increase carousel control arrow size
   control: {
-    minWidth: 56,
-    minHeight: 56,
-    borderRadius: '50%',
-
     svg: {
       width: 24,
       height: 24,
@@ -359,7 +356,7 @@ export default function ModelDetail({
   const meta = (
     <Meta
       title={`${model.name} | Stable Diffusion ${model.type} | Civitai`}
-      description={removeTags(model.description ?? '')}
+      description={truncate(removeTags(model.description ?? ''), { length: 150 })}
       image={
         nsfw || latestVersion?.images[0]?.url == null
           ? undefined
@@ -968,6 +965,7 @@ function ModelCarousel({
       align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
       slidesToScroll={mobile ? 1 : 2}
       withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+      controlSize={56}
       loop
     >
       <ImageGuard

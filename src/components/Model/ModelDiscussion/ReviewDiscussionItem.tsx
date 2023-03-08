@@ -270,6 +270,7 @@ function ReviewCarousel({
           setRenderIndexes((indexes) => (!indexes.includes(index) ? [...indexes, index] : indexes));
         }}
         withIndicators={hasMultipleImages}
+        controlSize={32}
         styles={{
           indicators: {
             bottom: 8,
@@ -278,12 +279,6 @@ function ReviewCarousel({
             width: 16,
             height: 8,
             transition: 'width 250ms ease',
-          },
-          // Increase carousel control arrow size
-          control: {
-            width: 32,
-            height: 32,
-            borderRadius: '50%',
           },
         }}
       >

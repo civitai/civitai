@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { TagSort } from '~/server/common/enums';
 
 import { trpc } from '~/utils/trpc';
 
@@ -78,7 +79,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function TrendingTags() {
+export function CategoryTags() {
   const { classes, cx, theme } = useStyles();
   const currentUser = useCurrentUser();
   const router = useRouter();
@@ -90,12 +91,19 @@ export function TrendingTags() {
     { type: 'Hide' },
     { enabled: currentUser != null }
   );
-  const { data: trendingTags = [] } = trpc.tag.getTrending.useQuery(
-    { entityType: ['Model'], not: hiddenTags?.map((x) => x.id), unlisted: false },
+  const { data: { items: categories } = { items: [] } } = trpc.tag.getAll.useQuery(
+    {
+      entityType: ['Model'],
+      sort: TagSort.MostModels,
+      not: hiddenTags?.map((x) => x.id),
+      unlisted: false,
+      categories: true,
+      limit: 100,
+    },
     { enabled: !currentUser || hiddenTags !== undefined }
   );
 
-  if (!trendingTags.length) return null;
+  if (!categories.length) return null;
 
   const atStart = scrollPosition.x === 0;
   const atEnd =
@@ -135,7 +143,7 @@ export function TrendingTags() {
             All
           </Button>
         </Link>
-        {trendingTags.map((tag) => {
+        {categories.map((tag) => {
           const active = router.query.tag === tag.name;
           return (
             <Link

@@ -22,6 +22,7 @@ import {
   ColorSwatch,
   useMantineTheme,
   List,
+  Box,
 } from '@mantine/core';
 import {
   IconDownload,
@@ -332,16 +333,28 @@ const useStyles = createStyles((theme) => ({
 function LinkButton() {
   // only show the connected indicator if there are any instances
   const { status } = useCivitaiLink();
+  const activityProgress = useCivitaiLinkStore((state) => state.activityProgress);
   const features = useFeatureFlags();
   if (!features.civitaiLink) return null;
   const color = civitaiLinkStatusColors[status];
 
   return (
-    <ActionIcon>
-      <Indicator color={color} showZero={!!color} dot={!!color}>
-        <IconLink />
-      </Indicator>
-    </ActionIcon>
+    <Box sx={{ position: 'relative' }}>
+      <ActionIcon>
+        <Indicator color={color} showZero={!!color} dot={!!color}>
+          <IconLink />
+        </Indicator>
+      </ActionIcon>
+      {activityProgress && activityProgress > 0 && activityProgress < 100 && (
+        <Progress
+          value={activityProgress}
+          striped
+          animate
+          size="sm"
+          sx={{ position: 'absolute', bottom: -3, width: '100%' }}
+        />
+      )}
+    </Box>
   );
 }
 

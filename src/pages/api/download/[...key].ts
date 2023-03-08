@@ -1,7 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getGetUrl } from '~/utils/s3-utils';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { UserActivityType } from '@prisma/client';
 import requestIp from 'request-ip';
 
@@ -9,7 +9,7 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
   // Get ip so that we can block exploits we catch
   const ip = requestIp.getClientIp(req);
   const blacklist = (
-    ((await dbWrite.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ?? ''
+    ((await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ?? ''
   ).split(',');
   if (ip && blacklist.includes(ip)) return res.status(403).json({ error: 'Forbidden' });
 

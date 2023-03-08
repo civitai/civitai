@@ -1,6 +1,6 @@
 import { Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
 
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CreateReportInput,
@@ -14,7 +14,7 @@ export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
   select,
 }: GetByIdInput & { select: TSelect }) => {
-  return dbWrite.report.findUnique({ where: { id }, select });
+  return dbRead.report.findUnique({ where: { id }, select });
 };
 
 const validateReportCreation = async ({
@@ -186,14 +186,14 @@ export const getReports = async <TSelect extends Prisma.ReportSelect>({
   };
   // if (type) where[type] = {};
 
-  const items = await dbWrite.report.findMany({
+  const items = await dbRead.report.findMany({
     take,
     skip,
     select,
     where,
     orderBy: [{ createdAt: 'desc' }],
   });
-  const count = await dbWrite.report.count({ where });
+  const count = await dbRead.report.count({ where });
   return getPagingData({ items, count }, take, page);
 };
 
@@ -205,7 +205,7 @@ export const updateReportById = ({
 };
 
 export const getReportCounts = ({ type }: GetReportCountInput) => {
-  return dbWrite.report.count({
+  return dbRead.report.count({
     where: { [type]: { isNot: null }, status: ReportStatus.Pending },
   });
 };
@@ -217,7 +217,7 @@ export const getReviewReports = <TSelect extends Prisma.ReviewReportSelect>({
   reviewId: number;
   select: TSelect;
 }) => {
-  return dbWrite.reviewReport.findMany({
+  return dbRead.reviewReport.findMany({
     select,
     where: { reviewId },
   });
@@ -230,7 +230,7 @@ export const getCommentReports = <TSelect extends Prisma.CommentReportSelect>({
   commentId: number;
   select: TSelect;
 }) => {
-  return dbWrite.commentReport.findMany({
+  return dbRead.commentReport.findMany({
     select,
     where: { commentId },
   });
@@ -243,7 +243,7 @@ export const getImageReports = <TSelect extends Prisma.ImageReportSelect>({
   imageId: number;
   select: TSelect;
 }) => {
-  return dbWrite.imageReport.findMany({
+  return dbRead.imageReport.findMany({
     select,
     where: { imageId },
   });

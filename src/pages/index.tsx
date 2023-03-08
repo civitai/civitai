@@ -11,9 +11,10 @@ import {
   InfiniteModelsSort,
 } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { Meta } from '~/components/Meta/Meta';
-import { TrendingTags } from '~/components/TrendingTags/TrendingTags';
+import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
+import { TagSort } from '~/server/common/enums';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 
@@ -31,8 +32,14 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
       await ssg.user.getTags.prefetch({ type: 'Hide' });
     }
 
-    // Prefetch trending tags
-    await ssg.tag.getTrending.prefetch({ entityType: ['Model'] });
+    // Prefetch category tags
+    await ssg.tag.getAll.prefetch({
+      entityType: ['Model'],
+      sort: TagSort.MostModels,
+      unlisted: false,
+      categories: true,
+      limit: 100,
+    });
   }
 
   return {
@@ -79,7 +86,7 @@ function Home() {
               <InfiniteModelsFilter />
             </Group>
           </Group>
-          <TrendingTags />
+          <CategoryTags />
           <InfiniteModels delayNsfw />
         </Stack>
       </Container>

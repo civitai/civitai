@@ -1,7 +1,7 @@
 import { isNotTag } from './../schema/tag.schema';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { Prisma, TagTarget } from '@prisma/client';
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import {
   GetQuestionsInput,
   SetQuestionAnswerInput,
@@ -34,7 +34,7 @@ export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
         ? { none: {} }
         : undefined,
   };
-  const items = await dbWrite.question.findMany({
+  const items = await dbRead.question.findMany({
     take,
     skip,
     select,
@@ -46,7 +46,7 @@ export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
       { createdAt: 'desc' },
     ],
   });
-  const count = await dbWrite.question.count({ where });
+  const count = await dbRead.question.count({ where });
   return getPagingData({ items, count }, take, page);
 };
 
@@ -57,7 +57,7 @@ export const getQuestionDetail = async <TSelect extends Prisma.QuestionSelect>({
   id: number;
   select: TSelect;
 }) => {
-  return await dbWrite.question.findUnique({ where: { id }, select });
+  return await dbRead.question.findUnique({ where: { id }, select });
 };
 
 export const upsertQuestion = async ({

@@ -12,6 +12,7 @@ export const loginRedirectReasons = {
   'follow-user': 'You need to be logged in to follow a user',
   'hide-content': 'You need to be logged in to hide content',
   'notify-version': 'You need to be logged in to subscribe for notifications',
+  'discord-link': 'Login with Discord to link your account',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;

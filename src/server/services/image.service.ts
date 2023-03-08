@@ -1,16 +1,18 @@
 import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { SessionUser } from 'next-auth';
+import { isProd } from '~/env/other';
 
 import { env } from '~/env/server.mjs';
 import { BrowsingMode, ImageSort } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetGalleryImageInput, GetImageConnectionsSchema } from '~/server/schema/image.schema';
 import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
+import { deleteImage } from '~/utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
-  const result = await dbWrite.imagesOnModels.findMany({
+  const result = await dbRead.imagesOnModels.findMany({
     where: { modelVersionId, image: { tosViolation: false, needsReview: false } },
     select: { image: { select: imageSelect } },
   });
@@ -18,7 +20,7 @@ export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId
 };
 
 export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
-  const result = await dbWrite.imagesOnReviews.findMany({
+  const result = await dbRead.imagesOnReviews.findMany({
     where: { reviewId, image: { tosViolation: false, needsReview: false } },
     select: { image: { select: imageSelect } },
   });
@@ -97,7 +99,7 @@ export const getGalleryImages = async <
   if (canViewNsfw && !browsingMode) browsingMode = BrowsingMode.All;
   else if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
 
-  const items = await dbWrite.image.findMany({
+  const items = await dbRead.image.findMany({
     cursor: cursor ? { id: cursor } : undefined,
     take: limit,
     where: needsReview
@@ -136,8 +138,14 @@ export const getGalleryImages = async <
   }));
 };
 
-export const deleteImageById = ({ id }: GetByIdInput) => {
-  return dbWrite.image.delete({ where: { id } });
+export const deleteImageById = async ({ id }: GetByIdInput) => {
+  try {
+    const image = await dbRead.image.findUnique({ where: { id }, select: { url: true } });
+    if (isProd && image) await deleteImage(image.url); // Remove from storage
+  } catch {
+    // Ignore errors
+  }
+  return await dbWrite.image.delete({ where: { id } });
 };
 
 export const updateImageById = <TSelect extends Prisma.ImageSelect>({
@@ -168,11 +176,12 @@ export const updateImageReportStatusByReason = ({
 };
 
 export const getImageConnectionsById = ({ id, modelId, reviewId }: GetImageConnectionsSchema) => {
-  return dbWrite.image.findUnique({
+  return dbRead.image.findUnique({
     where: { id },
     select: {
       connections: {
         select: {
+          imageId: true,
           model: modelId
             ? {
                 select: {

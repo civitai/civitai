@@ -35,8 +35,5 @@ export const addOnDemandRunStrategiesJob = createJob(
           AND NOT EXISTS (SELECT 1 FROM "OnDemandRunStrategy" WHERE "modelVersionId" = t."modelVersionId" AND "partnerId" = t."partnerId");
       `);
     });
-  },
-  {
-    shouldWait: false,
   }
 );

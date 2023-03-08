@@ -45,7 +45,9 @@ export const getFeatureFlags = ({ user }: { user?: SessionUser }) => {
     const devRequirement = flags.includes('dev') ? isDev : flags.length > 0;
     const otherRequirement =
       flags.filter((x) => x !== 'dev').length > 0
-        ? (flags.includes('mod') && user?.isModerator) || flags.includes('public')
+        ? (flags.includes('mod') && user?.isModerator) ||
+          flags.includes('public') ||
+          (!!user?.tier && flags.includes(user.tier as FeatureAvailability))
         : true;
 
     acc[key] = devRequirement && otherRequirement;

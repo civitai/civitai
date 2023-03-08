@@ -11,10 +11,11 @@ import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { AnswerDetail } from '~/components/Questions/AnswerDetail';
 import { AnswerForm } from '~/components/Questions/AnswerForm';
-import { dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { slugit } from '~/utils/string-helpers';
 import React from 'react';
 import { QuestionDetails } from '~/components/Questions/QuestionDetails';
+import truncate from 'lodash/truncate';
 
 export const getServerSideProps: GetServerSideProps<{
   id: number;
@@ -32,7 +33,7 @@ export const getServerSideProps: GetServerSideProps<{
     };
 
   if (!questionTitle) {
-    const question = await dbWrite.question.findUnique({
+    const question = await dbRead.question.findUnique({
       where: { id: questionId },
       select: { title: true },
     });
@@ -90,7 +91,7 @@ export default function QuestionPage(
     <>
       <Meta
         title={`${question.title} | Civitai`}
-        description={removeTags(question.content ?? '')}
+        description={truncate(removeTags(question.content ?? ''), { length: 150 })}
         // TODO - determine if we need to do anything to handle content that has images/videos in it
       />
       <Container pb={60} px="xs">

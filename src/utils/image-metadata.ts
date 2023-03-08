@@ -25,7 +25,12 @@ export async function getMetadata(file: File) {
     generationDetails = exif.parameters;
   }
 
-  const metadata = parseMetadata(generationDetails);
+  let metadata = {};
+  try {
+    metadata = parseMetadata(generationDetails);
+  } catch (e: any) { //eslint-disable-line
+    console.error('Error parsing metadata', e);
+  }
   const result = imageMetaSchema.safeParse(metadata);
   return result.success ? result.data : {};
 }
@@ -60,6 +65,8 @@ const decoder = new TextDecoder('utf-8');
 // #endregion
 
 // #region [parsers]
+const hashesRegex = /, Hashes:\s*({[^}]+})/;
+const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
 const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.]+):([0-9.]+)>/g;
 const automaticNameHash = /([a-zA-Z0-9_\.]+)\(([a-zA-Z0-9]+)\)/;
 const automaticSDKeyMap = new Map<string, keyof ImageMetaProps>([
@@ -76,9 +83,23 @@ const automaticSDParser = createMetadataParser(
     if (!meta) return metadata;
     const metaLines = meta.split('\n');
 
+    // Remove meta keys I wish I hadn't made... :(
+    let detailsLine = metaLines.pop();
+    for (const key of badExtensionKeys) {
+      if (!detailsLine?.includes(key)) continue;
+      detailsLine = detailsLine.split(key)[0];
+    }
+
+    // Extract Hashes
+    const hashes = detailsLine?.match(hashesRegex)?.[1];
+    if (hashes && detailsLine) {
+      metadata.hashes = JSON.parse(hashes);
+      detailsLine = detailsLine.replace(hashesRegex, '');
+    }
+
     // Extract fine details
     let currentKey = '';
-    const parts = metaLines.pop()?.split(':') ?? [];
+    const parts = detailsLine?.split(':') ?? [];
     for (const part of parts) {
       const priorValueEnd = part.lastIndexOf(',');
       if (parts[parts.length - 1] === part) {
@@ -96,25 +117,6 @@ const automaticSDParser = createMetadataParser(
       .map((x) => x.trim());
     metadata.prompt = prompt;
     metadata.negativePrompt = negativePrompt.join(' ').trim();
-
-    // Extract resource hashes
-    if (metadata['Resources']) {
-      const hashes: string[] = metadata['Resources']
-        ? JSON.parse(metadata['Resources'] as string)
-        : [];
-      if (hashes.length) metadata.hashes = hashes;
-      delete metadata['Resources'];
-    }
-
-    if (metadata['Hashed Negative prompt']) {
-      metadata.negativePromptHashed = JSON.parse(metadata['Hashed Negative prompt'] as string);
-      delete metadata['Hashed Negative prompt'];
-    }
-
-    if (metadata['Hashed prompt']) {
-      metadata.promptHashed = JSON.parse(metadata['Hashed prompt'] as string);
-      delete metadata['Hashed prompt'];
-    }
 
     // Extract resources
     const extranets = [...prompt.matchAll(automaticExtraNetsRegex)];

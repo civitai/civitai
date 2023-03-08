@@ -29,6 +29,7 @@ model Account {
   scope             String?
   id_token          String? @db.Text
   session_state     String?
+  metadata          Json    @default("{}")
   user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
@@ -79,7 +80,8 @@ model User {
   reviews              Review[]
   reviewReactions      ReviewReaction[]
   images               Image[]
-  models               Model[]
+  models               Model[]                    @relation("creator")
+  deletedModels        Model[]                    @relation("deletedBy")
   activities           UserActivity[]
   saves                SavedModel[]
   imports              Import[]
@@ -298,13 +300,15 @@ model Model {
   tosViolation   Boolean         @default(false)
   poi            Boolean         @default(false)
   userId         Int
-  user           User            @relation(fields: [userId], references: [id])
+  user           User            @relation("creator", fields: [userId], references: [id])
   status         ModelStatus     @default(Draft)
   publishedAt    DateTime?
   fromImport     Import?         @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId   Int?            @unique
   meta           Json            @default("{}")
   deletedAt      DateTime?
+  deletedBy      Int?
+  deletedByUser  User?           @relation("deletedBy", fields: [deletedBy], references: [id], onDelete: SetNull)
   checkpointType CheckpointType?
   locked         Boolean         @default(false)
 
@@ -1635,5 +1639,6 @@ model ModelHash {
   modelVersionId Int
   modelVersion   ModelVersion  @relation(fields: [modelVersionId], references: [id])
   hashType       ModelHashType
+  fileType       String
   hash           String
 }
