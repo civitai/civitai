@@ -102,9 +102,12 @@ export const tryRPC = async <T extends z.ZodTypeAny>(
         return;
       }
 
-      const result = await responseSchema.parseAsync(msg);
+      // console.log({ msg });
+      // const result = await responseSchema.parseAsync(msg);
 
-      resolve(result);
+      // resolve(result);
+      console.log({ msg });
+      resolve({} as any);
 
       await consumer.cancel();
     });

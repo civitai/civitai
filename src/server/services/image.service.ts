@@ -267,30 +267,26 @@ export const ingestImage = async ({
   image: IngestImageInput;
   user: SessionUser;
 }) => {
-  const { src, id, ...params } = ingestImageSchema.parse(image);
-  const url = getEdgeUrl(src, params);
+  const { url, id, mimeType, ...params } = ingestImageSchema.parse(image);
+  const edgeUrl = getEdgeUrl(url, params);
 
-  try {
-    const payload = await ingestionMessageSchema.parseAsync({
-      source: {
-        type: 'civitai',
-        name: 'Civitai',
-        id,
-        url: '',
-        user: { id: user.id, name: user.username },
-      },
-      image: url,
-      // contentType: 'image/png',
-      action: 'label',
-    });
+  const payload = await ingestionMessageSchema.parseAsync({
+    source: {
+      type: 'civitai',
+      name: 'Civitai',
+      id,
+      url: '',
+      user: { id: user.id, name: user.username },
+    },
+    image: edgeUrl,
+    contentType: mimeType,
+    action: 'label',
+  });
 
-    const msg = await imageIngestion(payload, `label-imageId-${id}`);
-    const imageTags = await dbWrite.tag.findMany({
-      where: { tagsOnImage: { some: { imageId: id } } },
-      select: imageTagSelect,
-    });
-    return imageTags;
-  } catch (error) {
-    throw new Error('image ingestion failed');
-  }
+  const msg = await imageIngestion(payload, `label-imageId-${id}`);
+  const imageTags = await dbWrite.tag.findMany({
+    where: { tagsOnImage: { some: { imageId: id } } },
+    select: imageTagSelect,
+  });
+  return imageTags;
 };

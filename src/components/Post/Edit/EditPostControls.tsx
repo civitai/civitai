@@ -25,7 +25,7 @@ function ManagePostStatus() {
   // const id = useEditPostContext((state) => state.id);
   // const status = useEditPostContext((state) => state.status);
   // const setStatus = useEditPostContext((state) => state.setStatus);
-  const { id, status, tags, images, setStatus } = useEditPostContext((state) => state);
+  const { id, tags, images } = useEditPostContext((state) => state);
 
   const { mutate, isLoading } = trpc.post.update.useMutation();
 

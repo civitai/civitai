@@ -1,5 +1,4 @@
 import { imageResourceUpsertSchema } from './image.schema';
-import { PostStatus } from '@prisma/client';
 import { z } from 'zod';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 
@@ -14,7 +13,7 @@ export const postUpdateSchema = z.object({
   nsfw: z.boolean().optional(),
   title: z.string().optional(),
   detail: z.string().optional(),
-  status: z.nativeEnum(PostStatus).optional(),
+  publishedAt: z.date().optional(),
 });
 
 export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;
@@ -43,6 +42,7 @@ export const addPostImageSchema = z.object({
   postId: z.number(),
   modelVersionId: z.number().optional(),
   index: z.number(),
+  mimeType: z.string(),
   meta: z.preprocess((value) => {
     if (typeof value !== 'object') return null;
     if (value && !Object.keys(value).length) return null;

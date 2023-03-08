@@ -152,7 +152,8 @@ export const updateImageSchema = z.object({
 export type IngestImageInput = z.infer<typeof ingestImageSchema>;
 export const ingestImageSchema = z.object({
   id: z.number(),
-  src: z.string(),
+  url: z.string(),
   name: z.string().optional(),
   width: z.number(),
+  mimeType: z.string(),
 });

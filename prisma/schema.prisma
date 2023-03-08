@@ -648,29 +648,24 @@ model ReviewReaction {
   @@unique([reviewId, userId, reaction])
 }
 
-enum PostStatus {
-  Public
-  Hidden
-}
-
 model Post {
   id             Int           @id @default(autoincrement())
   nsfw           Boolean       @default(false)
   title          String?
   detail         String?
-  scanned        Boolean       @default(false)
   userId         Int
   user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   modelVersionId Int?
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
-  status         PostStatus    @default(Hidden)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
+  publishedAt    DateTime?
 
   images    Image[]
   tags      TagsOnPost[]
   reactions PostReaction[]
   thread    Thread?
+  helper    PostHelper?
 }
 
 enum ImageGenerationProcess {
@@ -702,7 +697,8 @@ model Image {
   needsReview       Boolean                 @default(false)
   hideMeta          Boolean                 @default(false)
   index             Int?
-  scanned           Boolean                 @default(false)
+  scannedAt         DateTime?
+  scanRequestedAt   DateTime?
   mimeType          String?
 
   imagesOnModels  ImagesOnModels?
@@ -1726,4 +1722,11 @@ model ModelHash {
   hashType       ModelHashType
   fileType       String
   hash           String
+}
+
+/// @view
+model PostHelper {
+  postId  Int     @id
+  post    Post    @relation(fields: [postId], references: [id], onDelete: NoAction)
+  scanned Boolean
 }

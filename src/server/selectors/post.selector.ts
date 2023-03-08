@@ -15,6 +15,7 @@ export const editPostImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   hideMeta: true,
   generationProcess: true,
   needsReview: true,
+  mimeType: true,
   tags: { select: { tag: { select: imageTagSelect } } },
   resources: { select: imageResourceSelect },
 });
@@ -28,8 +29,7 @@ export const editPostSelect = Prisma.validator<Prisma.PostSelect>()({
   title: true,
   modelVersionId: true,
   userId: true,
-  status: true,
-  scanned: true,
+  publishedAt: true,
   images: {
     orderBy: { index: 'asc' },
     select: editPostImageSelect,
@@ -64,8 +64,7 @@ export const getPostDetailSelect = ({ userId }: { userId?: number }) =>
     title: true,
     modelVersionId: true,
     user: { select: userWithCosmeticsSelect },
-    status: true,
-    scanned: true,
+    publishedAt: true,
     images: {
       orderBy: { index: 'asc' },
       select: getImageV2Select({ userId }),

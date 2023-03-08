@@ -38,6 +38,8 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
     hideMeta: true,
     generationProcess: true,
     createdAt: true,
+    mimeType: true,
+    scannedAt: true,
     stats: {
       select: {
         cryCountAllTime: true,

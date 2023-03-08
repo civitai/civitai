@@ -11,7 +11,6 @@ import { getMetadata, auditMetaData } from '~/utils/image-metadata';
 import { isDefined } from '~/utils/type-guards';
 import { trpc } from '~/utils/trpc';
 import { useCFUploadStore } from '~/store/cf-upload.store';
-import { PostStatus } from '@prisma/client';
 
 //https://github.com/pmndrs/zustand/blob/main/docs/guides/initialize-state-with-props.md
 export type ImageUpload = {
@@ -26,6 +25,7 @@ export type ImageUpload = {
   index: number;
   status: 'blocked' | 'uploading';
   message?: string;
+  mimeType: string;
   file: File;
 };
 type ImageProps = { type: 'image'; data: PostImage } | { type: 'upload'; data: ImageUpload };
@@ -36,7 +36,7 @@ type EditPostProps = {
   modelVersionId?: number;
   title?: string;
   nsfw: boolean;
-  status: PostStatus;
+  publishedAt?: Date;
   tags: TagProps[];
   images: ImageProps[];
   reorder: boolean;
@@ -46,7 +46,7 @@ type EditPostProps = {
 interface EditPostState extends EditPostProps {
   setTitle: (title?: string) => void;
   toggleNsfw: (value?: boolean) => void;
-  setStatus: (status: PostStatus) => void;
+  setPublishedAt: (publishedAt: Date) => void;
   toggleReorder: (value?: boolean) => void;
   setTags: (dispatch: SetStateAction<TagProps[]>) => void;
   setImage: (id: number, updateFn: (images: PostImage) => PostImage) => void;
@@ -74,7 +74,7 @@ const processPost = (post?: PostEditDetail) => {
     id: post?.id ?? 0,
     title: post?.title ?? undefined,
     nsfw: post?.nsfw ?? false,
-    status: post?.status ?? PostStatus.Hidden,
+    publishedAt: post?.publishedAt ?? undefined,
     tags: post?.tags ?? [],
     images: post?.images ? prepareImages(post.images) : [],
     modelVersionId: post?.modelVersionId ?? undefined,
@@ -107,9 +107,9 @@ const createEditPostStore = ({
             set((state) => {
               state.nsfw = value ?? !state.nsfw;
             }),
-          setStatus: (status) =>
+          setPublishedAt: (publishedAt) =>
             set((state) => {
-              state.status = status;
+              state.publishedAt = publishedAt;
             }),
           toggleReorder: (value) =>
             set((state) => {
@@ -251,7 +251,6 @@ export const EditPostProvider = ({
     { file, ...data }: ImageUpload
   ) => {
     const { url, id, uuid, meta } = await upload<typeof data>({ file, meta: data });
-    console.log({ url });
     clear((item) => item.uuid === uuid);
     return await mutateAsync({ ...meta, url: id, postId, modelVersionId });
   };
@@ -288,6 +287,7 @@ const getImageDataFromFile = async (file: File) => {
   const img = await loadImage(url);
   const hashResult = blurHashImage(img);
   const auditResult = await auditMetaData(meta, false);
+  const mimeType = file.type;
   const blockedFor = !auditResult?.success ? auditResult?.blockedFor : undefined;
   // const blockedFor = ['test', 'testing'];
 
@@ -298,6 +298,7 @@ const getImageDataFromFile = async (file: File) => {
     meta,
     url,
     resources,
+    mimeType,
     ...hashResult,
     status: blockedFor ? 'blocked' : 'uploading',
     message: blockedFor?.filter(isDefined).join(', '),

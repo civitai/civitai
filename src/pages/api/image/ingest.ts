@@ -8,10 +8,15 @@ export default async function ingestImageEndpoint(req: NextApiRequest, res: Next
   const session = await getServerAuthSession({ req, res });
   const user = session?.user;
   if (!user) throw throwAuthorizationError();
-  if (req.method !== 'post') {
+  if (req.method !== 'POST') {
     res.status(405).send({ message: 'Only POST requests allowed' });
     return;
   }
 
-  return await ingestImage(req.body);
+  try {
+    const data = await ingestImage({ image: req.body, user });
+    res.status(200).json(data);
+  } catch (error) {
+    res.status(500).json({ message: 'image ingestion failed', error });
+  }
 }
