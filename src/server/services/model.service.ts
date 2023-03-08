@@ -437,8 +437,8 @@ export const updateModel = async ({
               index,
               image: {
                 create: {
-                  userId,
                   ...prepareCreateImage(image),
+                  user: { connect: { id: userId } },
                 },
               },
             })),
@@ -504,8 +504,8 @@ export const updateModel = async ({
                   index,
                   image: {
                     create: {
-                      userId,
                       ...prepareCreateImage(image),
+                      user: { connect: { id: userId } },
                     },
                   },
                 })),
