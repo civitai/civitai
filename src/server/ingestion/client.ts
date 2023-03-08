@@ -87,6 +87,7 @@ export const tryRPC = async <T extends z.ZodTypeAny>(
     const ch = (await Promise.resolve(channel)) ?? (await tryDefaultChannel());
     if (ch === undefined) {
       reject('Could not create a default channel');
+      reject('Could not create a default channel');
       return;
     }
 
@@ -96,27 +97,41 @@ export const tryRPC = async <T extends z.ZodTypeAny>(
         reject('Could not parse body to string');
         return;
       }
+      const consumer = await ch.basicConsume(REPLY_QUEUE, { noAck: true }, async (msg) => {
+        const body = msg.bodyToString();
+        if (body === null) {
+          reject('Could not parse body to string');
+          return;
+        }
 
-      if (msg.properties.correlationId !== id) {
-        reject(`Could not validate the correlationId., ${msg.properties.correlationId}, ${id}`);
-        return;
-      }
+        if (msg.properties.correlationId !== id) {
+          reject(`Could not validate the correlationId., ${msg.properties.correlationId}, ${id}`);
+          return;
+        }
+        if (msg.properties.correlationId !== id) {
+          reject(`Could not validate the correlationId., ${msg.properties.correlationId}, ${id}`);
+          return;
+        }
 
-      // console.log({ msg });
-      // const result = await responseSchema.parseAsync(msg);
+        // console.log({ msg });
+        // const result = await responseSchema.parseAsync(msg);
 
-      // resolve(result);
-      console.log({ msg });
-      resolve({} as any);
+        // resolve(result);
+        console.log({ msg });
+        resolve({} as any);
 
+        await consumer.cancel();
+      });
       await consumer.cancel();
     });
 
     await ch.basicPublish(
       '', // use the direct message
+      '', // use the direct message
       SERVER_QUEUE, // send to the server queue
       JSON.stringify(message), // encode our message to a string
       {
+        contentType: 'application/json',
         contentType: 'application/json',
         replyTo: REPLY_QUEUE,
         correlationId: id,
@@ -128,6 +143,7 @@ export const tryRPC = async <T extends z.ZodTypeAny>(
       await consumer.wait(timeout);
     } catch (e) {
       if (e instanceof AMQPError) {
+        reject(new RPCError('Timed out for response'));
         reject(new RPCError('Timed out for response'));
       } else {
         reject(e);

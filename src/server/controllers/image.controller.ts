@@ -112,7 +112,10 @@ export const getGalleryImagesInfiniteHandler = async ({
 
     return {
       nextCursor,
-      items: items.map(({ tags, ...item }) => ({ ...item, tags: tags.map(({ tag }) => tag) })),
+      items: items.map(({ tags, ...item }) => ({
+        ...item,
+        tags: tags.map(({ tag, automated }) => ({ ...tag, automated })),
+      })),
     };
   } catch (error) {
     throw throwDbError(error);

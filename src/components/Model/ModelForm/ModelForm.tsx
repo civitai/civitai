@@ -843,7 +843,7 @@ export function ModelForm({ model }: Props) {
               </Paper>
               <Paper radius="md" p="xl" withBorder>
                 <Stack spacing="xs">
-                  <Text size="sm" weight={500} sx={{ lineHeight: 1.2 }} mb="xs">
+                  {/* <Text size="sm" weight={500} sx={{ lineHeight: 1.2 }} mb="xs">
                     {`When using this model, I give permission for users to:`}
                   </Text>
                   <InputCheckbox name="allowNoCredit" label="Use without crediting me" />
@@ -853,9 +853,12 @@ export function ModelForm({ model }: Props) {
                       name="allowDifferentLicense"
                       label="Use different permissions on merges"
                     />
-                  )}
+                  )} */}
 
-                  <Divider label="Commercial Use" labelProps={{ weight: 'bold' }} />
+                  {/* <Divider label="Commercial Use" labelProps={{ weight: 'bold' }} /> */}
+                  <Text size="sm" weight={500} sx={{ lineHeight: 1.2 }} mb="xs">
+                    {`I request the commercial use of this resource be limited to:`}
+                  </Text>
                   <InputSegmentedControl
                     name="allowCommercialUse"
                     orientation="vertical"
@@ -904,6 +907,9 @@ export function ModelForm({ model }: Props) {
                       },
                     ]}
                   />
+                  <Text size="xs" color="dimmed">
+                    These are requests, not a formal license.
+                  </Text>
                 </Stack>
               </Paper>
               <Paper radius="md" p="xl" withBorder>
