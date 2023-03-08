@@ -127,11 +127,9 @@ export const tryRPC = async <T extends z.ZodTypeAny>(
 
     await ch.basicPublish(
       '', // use the direct message
-      '', // use the direct message
       SERVER_QUEUE, // send to the server queue
       JSON.stringify(message), // encode our message to a string
       {
-        contentType: 'application/json',
         contentType: 'application/json',
         replyTo: REPLY_QUEUE,
         correlationId: id,

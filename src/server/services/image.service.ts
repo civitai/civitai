@@ -284,6 +284,12 @@ export const ingestImage = async ({
     action: 'label',
   });
 
+  await dbWrite.image.update({
+    where: { id },
+    data: { scanRequestedAt: new Date() },
+    select: { id: true },
+  });
+
   const msg = await imageIngestion(payload, `label-imageId-${id}`);
   const imageTags = await dbWrite.tag.findMany({
     where: { tagsOnImage: { some: { imageId: id } } },
