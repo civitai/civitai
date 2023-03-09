@@ -29,7 +29,7 @@ export type ImageUpload = {
   file: File;
 };
 type ImageProps = { type: 'image'; data: PostImage } | { type: 'upload'; data: ImageUpload };
-type TagProps = Omit<SimpleTag, 'id'> & { id?: number };
+type TagProps = Omit<SimpleTag, 'id' | 'isCategory'> & { id?: number };
 type EditPostProps = {
   objectUrls: string[];
   id: number;

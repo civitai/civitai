@@ -1,31 +1,23 @@
 import {
   ActionIcon,
   Alert,
-  Autocomplete,
-  Badge,
   Center,
   createStyles,
   Group,
   Input,
   InputWrapperProps,
-  UnstyledButton,
   TextInput,
   Text,
   Popover,
+  Stack,
+  Box,
+  Divider,
 } from '@mantine/core';
-import {
-  getHotkeyHandler,
-  useDebouncedState,
-  useDisclosure,
-  useDebouncedValue,
-  useClickOutside,
-  useHotkeys,
-} from '@mantine/hooks';
+import { useDebouncedValue, getHotkeyHandler } from '@mantine/hooks';
 import { TagTarget } from '@prisma/client';
 import { IconPlus, IconX } from '@tabler/icons';
-import { useMemo } from 'react';
-import { PostTag } from '~/server/selectors/post.selector';
-import { Fragment, useState } from 'react';
+import { useEffect, useMemo } from 'react';
+import { useState } from 'react';
 import { trpc } from '~/utils/trpc';
 
 type TagProps = {
@@ -35,34 +27,118 @@ type TagProps = {
 type PostTagsPickerProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: TagProps[];
   onChange?: (value: TagProps[]) => void;
+  onAddTag?: (tag: TagProps) => void;
+  onRemoveTag?: (tag: TagProps) => void;
 };
 
-export function PostTagsPicker({ value = [], onChange, ...props }: PostTagsPickerProps) {
+export function PostTagsPicker({
+  value = [],
+  onChange,
+  onAddTag,
+  onRemoveTag,
+  ...props
+}: PostTagsPickerProps) {
   return (
     <Input.Wrapper {...props}>
-      <Group mt={5}>
+      <Group mt={5} spacing="xs">
         {value.map((tag, index) => (
-          <Fragment key={index}></Fragment>
+          <Alert
+            key={index}
+            radius="xl"
+            py={4}
+            pr="xs"
+            sx={{ minHeight: 32, display: 'flex', alignItems: 'center' }}
+          >
+            <Group spacing="xs">
+              <Text>{tag.name}</Text>
+              <ActionIcon
+                size="xs"
+                color="red"
+                variant="outline"
+                radius="xl"
+                onClick={() => onRemoveTag?.(tag)}
+              >
+                <IconX size={14} />
+              </ActionIcon>
+            </Group>
+          </Alert>
         ))}
-        <TagPicker onPick={() => undefined} />
+        {value.length < 5 && (
+          <TagPicker
+            value={value}
+            onPick={(tag) => {
+              onAddTag?.(tag);
+            }}
+          />
+        )}
       </Group>
     </Input.Wrapper>
   );
 }
 
-function TagPicker({ onPick }: { onPick: (tag: TagProps) => void }) {
+function TagPicker({ value, onPick }: { value?: TagProps[]; onPick: (tag: TagProps) => void }) {
+  const { classes, cx } = useDropdownContentStyles();
+  const [active, setActive] = useState<number>();
   const [editing, setEditing] = useState(false);
   const [query, setQuery] = useState<string>('');
   const [debounced] = useDebouncedValue(query, 300);
 
-  const { data, isLoading } = trpc.post.getTags.useQuery({ query: debounced });
+  const { data: tags, isLoading } = trpc.post.getTags.useQuery({ query: debounced });
+
+  useEffect(() => {
+    setActive(undefined);
+  }, [tags, editing]);
 
   const label = query.length > 1 ? 'Recommended' : 'Trending';
 
+  const handleUp = () => {
+    if (!tags?.length) return;
+    setActive((active) => {
+      if (active === undefined) return 0;
+      if (active > 0) return active - 1;
+      return active;
+    });
+  };
+
+  const handleDown = () => {
+    if (!tags?.length) return;
+    setActive((active) => {
+      if (active === undefined) return 0;
+      const lastIndex = tags.length - 1;
+      if (active < lastIndex) return active + 1;
+      return active;
+    });
+  };
+
+  const handleEnter = () => {
+    if (!tags?.length || !active) {
+      const exists = value?.find((x) => x.name === query);
+      if (!exists) onPick({ name: query });
+    } else {
+      const selected = tags[active];
+      const exists = value?.find((x) => x.name === selected.name);
+      if (!exists) onPick(selected);
+    }
+    setEditing(false);
+    setQuery('');
+  };
+
+  const handleClick = (index: number) => {
+    if (!tags?.length) return;
+    const selected = tags[index];
+    const exists = value?.find((x) => x.name === selected.name);
+    if (!exists) onPick(selected);
+  };
+
   return (
-    <Popover opened={editing && !!data?.length} position="bottom-start">
+    <Popover opened={editing && !!tags?.length} position="bottom-start" withArrow>
       <Popover.Target>
-        <StyledTag onClick={() => setEditing(true)}>
+        <Alert
+          radius="xl"
+          py={4}
+          onClick={() => setEditing(true)}
+          sx={{ minHeight: 32, display: 'flex', alignItems: 'center' }}
+        >
           {!editing ? (
             <Group spacing={4}>
               <IconPlus size={16} />
@@ -74,8 +150,10 @@ function TagPicker({ onPick }: { onPick: (tag: TagProps) => void }) {
               value={query}
               autoFocus
               onBlur={() => {
-                setQuery('');
-                setEditing(false);
+                setTimeout(() => {
+                  setQuery('');
+                  setEditing(false);
+                }, 0);
               }}
               onChange={(e) => setQuery(e.target.value)}
               styles={{
@@ -89,32 +167,49 @@ function TagPicker({ onPick }: { onPick: (tag: TagProps) => void }) {
                   width: !query.length ? '1ch' : `${query.length}ch`,
                 },
               }}
+              onKeyDown={getHotkeyHandler([
+                ['Enter', handleEnter],
+                ['ArrowUp', handleUp],
+                ['ArrowDown', handleDown],
+              ])}
             />
           )}
-        </StyledTag>
+        </Alert>
       </Popover.Target>
-      <Popover.Dropdown>
-        <Text>{label} Tags</Text>
+      <Popover.Dropdown p={0}>
+        <Box style={{ width: 300 }}>
+          <Text p="sm" weight={500}>
+            {label} Tags
+          </Text>
+          <Divider />
+          {!!tags?.length && (
+            <Stack spacing={0}>
+              {tags.map((tag, index) => (
+                <Group
+                  position="apart"
+                  key={index}
+                  className={cx({ [classes.active]: index === active })}
+                  onMouseOver={() => setActive(index)}
+                  onMouseLeave={() => setActive(undefined)}
+                  onClick={() => handleClick(index)}
+                  p="sm"
+                >
+                  <Text size="sm">{tag.name}</Text>
+                  <Text size="sm" color="dimmed">
+                    {tag.rank?.postCountAllTimeRank ?? tag.rank?.postCountDayRank} posts
+                  </Text>
+                </Group>
+              ))}
+            </Stack>
+          )}
+        </Box>
       </Popover.Dropdown>
     </Popover>
   );
 }
 
-function StyledTag({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
-  return (
-    <Alert
-      radius="xl"
-      py={4}
-      onClick={onClick}
-      sx={{ minHeight: 32, display: 'flex', alignItems: 'center' }}
-    >
-      {children}
-    </Alert>
-  );
-}
-
-function DropdownContent({ tags }: { tags: TagProps[]; onSelect: (tag: TagProps) => void }) {
-  useHotkeys([[]]);
-
-  return <></>;
-}
+const useDropdownContentStyles = createStyles((theme) => ({
+  active: {
+    background: 'red',
+  },
+}));

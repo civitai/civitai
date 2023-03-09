@@ -9,40 +9,51 @@ export function EditPostTags() {
   const tags = useEditPostContext((state) => state.tags);
   const setTags = useEditPostContext((state) => state.setTags);
 
-  const { data, isLoading } = trpc.tag.getAll.useQuery({
-    entityType: [TagTarget.Post],
-    limit: 0,
-    categories: true,
-  });
+  // const { data, isLoading } = trpc.tag.getAll.useQuery({
+  //   entityType: [TagTarget.Post],
+  //   limit: 0,
+  //   categories: true,
+  // });
 
-  const handleSetCategories = (tagNames: string[]) => {
-    // check if tags have been removed
-    // check if tags have been added
-    setTags((state) => {
-      const nonCategoryTags = state.filter((x) => !x.isCategory);
-      const categoryTags = state.filter((x) => x.isCategory);
-      const updatedCategoryTags = tagNames.map((name) => ({
-        id: categoryTags.find((x) => x.name === name)?.id,
-        name,
-        isCategory: true,
-      }));
-      return [...updatedCategoryTags, ...nonCategoryTags];
-    });
-  };
+  // const handleSetCategories = (tagNames: string[]) => {
+  //   // check if tags have been removed
+  //   // check if tags have been added
+  //   setTags((state) => {
+  //     const nonCategoryTags = state.filter((x) => !x.isCategory);
+  //     const categoryTags = state.filter((x) => x.isCategory);
+  //     const updatedCategoryTags = tagNames.map((name) => ({
+  //       id: categoryTags.find((x) => x.name === name)?.id,
+  //       name,
+  //       isCategory: true,
+  //     }));
+  //     return [...updatedCategoryTags, ...nonCategoryTags];
+  //   });
+  // };
 
-  const handleSetTags = (incoming: { id?: number; name: string }[]) => {
-    // check if tags have been removed
-    // check if tags have been added
-    const nonCategoryTags = incoming.map((tag) => ({ ...tag, isCategory: false }));
-    setTags((state) => {
-      const categoryTags = state.filter((x) => x.isCategory);
-      return [...categoryTags, ...nonCategoryTags];
-    });
-  };
+  // const handleSetTags = (incoming: { id?: number; name: string }[]) => {
+  //   // check if tags have been removed
+  //   // check if tags have been added
+  //   const nonCategoryTags = incoming.map((tag) => ({ ...tag, isCategory: false }));
+  //   setTags((state) => {
+  //     const categoryTags = state.filter((x) => x.isCategory);
+  //     return [...categoryTags, ...nonCategoryTags];
+  //   });
+  // };
 
   return (
     <Stack>
-      <PostTagsPicker value={tags} />
+      <PostTagsPicker
+        value={tags}
+        onChange={(tags) => {
+          setTags(tags);
+        }}
+        onAddTag={(tag) => {
+          setTags((tags) => [...tags, tag]);
+        }}
+        onRemoveTag={(tag) => {
+          setTags((tags) => tags.filter((x) => x.name !== tag.name));
+        }}
+      />
       {/* <MultiSelect
         label="Categories"
         data={data?.items.map((tag) => tag.name).sort() ?? []}
