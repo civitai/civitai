@@ -507,7 +507,7 @@ export const getUserTagsHandler = async ({
   }
 };
 
-export const toggleBlockedTagHandler = ({
+export const toggleBlockedTagHandler = async ({
   input,
   ctx,
 }: {
@@ -516,7 +516,7 @@ export const toggleBlockedTagHandler = ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    return toggleBlockedTag({ ...input, userId });
+    await toggleBlockedTag({ ...input, userId });
   } catch (error) {
     throw throwDbError(error);
   }

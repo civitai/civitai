@@ -3,6 +3,7 @@ import { throwDbError } from '~/server/utils/errorHandling';
 import { dbWrite } from '~/server/db/client';
 import { UpdatePreferencesSchema } from '~/server/schema/moderation.schema';
 import { TagEngagementType, TagType } from '@prisma/client';
+import { refreshHiddenTagsForUser } from '~/server/services/user-cache.service';
 
 const getAllowedModTags = (userId: number) =>
   dbWrite.tagEngagement.findMany({
@@ -40,7 +41,6 @@ export const updatePreferencesHandler = async ({
       if (value && !existing.includes(key)) toAdd.push(key);
       else if (!value && existing.includes(key)) toRemove.push(key);
     }
-
     if (toRemove.length) {
       await dbWrite.tagEngagement.deleteMany({
         where: {
@@ -63,6 +63,8 @@ export const updatePreferencesHandler = async ({
         });
       }
     }
+
+    await refreshHiddenTagsForUser({ userId });
   } catch (error) {
     throw throwDbError(error);
   }

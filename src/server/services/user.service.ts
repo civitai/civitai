@@ -12,6 +12,11 @@ import {
 } from '~/server/schema/user.schema';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { env } from '~/env/server.mjs';
+import {
+  refreshHiddenModelsForUser,
+  refreshHiddenTagsForUser,
+  refreshHiddenUsersForUser,
+} from '~/server/services/user-cache.service';
 
 // const xprisma = prisma.$extends({
 //   result: {
@@ -234,6 +239,7 @@ export const toggleModelEngagement = async ({
   }
 
   await dbWrite.modelEngagement.create({ data: { type, modelId, userId } });
+  if (type === 'Hide') await refreshHiddenModelsForUser({ userId });
   return;
 };
 
@@ -305,6 +311,7 @@ export const toggleHideUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
+  await refreshHiddenUsersForUser({ userId });
   return;
 };
 
@@ -353,7 +360,8 @@ export const toggleBlockedTag = async ({
       });
   }
 
-  return dbWrite.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
+  await dbWrite.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
+  await refreshHiddenTagsForUser({ userId });
 };
 
 export const updateAccountScope = async ({
