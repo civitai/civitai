@@ -47,14 +47,7 @@ export function EditPostImages() {
       <Stack>
         {images.map(({ type, data }, index) => (
           <Fragment key={index}>
-            {type === 'image' ? (
-              <ImageController
-                image={data}
-                canDelete={images.filter((x) => x.type === 'image').length > 1}
-              />
-            ) : (
-              <ImageUpload {...data} />
-            )}
+            {type === 'image' ? <ImageController image={data} /> : <ImageUpload {...data} />}
           </Fragment>
         ))}
       </Stack>
@@ -78,10 +71,8 @@ function ImageController({
     needsReview,
     resources,
   },
-  canDelete,
 }: {
   image: PostImage;
-  canDelete?: boolean;
 }) {
   const { classes, cx } = useStyles();
   const [withBorder, setWithBorder] = useState(false);
@@ -130,15 +121,13 @@ function ImageController({
           </Menu.Target>
           <Menu.Dropdown>
             <Menu.Item onClick={handleSelectImageClick}>Edit image</Menu.Item>
-            {canDelete && (
-              <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
-                {({ onClick, isLoading }) => (
-                  <Menu.Item color="red" onClick={onClick}>
-                    Delete image
-                  </Menu.Item>
-                )}
-              </DeleteImage>
-            )}
+            <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
+              {({ onClick, isLoading }) => (
+                <Menu.Item color="red" onClick={onClick}>
+                  Delete image
+                </Menu.Item>
+              )}
+            </DeleteImage>
           </Menu.Dropdown>
         </Menu>
       </>

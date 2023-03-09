@@ -77,7 +77,7 @@ export const getPostTags = async ({ query, limit }: GetPostTagsInput) => {
   return await dbRead.tag.findMany({
     take: limit,
     where: {
-      name: !showTrending ? query.toLowerCase().trim() : undefined,
+      name: !showTrending ? { contains: query, mode: 'insensitive' } : undefined,
     },
     select: postTagSelect({ trending: showTrending }),
     orderBy: {

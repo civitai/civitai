@@ -3,6 +3,7 @@ import { TagTarget } from '@prisma/client';
 import { useEditPostContext } from './EditPostProvider';
 import { TagsInput } from '~/components/Tags/TagsInput';
 import { trpc } from '~/utils/trpc';
+import { PostTagsPicker } from '~/components/Post/Edit/PostTagPicker';
 
 export function EditPostTags() {
   const tags = useEditPostContext((state) => state.tags);
@@ -41,7 +42,8 @@ export function EditPostTags() {
 
   return (
     <Stack>
-      <MultiSelect
+      <PostTagsPicker value={tags} />
+      {/* <MultiSelect
         label="Categories"
         data={data?.items.map((tag) => tag.name).sort() ?? []}
         value={tags.filter((x) => x.isCategory).map((x) => x.name)}
@@ -59,7 +61,7 @@ export function EditPostTags() {
         value={tags.filter((x) => !x.isCategory)}
         onChange={handleSetTags}
         target={[TagTarget.Post]}
-      />
+      /> */}
     </Stack>
   );
 }

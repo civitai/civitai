@@ -4,9 +4,7 @@ import { env } from '~/env/server.mjs';
 import type { AMQPBaseClient } from '@cloudamqp/amqp-client/types/amqp-base-client';
 import { z } from 'zod';
 
-export const amqp = new AMQPClient(
-  env.IMAGE_INGESTION_MESSAGE_QUEUE_SERVER ?? 'amqp://localhost'
-);
+export const amqp = new AMQPClient(env.IMAGE_INGESTION_MESSAGE_QUEUE_SERVER ?? 'amqp://localhost');
 
 let connection: AMQPBaseClient | undefined = undefined;
 
@@ -26,14 +24,12 @@ export const tryConnect = async () => {
     });
 };
 
-export const tryDefaultChannel = () =>
-  tryConnect().then((conn) => getDefaultChannel(conn));
+export const tryDefaultChannel = () => tryConnect().then((conn) => getDefaultChannel(conn));
 
 export const getDefaultChannel = (conn?: AMQPBaseClient) =>
   conn ? conn.channel() : connection?.channel();
 
-export const isConnected = () =>
-  connection === undefined ? false : connection.closed === false;
+export const isConnected = () => (connection === undefined ? false : connection.closed === false);
 
 /**
  * Pass a basic message to a topic
@@ -94,39 +90,33 @@ export const tryRPC = async <T extends z.ZodTypeAny>(
       return;
     }
 
-    const consumer = await ch.basicConsume(
-      REPLY_QUEUE,
-      { noAck: true },
-      async (msg) => {
-        const body = msg.bodyToString();
-        if (body === null) {
-          reject('Could not parse body to string');
-          return;
-        }
-
-        if (msg.properties.correlationId !== id) {
-          reject(
-            `Could not validate the correlationId., ${msg.properties.correlationId}, ${id}`
-          );
-          return;
-        }
-
-        // console.log({ msg });
-        try {
-          const response = JSON.parse(body);
-          const result = await responseSchema.parseAsync(response);
-          resolve(result);
-        } catch (e) {
-          console.error('Could not parse response', body);
-          throw e;
-        }
-
-        // console.log({ msg });
-        // resolve({} as any);
-
-        await consumer.cancel();
+    const consumer = await ch.basicConsume(REPLY_QUEUE, { noAck: true }, async (msg) => {
+      const body = msg.bodyToString();
+      if (body === null) {
+        reject('Could not parse body to string');
+        return;
       }
-    );
+
+      if (msg.properties.correlationId !== id) {
+        reject(`Could not validate the correlationId., ${msg.properties.correlationId}, ${id}`);
+        return;
+      }
+
+      // console.log({ msg });
+      try {
+        const response = JSON.parse(body);
+        const result = await responseSchema.parseAsync(response);
+        resolve(result);
+      } catch (e) {
+        console.error('Could not parse response', body);
+        throw e;
+      }
+
+      // console.log({ msg });
+      // resolve({} as any);
+
+      await consumer.cancel();
+    });
 
     await ch.basicPublish(
       '', // use the direct message
@@ -143,6 +133,7 @@ export const tryRPC = async <T extends z.ZodTypeAny>(
     try {
       await consumer.wait(timeout);
     } catch (e) {
+      console.log('error', e);
       if (e instanceof AMQPError) {
         reject(new RPCError('Timed out for response'));
       } else {
