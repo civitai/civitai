@@ -850,6 +850,7 @@ model TagMetric {
   timeframe     MetricTimeframe
   modelCount    Int             @default(0)
   imageCount    Int             @default(0)
+  postCount     Int             @default(0)
   hiddenCount   Int             @default(0)
   followerCount Int             @default(0)
 

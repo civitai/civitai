@@ -839,7 +839,7 @@ export const updateMetricsJob = createJob(
 
       -- upsert metrics for all affected
       -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "TagMetric" ("tagId", timeframe, "followerCount", "hiddenCount", "modelCount", "imageCount")
+      INSERT INTO "TagMetric" ("tagId", timeframe, "followerCount", "hiddenCount", "modelCount", "imageCount", "postCount")
       SELECT
         m.id,
         tf.timeframe,
@@ -870,7 +870,14 @@ export const updateMetricsJob = createJob(
           WHEN tf.timeframe = 'Month' THEN month_image_count
           WHEN tf.timeframe = 'Week' THEN week_image_count
           WHEN tf.timeframe = 'Day' THEN day_image_count
-        END AS image_count
+        END AS image_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN post_count
+          WHEN tf.timeframe = 'Year' THEN year_post_count
+          WHEN tf.timeframe = 'Month' THEN month_post_count
+          WHEN tf.timeframe = 'Week' THEN week_post_count
+          WHEN tf.timeframe = 'Day' THEN day_post_count
+        END AS post_count
       FROM
       (
         SELECT
@@ -894,7 +901,12 @@ export const updateMetricsJob = createJob(
           COALESCE(i.year_image_count, 0) AS year_image_count,
           COALESCE(i.month_image_count, 0) AS month_image_count,
           COALESCE(i.week_image_count, 0) AS week_image_count,
-          COALESCE(i.day_image_count, 0) AS day_image_count
+          COALESCE(i.day_image_count, 0) AS day_image_count,
+          COALESCE(p.post_count, 0) AS post_count,
+          COALESCE(p.year_post_count, 0) AS year_post_count,
+          COALESCE(p.month_post_count, 0) AS month_post_count,
+          COALESCE(p.week_post_count, 0) AS week_post_count,
+          COALESCE(p.day_post_count, 0) AS day_post_count
         FROM affected a
         LEFT JOIN (
           SELECT
@@ -922,6 +934,18 @@ export const updateMetricsJob = createJob(
         ) i ON i.id = a.id
         LEFT JOIN (
           SELECT
+            "tagId" id,
+            COUNT("postId") post_count,
+            SUM(IIF(p."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_post_count,
+            SUM(IIF(p."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_post_count,
+            SUM(IIF(p."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_post_count,
+            SUM(IIF(p."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_post_count
+          FROM "TagsOnPost" top
+          JOIN "Post" p ON p.id = top."postId"
+          GROUP BY "tagId"
+        ) p ON p.id = a.id
+        LEFT JOIN (
+          SELECT
             "tagId"                                                                      AS id,
             SUM(IIF(type = 'Follow', 1, 0))                                                     AS follower_count,
             SUM(IIF(type = 'Follow' AND "createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_follower_count,
@@ -941,7 +965,7 @@ export const updateMetricsJob = createJob(
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       ON CONFLICT ("tagId", timeframe) DO UPDATE
-        SET "followerCount" = EXCLUDED."followerCount", "modelCount" = EXCLUDED."modelCount", "hiddenCount" = EXCLUDED."hiddenCount";
+        SET "followerCount" = EXCLUDED."followerCount", "modelCount" = EXCLUDED."modelCount", "hiddenCount" = EXCLUDED."hiddenCount", "postCount" = EXCLUDED."postCount";
     `);
       await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Tag'`);
     };
