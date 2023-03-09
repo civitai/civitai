@@ -310,7 +310,7 @@ model Model {
   name           String
   description    String?
   type           ModelType
-  category       CategoryType    @default(SemiRealisticModels)
+  category       CategoryType    @default(Models)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   lastVersionAt  DateTime?
