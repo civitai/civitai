@@ -12,7 +12,7 @@ export function EditPostControls() {
 }
 
 const publishText = 'Publish';
-const hiddenLabel = `When a post is Hidden, you can grab a link and share it outside of the Imgur community.  Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;
+const hiddenLabel = `When a post is Hidden, you can grab a link and share it outside of the Civitai community.  Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;
 const matureLabel = 'Mature content may include content that is suggestive or provocative';
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,

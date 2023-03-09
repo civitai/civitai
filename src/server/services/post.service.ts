@@ -19,6 +19,7 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { editPostImageSelect, getPostDetailSelect } from '~/server/selectors/post.selector';
 import { ModelFileType } from '~/server/common/constants';
 import { isImageResource } from '~/server/schema/image.schema';
+import { simpleTagSelect } from '~/server/selectors/tag.selector';
 
 export const getPostDetail = async ({ id, userId }: GetByIdInput & { userId?: number }) => {
   const post = await dbWrite.post.findUnique({
@@ -78,43 +79,53 @@ export const getPostTags = async ({ query, limit }: GetPostTagsInput) => {
     take: limit,
     where: {
       name: !showTrending ? { contains: query, mode: 'insensitive' } : undefined,
+      rank: { isNot: null },
     },
     select: postTagSelect({ trending: showTrending }),
     orderBy: {
-      rank: !showTrending ? { postCountAllTimeRank: 'asc' } : { postCountDayRank: 'asc' },
+      rank: !showTrending ? { postCountAllTimeRank: 'desc' } : { postCountDayRank: 'desc' },
     },
   });
 };
 
 export const addPostTag = async ({ postId, id, name: initialName }: AddPostTagInput) => {
   const name = initialName.toLowerCase().trim();
-  if (!id) {
-    return await dbWrite.tag.create({
-      data: {
-        type: TagType.UserGenerated,
-        target: [TagTarget.Post],
-        name,
-        tagsOnPosts: {
-          create: {
-            postId,
+  return await dbWrite.$transaction(async (tx) => {
+    const tag = await tx.tag.findUnique({
+      where: { name },
+      select: { id: true, target: true },
+    });
+    if (!tag) {
+      return await dbWrite.tag.create({
+        data: {
+          type: TagType.UserGenerated,
+          target: [TagTarget.Post],
+          name,
+          tagsOnPosts: {
+            create: {
+              postId,
+            },
           },
         },
-      },
-    });
-  } else {
-    // TODO.posts - revisit this. When a user is adding tags, will we display tags that aren't TagTarget.Post? If so, then we need to rethink this
-    return await dbWrite.tag.update({
-      where: { id },
-      data: {
-        tagsOnPosts: {
-          connectOrCreate: {
-            where: { tagId_postId: { tagId: id, postId } },
-            create: { postId },
+        select: simpleTagSelect,
+      });
+    } else {
+      // update the tag target if needed
+      return await dbWrite.tag.update({
+        where: { id: tag.id },
+        data: {
+          target: !tag.target.includes(TagTarget.Post) ? { push: TagTarget.Post } : undefined,
+          tagsOnPosts: {
+            connectOrCreate: {
+              where: { tagId_postId: { tagId: tag.id, postId } },
+              create: { postId },
+            },
           },
         },
-      },
-    });
-  }
+        select: simpleTagSelect,
+      });
+    }
+  });
 };
 
 export const removePostTag = async ({ postId, id }: RemovePostTagInput) => {
