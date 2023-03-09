@@ -38,6 +38,7 @@ export function PostTagsPicker({
   onRemoveTag,
   ...props
 }: PostTagsPickerProps) {
+  console.log({ tags: value });
   return (
     <Input.Wrapper {...props}>
       <Group mt={5} spacing="xs">
@@ -111,7 +112,7 @@ function TagPicker({ value, onPick }: { value?: TagProps[]; onPick: (tag: TagPro
   };
 
   const handleEnter = () => {
-    if (!tags?.length || !active) {
+    if (!tags?.length || active === undefined) {
       const exists = value?.find((x) => x.name === query);
       if (!exists) onPick({ name: query });
     } else {
