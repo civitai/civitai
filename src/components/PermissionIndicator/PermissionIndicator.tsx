@@ -23,27 +23,27 @@ export const PermissionIndicator = ({ permissions, size = 20, spacing = 2, ...pr
   const canSell = allowCommercialUse === 'Sell';
 
   const explanation = {
-    // 'Use the model without crediting the creator': allowNoCredit,
+    'Use the model without crediting the creator': allowNoCredit,
     'Sell images they generate': canSellImages,
     'Run on services that generate images for money': canRent,
-    // 'Share merges using this model': allowDerivatives,
+    'Share merges using this model': allowDerivatives,
     'Sell this model or merges using this model': canSell,
-    // 'Have different permissions when sharing merges': allowDifferentLicense,
+    'Have different permissions when sharing merges': allowDifferentLicense,
   };
   const iconProps = { size, stroke: 1.5 };
   const icons = [
-    // !allowNoCredit && { label: 'Creator credit required', icon: <IconUserCheck {...iconProps} /> },
+    !allowNoCredit && { label: 'Creator credit required', icon: <IconUserCheck {...iconProps} /> },
     !canSellImages && { label: 'No selling images', icon: <IconPhotoOff {...iconProps} /> },
     !canRent && { label: 'No generation services', icon: <IconBrushOff {...iconProps} /> },
     !canSell && { label: 'No selling models', icon: <IconShoppingCartOff {...iconProps} /> },
-    // !allowDerivatives && { label: 'No sharing merges', icon: <IconExchangeOff {...iconProps} /> },
-    // !allowDifferentLicense && {
-    //   label: 'Same permissions required',
-    //   icon: <IconRotate2 {...iconProps} />,
-    // },
+    !allowDerivatives && { label: 'No sharing merges', icon: <IconExchangeOff {...iconProps} /> },
+    !allowDifferentLicense && {
+      label: 'Same permissions required',
+      icon: <IconRotate2 {...iconProps} />,
+    },
   ].filter(Boolean) as { label: string; icon: React.ReactNode }[];
   return (
-    <Popover withArrow width={330}>
+    <Popover withArrow>
       <Popover.Target>
         <Group spacing={spacing} sx={{ cursor: 'pointer' }} noWrap {...props}>
           {icons.map(({ label, icon }, i) => (
@@ -79,9 +79,6 @@ export const PermissionIndicator = ({ permissions, size = 20, spacing = 2, ...pr
             </List.Item>
           ))}
         </List>
-        <Text size="xs" color="dimmed" mt={5} sx={{ lineHeight: 1.2 }}>
-          These are requests from the model creator and not a formal license.
-        </Text>
       </Popover.Dropdown>
     </Popover>
   );

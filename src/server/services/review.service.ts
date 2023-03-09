@@ -131,8 +131,8 @@ export const createOrUpdateReview = async ({
           image: {
             create: {
               ...prepareCreateImage(image),
-              user: { connect: { id: ownerId } },
-            },
+              userId: ownerId,
+            } as Prisma.ImageUncheckedCreateWithoutImagesOnReviewsInput,
           },
         })),
       },
@@ -148,8 +148,8 @@ export const createOrUpdateReview = async ({
           image: {
             create: {
               ...prepareCreateImage(image),
-              user: { connect: { id: ownerId } },
-            },
+              userId: ownerId,
+            } as Prisma.ImageUncheckedCreateWithoutImagesOnReviewsInput,
           },
         })),
         update: imagesToUpdate.map(({ index, ...image }) => ({
