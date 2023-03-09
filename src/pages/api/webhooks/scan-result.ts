@@ -22,10 +22,17 @@ export default WebhookEndpoint(async (req, res) => {
   const tasks = query.tasks ?? ['Import', 'Scan', 'Hash'];
   const scanResult: ScanResult = req.body;
 
-  const where: Prisma.ModelFileFindUniqueArgs['where'] = {
-    modelVersionId_type_format: { modelVersionId, type, format },
-  };
-  const { url, id: fileId, name } = (await dbWrite.modelFile.findUnique({ where })) ?? {};
+  const {
+    url,
+    id: fileId,
+    name,
+  } = (await dbWrite.modelFile.findFirst({
+    where: {
+      modelVersionId,
+      type,
+      format,
+    },
+  })) ?? {};
   if (!url || !fileId) return res.status(404).json({ error: 'File not found' });
 
   const data: Prisma.ModelFileUpdateInput = {};
@@ -83,7 +90,7 @@ export default WebhookEndpoint(async (req, res) => {
   }
 
   // Update if we made changes...
-  if (Object.keys(data).length > 0) await dbWrite.modelFile.update({ where, data });
+  if (Object.keys(data).length > 0) await dbWrite.modelFile.update({ where: { id: fileId }, data });
 
   // Update hashes
   if (tasks.includes('Hash') && scanResult.hashes) {

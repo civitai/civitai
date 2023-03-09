@@ -308,7 +308,8 @@ export const updateModelHandler = async ({
   }
 
   try {
-    const model = await updateModel({ ...input, userId: user.id });
+    const userId = user.id;
+    const model = await updateModel({ ...input, userId });
     if (!model) {
       throw throwNotFoundError(`No model with id ${id}`);
     }

@@ -130,8 +130,8 @@ export const createOrUpdateReview = async ({
           index,
           image: {
             create: {
-              userId: ownerId,
               ...prepareCreateImage(image),
+              user: { connect: { id: ownerId } },
             },
           },
         })),
@@ -147,8 +147,8 @@ export const createOrUpdateReview = async ({
           index,
           image: {
             create: {
-              userId: ownerId,
               ...prepareCreateImage(image),
+              user: { connect: { id: ownerId } },
             },
           },
         })),
