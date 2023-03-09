@@ -243,6 +243,9 @@ enum ModelType {
 }
 
 enum CategoryType {
+  RealisticModels
+  SemiRealisticModels
+  AnimeModels
   Models
   Characters
   Places
@@ -305,7 +308,7 @@ model Model {
   name           String
   description    String?
   type           ModelType
-  category       CategoryType    @default(Models)
+  category       CategoryType    @default(SemiRealisticModels)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   lastVersionAt  DateTime?
