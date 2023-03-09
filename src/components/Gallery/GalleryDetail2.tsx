@@ -172,9 +172,11 @@ export function GalleryDetail2() {
                 </AlertWithIcon>
               )}
               <Group spacing={4} px="md">
-                {image.tags.map((tag) => (
-                  <Badge key={tag.id}>{tag.name}</Badge>
-                ))}
+                {image.tags
+                  .filter((x) => !x.automated)
+                  .map((tag) => (
+                    <Badge key={tag.id}>{tag.name}</Badge>
+                  ))}
                 {/* <Badge
                   style={{ cursor: 'pointer' }}
                   leftSection={
