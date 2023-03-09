@@ -33,7 +33,10 @@ export type UserUpdateInput = z.input<typeof userUpdateSchema>;
 export const toggleModelEngagementInput = z.object({ modelId: z.number() });
 export type ToggleModelEngagementInput = z.infer<typeof toggleModelEngagementInput>;
 
-export const toggleFollowUserSchema = z.object({ targetUserId: z.number() });
+export const toggleFollowUserSchema = z.object({
+  targetUserId: z.number(),
+  username: z.string().nullable().optional(),
+});
 export type ToggleFollowUserSchema = z.infer<typeof toggleFollowUserSchema>;
 
 export const getUserTagsSchema = z.object({ type: z.nativeEnum(TagEngagementType) });

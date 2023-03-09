@@ -1180,6 +1180,7 @@ model PostReaction {
 enum TagEngagementType {
   Hide
   Follow
+  Allow
 }
 
 model TagEngagement {

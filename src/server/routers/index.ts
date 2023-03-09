@@ -20,6 +20,7 @@ import { reactionRouter } from './reaction.router';
 import { downloadRouter } from './download.router';
 import { stripeRouter } from './stripe.router';
 import { announcementRouter } from '~/server/routers/announcement.router';
+import { moderationRouter } from '~/server/routers/moderation.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -43,6 +44,7 @@ export const appRouter = router({
   commentv2: commentv2Router,
   reaction: reactionRouter,
   stripe: stripeRouter,
+  moderation: moderationRouter,
 });
 
 // export type definition of API
