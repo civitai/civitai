@@ -17,10 +17,9 @@ import { Center, createStyles, Paper } from '@mantine/core';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useDidUpdate } from '@mantine/hooks';
 import { trpc } from '~/utils/trpc';
-import { PostImage } from '~/server/selectors/post.selector';
 import { CSS } from '@dnd-kit/utilities';
 import { IconArrowsMaximize } from '@tabler/icons';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { PostEditImage } from '~/server/controllers/post.controller';
 
 export function ReorderImages() {
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
@@ -86,7 +85,7 @@ function SortableImage({
   sortableId,
   activeId,
 }: {
-  image: PostImage;
+  image: PostEditImage;
   sortableId: UniqueIdentifier;
   activeId?: UniqueIdentifier;
 }) {
@@ -181,16 +180,18 @@ export function ReorderImagesButton({
   children: ({
     onClick,
     isLoading,
-    reorder,
+    isReordering,
+    canReorder,
   }: {
     onClick: () => void;
     isLoading: boolean;
-    reorder: boolean;
+    isReordering: boolean;
+    canReorder: boolean;
   }) => React.ReactElement;
 }) {
   const id = useEditPostContext((state) => state.id);
   const images = useEditPostContext((state) => state.images);
-  const reorder = useEditPostContext((state) => state.reorder);
+  const isReordering = useEditPostContext((state) => state.reorder);
   const toggleReorder = useEditPostContext((state) => state.toggleReorder);
   const { mutate, isLoading } = trpc.post.reorderImages.useMutation();
 
@@ -199,27 +200,22 @@ export function ReorderImagesButton({
   };
 
   useDidUpdate(() => {
-    if (!reorder) {
-      mutate(
-        {
-          id,
-          imageIds: images
-            .map((x) => {
-              if (x.type === 'image') return x.data.id;
-            })
-            .filter(isDefined),
-        }
-        // {
-        //   onSuccess: () => {
-        //     showSuccessNotification({ message: 'images rearranged sucessfully' });
-        //   },
-        //   onError: (error: any) => {
-        //     showErrorNotification({ error, reason: 'failed to save rearrange images' });
-        //   },
-        // }
-      );
+    if (!isReordering) {
+      mutate({
+        id,
+        imageIds: images
+          .map((x) => {
+            if (x.type === 'image') return x.data.id;
+          })
+          .filter(isDefined),
+      });
     }
-  }, [reorder]);
+  }, [isReordering]);
 
-  return children({ onClick, isLoading, reorder });
+  return children({
+    onClick,
+    isLoading,
+    isReordering,
+    canReorder: !images.filter((x) => x.type === 'upload').length,
+  });
 }

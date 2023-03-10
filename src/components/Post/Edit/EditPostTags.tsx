@@ -13,7 +13,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue, getHotkeyHandler, useClickOutside } from '@mantine/hooks';
 import { IconPlus, IconX } from '@tabler/icons';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { trpc } from '~/utils/trpc';
 
@@ -24,12 +24,12 @@ type TagProps = {
 
 export function EditPostTags() {
   const tags = useEditPostContext((state) => state.tags);
-  console.log({ tags });
+  const publishedAt = useEditPostContext((state) => state.publishedAt);
   return (
     <Input.Wrapper label="Tags">
       <Group mt={5} spacing="xs">
         {tags.map((tag, index) => (
-          <PostTag key={index} tag={tag} />
+          <PostTag key={index} tag={tag} canRemove={publishedAt ? tags.length > 1 : true} />
         ))}
         {tags.length < 5 && <TagPicker />}
       </Group>
@@ -37,7 +37,7 @@ export function EditPostTags() {
   );
 }
 
-function PostTag({ tag }: { tag: TagProps }) {
+function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
   const postId = useEditPostContext((state) => state.id);
   const setTags = useEditPostContext((state) => state.setTags);
 
@@ -67,7 +67,7 @@ function PostTag({ tag }: { tag: TagProps }) {
     >
       <Group spacing="xs">
         <Text>{tag.name}</Text>
-        {tag.id && (
+        {tag.id && canRemove && (
           <ActionIcon
             size="xs"
             color="red"
@@ -132,8 +132,13 @@ function TagPicker() {
 
   const label = query.length > 1 ? 'Recommended' : 'Trending';
 
+  const filteredData = useMemo(
+    () => data?.filter((x) => !tags.some((tag) => tag.name === x.name)) ?? [],
+    [data, tags]
+  );
+
   const handleUp = () => {
-    if (!data?.length) return;
+    if (!filteredData?.length) return;
     setActive((active) => {
       if (active === undefined) return 0;
       if (active > 0) return active - 1;
@@ -142,21 +147,21 @@ function TagPicker() {
   };
 
   const handleDown = () => {
-    if (!data?.length) return;
+    if (!filteredData?.length) return;
     setActive((active) => {
       if (active === undefined) return 0;
-      const lastIndex = data.length - 1;
+      const lastIndex = filteredData.length - 1;
       if (active < lastIndex) return active + 1;
       return active;
     });
   };
 
   const handleEnter = () => {
-    if (!data?.length || active === undefined) {
+    if (!filteredData?.length || active === undefined) {
       const exists = tags?.find((x) => x.name === query);
       if (!exists) handleAddTag({ name: query });
     } else {
-      const selected = data[active];
+      const selected = filteredData[active];
       const exists = tags?.find((x) => x.name === selected.name);
       if (!exists) handleAddTag(selected);
     }
@@ -165,8 +170,8 @@ function TagPicker() {
   };
 
   const handleClick = (index: number) => {
-    if (!data?.length) return;
-    const selected = data[index];
+    if (!filteredData?.length) return;
+    const selected = filteredData[index];
     const exists = tags?.find((x) => x.name === selected.name);
     if (!exists) handleAddTag(selected);
     setEditing(false);
@@ -174,7 +179,7 @@ function TagPicker() {
   };
 
   return (
-    <Popover opened={editing && !!data?.length} position="bottom-start" shadow="lg">
+    <Popover opened={editing && !!filteredData?.length} position="bottom-start" shadow="lg">
       <Popover.Target>
         <Alert
           radius="xl"
@@ -220,9 +225,9 @@ function TagPicker() {
             {label} Tags
           </Text>
           <Divider />
-          {!!data?.length && (
+          {!!filteredData?.length && (
             <Stack spacing={0}>
-              {data.map((tag, index) => (
+              {filteredData.map((tag, index) => (
                 <Group
                   position="apart"
                   key={index}

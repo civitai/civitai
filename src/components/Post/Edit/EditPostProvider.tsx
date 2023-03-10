@@ -2,9 +2,8 @@ import { createStore, useStore } from 'zustand';
 import { createContext, useContext, useRef, useEffect, SetStateAction } from 'react';
 import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
-import { PostEditDetail } from '~/server/controllers/post.controller';
+import { PostEditDetail, PostEditImage } from '~/server/controllers/post.controller';
 import { ImageTag, SimpleTag } from '~/server/selectors/tag.selector';
-import { PostImage } from '~/server/selectors/post.selector';
 import { devtools } from 'zustand/middleware';
 import { loadImage, blurHashImage } from '~/utils/blurhash';
 import { getMetadata, auditMetaData } from '~/utils/image-metadata';
@@ -28,7 +27,7 @@ export type ImageUpload = {
   mimeType: string;
   file: File;
 };
-type ImageProps = { type: 'image'; data: PostImage } | { type: 'upload'; data: ImageUpload };
+type ImageProps = { type: 'image'; data: PostEditImage } | { type: 'upload'; data: ImageUpload };
 type TagProps = Omit<SimpleTag, 'id' | 'isCategory'> & { id?: number };
 type EditPostProps = {
   objectUrls: string[];
@@ -49,8 +48,8 @@ interface EditPostState extends EditPostProps {
   setPublishedAt: (publishedAt: Date) => void;
   toggleReorder: (value?: boolean) => void;
   setTags: (dispatch: SetStateAction<TagProps[]>) => void;
-  setImage: (id: number, updateFn: (images: PostImage) => PostImage) => void;
-  setImages: (updateFn: (images: PostImage[]) => PostImage[]) => void;
+  setImage: (id: number, updateFn: (images: PostEditImage) => PostEditImage) => void;
+  setImages: (updateFn: (images: PostEditImage[]) => PostEditImage[]) => void;
   setSelectedImageId: (id?: number) => void;
   upload: (
     { postId, modelVersionId }: { postId: number; modelVersionId?: number },
@@ -66,7 +65,7 @@ interface EditPostState extends EditPostProps {
 
 type EditPostStore = ReturnType<typeof createEditPostStore>;
 
-const prepareImages = (images: PostImage[]) =>
+const prepareImages = (images: PostEditImage[]) =>
   images.map((image): ImageProps => ({ type: 'image', data: image }));
 
 const processPost = (post?: PostEditDetail) => {
@@ -88,7 +87,7 @@ const createEditPostStore = ({
   handleUpload,
 }: {
   post?: PostEditDetail;
-  handleUpload: (args: HandleUploadArgs, toUpload: ImageUpload) => Promise<PostImage>;
+  handleUpload: (args: HandleUploadArgs, toUpload: ImageUpload) => Promise<PostEditImage>;
 }) => {
   return createStore<EditPostState>()(
     devtools(
@@ -123,13 +122,13 @@ const createEditPostStore = ({
             set((state) => {
               const index = state.images.findIndex((x) => x.type === 'image' && x.data.id === id);
               if (index > -1)
-                state.images[index].data = updateFn(state.images[index].data as PostImage);
+                state.images[index].data = updateFn(state.images[index].data as PostEditImage);
             }),
           setImages: (updateFn) =>
             set((state) => {
               // only allow calling setImages if uploads are finished
               if (state.images.every((x) => x.type === 'image')) {
-                const images = state.images.map(({ data }) => data as PostImage);
+                const images = state.images.map(({ data }) => data as PostEditImage);
                 state.images = prepareImages(updateFn(images));
               }
             }),
@@ -182,9 +181,7 @@ const createEditPostStore = ({
                         (x) => x.type === 'image' && x.data.id === created.id
                       );
                       if (index === -1) throw new Error('index out of bounds');
-                      (state.images[index].data as PostImage).tags = imageTags.map((tag) => ({
-                        tag,
-                      }));
+                      (state.images[index].data as PostEditImage).tags = imageTags;
                     });
                   } catch (error) {
                     console.error(error);
@@ -305,7 +302,7 @@ const getImageDataFromFile = async (file: File) => {
   };
 };
 
-const ingestImage = async (image: PostImage): Promise<ImageTag[]> => {
+const ingestImage = async (image: PostEditImage): Promise<ImageTag[]> => {
   const res = await fetch('/api/image/ingest', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -39,8 +39,3 @@ export default function PostCreate() {
 }
 
 PostCreate.getLayout = PostEditLayout;
-
-/*  TODO.posts - add to migration
-UPDATE "Tag" SET target = array_append(target, 'Post')
-WHERE 'Image' = ANY(Target);
-*/

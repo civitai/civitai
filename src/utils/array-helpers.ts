@@ -11,5 +11,5 @@ export function toStringList(array: string[]) {
 }
 
 export function removeDuplicates<T extends object>(array: T[], property: keyof T) {
-  return uniqBy(array, property);
+  return uniqBy<T>(array, property);
 }

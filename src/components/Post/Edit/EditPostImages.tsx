@@ -17,7 +17,6 @@ import {
   Code,
   BadgeProps,
 } from '@mantine/core';
-import { PostImage } from '~/server/selectors/post.selector';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { Fragment, useState } from 'react';
 import {
@@ -32,6 +31,8 @@ import {
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { useCFUploadStore } from '~/store/cf-upload.store';
 import { EditImageDrawer } from '~/components/Post/Edit/EditImageDrawer';
+import { TagType } from '@prisma/client';
+import { PostEditImage } from '~/server/controllers/post.controller';
 
 export function EditPostImages() {
   const postId = useEditPostContext((state) => state.id);
@@ -70,15 +71,18 @@ function ImageController({
     generationProcess,
     needsReview,
     resources,
+    tags,
   },
 }: {
-  image: PostImage;
+  image: PostEditImage;
 }) {
   const { classes, cx } = useStyles();
   const [withBorder, setWithBorder] = useState(false);
   const removeImage = useEditPostContext((state) => state.removeImage);
   const setSelectedImageId = useEditPostContext((state) => state.setSelectedImageId);
   const handleSelectImageClick = () => setSelectedImageId(id);
+
+  const generatedTags = tags.filter((x) => x.type !== TagType.UserGenerated);
 
   return (
     <Card className={classes.container} withBorder={withBorder} p={0}>
@@ -90,6 +94,11 @@ function ImageController({
       />
       <>
         <Group className={cx(classes.footer, classes.content)} spacing={6} p="xs" position="right">
+          {!!generatedTags.length && (
+            <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
+              Generated Tags
+            </Badge>
+          )}
           {meta ? (
             <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
               Generation Data

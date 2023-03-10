@@ -71,6 +71,7 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
 };
 
 export type PostEditDetail = AsyncReturnType<typeof getPostEditHandler>;
+export type PostEditImage = PostEditDetail['images'][0] & { previewUrl?: string };
 export const getPostEditHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
     const post = await getPostEditDetail(input);

@@ -1,3 +1,4 @@
+import { resourceReviewRouter } from './resourceReview.router';
 import { postRouter } from './post.router';
 import { router } from '~/server/trpc';
 import { accountRouter } from './account.router';
@@ -47,6 +48,7 @@ export const appRouter = router({
   user: userRouter,
   userLink: userLinkRouter,
   post: postRouter,
+  resourceReview: resourceReviewRouter,
 });
 
 // export type definition of API

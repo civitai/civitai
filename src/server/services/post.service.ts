@@ -42,6 +42,7 @@ export const getPostEditDetail = async ({ id }: GetByIdInput) => {
   return {
     ...post,
     tags: post.tags.flatMap((x) => x.tag),
+    images: post.images.map((image) => ({ ...image, tags: image.tags.flatMap((x) => x.tag) })),
   };
 };
 
@@ -56,11 +57,12 @@ export const createPost = async ({
   return {
     ...result,
     tags: result.tags.flatMap((x) => x.tag),
+    images: result.images.map((image) => ({ ...image, tags: image.tags.flatMap((x) => x.tag) })),
   };
 };
 
 export const updatePost = async (data: PostUpdateInput) => {
-  await dbWrite.post.update({
+  await dbWrite.post.updateMany({
     where: { id: data.id },
     data: {
       ...data,
@@ -80,6 +82,7 @@ export const getPostTags = async ({ query, limit }: GetPostTagsInput) => {
     where: {
       name: !showTrending ? { contains: query, mode: 'insensitive' } : undefined,
       rank: { isNot: null },
+      isCategory: showTrending ? true : undefined,
     },
     select: postTagSelect({ trending: showTrending }),
     orderBy: {
@@ -159,7 +162,7 @@ export const addPostImage = async ({
     ...new Set(autoResources.map((x) => x.modelVersionId)),
   ].filter(isDefined);
 
-  return await dbWrite.image.create({
+  const result = await dbWrite.image.create({
     data: {
       ...image,
       meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
@@ -177,13 +180,14 @@ export const addPostImage = async ({
     },
     select: editPostImageSelect,
   });
+  return { ...result, tags: result.tags.flatMap((x) => x.tag) };
 };
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
   const updateResources = image.resources.filter(isImageResource);
   const createResources = image.resources.filter(isNotImageResource);
 
-  return await dbWrite.image.update({
+  const result = await dbWrite.image.update({
     where: { id: image.id },
     data: {
       ...image,
@@ -197,6 +201,8 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
     select: editPostImageSelect,
   });
+
+  return { ...result, tags: result.tags.flatMap((x) => x.tag) };
 };
 
 export const reorderPostImages = async ({ imageIds }: ReorderPostImagesInput) => {
