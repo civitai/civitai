@@ -716,6 +716,7 @@ model Image {
   scannedAt         DateTime?
   scanRequestedAt   DateTime?
   mimeType          String?
+  sizeKB            Int?
 
   imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?

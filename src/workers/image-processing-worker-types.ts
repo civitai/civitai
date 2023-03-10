@@ -13,6 +13,8 @@ export type ImageProcessing = {
   blockedFor?: string[];
   needsReview?: boolean;
   status?: ImageProcessingStatus;
+  mimeType?: string;
+  sizeKB?: number;
 };
 
 export type StatusMessage = { uuid: string; status: ImageProcessingStatus };

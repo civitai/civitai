@@ -191,7 +191,7 @@ export const getReports = async <TSelect extends Prisma.ReportSelect>({
     skip,
     select,
     where,
-    orderBy: [{ createdAt: 'desc' }],
+    orderBy: [{ id: 'desc' }],
   });
   const count = await dbRead.report.count({ where });
   return getPagingData({ items, count }, take, page);
