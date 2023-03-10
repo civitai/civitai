@@ -57,8 +57,8 @@ export const imageSchema = z.object({
   analysis: imageAnalysisSchema.optional(),
   tags: z.array(tagSchema).optional(),
   needsReview: z.boolean().optional(),
-  mimeTye: z.string().optional(),
-  size: z.string().optional(),
+  mimeType: z.string().optional(),
+  sizeKB: z.number().optional(),
 });
 
 export type ImageUploadProps = z.infer<typeof imageSchema>;
