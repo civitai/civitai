@@ -79,6 +79,8 @@ export const imageSchema = z.object({
   needsReview: z.boolean().optional(),
   postId: z.number().optional(),
   resources: z.array(imageResourceUpsertSchema).optional(),
+  mimeType: z.string().optional(),
+  sizeKB: z.number().optional(),
 });
 
 export type ImageUploadProps = z.infer<typeof imageSchema>;

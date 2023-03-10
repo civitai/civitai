@@ -14,6 +14,7 @@ import {
 // @ts-ignore
 import SharedWorker from '@okikio/sharedworker';
 import { loadImage, getImageData, blurHashImage } from '~/utils/blurhash';
+import { bytesToKB } from '~/utils/number-helpers';
 
 type MessageCallback = (data: ScanImageMessage) => void;
 
@@ -85,6 +86,8 @@ export const ImageProcessingProvider = ({ children }: { children: React.ReactNod
         uuid: uuidv4(),
         file,
         status: 'processing',
+        sizeKB: file.size ? Math.ceil(bytesToKB(file.size)) : 0,
+        mimeType: file.type,
       })
     );
 

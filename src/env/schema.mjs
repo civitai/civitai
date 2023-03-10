@@ -65,7 +65,7 @@ export const serverSchema = z.object({
     return str.split(',');
   }, z.array(z.string())),
   IMAGE_INGESTION_MESSAGE_QUEUE_SERVER: z.string().optional(),
-  RPC_TIMEOUT: z.preprocess((x) => parseInt(String(x)), z.number()),
+  RPC_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 30000), z.number()),
 });
 
 /**

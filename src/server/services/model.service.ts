@@ -501,9 +501,9 @@ export const updateModel = async ({
               index,
               image: {
                 create: {
-                  userId,
                   ...prepareCreateImage(image),
-                },
+                  userId,
+                } as Prisma.ImageUncheckedCreateWithoutImagesOnReviewsInput,
               },
             })),
           },
@@ -568,9 +568,9 @@ export const updateModel = async ({
                   index,
                   image: {
                     create: {
-                      userId,
                       ...prepareCreateImage(image),
-                    },
+                      userId,
+                    } as Prisma.ImageUncheckedCreateWithoutImagesOnReviewsInput,
                   },
                 })),
                 update: imagesToUpdate.map(({ index, ...image }) => ({
