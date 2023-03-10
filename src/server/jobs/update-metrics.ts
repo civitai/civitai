@@ -1214,7 +1214,15 @@ export const updateMetricsJob = createJob(
   }
 );
 
-type MetricUpdateType = 'Model' | 'ModelVersion' | 'Answer' | 'Question' | 'User' | 'Tag' | 'Image';
+type MetricUpdateType =
+  | 'Model'
+  | 'ModelVersion'
+  | 'Answer'
+  | 'Question'
+  | 'User'
+  | 'Tag'
+  | 'Image'
+  | 'Post';
 export const queueMetricUpdate = async (type: MetricUpdateType, id: number) => {
   try {
     await dbWrite.metricUpdateQueue.createMany({ data: { type, id } });

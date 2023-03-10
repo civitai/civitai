@@ -1,4 +1,4 @@
-import { Button, Group, Popover, Text, PopoverProps } from '@mantine/core';
+import { Button, Group, Popover, Text, PopoverProps, GroupProps } from '@mantine/core';
 import { ReviewReactions } from '@prisma/client';
 import { IconMoodSmile, IconPlus } from '@tabler/icons';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -35,7 +35,8 @@ export function Reactions({
   entityType,
   entityId,
   popoverPosition = 'top-start',
-}: ReactionsProps) {
+  ...groupProps
+}: ReactionsProps & Omit<GroupProps, 'children' | 'onClick'>) {
   const currentUser = useCurrentUser();
 
   return (
@@ -46,6 +47,7 @@ export function Reactions({
         e.preventDefault();
         e.stopPropagation();
       }}
+      {...groupProps}
     >
       <Popover shadow="md" position={popoverPosition} withArrow withinPortal>
         <Popover.Target>

@@ -16,7 +16,7 @@ export default function PostEdit() {
           <Stack>
             <Title size="sm">POST</Title>
             <EditPostControls />
-            <EditPostReviews />
+            {/* <EditPostReviews /> */}
           </Stack>
         </Grid.Col>
         <Grid.Col md={8} sm={6} orderSm={1}>
