@@ -121,7 +121,7 @@ export const getGalleryImages = async <
         : sort === ImageSort.MostReactions
         ? [{ rank: { [`reactionCount${period}Rank`]: 'asc' } }]
         : []),
-      { createdAt: 'desc' },
+      { id: 'desc' },
     ],
   });
 

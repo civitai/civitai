@@ -144,7 +144,7 @@ export const getGalleryImagesHandler = async ({
     const items = await getGalleryImages({
       ...input,
       user: ctx.user,
-      // orderBy: [{ connections: { index: 'asc' } }, { createdAt: 'desc' }], // Disabled for performance reasons
+      // orderBy: [{ connections: { index: 'asc' } }, { id: 'desc' }], // Disabled for performance reasons
     });
     const parsedItems = items.map(({ tags, ...item }) => ({
       ...item,
