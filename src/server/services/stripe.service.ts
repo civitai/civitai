@@ -146,6 +146,7 @@ export const createSubscribeSession = async ({
     line_items: lineItems,
     success_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
     cancel_url: `${baseUrl}/pricing?canceled=true`,
+    allow_promotion_codes: true,
   });
 
   return { sessionId: session.id, url: session.url };
