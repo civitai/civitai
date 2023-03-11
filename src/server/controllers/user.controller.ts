@@ -43,18 +43,20 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
-export const getAllUsersHandler = ({
+export const getAllUsersHandler = async ({
   input,
   ctx,
 }: {
   input: GetAllUsersInput;
-  ctx: DeepNonNullable<Context>;
+  ctx: Context;
 }) => {
   try {
-    return getUsers({
+    const users = await getUsers({
       ...input,
       email: ctx.user?.isModerator ? input.email : undefined,
     });
+
+    return users;
   } catch (error) {
     throw throwDbError(error);
   }
