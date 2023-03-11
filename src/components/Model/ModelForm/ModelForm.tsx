@@ -66,7 +66,7 @@ import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ModelById } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { slugit, splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
@@ -193,7 +193,7 @@ export function ModelForm({ model }: Props) {
       baseModel: (baseModel as BaseModel) ?? defaultModelVersion.baseModel,
       skipTrainedWords:
         !version.trainedWords.length ||
-        !['Checkpoint', 'TextualInversion', 'LORA'].includes(model?.type ?? ''),
+        !['Checkpoint', 'TextualInversion', 'LORA', 'LoCon'].includes(model?.type ?? ''),
       // HOTFIX: Casting image.meta type issue with generated prisma schema
       images: images.map((image) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
       // HOTFIX: Casting files to defaultModelFile[] to avoid type confusion and accept room for error
@@ -270,7 +270,7 @@ export function ModelForm({ model }: Props) {
   const mutating = addMutation.isLoading || updateMutation.isLoading;
   const [type, allowDerivatives, status] = form.watch(['type', 'allowDerivatives', 'status']);
 
-  const acceptsTrainedWords = ['Checkpoint', 'TextualInversion', 'LORA'].includes(type);
+  const acceptsTrainedWords = ['Checkpoint', 'TextualInversion', 'LORA', 'LoCon'].includes(type);
   const isTextualInversion = type === 'TextualInversion';
 
   const copyImages = ({ from, to }: { from: number; to: number }) => {
@@ -458,7 +458,7 @@ export function ModelForm({ model }: Props) {
                         label="Type"
                         placeholder="Type"
                         data={Object.values(ModelType).map((type) => ({
-                          label: splitUppercase(type),
+                          label: getDisplayName(type),
                           value: type,
                         }))}
                         onChange={handleModelTypeChange}

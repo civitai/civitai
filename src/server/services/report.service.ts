@@ -8,6 +8,7 @@ import {
   GetReportsInput,
   ReportEntity,
 } from '~/server/schema/report.schema';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
@@ -70,6 +71,23 @@ export const createReport = async ({
   id,
   ...data
 }: CreateReportInput & { userId: number }) => {
+  let isReportingLocked = false;
+  if (type === ReportEntity.Image) {
+    const image = await dbRead.imagesOnModels.findFirst({
+      where: { imageId: id, modelVersion: { model: { underAttack: true } } },
+      select: { imageId: true },
+    });
+    isReportingLocked = !!image;
+  } else if (type === ReportEntity.Model) {
+    const model = await dbRead.model.findFirst({
+      where: { id, underAttack: true },
+      select: { id: true },
+    });
+    isReportingLocked = !!model;
+  }
+
+  if (isReportingLocked) throwBadRequestError('Reporting is locked for this model.');
+
   const validReport =
     data.reason !== ReportReason.NSFW
       ? await validateReportCreation({

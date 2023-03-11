@@ -240,6 +240,7 @@ enum ModelType {
   Hypernetwork
   AestheticGradient
   LORA
+  LoCon
   Controlnet
   Poses
 }
@@ -313,6 +314,7 @@ model Model {
   deletedByUser  User?           @relation("deletedBy", fields: [deletedBy], references: [id], onDelete: SetNull)
   checkpointType CheckpointType?
   locked         Boolean         @default(false)
+  underAttack    Boolean         @default(false)
 
   // Licensing
   allowNoCredit         Boolean       @default(true)
@@ -368,6 +370,7 @@ model ModelEngagement {
   createdAt DateTime            @default(now())
 
   @@id([userId, modelId])
+  @@index([modelId], type: Hash)
 }
 
 model ModelVersion {
@@ -403,6 +406,8 @@ model ModelVersion {
   posts            Post[]
   reviewsV2        ReviewV2[]
   hashes           ModelHash[]
+
+  @@index([modelId], type: Hash)
 }
 
 enum ModelVersionEngagementType {
@@ -470,6 +475,8 @@ model ModelFile {
   scanRequestedAt   DateTime?
   rawScanResult     Json?
   hashes            ModelFileHash[]
+
+  @@index([modelVersionId], type: Hash)
 }
 
 enum MetricTimeframe {
@@ -615,6 +622,8 @@ model Review {
   reports          ReviewReport[]
   comments         Comment[]
   imageConnections ImageConnection[]
+
+  @@index([modelId], type: Hash)
 }
 
 model ReviewV2 {
@@ -625,6 +634,8 @@ model ReviewV2 {
   details        String
   threadId       Int?
   thread         Thread?      @relation(fields: [threadId], references: [id])
+
+  @@index([threadId], type: Hash)
 }
 
 enum ReviewReactions {
@@ -714,6 +725,9 @@ model Image {
   rank            ImageRank?
   modHelper       ImageModHelper?
   resources       ImageResource[]
+
+  @@index([featuredAt])
+  @@index([postId], type: Hash)
 }
 
 model ImageResource {
@@ -755,6 +769,7 @@ model ImagesOnModels {
   index          Int?
 
   @@id([imageId, modelVersionId])
+  @@index([modelVersionId], type: Hash)
 }
 
 model ImagesOnReviews {
@@ -765,6 +780,7 @@ model ImagesOnReviews {
   index    Int?
 
   @@id([imageId, reviewId])
+  @@index([reviewId], type: Hash)
 }
 
 enum TagTarget {
@@ -812,6 +828,7 @@ model TagsOnModels {
   createdAt DateTime @default(now())
 
   @@id([modelId, tagId])
+  @@index([modelId], type: Hash)
 }
 
 model TagsOnQuestions {
@@ -821,6 +838,7 @@ model TagsOnQuestions {
   tagId      Int
 
   @@id([tagId, questionId])
+  @@index([questionId], type: Hash)
 }
 
 model TagsOnImage {
@@ -833,6 +851,7 @@ model TagsOnImage {
   confidence Int?
 
   @@id([tagId, imageId])
+  @@index([imageId], type: Hash)
 }
 
 model TagsOnPost {
@@ -843,6 +862,7 @@ model TagsOnPost {
   createdAt DateTime @default(now())
 
   @@id([tagId, postId])
+  @@index([postId], type: Hash)
 }
 
 model TagMetric {
@@ -945,6 +965,10 @@ model Comment {
   comments  Comment[]         @relation("ParentComments")
   reactions CommentReaction[]
   reports   CommentReport[]
+
+  @@index([modelId], type: Hash)
+  @@index([reviewId], type: Hash)
+  @@index([parentId], type: Hash)
 }
 
 model CommentReaction {
@@ -1094,6 +1118,8 @@ model CommentV2 {
   thread       Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
   reactions CommentV2Reaction[]
+
+  @@index([threadId], type: Hash)
 }
 
 model Thread {

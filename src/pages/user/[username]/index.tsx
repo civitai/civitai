@@ -47,6 +47,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
 import { openConfirmModal } from '@mantine/modals';
+import { NotFound } from '~/components/AppLayout/NotFound';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -69,7 +70,7 @@ export default function UserPage({
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
 
-  const { data: user } = trpc.user.getCreator.useQuery({ username });
+  const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery({ username });
 
   const { models: uploads } = user?._count ?? { models: 0 };
   const stats = user?.stats;
@@ -137,6 +138,8 @@ export default function UserPage({
         });
     }
   };
+
+  if (!userLoading && !user) return <NotFound />;
 
   return (
     <>

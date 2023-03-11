@@ -1,5 +1,5 @@
 import { ImageSort, QuestionSort } from './enums';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe, ModelType } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 
 export const constants = {

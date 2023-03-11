@@ -9,6 +9,7 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
   let hasNegativeEmbed = false;
   let hasConfig = false;
   let hasVAE = false;
+  const hasLoCon = modelType === ModelType.LoCon;
   if (files) {
     for (const file of files) {
       if (modelType === ModelType.TextualInversion && file.type === 'Negative')
@@ -20,6 +21,15 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
 
   return (
     <>
+      {hasLoCon && (
+        <AlertWithIcon icon={<IconAlertCircle />}>
+          This is a LoCon (LyCORIS) model, and requires an{' '}
+          <Anchor href="https://github.com/KohakuBlueleaf/a1111-sd-webui-locon" rel="nofollow">
+            additional extension in Automatic 1111
+          </Anchor>{' '}
+          to work.
+        </AlertWithIcon>
+      )}
       {hasNegativeEmbed && (
         <AlertWithIcon icon={<IconAlertCircle />}>
           This Textual Inversion includes a{' '}

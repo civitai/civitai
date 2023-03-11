@@ -192,7 +192,7 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
         showErrorNotification({
           error: new Error(error.message),
           title: 'Unable to send report',
-          reason: 'An unexpected error occurred, please try again',
+          reason: error.message ?? 'An unexpected error occurred, please try again',
         });
       },
       onSettled() {

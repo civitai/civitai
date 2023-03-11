@@ -25,7 +25,7 @@ export const getUserCreator = async (where: { username?: string; id?: number }) 
   }
 
   return dbRead.user.findFirst({
-    where: { ...where, deletedAt: null },
+    where: { ...where, deletedAt: null, id: { not: -1 } },
     select: {
       id: true,
       image: true,
@@ -83,6 +83,7 @@ export const getUsers = ({ limit, query, email, ids }: GetAllUsersInput) => {
       AND ${query ? `username ILIKE '${query}%'` : 'TRUE'}
       AND ${email ? `email ILIKE '${email}%'` : 'TRUE'}
       AND "deletedAt" IS NULL
+      AND "id" != -1
     ORDER BY LENGTH(username) ASC
     LIMIT ${limit}
   `);
@@ -103,7 +104,7 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
   select,
 }: GetByUsernameSchema & { select: TSelect }) => {
   return dbRead.user.findUnique({
-    where: { username },
+    where: { username, deletedAt: null, id: { not: -1 } },
     select,
   });
 };
