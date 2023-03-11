@@ -38,6 +38,7 @@ export type SocketClient = Socket<ServerToClientEvents, ClientToServerEvents>;
 // ---------------------
 
 export type ResourceType =
+  | 'LoCon'
   | 'LORA'
   | 'Checkpoint'
   | 'CheckpointConfig'

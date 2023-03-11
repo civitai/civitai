@@ -103,7 +103,7 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
   username,
   select,
 }: GetByUsernameSchema & { select: TSelect }) => {
-  return dbRead.user.findUnique({
+  return dbRead.user.findFirst({
     where: { username, deletedAt: null, id: { not: -1 } },
     select,
   });
