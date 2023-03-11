@@ -43,14 +43,17 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
-export const getAllUsersHandler = ({ input }: { input: GetAllUsersInput }) => {
+export const getAllUsersHandler = ({
+  input,
+  ctx,
+}: {
+  input: GetAllUsersInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     return getUsers({
       ...input,
-      select: {
-        username: true,
-        id: true,
-      },
+      email: ctx.user?.isModerator ? input.email : undefined,
     });
   } catch (error) {
     throw throwDbError(error);
