@@ -25,7 +25,7 @@ export const getUserCreator = async (where: { username?: string; id?: number }) 
   }
 
   return dbRead.user.findFirst({
-    where: { ...where, deletedAt: null, id: { not: -1 } },
+    where: { id: { not: -1 }, ...where, deletedAt: null },
     select: {
       id: true,
       image: true,
