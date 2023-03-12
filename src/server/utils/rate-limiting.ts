@@ -30,7 +30,7 @@ const isRateLimited = async (req: NextApiRequest, res: NextApiResponse, resource
     if (e instanceof Error) {
       // Some redis error
       console.error(e);
-      return;
+      return false;
     }
 
     const secs = Math.ceil(e.msBeforeNext / 1000) || 1;
