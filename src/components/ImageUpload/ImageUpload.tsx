@@ -485,6 +485,7 @@ function ImageMetaPopover({
             'DPM++ SDE Karras',
             'DDIM',
             'PLMS',
+            'UniPC',
           ]}
           value={sampler}
           onChange={(value) => setSampler(value ?? undefined)}
