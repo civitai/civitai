@@ -47,6 +47,7 @@ export const serverSchema = z.object({
   S3_FORCE_PATH_STYLE: z
     .preprocess((val) => val === true || val === 'true', z.boolean())
     .default(false),
+  RATE_LIMITING: z.preprocess((val) => val === true || val === 'true', z.boolean()),
   CF_ACCOUNT_ID: z.string(),
   CF_IMAGES_TOKEN: z.string(),
   JOB_TOKEN: z.string(),

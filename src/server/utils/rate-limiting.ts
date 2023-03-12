@@ -4,6 +4,7 @@ import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import requestIp from 'request-ip';
 import { redisLegacy } from '~/server/redis/client';
 import { RateLimiterRedis } from 'rate-limiter-flexible';
+import { env } from '~/env/server.mjs';
 
 const limiterOptions = {
   points: 30, // allow points
@@ -18,6 +19,8 @@ const rateLimiter = new RateLimiterRedis({
 });
 
 const isRateLimited = async (req: NextApiRequest, res: NextApiResponse, resourceKey = 'base') => {
+  if (!env.RATE_LIMITING) return false;
+
   const session = await getServerAuthSession({ req, res });
   const requesterKey = session?.user?.id ?? requestIp.getClientIp(req);
   const pointCost = !!session?.user ? 1 : unauthedPointCost;
