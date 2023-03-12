@@ -25,7 +25,10 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
       {isWildcards && (
         <AlertWithIcon icon={<IconAlertCircle />}>
           This is a Wildcard collection, it requires an{' '}
-          <Anchor href="https://github.com/KohakuBlueleaf/a1111-sd-webui-locon" rel="nofollow">
+          <Anchor
+            href="https://github.com/AUTOMATIC1111/stable-diffusion-webui-wildcards"
+            rel="nofollow"
+          >
             additional extension in Automatic 1111
           </Anchor>{' '}
           to work.
@@ -34,10 +37,7 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
       {isLoCon && (
         <AlertWithIcon icon={<IconAlertCircle />}>
           This is a LoCon (LyCORIS) model, and requires an{' '}
-          <Anchor
-            href="https://github.com/AUTOMATIC1111/stable-diffusion-webui-wildcards"
-            rel="nofollow"
-          >
+          <Anchor href="https://github.com/KohakuBlueleaf/a1111-sd-webui-locon" rel="nofollow">
             additional extension in Automatic 1111
           </Anchor>{' '}
           to work.
