@@ -457,7 +457,11 @@ export default function ModelDetail({
       label: 'Trigger Words',
       visible: !!latestVersion?.trainedWords?.length,
       value: (
-        <TrainedWords trainedWords={latestVersion?.trainedWords} files={latestVersion?.files} />
+        <TrainedWords
+          trainedWords={latestVersion?.trainedWords}
+          files={latestVersion?.files}
+          type={model.type}
+        />
       ),
     },
   ];

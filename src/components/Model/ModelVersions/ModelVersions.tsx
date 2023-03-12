@@ -133,7 +133,9 @@ function TabContent({ version, nsfw, type, locked, modelId, modelName }: TabCont
     {
       label: 'Trigger Words',
       visible: !!version.trainedWords?.length,
-      value: <TrainedWords trainedWords={version?.trainedWords} files={version?.files} />,
+      value: (
+        <TrainedWords trainedWords={version?.trainedWords} files={version?.files} type={type} />
+      ),
     },
     {
       label: 'Training Images',

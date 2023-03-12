@@ -193,7 +193,9 @@ export function ModelForm({ model }: Props) {
       baseModel: (baseModel as BaseModel) ?? defaultModelVersion.baseModel,
       skipTrainedWords:
         !version.trainedWords.length ||
-        !['Checkpoint', 'TextualInversion', 'LORA', 'LoCon'].includes(model?.type ?? ''),
+        !['Checkpoint', 'TextualInversion', 'LORA', 'LoCon', 'Wildcards'].includes(
+          model?.type ?? ''
+        ),
       // HOTFIX: Casting image.meta type issue with generated prisma schema
       images: images.map((image) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
       // HOTFIX: Casting files to defaultModelFile[] to avoid type confusion and accept room for error
@@ -270,7 +272,13 @@ export function ModelForm({ model }: Props) {
   const mutating = addMutation.isLoading || updateMutation.isLoading;
   const [type, allowDerivatives, status] = form.watch(['type', 'allowDerivatives', 'status']);
 
-  const acceptsTrainedWords = ['Checkpoint', 'TextualInversion', 'LORA', 'LoCon'].includes(type);
+  const acceptsTrainedWords = [
+    'Checkpoint',
+    'TextualInversion',
+    'LORA',
+    'LoCon',
+    'Wildcards',
+  ].includes(type);
   const isTextualInversion = type === 'TextualInversion';
 
   const copyImages = ({ from, to }: { from: number; to: number }) => {
@@ -726,6 +734,7 @@ export function ModelForm({ model }: Props) {
                                   clearable
                                   searchable
                                   required
+                                  parsePaste
                                 />
                               )}
                               {!isTextualInversion && (

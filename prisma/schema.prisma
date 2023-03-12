@@ -243,6 +243,7 @@ enum ModelType {
   LoCon
   Controlnet
   Poses
+  Wildcards
 }
 
 enum ImportStatus {

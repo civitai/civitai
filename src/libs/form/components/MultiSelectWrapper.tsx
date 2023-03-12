@@ -26,6 +26,7 @@ type MultiSelectWrapperProps<T extends string | number> = Omit<
   /** Controlled input onChange handler */
   onChange?(value: T[]): void;
   loading?: boolean;
+  parsePaste?: boolean;
 };
 
 export function MultiSelectWrapper<T extends string | number>({
@@ -34,6 +35,7 @@ export function MultiSelectWrapper<T extends string | number>({
   defaultValue,
   loading,
   onChange,
+  parsePaste = false,
   ...props
 }: MultiSelectWrapperProps<T>) {
   const initialType =
@@ -58,12 +60,29 @@ export function MultiSelectWrapper<T extends string | number>({
     onChange?.(returnValue as T[]);
   };
 
+  const handlePaste = (pastedText: string) => {
+    // Split pasted text by comma or new line
+    const pastedValues = pastedText.split(/[\n,]/).map((x) => x.trim());
+    const newValue = new Set([...((value as string[]) ?? []), ...pastedValues]);
+    handleChange([...newValue]);
+  };
+
   return (
     <MultiSelectContext.Provider value={{ limit: props.limit }}>
       <MultiSelect
         data={parsedData as (string | SelectItem)[]}
         value={parsedValue}
         onChange={handleChange}
+        onPaste={
+          parsePaste
+            ? (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const pastedText = e.clipboardData.getData('text');
+                handlePaste(pastedText);
+              }
+            : undefined
+        }
         dropdownComponent={
           props.searchable && (!props.limit || props.limit > data.length)
             ? undefined

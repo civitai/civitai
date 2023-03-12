@@ -33,6 +33,7 @@ const fileTypesByModelType: Record<ModelType, ModelFileType[]> = {
   Hypernetwork: ['Model', 'Training Data'],
   Controlnet: ['Model'],
   Poses: ['Archive'],
+  Wildcards: ['Archive'],
 };
 
 export function FileList({ parentIndex, form }: Props) {

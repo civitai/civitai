@@ -11,6 +11,7 @@ const instructions = {
   [ModelType.Hypernetwork]: '#hypernetwork',
   [ModelType.Controlnet]: '#controlnet',
   [ModelType.Poses]: '#poses',
+  [ModelType.Wildcards]: '#wildcards',
 };
 
 export const HowToUseModel = ({ type }: ModelFileAlertProps) => {

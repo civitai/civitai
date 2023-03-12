@@ -47,7 +47,8 @@ export type ResourceType =
   | 'AestheticGradient'
   | 'VAE'
   | 'Controlnet'
-  | 'Poses';
+  | 'Poses'
+  | 'Wildcards';
 
 type CommandBase = {
   id: string;
