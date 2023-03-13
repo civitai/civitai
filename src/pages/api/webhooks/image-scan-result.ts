@@ -74,7 +74,6 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 
   // Add new automated tags to image
   try {
-    console.log({ tags });
     await dbWrite.tagsOnImage.createMany({
       data: tags
         .filter((x) => x.id)
