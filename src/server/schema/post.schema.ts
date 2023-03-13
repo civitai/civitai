@@ -14,6 +14,7 @@ export const postsQuerySchema = z.object({
     .string()
     .transform((data) => postgresSlugify(data))
     .optional(),
+  tagname: z.string().optional(),
 });
 
 export type PostCreateInput = z.infer<typeof postCreateSchema>;
