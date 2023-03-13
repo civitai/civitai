@@ -7,6 +7,7 @@ export enum ReportEntity {
   Model = 'model',
   Review = 'review',
   Comment = 'comment',
+  CommentV2 = 'commentV2',
   Image = 'image',
 }
 

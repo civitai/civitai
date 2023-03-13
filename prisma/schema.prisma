@@ -560,11 +560,12 @@ model Report {
   previouslyReviewedCount Int          @default(0)
   alsoReportedBy          Int[]        @default([]) // UserIds
 
-  status  ReportStatus
-  model   ModelReport?
-  review  ReviewReport?
-  comment CommentReport?
-  image   ImageReport?
+  status    ReportStatus
+  model     ModelReport?
+  review    ReviewReport?
+  comment   CommentReport?
+  commentV2 CommentV2Report?
+  image     ImageReport?
 }
 
 model ModelReport {
@@ -592,6 +593,15 @@ model CommentReport {
   report    Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, commentId])
+}
+
+model CommentV2Report {
+  commentV2Id Int
+  commentV2   CommentV2 @relation(fields: [commentV2Id], references: [id], onDelete: Cascade)
+  reportId    Int       @unique
+  report      Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, commentV2Id])
 }
 
 model ImageReport {
@@ -1120,6 +1130,7 @@ model CommentV2 {
   thread       Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
   reactions CommentV2Reaction[]
+  reports   CommentV2Report[]
 
   @@index([threadId], type: Hash)
 }

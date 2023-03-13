@@ -25,7 +25,7 @@ const validateReportCreation = async ({
   reason,
 }: {
   userId: number;
-  reportType: 'model' | 'review' | 'comment' | 'image';
+  reportType: 'model' | 'review' | 'comment' | 'image' | 'commentV2';
   entityReportId: number;
   reason: ReportReason;
 }): Promise<Report | null> => {
@@ -168,6 +168,17 @@ export const createReport = async ({
         });
         if (toUpdate) {
           await tx.comment.update({ where: { id }, data: toUpdate });
+        }
+        break;
+      case ReportEntity.CommentV2:
+        await dbWrite.commentV2Report.create({
+          data: {
+            commentV2: { connect: { id } },
+            report,
+          },
+        });
+        if (toUpdate) {
+          await tx.commentV2.update({ where: { id }, data: toUpdate });
         }
         break;
       case ReportEntity.Image:

@@ -41,6 +41,7 @@ const reports = [
       ReportEntity.Model,
       ReportEntity.Review,
       ReportEntity.Comment,
+      ReportEntity.CommentV2,
       ReportEntity.Image,
     ],
   },
@@ -52,6 +53,7 @@ const reports = [
       ReportEntity.Model,
       ReportEntity.Review,
       ReportEntity.Comment,
+      ReportEntity.CommentV2,
       ReportEntity.Image,
     ],
   },
@@ -137,9 +139,12 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
               await queryUtils.review.getAll.invalidate();
               break;
             case ReportEntity.Comment:
-              await queryUtils.comment.getById.invalidate({ id: variables.id });
-              await queryUtils.comment.getAll.invalidate();
-              await queryUtils.comment.getCommentsById.invalidate();
+              // Nothing changes here so nothing to invalidate...
+              // await queryUtils.comment.getById.invalidate({ id: variables.id });
+              // await queryUtils.comment.getAll.invalidate();
+              // await queryUtils.comment.getCommentsById.invalidate();
+              break;
+            case ReportEntity.CommentV2:
               break;
             case ReportEntity.Image:
               if (variables.reason === ReportReason.NSFW)
@@ -203,6 +208,7 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
     const handleSubmit = (data: Record<string, unknown>) => {
       const details: any = Object.fromEntries(Object.entries(data).filter(([_, v]) => v != null));
       if (!reason) return;
+      console.log({ entityId });
       mutate({
         type: entityType,
         reason,
