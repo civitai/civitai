@@ -7,6 +7,7 @@ import {
   RemovePostTagInput,
   UpdatePostImageInput,
   GetPostTagsInput,
+  PostsQueryInput,
 } from './../schema/post.schema';
 import {
   createPost,
@@ -20,6 +21,7 @@ import {
   getPostEditDetail,
   updatePostImage,
   getPostTags,
+  getPostsInfinite,
 } from './../services/post.service';
 import { TRPCError } from '@trpc/server';
 import { PostCreateInput } from '~/server/schema/post.schema';
@@ -29,6 +31,21 @@ import {
   throwAuthorizationError,
 } from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
+
+export const getPostsInfiniteHandler = async ({
+  input,
+  ctx,
+}: {
+  input: PostsQueryInput;
+  ctx: Context;
+}) => {
+  try {
+    return await getPostsInfinite({ ...input, user: ctx.user });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
 
 export const createPostHandler = async ({
   input,

@@ -1,6 +1,20 @@
+import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { imageResourceUpsertSchema } from './image.schema';
 import { z } from 'zod';
 import { imageMetaSchema } from '~/server/schema/image.schema';
+import { postgresSlugify } from '~/utils/string-helpers';
+
+export type PostsQueryInput = z.infer<typeof postsQuerySchema>;
+export const postsQuerySchema = z.object({
+  page: z.preprocess((val) => Number(val), z.number().min(1)).default(1),
+  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(DEFAULT_PAGE_SIZE),
+  cursor: z.preprocess((val) => Number(val), z.number()).optional(),
+  query: z.string().optional(),
+  username: z
+    .string()
+    .transform((data) => postgresSlugify(data))
+    .optional(),
+});
 
 export type PostCreateInput = z.infer<typeof postCreateSchema>;
 export const postCreateSchema = z.object({

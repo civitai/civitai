@@ -12,6 +12,7 @@ import {
   getPostEditHandler,
   updatePostImageHandler,
   getPostTagsHandler,
+  getPostsInfiniteHandler,
 } from './../controllers/post.controller';
 import {
   postCreateSchema,
@@ -22,6 +23,7 @@ import {
   removePostTagSchema,
   updatePostImageSchema,
   getPostTagsSchema,
+  postsQuerySchema,
 } from './../schema/post.schema';
 import { dbWrite } from '~/server/db/client';
 import { router, protectedProcedure, middleware } from '~/server/trpc';
@@ -53,6 +55,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 });
 
 export const postRouter = router({
+  getInfinite: publicProcedure.input(postsQuerySchema).query(getPostsInfiniteHandler),
   get: publicProcedure.input(getByIdSchema).query(getPostHandler),
   getEdit: protectedProcedure.input(getByIdSchema).query(getPostEditHandler),
   create: protectedProcedure.input(postCreateSchema).mutation(createPostHandler),

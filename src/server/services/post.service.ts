@@ -1,5 +1,6 @@
+import { SessionUser } from 'next-auth';
 import { isNotImageResource } from './../schema/image.schema';
-import { editPostSelect, postTagSelect } from './../selectors/post.selector';
+import { editPostSelect, postTagSelect, simplePostSelect } from './../selectors/post.selector';
 import { isDefined } from '~/utils/type-guards';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { GetByIdInput } from './../schema/base.schema';
@@ -12,6 +13,7 @@ import {
   ReorderPostImagesInput,
   RemovePostTagInput,
   GetPostTagsInput,
+  PostsQueryInput,
 } from './../schema/post.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { TagType, TagTarget, Prisma } from '@prisma/client';
@@ -21,8 +23,49 @@ import { ModelFileType } from '~/server/common/constants';
 import { isImageResource } from '~/server/schema/image.schema';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 
+export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
+export const getPostsInfinite = async ({
+  page,
+  limit,
+  cursor,
+  query,
+  username,
+  user,
+}: PostsQueryInput & { user?: SessionUser }) => {
+  const skip = (page - 1) * limit;
+  const take = limit + 1;
+
+  const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
+  if (query) AND.push({ title: { in: query, mode: 'insensitive' } });
+  if (username) AND.push({ user: { username } });
+
+  const posts = await dbRead.post.findMany({
+    skip,
+    take,
+    cursor: cursor ? { id: cursor } : undefined,
+    where: {
+      AND,
+    },
+    select: simplePostSelect,
+  });
+
+  let nextCursor: number | undefined;
+  if (posts.length > limit) {
+    const nextItem = posts.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  return {
+    nextCursor,
+    items: posts.map(({ images, ...post }) => ({
+      ...post,
+      image: images[0],
+    })),
+  };
+};
+
 export const getPostDetail = async ({ id, userId }: GetByIdInput & { userId?: number }) => {
-  const post = await dbWrite.post.findUnique({
+  const post = await dbRead.post.findUnique({
     where: { id },
     select: getPostDetailSelect({ userId }),
   });

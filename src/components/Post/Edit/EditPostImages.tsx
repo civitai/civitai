@@ -82,7 +82,7 @@ function ImageController({
   const setSelectedImageId = useEditPostContext((state) => state.setSelectedImageId);
   const handleSelectImageClick = () => setSelectedImageId(id);
 
-  const generatedTags = tags.filter((x) => x.type !== TagType.UserGenerated);
+  const generatedTags = tags?.filter((x) => x.type !== TagType.UserGenerated);
 
   return (
     <Card className={classes.container} withBorder={withBorder} p={0}>

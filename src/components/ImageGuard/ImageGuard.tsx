@@ -36,7 +36,7 @@ import { useImageStore } from '~/store/images.store';
 import { isDefined } from '~/utils/type-guards';
 
 export type ImageGuardConnect = {
-  entityType: 'model' | 'modelVersion' | 'review' | 'user';
+  entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post';
   entityId: number;
 };
 // #region [store]

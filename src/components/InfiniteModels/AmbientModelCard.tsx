@@ -40,6 +40,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -71,8 +72,8 @@ const useStyles = createStyles((theme) => {
 
   return {
     card: {
-      height: '300px',
-      background: theme.fn.gradient({ from: base[9], to: background, deg: 180 }),
+      // height: '300px',
+      // background: theme.fn.gradient({ from: base[9], to: background, deg: 180 }),
     },
 
     content: {
@@ -323,13 +324,12 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
       sx={{ opacity: isHidden ? 0.1 : undefined }}
     >
       <Link href={`/models/${id}/${slugit(name)}`} passHref>
-        <Card
+        <MasonryCard
           ref={ref}
           withBorder
           component="a"
           shadow="sm"
-          className={classes.card}
-          style={{ height: `${height}px` }}
+          height={height}
           p={0}
           onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
             if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
@@ -497,7 +497,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
               </Stack>
             </>
           )}
-        </Card>
+        </MasonryCard>
       </Link>
     </Indicator>
   );
