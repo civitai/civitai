@@ -4,7 +4,7 @@ import { dbWrite } from '~/server/db/client';
 import { TagTarget, TagType } from '@prisma/client';
 
 const tagSchema = z.object({
-  tag: z.string(),
+  tag: z.string().transform((x) => x.toLowerCase().trim()),
   id: z.number().optional(),
   confidence: z.number(),
 });
@@ -74,6 +74,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 
   // Add new automated tags to image
   try {
+    console.log({ tags });
     await dbWrite.tagsOnImage.createMany({
       data: tags
         .filter((x) => x.id)
@@ -85,6 +86,12 @@ export default WebhookEndpoint(async function imageTags(req, res) {
         })),
     });
   } catch (e: any) {
+    const image = await dbWrite.image.findUnique({
+      where: { id: imageId },
+      select: { id: true },
+    });
+    if (!image) return res.status(404).json({ error: 'Image not found' });
+
     return res.status(500).json({ error: e.message });
   }
 
