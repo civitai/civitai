@@ -21,15 +21,36 @@ const schema = z.object({
   format: z.nativeEnum(ModelFileFormat).optional(),
 });
 
+const forbidden = (req: NextApiRequest, res: NextApiResponse) => {
+  res.status(403);
+  if (req.headers['content-type'] === 'application/json') return res.json({ error: 'Forbidden' });
+  else return res.send('Forbidden');
+};
+
+const notFound = (req: NextApiRequest, res: NextApiResponse, message = 'Not Found') => {
+  res.status(404);
+  if (req.headers['content-type'] === 'application/json') return res.json({ error: message });
+  else return res.send(message);
+};
+
 export default RateLimitedEndpoint(
   async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
     // Get ip so that we can block exploits we catch
     const ip = requestIp.getClientIp(req);
-    const blacklist = (
+    const ipBlacklist = (
       ((await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ??
       ''
     ).split(',');
-    if (ip && blacklist.includes(ip)) return res.status(403).json({ error: 'Forbidden' });
+    if (ip && ipBlacklist.includes(ip)) return forbidden(req, res);
+
+    const session = await getServerAuthSession({ req, res });
+    if (!!session?.user) {
+      const userBlacklist = (
+        ((await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))
+          ?.value as string) ?? ''
+      ).split(',');
+      if (userBlacklist.includes(session.user.id.toString())) return forbidden(req, res);
+    }
 
     const queryResults = schema.safeParse(req.query);
     if (!queryResults.success)
@@ -68,9 +89,8 @@ export default RateLimitedEndpoint(
         },
       },
     });
-    if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
+    if (!modelVersion) return notFound(req, res, 'Model not found');
 
-    const session = await getServerAuthSession({ req, res });
     const file =
       type != null || format != null
         ? modelVersion.files[0]
@@ -78,7 +98,7 @@ export default RateLimitedEndpoint(
             type: session?.user?.preferredPrunedModel ? 'Pruned Model' : undefined,
             format: session?.user?.preferredModelFormat,
           });
-    if (!file) return res.status(404).json({ error: 'Model file not found' });
+    if (!file) return notFound(req, res, 'Model file not found');
 
     // Handle non-published models
     const isMod = session?.user?.isModerator;
@@ -87,7 +107,7 @@ export default RateLimitedEndpoint(
       isMod ||
       modelVersion?.model?.status === 'Published' ||
       (userId && modelVersion?.model?.userId === userId);
-    if (!canDownload) return res.status(404).json({ error: 'Model not found' });
+    if (!canDownload) return notFound(req, res, 'Model not found');
 
     // Handle unauthenticated downloads
     if (!env.UNAUTHENTICATED_DOWNLOAD && !userId) {

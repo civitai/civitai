@@ -234,7 +234,6 @@ function TabContent({ version, nsfw, type, locked, modelId, modelName }: TabCont
                     href={createModelFileDownloadUrl({ versionId: version.id, primary: true })}
                     disabled={!primaryFile}
                     menuItems={downloadMenuItems.length > 1 ? downloadMenuItems : []}
-                    download
                   >
                     {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
                   </MultiActionButton>

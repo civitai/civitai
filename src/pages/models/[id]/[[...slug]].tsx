@@ -709,7 +709,6 @@ export default function ModelDetail({
                           disabled={!primaryFile}
                           menuItems={downloadMenuItems.length > 1 ? downloadMenuItems : []}
                           menuTooltip="Other Downloads"
-                          download
                         >
                           <Text align="center">
                             {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
