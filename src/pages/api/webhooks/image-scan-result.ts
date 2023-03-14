@@ -10,7 +10,8 @@ const tagSchema = z.object({
 });
 const bodySchema = z.object({
   id: z.number(),
-  tags: z.array(tagSchema),
+  isValid: z.boolean(),
+  tags: z.array(tagSchema).optional(),
 });
 const tagCache: Record<string, number> = {};
 
@@ -22,12 +23,21 @@ export default WebhookEndpoint(async function imageTags(req, res) {
     return res
       .status(400)
       .json({ error: `Invalid body: ${bodyResults.error.flatten().fieldErrors}` });
-  const { id: imageId, tags } = bodyResults.data;
+  const { id: imageId, tags, isValid } = bodyResults.data;
+
+  // If image is not valid, delete image
+  if (!isValid) {
+    await dbWrite.image.delete({ where: { id: imageId } });
+    return res.status(200).json({ ok: true });
+  }
 
   // Clear automated tags
   await dbWrite.tagsOnImage.deleteMany({
     where: { imageId, automated: true },
   });
+
+  // If there are no tags, return
+  if (!tags || tags.length === 0) return res.status(200).json({ ok: true });
 
   // Get Ids for tags
   const tagsToFind: string[] = [];

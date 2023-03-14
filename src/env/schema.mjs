@@ -67,6 +67,7 @@ export const serverSchema = z.object({
   }, z.array(z.string())),
   IMAGE_INGESTION_MESSAGE_QUEUE_SERVER: z.string().optional(),
   RPC_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 30000), z.number()),
+  IMAGE_SCANNING_ENDPOINT: z.string().optional(),
 });
 
 /**
