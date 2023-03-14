@@ -23,11 +23,15 @@ export default WebhookEndpoint(async function imageTags(req, res) {
     return res
       .status(400)
       .json({ error: `Invalid body: ${bodyResults.error.flatten().fieldErrors}` });
-  const { id: imageId, tags, isValid } = bodyResults.data;
+  const { id: imageId, isValid, tags: incomingTags } = bodyResults.data;
 
   // If image is not valid, delete image
   if (!isValid) {
-    await dbWrite.image.delete({ where: { id: imageId } });
+    try {
+      await dbWrite.image.delete({ where: { id: imageId } });
+    } catch {
+      // Do nothing... it must already be gone
+    }
     return res.status(200).json({ ok: true });
   }
 
@@ -37,7 +41,14 @@ export default WebhookEndpoint(async function imageTags(req, res) {
   });
 
   // If there are no tags, return
-  if (!tags || tags.length === 0) return res.status(200).json({ ok: true });
+  if (!incomingTags || incomingTags.length === 0) return res.status(200).json({ ok: true });
+
+  // De-dupe incoming tags and keep tag with highest confidence
+  const tagMap: Record<string, (typeof incomingTags)[0]> = {};
+  for (const tag of incomingTags) {
+    if (!tagMap[tag.tag] || tagMap[tag.tag].confidence < tag.confidence) tagMap[tag.tag] = tag;
+  }
+  const tags = Object.values(tagMap);
 
   // Get Ids for tags
   const tagsToFind: string[] = [];
@@ -54,11 +65,8 @@ export default WebhookEndpoint(async function imageTags(req, res) {
     });
 
     // Cache found tags and add ids to tags
-    for (const tag of foundTags) {
-      tagCache[tag.name] = tag.id;
-      const match = tags.find((x) => x.tag === tag.name);
-      if (match) match.id = tag.id;
-    }
+    for (const tag of foundTags) tagCache[tag.name] = tag.id;
+    for (const tag of tags) tag.id = tagCache[tag.tag];
   }
 
   // Add missing tags

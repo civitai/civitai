@@ -5,6 +5,7 @@ import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server.mjs';
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { createLogger } from '~/utils/logging';
 
 const stringToNumberArraySchema = z
   .string()
@@ -25,8 +26,10 @@ export default ModEndpoint(
 
     const where: Prisma.Enumerable<Prisma.ImageWhereInput> = {};
     if (!!imageIds?.length) where.id = { in: imageIds };
-    else if (!!imageCount) where.scanRequestedAt = null;
-    else {
+    else if (!!imageCount) {
+      where.scanRequestedAt = null;
+      where.scannedAt = null;
+    } else {
       return res.status(400).json({
         error: 'Must provide at least one of imageCount or imageIds',
       });
@@ -39,22 +42,30 @@ export default ModEndpoint(
     });
 
     if (!wait) res.status(200).json({ images: images.length });
-    else {
-      for (const image of images) {
-        const width = Math.min(450, image.width ?? 450);
-        const anim = image.name?.endsWith('.gif') ? false : undefined;
-        const gamma = anim === false ? 0.99 : undefined;
-        const url = getEdgeUrl(image.url, { width, anim, gamma });
 
+    for (const image of images) {
+      const width = Math.min(450, image.width ?? 450);
+      const anim = image.name?.endsWith('.gif') ? false : undefined;
+      const gamma = anim === false ? 0.99 : undefined;
+      const url = getEdgeUrl(image.url, { width, anim, gamma });
+
+      try {
         await fetch(env.IMAGE_SCANNING_ENDPOINT, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url, imageId: image.id }),
         });
-      }
 
-      res.status(200).json({ images: images.length });
+        await dbWrite.image.update({
+          where: { id: image.id },
+          data: { scanRequestedAt: new Date() },
+        });
+      } catch (e: any) {
+        console.error('Failed to send image for scan', e.message);
+      }
     }
+
+    if (wait) res.status(200).json({ images: images.length });
   },
   ['GET']
 );

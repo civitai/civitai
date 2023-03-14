@@ -9,6 +9,12 @@ export const AnchorNoTravel = (props: NextLinkProps & AnchorProps) => {
       component={NextLink}
       {...props}
       onClick={(e) => {
+        if (e.target !== e.currentTarget) {
+          const target = e.target as HTMLAnchorElement;
+          if (target.tagName === 'A') {
+            window.open(target.href, target.target ?? '_blank');
+          }
+        }
         e.preventDefault();
         e.stopPropagation();
       }}
