@@ -28,7 +28,7 @@ async function getModerationTags() {
 async function getHiddenTags(userId: number) {
   const tags = await dbWrite.tagEngagement.findMany({
     where: { userId, type: { in: [TagEngagementType.Hide, TagEngagementType.Allow] } },
-    select: { tag: { select: { id: true, name: true } }, type: true },
+    select: { tag: { select: { id: true } }, type: true },
   });
 
   const moderationTags = await getModerationTags();
@@ -45,10 +45,10 @@ async function getHiddenTags(userId: number) {
 }
 
 export async function getHiddenTagsForUser({
-  userId,
+  userId = -1, // Default to civitai account
   refreshCache,
 }: {
-  userId: number;
+  userId?: number;
   refreshCache?: boolean;
 }) {
   const cachedTags = await redis.get(`user:${userId}:hidden-tags`);
@@ -64,6 +64,7 @@ export async function getHiddenTagsForUser({
 }
 
 export async function refreshHiddenTagsForUser({ userId }: { userId: number }) {
+  console.log('refreshing hidden tags for user', userId);
   await redis.del(`user:${userId}:hidden-tags`);
 }
 // #endregion
@@ -72,18 +73,18 @@ export async function refreshHiddenTagsForUser({ userId }: { userId: number }) {
 async function getHiddenUsers(userId: number) {
   const users = await dbWrite.userEngagement.findMany({
     where: { userId, type: UserEngagementType.Hide },
-    select: { user: { select: { id: true, username: true } } },
+    select: { targetUser: { select: { id: true } } },
   });
 
-  const hiddenUsers = users?.map((x) => x.user.id) ?? [];
+  const hiddenUsers = users?.map((x) => x.targetUser.id) ?? [];
   return hiddenUsers;
 }
 
 export async function getHiddenUsersForUser({
-  userId,
+  userId = -1, // Default to civitai account
   refreshCache,
 }: {
-  userId: number;
+  userId?: number;
   refreshCache?: boolean;
 }) {
   const cachedUsers = await redis.get(`user:${userId}:hidden-users`);
@@ -99,6 +100,7 @@ export async function getHiddenUsersForUser({
 }
 
 export async function refreshHiddenUsersForUser({ userId }: { userId: number }) {
+  console.log('refreshing hidden users for user', userId);
   await redis.del(`user:${userId}:hidden-users`);
 }
 // #endregion
@@ -115,10 +117,10 @@ async function getHiddenModels(userId: number) {
 }
 
 export async function getHiddenModelsForUser({
-  userId,
+  userId = -1, // Default to civitai account
   refreshCache,
 }: {
-  userId: number;
+  userId?: number;
   refreshCache?: boolean;
 }) {
   const cachedModels = await redis.get(`user:${userId}:hidden-models`);
@@ -134,6 +136,23 @@ export async function getHiddenModelsForUser({
 }
 
 export async function refreshHiddenModelsForUser({ userId }: { userId: number }) {
+  console.log('refreshing hidden models for user', userId);
   await redis.del(`user:${userId}:hidden-models`);
 }
 // #endregion
+
+export async function getAllHiddenForUser({
+  userId = -1, // Default to civitai account
+  refreshCache,
+}: {
+  userId?: number;
+  refreshCache?: boolean;
+}) {
+  const [tags, users, models] = await Promise.all([
+    getHiddenTagsForUser({ userId, refreshCache }),
+    getHiddenUsersForUser({ userId, refreshCache }),
+    getHiddenModelsForUser({ userId, refreshCache }),
+  ]);
+
+  return { tags, users, models };
+}

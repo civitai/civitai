@@ -55,7 +55,6 @@ export const updatePreferencesHandler = async ({
       const tagIds = (
         await dbWrite.tag.findMany({ where: { name: { in: toAdd }, type: TagType.Moderation } })
       )?.map((x) => x.id);
-      console.log({ tagIds });
 
       if (!!tagIds?.length) {
         await dbWrite.tagEngagement.createMany({

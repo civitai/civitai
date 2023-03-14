@@ -5,5 +5,7 @@ export async function invalidateModeratedContent(queryUtils: ReturnType<typeof t
   await queryUtils.image.getGalleryImages.invalidate();
   await queryUtils.image.getGalleryImageDetail.invalidate();
   await queryUtils.image.getGalleryImagesInfinite.invalidate();
+  await queryUtils.tag.getAll.invalidate();
+  await queryUtils.tag.getTrending.invalidate();
   // TODO Briant: Invalidate post queries
 }

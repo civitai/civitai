@@ -82,11 +82,7 @@ const filterSchema = z.object({
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
-export function InfiniteModels({
-  columnWidth = 300,
-  showHidden = false,
-  delayNsfw = false,
-}: InfiniteModelsProps) {
+export function InfiniteModels({ columnWidth = 300, delayNsfw = false }: InfiniteModelsProps) {
   const router = useRouter();
   const filters = useInfiniteModelsFilters();
   const result = filterSchema.safeParse(router.query);
@@ -95,33 +91,10 @@ export function InfiniteModels({
 
   const { ref, inView } = useInView();
 
-  const { data: blockedTags } = trpc.user.getTags.useQuery(
-    { type: 'Hide' },
-    { enabled: !!currentUser }
-  );
-  const excludedTagIds = blockedTags?.map((tag) => tag.id);
-
-  // Hidden Models
-  const { data: { Hide } = { Hide: [] }, isFetched: isHiddenFetched } =
-    trpc.user.getEngagedModels.useQuery(undefined, {
-      enabled: !!currentUser,
-      cacheTime: Infinity,
-      staleTime: Infinity,
-    });
-
-  // State is kept separate to prevent unnecessary re-fetch
-  // when the user toggles a model's hidden state updating the list above
-  const [excludedIds, setExcludedIds] = useState<number[]>();
-  useEffect(() => {
-    if (isHiddenFetched && !excludedIds) setExcludedIds(Hide);
-  }, [isHiddenFetched]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const { data, isLoading, fetchNextPage, hasNextPage } = trpc.model.getAll.useInfiniteQuery(
     {
       ...filters,
       ...queryParams,
-      excludedTagIds,
-      excludedIds: queryParams.hidden ? undefined : excludedIds,
     },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
@@ -129,12 +102,6 @@ export function InfiniteModels({
       trpc: { context: { skipBatch: true } },
     }
   );
-  const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
-    enabled: !showHidden && !!currentUser,
-    cacheTime: Infinity,
-    staleTime: Infinity,
-  });
-  const hiddenUserIds = useMemo(() => hidden.map((item) => item.id), [hidden]);
 
   useEffect(() => {
     if (inView) {
@@ -145,10 +112,7 @@ export function InfiniteModels({
   const isAuthenticated = !!currentUser;
   const models = useMemo(
     () => {
-      const items =
-        data?.pages
-          .flatMap((x) => (!!x ? x.items : []))
-          .filter((item) => !hiddenUserIds.includes(item.user.id)) ?? [];
+      const items = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
 
       // If current user isn't authenticated make sure they aren't greeted with a blurry wall
       if (delayNsfw && items.length > 0 && !isAuthenticated && items.length <= 100) {
@@ -295,6 +259,8 @@ const MasonryItem = ({
   const [loading, setLoading] = useState(false);
   const { ref, inView } = useInView();
 
+  // We need to have this info so that we can show the low opacity when they toggle it on this page...
+  // We no longer use this for request filtering...
   const {
     data: { Favorite: favoriteModels = [], Hide: hiddenModels = [] } = { Favorite: [], Hide: [] },
   } = trpc.user.getEngagedModels.useQuery(undefined, {

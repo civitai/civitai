@@ -64,6 +64,7 @@ model User {
   blurNsfw             Boolean?              @default(true)
   isModerator          Boolean?              @default(false)
   tos                  Boolean?              @default(false)
+  onboarded            Boolean?              @default(false)
   createdAt            DateTime              @default(now())
   deletedAt            DateTime?
   preferredModelFormat ModelFileFormat?      @default(SafeTensor)

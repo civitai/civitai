@@ -20,6 +20,7 @@ import { dbRead } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteModelSchema,
+  GetAllModelsOutput,
   getAllModelsSchema,
   getDownloadSchema,
   ModelInput,
@@ -35,6 +36,7 @@ import {
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { checkFileExists, getS3Client } from '~/utils/s3-utils';
 import { prepareFile } from '~/utils/file-helpers';
+import { getAllHiddenForUser } from '~/server/services/user-cache.service';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -81,12 +83,29 @@ const checkFilesExistence = middleware(async ({ input, ctx, next }) => {
   });
 });
 
+const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
+  const userId = ctx.user?.id;
+  const _input = input as GetAllModelsOutput;
+  const hidden = await getAllHiddenForUser({ userId });
+  _input.excludedTagIds = [...hidden.tags, ...(_input.excludedTagIds ?? [])];
+  _input.excludedIds = [...hidden.models, ...(_input.excludedIds ?? [])];
+  _input.excludedUserIds = [...hidden.users, ...(_input.excludedUserIds ?? [])];
+
+  return next({
+    ctx: { user: ctx.user },
+  });
+});
+
 export const modelRouter = router({
   getById: publicProcedure.input(getByIdSchema).query(getModelHandler),
   getAll: publicProcedure
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
+    .use(applyUserPreferences)
     .query(getModelsInfiniteHandler),
-  getAllPagedSimple: publicProcedure.input(getAllModelsSchema).query(getModelsPagedSimpleHandler),
+  getAllPagedSimple: publicProcedure
+    .input(getAllModelsSchema)
+    .use(applyUserPreferences)
+    .query(getModelsPagedSimpleHandler),
   getAllWithVersions: publicProcedure
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
     .query(getModelsWithVersionsHandler),
