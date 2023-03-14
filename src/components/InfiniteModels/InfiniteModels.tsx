@@ -119,20 +119,37 @@ export function InfiniteModels({
     if (isHiddenFetched && !excludedIds) setExcludedIds(Hide);
   }, [isHiddenFetched]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
-    trpc.model.getAll.useInfiniteQuery(
-      {
-        ...filters,
-        ...queryParams,
-        excludedTagIds,
-        excludedIds: queryParams.hidden ? undefined : excludedIds,
-      },
-      {
-        getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-        getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
-        trpc: { context: { skipBatch: true } },
-      }
-    );
+  const {
+    data,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isRefetching,
+    // isPreviousData,
+    // status,
+  } = trpc.model.getAll.useInfiniteQuery(
+    {
+      ...filters,
+      ...queryParams,
+      excludedTagIds,
+      excludedIds: queryParams.hidden ? undefined : excludedIds,
+    },
+    {
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+      trpc: { context: { skipBatch: true } },
+      // keepPreviousData: true,
+    }
+  );
+
+  // useEffect(() => console.log({ data }), [data]);
+  // useEffect(() => console.log({ filters }), [filters]);
+  // useEffect(() => console.log({ isLoading }), [isLoading]);
+  // useEffect(() => console.log({ isFetchingNextPage }), [isFetchingNextPage]);
+  // useEffect(() => console.log({ isRefetching }), [isRefetching]);
+  // useEffect(() => console.log({ isPreviousData }), [isPreviousData]);
+  // useEffect(() => console.log({ status }), [status]);
   const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
     enabled: !showHidden && !!currentUser,
     cacheTime: Infinity,
@@ -194,6 +211,12 @@ export function InfiniteModels({
           fetchNextPage={fetchNextPage}
           scrollToIndex={(data) => data.findIndex((x) => x.id === modelId)}
           render={AmbientModelCard}
+          filters={{
+            ...filters,
+            ...queryParams,
+            excludedTagIds,
+            excludedIds: queryParams.hidden ? undefined : excludedIds,
+          }}
         />
       ) : (
         <Stack align="center">

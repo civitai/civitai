@@ -35,6 +35,7 @@ export default function PostsInfinite({ columnWidth = 300 }: { columnWidth?: num
         fetchNextPage={fetchNextPage}
         columnWidth={columnWidth}
         render={PostsCard}
+        filters={filters}
       />
     </>
   );
