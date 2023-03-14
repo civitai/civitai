@@ -10,13 +10,14 @@ export const DismissibleAlert = ({
   emoji,
   icon,
   className,
+  getInitialValueInEffect = true,
   ...props
 }: DismissibleAlertProps) => {
   const { classes, cx } = useStyles({ color });
   const [dismissed, setDismissed] = useLocalStorage({
     key: `alert-dismissed-${id}`,
     defaultValue: false,
-    getInitialValueInEffect: true,
+    getInitialValueInEffect,
   });
 
   if (dismissed) return null;
@@ -62,6 +63,7 @@ type DismissibleAlertProps = {
   emoji?: string | null;
   icon?: React.ReactNode;
   size?: 'sm' | 'md';
+  getInitialValueInEffect?: boolean;
 } & Omit<AlertProps, 'color' | 'children'>;
 
 const useStyles = createStyles((theme, { color }: { color: MantineColor }) => ({

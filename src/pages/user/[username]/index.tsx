@@ -47,6 +47,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { showErrorNotification } from '~/utils/notifications';
+import { openConfirmModal } from '@mantine/modals';
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -72,7 +74,7 @@ export default function UserPage({
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
 
-  const { data: user } = trpc.user.getCreator.useQuery({ username });
+  const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery({ username });
 
   const { models: uploads } = user?._count ?? { models: 0 };
   const stats = user?.stats;
@@ -141,6 +143,8 @@ export default function UserPage({
         });
     }
   };
+
+  if (!userLoading && !user) return <NotFound />;
 
   return (
     <>

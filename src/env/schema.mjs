@@ -47,6 +47,7 @@ export const serverSchema = z.object({
   S3_FORCE_PATH_STYLE: z
     .preprocess((val) => val === true || val === 'true', z.boolean())
     .default(false),
+  RATE_LIMITING: z.preprocess((val) => val === true || val === 'true', z.boolean()),
   CF_ACCOUNT_ID: z.string(),
   CF_IMAGES_TOKEN: z.string(),
   JOB_TOKEN: z.string(),
@@ -66,6 +67,7 @@ export const serverSchema = z.object({
   }, z.array(z.string())),
   IMAGE_INGESTION_MESSAGE_QUEUE_SERVER: z.string().optional(),
   RPC_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 30000), z.number()),
+  IMAGE_SCANNING_ENDPOINT: z.string().optional(),
 });
 
 /**
@@ -77,9 +79,8 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string(),
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string(),
   NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
-  NEXT_PUBLIC_GIT_HASH: z.string().optional(),
   NEXT_PUBLIC_CIVITAI_LINK: z.string().url(),
-  NEXT_PUBLIC_MAINTENANCE_MODE: z.preprocess((val) => val === true || val === 'true', z.boolean()),
+  NEXT_PUBLIC_GIT_HASH: z.string().optional(),
 });
 
 /**
@@ -93,6 +94,5 @@ export const clientEnv = {
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: process.env.NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION,
   NEXT_PUBLIC_IMAGE_LOCATION: process.env.NEXT_PUBLIC_IMAGE_LOCATION,
   NEXT_PUBLIC_GIT_HASH: process.env.NEXT_PUBLIC_GIT_HASH,
-  NEXT_PUBLIC_MAINTENANCE_MODE: process.env.NEXT_PUBLIC_MAINTENANCE_MODE === 'true',
   NEXT_PUBLIC_CIVITAI_LINK: process.env.NEXT_PUBLIC_CIVITAI_LINK,
 };

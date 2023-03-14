@@ -7,9 +7,11 @@ const instructions = {
   [ModelType.TextualInversion]: '#textual-inversions',
   [ModelType.AestheticGradient]: '#aesthetic-gradients',
   [ModelType.LORA]: '#lora',
-  [ModelType.Hypernetwork]: '#lora',
+  [ModelType.LoCon]: '#locon',
+  [ModelType.Hypernetwork]: '#hypernetwork',
   [ModelType.Controlnet]: '#controlnet',
   [ModelType.Poses]: '#poses',
+  [ModelType.Wildcards]: '#wildcards',
 };
 
 export const HowToUseModel = ({ type }: ModelFileAlertProps) => {

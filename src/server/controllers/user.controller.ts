@@ -42,15 +42,20 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 
-export const getAllUsersHandler = ({ input }: { input: GetAllUsersInput }) => {
+export const getAllUsersHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetAllUsersInput;
+  ctx: Context;
+}) => {
   try {
-    return getUsers({
+    const users = await getUsers({
       ...input,
-      select: {
-        username: true,
-        id: true,
-      },
+      email: ctx.user?.isModerator ? input.email : undefined,
     });
+
+    return users;
   } catch (error) {
     throw throwDbError(error);
   }

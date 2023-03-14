@@ -8,7 +8,7 @@ import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { InputFileUpload } from '~/libs/form';
 import { constants, ModelFileType } from '~/server/common/constants';
 import { ModelFileInput } from '~/server/schema/model-file.schema';
-import { splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 
 const fileFormats = constants.modelFileFormats.filter((type) => type !== 'Other');
 const fileFormatCount = fileFormats.length;
@@ -27,11 +27,13 @@ const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
 const fileTypesByModelType: Record<ModelType, ModelFileType[]> = {
   TextualInversion: ['Model', 'Negative', 'Training Data'],
   LORA: ['Model', 'Text Encoder', 'Training Data'],
+  LoCon: ['Model', 'Training Data'],
   Checkpoint: ['Model', 'Pruned Model', 'Config', 'VAE', 'Training Data'],
   AestheticGradient: ['Model', 'Training Data'],
   Hypernetwork: ['Model', 'Training Data'],
   Controlnet: ['Model'],
   Poses: ['Archive'],
+  Wildcards: ['Archive'],
 };
 
 export function FileList({ parentIndex, form }: Props) {
@@ -148,7 +150,7 @@ function FileItem({ type, parentIndex, index, modelType, onRemoveClick }: FileIt
 
   return (
     <InputFileUpload
-      label={`${splitUppercase(index > 0 ? type : modelType)} File`}
+      label={`${getDisplayName(index > 0 ? type : modelType)} File`}
       name={`modelVersions.${parentIndex}.files.${index}`}
       placeholder="Pick a file"
       uploadType={type}

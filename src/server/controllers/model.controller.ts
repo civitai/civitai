@@ -2,7 +2,7 @@ import { modelHashSelect } from './../selectors/modelHash.selector';
 import { ModelStatus, ModelHashType, Prisma, UserActivityType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
-import { dbRead } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { Context } from '~/server/createContext';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -45,7 +45,11 @@ import { constants, ModelFileType } from '~/server/common/constants';
 import { BrowsingMode } from '~/server/common/enums';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { getGetUrl } from '~/utils/s3-utils';
-import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
+import {
+  CommandResourcesAdd,
+  ResourceType,
+  ResponseResourcesAdd,
+} from '~/components/CivitaiLink/shared-types';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -500,7 +504,7 @@ export const getDownloadCommandHandler = async ({
       isMod || modelVersion?.model?.status === 'Published' || modelVersion.model.userId === userId;
     if (!canDownload) throw throwNotFoundError();
 
-    await dbRead.userActivity.create({
+    await dbWrite.userActivity.create({
       data: {
         userId,
         activity: UserActivityType.ModelDownload,
@@ -548,7 +552,9 @@ export const getDownloadCommandHandler = async ({
     }
 
     return { commands };
-  } catch (error) {}
+  } catch (error) {
+    throwDbError(error);
+  }
 };
 
 export const getModelDetailsForReviewHandler = async ({

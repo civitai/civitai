@@ -11,6 +11,7 @@ const supportedModelTypes: ModelType[] = [
   'Hypernetwork',
   'TextualInversion',
   'LORA',
+  'LoCon',
   'Controlnet',
 ];
 

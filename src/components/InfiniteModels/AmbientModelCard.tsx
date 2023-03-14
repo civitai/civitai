@@ -48,7 +48,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { ModelGetAll } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { splitUppercase, slugit } from '~/utils/string-helpers';
+import { slugit, getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const mantineColors: DefaultMantineColor[] = [
@@ -201,7 +201,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
   const modelBadges = (
     <>
       <Badge className={cx(classes.floatingBadge, classes.typeBadge)} radius="sm" size="sm">
-        {splitUppercase(data.type)}
+        {getDisplayName(data.type)}
       </Badge>
       {data.status !== ModelStatus.Published && (
         <Badge className={cx(classes.floatingBadge, classes.statusBadge)} radius="sm" size="sm">
@@ -418,6 +418,11 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                     modelName={name}
                     modelType={data.type}
                     hashes={data.hashes}
+                    tooltipProps={{
+                      position: 'right',
+                      transition: 'slide-right',
+                      variant: 'smallRounded',
+                    }}
                   >
                     {({ color, onClick, ref, icon }) => (
                       <ActionIcon

@@ -9,11 +9,20 @@ import {
   Box,
   Sx,
   ActionIcon,
+  Tooltip,
   Menu,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { Prisma } from '@prisma/client';
-import { IconDotsVertical, IconEye, IconEyeOff, IconFlag, IconLock, IconPlus } from '@tabler/icons';
+import {
+  IconDotsVertical,
+  IconEye,
+  IconEyeOff,
+  IconFlag,
+  IconLock,
+  IconPlus,
+  IconRating18Plus,
+} from '@tabler/icons';
 import { useRouter } from 'next/router';
 import React, { cloneElement, createContext, useContext, useState, useCallback } from 'react';
 import { create } from 'zustand';

@@ -129,7 +129,7 @@ export const commentNotifications = createNotificationProcessor({
           SELECT 1
           FROM "Notification" n
           WHERE n."userId" = r."ownerId"
-              AND n.type IN ('new-thread-response', 'new-comment-response', 'new-mention')
+              AND n.type IN ('new-thread-response', 'new-comment-response', 'new-mention', 'new-comment-nested')
               AND n.details->>'commentId' = r.details->>'commentId'
         );
     `,

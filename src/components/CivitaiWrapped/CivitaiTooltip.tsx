@@ -1,4 +1,4 @@
-import { Tooltip, TooltipProps } from '@mantine/core';
+import { Tooltip, TooltipProps, Text } from '@mantine/core';
 
 const variants: Record<string, Partial<TooltipProps>> = {
   smallRounded: {
@@ -19,11 +19,14 @@ const variants: Record<string, Partial<TooltipProps>> = {
   },
 };
 
-export function CivitaiTooltip({
-  variant,
-  ...props
-}: { variant?: keyof typeof variants } & TooltipProps) {
+export function CivitaiTooltip({ variant, ...props }: CivitaiTooltipProps) {
   const variantProps = variant ? variants[variant] : {};
+  if (variant === 'smallRounded')
+    props.label = (
+      <Text size="xs" weight={500}>
+        {props.label}
+      </Text>
+    );
   return (
     <Tooltip {...variantProps} {...props}>
       {props.children}

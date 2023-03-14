@@ -4,6 +4,19 @@ import { ModelVersionEngagementType, Prisma } from '@prisma/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
 
+export const getModelVersion = async <TSelect extends Prisma.ModelVersionSelect>({
+  input: { id },
+  user,  //eslint-disable-line
+  select,
+}: {
+  input: GetByIdInput;
+  user?: SessionUser;
+  select: TSelect;
+}) => {
+  const model = await dbRead.modelVersion.findUnique({ where: { id }, select });
+  return model;
+};
+
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
 }: {

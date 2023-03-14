@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 import { ModelType, MetricTimeframe, CheckpointType, ModelStatus } from '@prisma/client';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
-import { splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 import { deleteCookie } from 'cookies-next';
 import { immer } from 'zustand/middleware/immer';
 import { modelFilterSchema, useCookies } from '~/providers/CookiesProvider';
@@ -271,7 +271,7 @@ export function InfiniteModelsFilter() {
           >
             {Object.values(ModelType).map((type, index) => (
               <Chip key={index} value={type} {...chipProps}>
-                {splitUppercase(type)}
+                {getDisplayName(type)}
               </Chip>
             ))}
           </Chip.Group>

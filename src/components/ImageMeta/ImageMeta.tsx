@@ -15,6 +15,7 @@ import { IconCheck, IconCopy } from '@tabler/icons';
 import { useMemo } from 'react';
 import { encodeMetadata } from '~/utils/image-metadata';
 import { ImageGenerationProcess } from '@prisma/client';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 type Props = {
   meta: ImageMetaProps;
@@ -55,6 +56,29 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
 
   return (
     <Stack spacing="xs">
+      <DismissibleAlert
+        id="image-reproduction"
+        title="What is this?"
+        getInitialValueInEffect={false}
+        content={
+          <>
+            This is the data used to generate this image.{' '}
+            <Text component="span" weight={500} sx={{ lineHeight: 1.1 }}>
+              The image may not be exactly the same when you generate it.
+            </Text>{' '}
+            <Text
+              component="a"
+              td="underline"
+              variant="link"
+              sx={{ lineHeight: 1.1 }}
+              href="/github/wiki/Image-Reproduction"
+              target="_blank"
+            >
+              Learn why...
+            </Text>
+          </>
+        }
+      />
       {metas.long.map(({ label, value }) => (
         <Stack key={label} spacing={0}>
           <Group spacing={4} align="center">

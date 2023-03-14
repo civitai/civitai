@@ -133,7 +133,9 @@ function TabContent({ version, nsfw, type, locked, modelId, modelName }: TabCont
     {
       label: 'Trigger Words',
       visible: !!version.trainedWords?.length,
-      value: <TrainedWords trainedWords={version?.trainedWords} files={version?.files} />,
+      value: (
+        <TrainedWords trainedWords={version?.trainedWords} files={version?.files} type={type} />
+      ),
     },
     {
       label: 'Training Images',
@@ -234,7 +236,6 @@ function TabContent({ version, nsfw, type, locked, modelId, modelName }: TabCont
                     href={createModelFileDownloadUrl({ versionId: version.id, primary: true })}
                     disabled={!primaryFile}
                     menuItems={downloadMenuItems.length > 1 ? downloadMenuItems : []}
-                    download
                   >
                     {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
                   </MultiActionButton>
