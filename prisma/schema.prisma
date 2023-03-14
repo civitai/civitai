@@ -670,6 +670,21 @@ model Post {
   helper    PostHelper?
   stats     PostStat?
   rank      PostRank?
+  metrics   PostMetric[]
+}
+
+model PostMetric {
+  postId       Int
+  post         Post            @relation(fields: [postId], references: [id], onDelete: Cascade)
+  timeframe    MetricTimeframe
+  likeCount    Int             @default(0)
+  dislikeCount Int             @default(0)
+  laughCount   Int             @default(0)
+  cryCount     Int             @default(0)
+  heartCount   Int             @default(0)
+  commentCount Int             @default(0)
+
+  @@id([postId, timeframe])
 }
 
 enum ImageGenerationProcess {
