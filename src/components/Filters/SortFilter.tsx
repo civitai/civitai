@@ -1,13 +1,12 @@
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
-import { useFiltersContext } from '~/providers/FiltersProvider';
+import { FilterSubTypes, useFiltersContext } from '~/providers/FiltersProvider';
 import { ImageSort, ModelSort, PostSort, QuestionSort } from '~/server/common/enums';
 
-type SortType = 'model' | 'post' | 'image' | 'question';
 type SortFilterProps = {
-  type: SortType;
+  type: FilterSubTypes;
 };
 
-function getSortOptions(type: SortType) {
+function getSortOptions(type: FilterSubTypes) {
   switch (type) {
     case 'model':
       return ModelSort;

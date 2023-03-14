@@ -56,7 +56,12 @@ export function MasonryGrid2<T>({
   // #region [track data changes]
   const counterRef = useRef(0);
   const previousFetching = usePrevious(isRefetching && !isFetchingNextPage);
-  if (previousFetching) counterRef.current++;
+  // if (previousFetching) counterRef.current++;
+
+  useEffect(() => {
+    // console.log({ previousFetching });
+    if (previousFetching) counterRef.current++;
+  }, [previousFetching]);
   // #endregion
 
   // #region [base masonic settings]
@@ -70,7 +75,7 @@ export function MasonryGrid2<T>({
       columnWidth,
       columnGutter: columnGutter ?? theme.spacing.md,
     },
-    [previousFetching]
+    [counterRef.current]
   );
   const resizeObserver = useResizeObserver(positioner);
   // #endregion
