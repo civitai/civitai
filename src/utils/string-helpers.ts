@@ -10,7 +10,7 @@ export function splitUppercase(value: string) {
 }
 
 const nameOverides: Record<string, string> = {
-  LoCon: 'LoCon',
+  LoCon: 'LyCORIS',
   LORA: 'LoRA',
 };
 export function getDisplayName(value: string) {
