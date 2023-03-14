@@ -40,9 +40,8 @@ const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
 
 export function throwDbError(error: unknown) {
   // Always log to console
-  console.error(error);
-
-  if (error instanceof Prisma.PrismaClientKnownRequestError)
+  if (error instanceof TRPCError) throw error;
+  else if (error instanceof Prisma.PrismaClientKnownRequestError)
     throw new TRPCError({
       code: prismaErrorToTrpcCode[error.code] ?? 'INTERNAL_SERVER_ERROR',
       message: error.message,

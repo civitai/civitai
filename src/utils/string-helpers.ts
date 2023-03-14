@@ -9,6 +9,14 @@ export function splitUppercase(value: string) {
     .join(' ');
 }
 
+const nameOverides: Record<string, string> = {
+  LoCon: 'LyCORIS',
+  LORA: 'LoRA',
+};
+export function getDisplayName(value: string) {
+  return nameOverides[value] ?? splitUppercase(value);
+}
+
 export function getInitials(value: string) {
   return value
     .match(/(^\S\S?|\b\S)?/g)

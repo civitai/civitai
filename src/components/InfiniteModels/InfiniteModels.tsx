@@ -61,7 +61,7 @@ import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controll
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { slugit, splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 type InfiniteModelsProps = {
@@ -301,7 +301,7 @@ const MasonryItem = ({
         </Badge>
       )}
       <Badge radius="sm" size="xs">
-        {splitUppercase(data.type)}
+        {getDisplayName(data.type)}
       </Badge>
     </>
   );

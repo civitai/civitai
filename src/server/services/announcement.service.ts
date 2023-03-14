@@ -19,7 +19,7 @@ export const getLatestAnnouncement = async <TSelect extends Prisma.AnnouncementS
         },
       ],
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { id: 'desc' },
     select,
   });
 };

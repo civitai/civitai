@@ -43,7 +43,7 @@ export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
       ...(sort === QuestionSort.MostLiked
         ? [{ rank: { [`heartCount${period}Rank`]: 'asc' } }]
         : []),
-      { createdAt: 'desc' },
+      { id: 'desc' },
     ],
   });
   const count = await dbRead.question.count({ where });

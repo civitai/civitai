@@ -17,7 +17,7 @@ type CustomAutocompleteItem = {
   badge?: React.ReactElement<BadgeProps> | null;
 };
 
-const limit = 3;
+const limit = 5;
 
 export function ListSearch({ onSearch }: Props) {
   const router = useRouter();
@@ -52,7 +52,7 @@ export function ListSearch({ onSearch }: Props) {
     query.startsWith('@') ? query.substring(1).toLowerCase().trim() : query.toLowerCase();
 
   const { data: users } = trpc.user.getAll.useQuery(
-    { query: parseUserQuery(value), limit },
+    { query: parseUserQuery(value), limit: 10 },
     { enabled: !!value.length && canQueryUsers }
   );
 

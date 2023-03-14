@@ -6,13 +6,14 @@ import { getServerSession } from 'next-auth/next';
 import { createAuthOptions } from '~/pages/api/auth/[...nextauth]';
 import { getSessionFromBearerToken } from '~/server/utils/session-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { Session } from 'next-auth';
 
 // Next API route example - /pages/api/restricted.ts
 export const getServerAuthSession = async ({
   req,
   res,
 }: {
-  req: GetServerSidePropsContext['req'];
+  req: GetServerSidePropsContext['req'] & { context?: Record<string, unknown> };
   res: GetServerSidePropsContext['res'];
 }) => {
   // Try getting session based on token
@@ -23,6 +24,10 @@ export const getServerAuthSession = async ({
     token = url.searchParams.get('token') || undefined;
   }
 
-  if (token) return await getSessionFromBearerToken(token);
+  if (token) {
+    if (!req.context) req.context = {};
+    if (!req.context?.session) req.context.session = await getSessionFromBearerToken(token);
+    return req.context.session as Session | null;
+  }
   return getServerSession(req, res, createAuthOptions(req as NextApiRequest));
 };
