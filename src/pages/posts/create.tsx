@@ -33,7 +33,7 @@ export default function PostCreate() {
 
   return (
     <Container size="xs">
-      <ImageDropzone onDrop={handleDrop} loading={isLoading} count={images.length} />
+      <ImageDropzone onDrop={handleDrop} loading={isLoading} count={images.length} max={50} />
     </Container>
   );
 }

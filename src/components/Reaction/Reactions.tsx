@@ -27,6 +27,7 @@ type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
   reactions: ReactionDetails[];
   metrics?: ReactionMetrics;
   popoverPosition?: PopoverProps['position'];
+  readonly?: boolean;
 };
 
 export function Reactions({
@@ -35,6 +36,7 @@ export function Reactions({
   entityType,
   entityId,
   popoverPosition = 'top-start',
+  readonly,
   ...groupProps
 }: ReactionsProps & Omit<GroupProps, 'children' | 'onClick'>) {
   const currentUser = useCurrentUser();
@@ -44,12 +46,14 @@ export function Reactions({
       spacing={4}
       align="center"
       onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
+        if (!readonly) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
       }}
       {...groupProps}
     >
-      <Popover shadow="md" position={popoverPosition} withArrow withinPortal>
+      <Popover shadow="md" position={popoverPosition} withArrow withinPortal disabled={readonly}>
         <Popover.Target>
           <Button variant="subtle" size="xs" color="gray" radius="xl" compact>
             <Group spacing={2}>
@@ -82,6 +86,7 @@ export function Reactions({
         entityType={entityType}
         entityId={entityId}
         noEmpty
+        readonly={readonly}
       >
         {ReactionBadge}
       </ReactionsList>
@@ -97,6 +102,7 @@ function ReactionsList({
   available,
   children,
   noEmpty,
+  readonly,
 }: Omit<ReactionsProps, 'popoverPosition'> & {
   noEmpty?: boolean;
   available?: ReviewReactions[];
@@ -105,6 +111,7 @@ function ReactionsList({
     count: number;
     reaction: ReviewReactions;
   }) => React.ReactElement;
+  readonly?: boolean;
 }) {
   const currentUser = useCurrentUser();
   const keys = Object.keys(availableReactions) as ReviewReactions[];
@@ -126,7 +133,7 @@ function ReactionsList({
               count={count}
               entityType={entityType}
               entityId={entityId}
-              readonly={!currentUser}
+              readonly={!currentUser || readonly}
               noEmpty={noEmpty}
             >
               {children}

@@ -24,7 +24,6 @@ import { imageGenerationSchema, imageMetaSchema } from '~/server/schema/image.sc
 
 import { trpc } from '~/utils/trpc';
 import { splitUppercase } from '~/utils/string-helpers';
-import { IconVersions } from '@tabler/icons';
 import { showSuccessNotification } from '~/utils/notifications';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { TagType } from '@prisma/client';
@@ -77,7 +76,21 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
     | PostEditImage
     | undefined;
 
-  const form = useForm({ schema, defaultValues: image as any, mode: 'onChange' });
+  const meta: Record<string, unknown> = (image?.meta as Record<string, unknown>) ?? {};
+  const defaultValues: z.infer<typeof schema> = {
+    hideMeta: image?.hideMeta ?? false,
+    nsfw: image?.nsfw ?? false,
+    meta: {
+      prompt: meta.prompt ?? '',
+      negativePrompt: meta.negativePrompt ?? '',
+      cfgScale: meta.cfgScale ?? '',
+      steps: meta.steps ?? '',
+      sampler: meta.sampler ?? '',
+      seed: meta.seed ?? '',
+    } as any,
+  };
+
+  const form = useForm({ schema, defaultValues, mode: 'onChange' });
   const { mutate, isLoading } = trpc.post.updateImage.useMutation();
 
   const handleSubmit = (data: z.infer<typeof schema>) => {

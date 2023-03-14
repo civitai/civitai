@@ -6,7 +6,7 @@ import {
   ModelStatus,
   ModelType,
 } from '@prisma/client';
-import React, { createContext, useContext } from 'react';
+import React, { createContext, useContext, useEffect } from 'react';
 import { z } from 'zod';
 
 import { constants } from '~/server/common/constants';
@@ -15,9 +15,13 @@ import {
   ImageResource,
   ImageSort,
   ModelSort,
+  PostSort,
   QuestionSort,
   QuestionStatus,
 } from '~/server/common/enums';
+import { postsFilterSchema, postsQuerySchema } from '~/server/schema/post.schema';
+import { QS } from '~/utils/qs';
+import { getCookies } from 'cookies-next';
 
 export const modelFilterSchema = z.object({
   sort: z.nativeEnum(ModelSort).optional(),
@@ -47,8 +51,15 @@ export const galleryFilterSchema = z.object({
   excludedTags: z.number().array().optional(),
 });
 
-const CookiesCtx = createContext<CookiesContext>({} as CookiesContext);
-export const useCookies = () => useContext(CookiesCtx);
+const cookies = getCookies();
+console.log({ cookies });
+
+const CookiesCtx = createContext<CookiesContext | null>(null);
+export const useCookies = () => {
+  const context = useContext(CookiesCtx);
+  if (!context) throw new Error('Missing CookiesCtx.Provider in the tree');
+  return context;
+};
 export const CookiesProvider = ({
   children,
   value: initialValue,
@@ -64,14 +75,16 @@ const cookiesSchema = z.object({
   models: modelFilterSchema,
   questions: questionsFilterSchema,
   gallery: galleryFilterSchema,
+  post: postsFilterSchema,
 });
-export type CookiesContext = z.input<typeof cookiesSchema>;
+export type CookiesContext = z.infer<typeof cookiesSchema>;
 
 export function parseCookies(
   cookies: Partial<{
     [key: string]: string;
   }>
 ) {
+  const postFilters = cookies?.['p_filters'];
   return zodParse({
     models: {
       sort: cookies?.['f_sort'],
@@ -98,6 +111,7 @@ export function parseCookies(
       tags: cookies?.['g_tags'],
       excludedTags: cookies?.['g_excludedTags'],
     },
+    post: postFilters ? QS.parse(postFilters) : {},
   });
 }
 
@@ -136,10 +150,11 @@ const zodParse = z
           excludedTags: z.string(),
         })
         .partial(),
+      post: postsFilterSchema,
     })
   )
   .implement(
-    ({ models, questions, gallery }) =>
+    ({ models, questions, gallery, post }) =>
       ({
         models: {
           ...models,
@@ -159,6 +174,7 @@ const zodParse = z
             ? JSON.parse(decodeURIComponent(gallery.excludedTags))
             : [],
         },
+        post,
       } as CookiesContext)
   );
 

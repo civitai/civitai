@@ -1,4 +1,4 @@
-import { ImageSort, QuestionSort } from './enums';
+import { ImageSort, PostSort, QuestionSort, BrowsingMode } from './enums';
 import { MetricTimeframe } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 
@@ -15,6 +15,12 @@ export const constants = {
   galleryFilterDefaults: {
     sort: ImageSort.MostReactions,
     period: MetricTimeframe.AllTime,
+    limit: 50,
+  },
+  postFilterDefaults: {
+    sort: PostSort.MostReactions,
+    period: MetricTimeframe.AllTime,
+    browsingMode: BrowsingMode.All,
     limit: 50,
   },
   baseModels: ['SD 1.4', 'SD 1.5', 'SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'Other'],

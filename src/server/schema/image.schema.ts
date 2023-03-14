@@ -4,14 +4,19 @@ import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { tagSchema } from '~/server/schema/tag.schema';
 
-const stringToNumber = z.preprocess((value) => Number(value), z.number());
+const stringToNumber = z.preprocess(
+  (value) => (value ? Number(value) : undefined),
+  z.number().optional()
+);
+
+const undefinedString = z.preprocess((value) => (value ? value : undefined), z.string().optional());
 
 export const imageGenerationSchema = z.object({
-  prompt: z.string(),
-  negativePrompt: z.string(),
+  prompt: undefinedString,
+  negativePrompt: undefinedString,
   cfgScale: stringToNumber,
   steps: stringToNumber,
-  sampler: z.string(),
+  sampler: undefinedString,
   seed: stringToNumber,
 });
 

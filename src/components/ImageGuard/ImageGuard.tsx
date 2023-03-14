@@ -9,20 +9,10 @@ import {
   Box,
   Sx,
   ActionIcon,
-  Tooltip,
   Menu,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { Prisma } from '@prisma/client';
-import {
-  IconDotsVertical,
-  IconEye,
-  IconEyeOff,
-  IconFlag,
-  IconLock,
-  IconPlus,
-  IconRating18Plus,
-} from '@tabler/icons';
+import { IconDotsVertical, IconEye, IconEyeOff, IconFlag, IconLock, IconPlus } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import React, { cloneElement, createContext, useContext, useState, useCallback } from 'react';
 import { create } from 'zustand';
@@ -30,8 +20,6 @@ import { immer } from 'zustand/middleware/immer';
 import { ReportImageNsfwButton } from '~/components/Image/ImageNsfwButton/ImageNsfwButton';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ImageModel } from '~/server/selectors/image.selector';
-import { SimpleTag } from '~/server/selectors/tag.selector';
 import { useImageStore } from '~/store/images.store';
 import { isDefined } from '~/utils/type-guards';
 
@@ -76,7 +64,7 @@ const useStore = create<SfwStore>()(
 
 // #region [ImageGuardContext]
 type ImageGuardState = {
-  images: CustomImageModel[];
+  images: ImageProps[];
   connect?: ImageGuardConnect;
 };
 const ImageGuardCtx = createContext<ImageGuardState>({} as any);
@@ -92,21 +80,31 @@ const useImageGuardContext = () => {
   - use case: home page, model card, toggle image - since I don't have all the images yet, I need to be able to still manage nsfw state for all the images without having the knowledge of which images are nsfw
 */
 
-type CustomImageModel = Omit<ImageModel, 'tags'> & {
+// type CustomImageModel = Omit<ImageModel, 'tags'> & {
+//   imageNsfw?: boolean;
+//   tags?: SimpleTag[];
+//   analysis?: Prisma.JsonValue;
+// };
+
+type ImageProps = {
+  id: number;
+  nsfw: boolean;
   imageNsfw?: boolean;
-  tags?: SimpleTag[];
-  analysis?: Prisma.JsonValue;
 };
 
-type ImageGuardProps = {
-  images: CustomImageModel[];
+type ImageGuardProps<T extends ImageProps> = {
+  images: T[];
   connect?: ImageGuardConnect;
-  render: (image: CustomImageModel, index: number) => React.ReactNode;
+  render: (image: T, index: number) => React.ReactNode;
   /** Make all images nsfw by default */
   nsfw?: boolean;
 };
 
-export function ImageGuard({ images: initialImages, connect, render }: ImageGuardProps) {
+export function ImageGuard<T extends ImageProps>({
+  images: initialImages,
+  connect,
+  render,
+}: ImageGuardProps<T>) {
   const images = initialImages.filter(isDefined).filter((x) => x.id);
 
   return (
@@ -121,7 +119,7 @@ export function ImageGuard({ images: initialImages, connect, render }: ImageGuar
 }
 
 const ImageGuardContentCtx = createContext<{
-  image: CustomImageModel;
+  image: ImageProps;
   safe: boolean;
   showToggleImage: boolean;
   showToggleConnect: boolean;
@@ -139,7 +137,7 @@ function ImageGuardContentProvider({
   image,
 }: {
   children: React.ReactNode;
-  image: CustomImageModel;
+  image: ImageProps;
 }) {
   const { connect } = useImageGuardContext();
   const currentUser = useCurrentUser();
@@ -459,3 +457,12 @@ function ImageGuardPopover({ children }: { children: React.ReactElement }) {
     },
   });
 }
+
+ImageGuard.Content = function ImageGuardContent({
+  children,
+}: {
+  children: ({ safe }: { safe: boolean }) => React.ReactElement;
+}) {
+  const { safe } = useImageGuardContentContext();
+  return children({ safe });
+};

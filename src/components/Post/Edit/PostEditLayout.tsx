@@ -31,7 +31,7 @@ function LayoutProvider({ children }: { children: any }) {
       const handleReturn = async () => {
         await queryUtils.post.get.invalidate({ id: postId });
         await queryUtils.post.getEdit.invalidate({ id: postId });
-        // TODO.posts - additional post invalidation here
+        await queryUtils.post.getInfinite.invalidate();
       };
       return () => {
         handleReturn();

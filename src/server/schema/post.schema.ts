@@ -3,9 +3,20 @@ import { imageResourceUpsertSchema } from './image.schema';
 import { z } from 'zod';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
+import { constants } from '~/server/common/constants';
+import { MetricTimeframe } from '@prisma/client';
+import { BrowsingMode, PostSort } from '~/server/common/enums';
+import { isDefined } from '~/utils/type-guards';
+
+export type PostsFilterInput = z.infer<typeof postsFilterSchema>;
+export const postsFilterSchema = z.object({
+  browsingMode: z.nativeEnum(BrowsingMode).default(constants.postFilterDefaults.browsingMode),
+  period: z.nativeEnum(MetricTimeframe).default(constants.postFilterDefaults.period),
+  sort: z.nativeEnum(PostSort).default(constants.postFilterDefaults.sort),
+});
 
 export type PostsQueryInput = z.infer<typeof postsQuerySchema>;
-export const postsQuerySchema = z.object({
+export const postsQuerySchema = postsFilterSchema.extend({
   page: z.preprocess((val) => Number(val), z.number().min(1)).default(1),
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(DEFAULT_PAGE_SIZE),
   cursor: z.preprocess((val) => Number(val), z.number()).optional(),
@@ -14,7 +25,6 @@ export const postsQuerySchema = z.object({
     .string()
     .transform((data) => postgresSlugify(data))
     .optional(),
-  tagname: z.string().optional(),
 });
 
 export type PostCreateInput = z.infer<typeof postCreateSchema>;
@@ -70,7 +80,7 @@ export const updatePostImageSchema = z.object({
   id: z.number(),
   meta: z.preprocess((value) => {
     if (typeof value !== 'object') return null;
-    if (value && !Object.keys(value).length) return null;
+    if (value && !Object.values(value).filter(isDefined).length) return null;
     return value;
   }, imageMetaSchema.nullish()),
   hideMeta: z.boolean().optional(),

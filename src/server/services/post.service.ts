@@ -1,6 +1,6 @@
 import { SessionUser } from 'next-auth';
 import { isNotImageResource } from './../schema/image.schema';
-import { editPostSelect, postTagSelect, simplePostSelect } from './../selectors/post.selector';
+import { editPostSelect, postTagSelect } from './../selectors/post.selector';
 import { isDefined } from '~/utils/type-guards';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { GetByIdInput } from './../schema/base.schema';
@@ -18,10 +18,14 @@ import {
 import { dbWrite, dbRead } from '~/server/db/client';
 import { TagType, TagTarget, Prisma } from '@prisma/client';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
-import { editPostImageSelect, getPostDetailSelect } from '~/server/selectors/post.selector';
+import { editPostImageSelect } from '~/server/selectors/post.selector';
 import { ModelFileType } from '~/server/common/constants';
 import { isImageResource } from '~/server/schema/image.schema';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
+import { env } from '~/env/server.mjs';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { BrowsingMode } from '~/server/common/enums';
+import { getImageV2Select } from '~/server/selectors/imagev2.selector';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -30,6 +34,8 @@ export const getPostsInfinite = async ({
   cursor,
   query,
   username,
+  period,
+  sort,
   user,
 }: PostsQueryInput & { user?: SessionUser }) => {
   const skip = (page - 1) * limit;
@@ -46,28 +52,51 @@ export const getPostsInfinite = async ({
     where: {
       AND,
     },
-    select: simplePostSelect,
+    select: {
+      id: true,
+      nsfw: true,
+      title: true,
+      user: { select: userWithCosmeticsSelect },
+      images: {
+        orderBy: { index: 'asc' },
+        take: 1,
+        select: getImageV2Select({ userId: user?.id }),
+      },
+    },
   });
 
+  const postsWithImage = posts.filter((x) => !!x.images.length);
   let nextCursor: number | undefined;
-  if (posts.length > limit) {
-    const nextItem = posts.pop();
+  if (postsWithImage.length > limit) {
+    const nextItem = postsWithImage.pop();
     nextCursor = nextItem?.id;
   }
 
   return {
     nextCursor,
-    items: posts.map(({ images, ...post }) => ({
+    items: postsWithImage.map(({ images, ...post }) => ({
       ...post,
       image: images[0],
     })),
   };
 };
 
-export const getPostDetail = async ({ id, userId }: GetByIdInput & { userId?: number }) => {
+export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   const post = await dbRead.post.findUnique({
     where: { id },
-    select: getPostDetailSelect({ userId }),
+    select: {
+      id: true,
+      nsfw: true,
+      title: true,
+      modelVersionId: true,
+      user: { select: userWithCosmeticsSelect },
+      publishedAt: true,
+      images: {
+        orderBy: { index: 'asc' },
+        select: getImageV2Select({ userId: user?.id }),
+      },
+      tags: { select: { tag: { select: simpleTagSelect } } },
+    },
   });
   if (!post) throw throwNotFoundError();
   return {

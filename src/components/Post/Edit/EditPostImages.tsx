@@ -16,6 +16,7 @@ import {
   Popover,
   Code,
   BadgeProps,
+  AspectRatio,
 } from '@mantine/core';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { Fragment, useState } from 'react';
@@ -44,7 +45,7 @@ export function EditPostImages() {
 
   return (
     <Stack>
-      <ImageDropzone onDrop={handleDrop} count={images.length} />
+      <ImageDropzone onDrop={handleDrop} count={images.length} max={50} />
       <Stack>
         {images.map(({ type, data }, index) => (
           <Fragment key={index}>
@@ -222,6 +223,7 @@ const useStyles = createStyles((theme) => {
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
+      minHeight: 100,
     },
     actions: {
       position: 'absolute',

@@ -74,7 +74,7 @@ export const updatePostHandler = async ({ input }: { input: PostUpdateInput }) =
 export type PostDetail = AsyncReturnType<typeof getPostHandler>;
 export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
-    const post = await getPostDetail({ ...input, userId: ctx.user?.id });
+    const post = await getPostDetail({ ...input, user: ctx.user });
     if (!post) throw throwNotFoundError();
     const isOwnerOrModerator = post.user.id === ctx.user?.id || ctx.user?.isModerator;
     // TODO.posts - additional view logic
