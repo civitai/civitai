@@ -43,7 +43,7 @@ export default ModEndpoint(
 
     if (!wait) res.status(200).json({ images: images.length });
 
-    const batchSize = 20;
+    const batchSize = 100;
     const batches = chunk(images, batchSize);
     let i = 0;
     for (const batch of batches) {
