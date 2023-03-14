@@ -92,16 +92,14 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 
   // Add new automated tags to image
   try {
-    await dbWrite.tagsOnImage.createMany({
-      data: tags
+    await dbWrite.$executeRawUnsafe(`
+      INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated")
+      VALUES ${tags
         .filter((x) => x.id)
-        .map((x) => ({
-          imageId,
-          tagId: x.id as number,
-          confidence: x.confidence,
-          automated: true,
-        })),
-    });
+        .map((x) => `(${imageId}, ${x.id}, ${x.confidence}, true)`)
+        .join(', ')}
+      ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
+    `);
   } catch (e: any) {
     const image = await dbWrite.image.findUnique({
       where: { id: imageId },

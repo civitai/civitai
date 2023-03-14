@@ -5,7 +5,7 @@ import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server.mjs';
 import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
-import { createLogger } from '~/utils/logging';
+import { chunk } from 'lodash';
 
 const stringToNumberArraySchema = z
   .string()
@@ -43,27 +43,44 @@ export default ModEndpoint(
 
     if (!wait) res.status(200).json({ images: images.length });
 
-    for (const image of images) {
-      const width = Math.min(450, image.width ?? 450);
-      const anim = image.name?.endsWith('.gif') ? false : undefined;
-      const gamma = anim === false ? 0.99 : undefined;
-      const url = getEdgeUrl(image.url, { width, anim, gamma });
+    const batchSize = 20;
+    const batches = chunk(images, batchSize);
+    let i = 0;
+    for (const batch of batches) {
+      console.log(
+        `Sending batch ${i} to ${Math.min(i + batchSize, images.length)} of ${images.length} images`
+      );
+      const queued: number[] = [];
+      await Promise.all(
+        batch.map(async (image) => {
+          const width = Math.min(450, image.width ?? 450);
+          const anim = image.name?.endsWith('.gif') ? false : undefined;
+          const gamma = anim === false ? 0.99 : undefined;
+          const url = getEdgeUrl(image.url, { width, anim, gamma });
 
-      try {
-        await fetch(env.IMAGE_SCANNING_ENDPOINT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, imageId: image.id }),
-        });
+          try {
+            await fetch(env.IMAGE_SCANNING_ENDPOINT as string, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url, imageId: image.id }),
+            });
+            queued.push(image.id);
+          } catch (e: any) {
+            console.error('Failed to send image for scan', e.message);
+          }
+        })
+      );
 
-        await dbWrite.image.update({
-          where: { id: image.id },
+      if (!!queued.length) {
+        await dbWrite.image.updateMany({
+          where: { id: { in: queued } },
           data: { scanRequestedAt: new Date() },
         });
-      } catch (e: any) {
-        console.error('Failed to send image for scan', e.message);
       }
+
+      i += batchSize;
     }
+    console.log('Done sending images for scan!');
 
     if (wait) res.status(200).json({ images: images.length });
   },
