@@ -11,6 +11,12 @@ declare global {
     ? R
     : any;
 
+  type DeepPartial<T> = T extends object
+    ? {
+        [P in keyof T]?: DeepPartial<T[P]>;
+      }
+    : T;
+
   type MixedObject = Record<string, any>;
   type BaseEntity = { id: number | string } & MixedObject;
 

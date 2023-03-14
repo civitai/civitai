@@ -33,6 +33,7 @@ import { isDev, isMaintenanceMode } from '~/env/other';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { MetaPWA } from '~/components/Meta/MetaPWA';
+import { FiltersProvider, FiltersInput, parseFiltersCookie } from '~/providers/FiltersProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -49,6 +50,7 @@ type CustomAppProps = {
   session: Session | null;
   colorScheme: ColorScheme;
   cookies: CookiesContext;
+  filters: FiltersInput;
   flags: FeatureFlags;
   isMaintenanceMode: boolean | undefined;
 }>;
@@ -60,6 +62,7 @@ function MyApp(props: CustomAppProps) {
       session,
       colorScheme: initialColorScheme,
       cookies,
+      filters,
       flags,
       isMaintenanceMode,
       ...pageProps
@@ -97,18 +100,20 @@ function MyApp(props: CustomAppProps) {
       <RegisterCatchNavigation />
       <SessionProvider session={session}>
         <CookiesProvider value={cookies}>
-          <FeatureFlagsProvider flags={flags}>
-            <ImageProcessingProvider>
-              <CivitaiLinkProvider>
-                <CustomModalsProvider>
-                  <NotificationsProvider>
-                    <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                    <RoutedContextProvider2 />
-                  </NotificationsProvider>
-                </CustomModalsProvider>
-              </CivitaiLinkProvider>
-            </ImageProcessingProvider>
-          </FeatureFlagsProvider>
+          <FiltersProvider value={filters}>
+            <FeatureFlagsProvider flags={flags}>
+              <ImageProcessingProvider>
+                <CivitaiLinkProvider>
+                  <CustomModalsProvider>
+                    <NotificationsProvider>
+                      <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                      <RoutedContextProvider2 />
+                    </NotificationsProvider>
+                  </CustomModalsProvider>
+                </CivitaiLinkProvider>
+              </ImageProcessingProvider>
+            </FeatureFlagsProvider>
+          </FiltersProvider>
         </CookiesProvider>
       </SessionProvider>
     </>
@@ -182,6 +187,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx);
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
+  const filters = parseFiltersCookie(cookies);
 
   if (isMaintenanceMode) {
     return {
@@ -190,6 +196,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
         colorScheme,
         cookies: parsedCookies,
         isMaintenanceMode,
+        filters,
       },
       ...appProps,
     };
@@ -203,6 +210,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
         cookies: parsedCookies,
         session,
         flags,
+        filters,
       },
       ...appProps,
     };
