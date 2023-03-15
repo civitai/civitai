@@ -6,6 +6,7 @@ import { EditPostTitle } from '~/components/Post/Edit/EditPostTitle';
 import { ReorderImages } from '~/components/Post/Edit/ReorderImages';
 import { EditPostControls } from '~/components/Post/Edit/EditPostControls';
 import { EditPostReviews } from '~/components/Post/Edit/EditPostReviews';
+import { EditPostDetail } from '~/components/Post/Edit/EditPostDetail';
 
 export default function PostEdit() {
   const reorder = useEditPostContext((state) => state.reorder);
@@ -22,6 +23,7 @@ export default function PostEdit() {
         <Grid.Col md={8} sm={6} orderSm={1}>
           <Stack>
             <EditPostTitle />
+            <EditPostDetail />
             {!reorder ? <EditPostImages /> : <ReorderImages />}
           </Stack>
         </Grid.Col>

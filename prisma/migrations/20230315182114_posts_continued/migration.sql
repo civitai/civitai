@@ -1,3 +1,39 @@
+/*
+  Warnings:
+
+  - You are about to drop the `ReviewV2` table. If the table is not empty, all the data it contains will be lost.
+  - A unique constraint covering the columns `[reviewId]` on the table `Thread` will be added. If there are existing duplicate values, this will fail.
+
+*/
+-- DropForeignKey
+ALTER TABLE "ReviewV2" DROP CONSTRAINT "ReviewV2_modelVersionId_fkey";
+
+-- DropForeignKey
+ALTER TABLE "ReviewV2" DROP CONSTRAINT "ReviewV2_threadId_fkey";
+
+-- AlterTable
+ALTER TABLE "TagMetric" ADD COLUMN     "postCount" INTEGER NOT NULL DEFAULT 0;
+
+-- AlterTable
+ALTER TABLE "Thread" ADD COLUMN     "reviewId" INTEGER;
+
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN     "onboarded" BOOLEAN DEFAULT false;
+
+-- DropTable
+DROP TABLE "ReviewV2";
+
+-- CreateTable
+CREATE TABLE "ResourceReview" (
+    "id" SERIAL NOT NULL,
+    "modelVersionId" INTEGER NOT NULL,
+    "rating" INTEGER NOT NULL,
+    "details" TEXT NOT NULL,
+    "userId" INTEGER NOT NULL,
+
+    CONSTRAINT "ResourceReview_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateTable
 CREATE TABLE "PostMetric" (
     "postId" INTEGER NOT NULL,
@@ -12,8 +48,32 @@ CREATE TABLE "PostMetric" (
     CONSTRAINT "PostMetric_pkey" PRIMARY KEY ("postId","timeframe")
 );
 
+-- CreateIndex
+CREATE UNIQUE INDEX "Thread_reviewId_key" ON "Thread"("reviewId");
+
+-- CreateIndex
+CREATE INDEX "Thread_reviewId_idx" ON "Thread" USING HASH ("reviewId");
+
+-- CreateIndex
+CREATE INDEX "Thread_postId_idx" ON "Thread" USING HASH ("postId");
+
+-- CreateIndex
+CREATE INDEX "Thread_questionId_idx" ON "Thread" USING HASH ("questionId");
+
+-- CreateIndex
+CREATE INDEX "Thread_imageId_idx" ON "Thread" USING HASH ("imageId");
+
+-- AddForeignKey
+ALTER TABLE "ResourceReview" ADD CONSTRAINT "ResourceReview_modelVersionId_fkey" FOREIGN KEY ("modelVersionId") REFERENCES "ModelVersion"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ResourceReview" ADD CONSTRAINT "ResourceReview_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
 -- AddForeignKey
 ALTER TABLE "PostMetric" ADD CONSTRAINT "PostMetric_postId_fkey" FOREIGN KEY ("postId") REFERENCES "Post"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Thread" ADD CONSTRAINT "Thread_reviewId_fkey" FOREIGN KEY ("reviewId") REFERENCES "ResourceReview"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- Add Post Stats
 CREATE OR REPLACE VIEW "PostStat" AS
@@ -145,3 +205,88 @@ FROM timeframe_rank
 GROUP BY "postId";
 
 CREATE UNIQUE INDEX prank_post_id ON "PostRank" ("postId");
+
+-- This is an empty migration.
+DROP MATERIALIZED VIEW IF EXISTS "TagRank";
+DROP VIEW IF EXISTS "TagStat";
+
+CREATE VIEW "TagStat" AS
+WITH stats_timeframe AS (
+	SELECT
+	  t.id,
+	  tf.timeframe,
+	  coalesce(sum(tm."followerCount"), 0) AS "followerCount",
+	  coalesce(sum(tm."hiddenCount"), 0) AS "hiddenCount",
+	  coalesce(sum(tm."modelCount"), 0) AS "modelCount",
+	  coalesce(sum(tm."imageCount"), 0) AS "imageCount",
+	  coalesce(sum(tm."postCount"), 0) AS "postCount"
+	FROM "Tag" t
+	CROSS JOIN (
+		SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+	) tf
+	LEFT JOIN "TagMetric" tm ON tm."tagId" = t.id AND tm.timeframe = tf.timeframe
+	GROUP BY t.id, tf.timeframe
+)
+SELECT
+id "tagId",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "followerCount", NULL)) AS "followerCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "followerCount", NULL)) AS "followerCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "followerCount", NULL)) AS "followerCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "followerCount", NULL)) AS "followerCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "followerCount", NULL)) AS "followerCountAllTime",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "hiddenCount", NULL)) AS "hiddenCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "hiddenCount", NULL)) AS "hiddenCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "hiddenCount", NULL)) AS "hiddenCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "hiddenCount", NULL)) AS "hiddenCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "hiddenCount", NULL)) AS "hiddenCountAllTime",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "modelCount", NULL)) AS "modelCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "modelCount", NULL)) AS "modelCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "modelCount", NULL)) AS "modelCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "modelCount", NULL)) AS "modelCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "modelCount", NULL)) AS "modelCountAllTime",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "imageCount", NULL)) AS "imageCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "imageCount", NULL)) AS "imageCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "imageCount", NULL)) AS "imageCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "imageCount", NULL)) AS "imageCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "imageCount", NULL)) AS "imageCountAllTime",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "postCount", NULL)) AS "postCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "postCount", NULL)) AS "postCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "postCount", NULL)) AS "postCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "postCount", NULL)) AS "postCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "postCount", NULL)) AS "postCountAllTime"
+from stats_timeframe
+GROUP BY "id";
+
+-- Add TagRank
+
+CREATE MATERIALIZED VIEW "TagRank" AS
+SELECT
+  "tagId",
+	ROW_NUMBER() OVER (ORDER BY "followerCountDay" DESC, "modelCountDay" DESC, "hiddenCountDay" ASC, "tagId") AS "followerCountDayRank",
+	ROW_NUMBER() OVER (ORDER BY "followerCountWeek" DESC, "modelCountWeek" DESC, "hiddenCountWeek" ASC, "tagId") AS "followerCountWeekRank",
+	ROW_NUMBER() OVER (ORDER BY "followerCountMonth" DESC, "modelCountMonth" DESC, "hiddenCountMonth" ASC, "tagId") AS "followerCountMonthRank",
+	ROW_NUMBER() OVER (ORDER BY "followerCountYear" DESC, "modelCountYear" DESC, "hiddenCountYear" ASC, "tagId") AS "followerCountYearRank",
+	ROW_NUMBER() OVER (ORDER BY "followerCountAllTime" DESC, "modelCountAllTime" DESC, "hiddenCountAllTime" ASC, "tagId") AS "followerCountAllTimeRank",
+	ROW_NUMBER() OVER (ORDER BY "hiddenCountDay" DESC, "modelCountDay" DESC, "followerCountDay" ASC, "tagId") AS "hiddenCountDayRank",
+	ROW_NUMBER() OVER (ORDER BY "hiddenCountWeek" DESC, "modelCountWeek" DESC, "followerCountWeek" ASC, "tagId") AS "hiddenCountWeekRank",
+	ROW_NUMBER() OVER (ORDER BY "hiddenCountMonth" DESC, "modelCountMonth" DESC, "followerCountMonth" ASC, "tagId") AS "hiddenCountMonthRank",
+	ROW_NUMBER() OVER (ORDER BY "hiddenCountYear" DESC, "modelCountYear" DESC, "followerCountYear" ASC, "tagId") AS "hiddenCountYearRank",
+	ROW_NUMBER() OVER (ORDER BY "hiddenCountAllTime" DESC, "modelCountAllTime" DESC, "followerCountAllTime" ASC, "tagId") AS "hiddenCountAllTimeRank",
+	ROW_NUMBER() OVER (ORDER BY "modelCountDay" DESC, "followerCountDay" DESC, "hiddenCountDay" ASC, "tagId") AS "modelCountDayRank",
+	ROW_NUMBER() OVER (ORDER BY "modelCountWeek" DESC, "followerCountWeek" DESC, "hiddenCountWeek" ASC, "tagId") AS "modelCountWeekRank",
+	ROW_NUMBER() OVER (ORDER BY "modelCountMonth" DESC, "followerCountMonth" DESC, "hiddenCountMonth" ASC, "tagId") AS "modelCountMonthRank",
+	ROW_NUMBER() OVER (ORDER BY "modelCountYear" DESC, "followerCountYear" DESC, "hiddenCountYear" ASC, "tagId") AS "modelCountYearRank",
+	ROW_NUMBER() OVER (ORDER BY "modelCountAllTime" DESC, "followerCountAllTime" DESC, "hiddenCountAllTime" ASC, "tagId") AS "modelCountAllTimeRank",
+	ROW_NUMBER() OVER (ORDER BY "imageCountDay" DESC, "followerCountDay" DESC, "hiddenCountDay" ASC, "tagId") AS "imageCountDayRank",
+	ROW_NUMBER() OVER (ORDER BY "imageCountWeek" DESC, "followerCountWeek" DESC, "hiddenCountWeek" ASC, "tagId") AS "imageCountWeekRank",
+	ROW_NUMBER() OVER (ORDER BY "imageCountMonth" DESC, "followerCountMonth" DESC, "hiddenCountMonth" ASC, "tagId") AS "imageCountMonthRank",
+	ROW_NUMBER() OVER (ORDER BY "imageCountYear" DESC, "followerCountYear" DESC, "hiddenCountYear" ASC, "tagId") AS "imageCountYearRank",
+	ROW_NUMBER() OVER (ORDER BY "imageCountAllTime" DESC, "followerCountAllTime" DESC, "hiddenCountAllTime" ASC, "tagId") AS "imageCountAllTimeRank",
+	ROW_NUMBER() OVER (ORDER BY "postCountDay" DESC,  "imageCountDay" DESC, "hiddenCountDay" ASC, "tagId") AS "postCountDayRank",
+	ROW_NUMBER() OVER (ORDER BY "postCountWeek" DESC, "imageCountWeek" DESC, "hiddenCountWeek" ASC, "tagId") AS "postCountWeekRank",
+	ROW_NUMBER() OVER (ORDER BY "postCountMonth" DESC, "imageCountMonth" DESC, "hiddenCountMonth" ASC, "tagId") AS "postCountMonthRank",
+	ROW_NUMBER() OVER (ORDER BY "postCountYear" DESC, "imageCountYear" DESC, "hiddenCountYear" ASC, "tagId") AS "postCountYearRank",
+	ROW_NUMBER() OVER (ORDER BY "postCountAllTime" DESC, "imageCountAllTime" DESC, "hiddenCountAllTime" ASC, "tagId") AS "postCountAllTimeRank"
+FROM "TagStat";
+
+CREATE UNIQUE INDEX trank_tag_id ON "TagRank" ("tagId");
