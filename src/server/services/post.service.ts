@@ -39,10 +39,15 @@ export const getPostsInfinite = async ({
   excludedUserIds,
   period,
   sort,
+  browsingMode,
   user,
 }: PostsQueryInput & { user?: SessionUser }) => {
   const skip = (page - 1) * limit;
   const take = limit + 1;
+
+  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
+  if (canViewNsfw && !browsingMode) browsingMode = BrowsingMode.All;
+  else if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
 
   const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
   const imageAND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
@@ -60,6 +65,10 @@ export const getPostsInfinite = async ({
     cursor: cursor ? { id: cursor } : undefined,
     where: {
       AND,
+      nsfw:
+        browsingMode === BrowsingMode.All
+          ? undefined
+          : { equals: browsingMode === BrowsingMode.NSFW },
     },
     select: {
       id: true,
