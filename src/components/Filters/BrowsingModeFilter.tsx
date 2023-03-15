@@ -19,6 +19,17 @@ export function BrowsingModeFilter(props: Props) {
       data={options}
       value={browsingMode}
       onChange={(mode: BrowsingMode) => setFilters({ browsingMode: mode })}
+      my={5}
+      size="xs"
+      color="blue"
+      styles={(theme) => ({
+        root: {
+          border: `1px solid ${
+            theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+          }`,
+          background: 'none',
+        },
+      })}
       {...props}
     />
   );

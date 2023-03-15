@@ -46,16 +46,17 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
     isCategory: categories,
   };
 
+  const orderBy: Prisma.Enumerable<Prisma.TagOrderByWithRelationInput> = [];
+  if (sort === TagSort.MostImages) orderBy.push({ rank: { imageCountAllTimeRank: 'asc' } });
+  else if (sort === TagSort.MostModels) orderBy.push({ rank: { modelCountAllTimeRank: 'asc' } });
+  else if (sort === TagSort.MostPosts) orderBy.push({ rank: { postCountAllTimeRank: 'asc' } });
+
   const items = await dbRead.tag.findMany({
     take,
     skip,
     select,
     where,
-    orderBy: [
-      ...(sort === TagSort.MostImages
-        ? [{ rank: { imageCountAllTimeRank: 'asc' } as const }]
-        : [{ rank: { modelCountAllTimeRank: 'asc' } as const }]),
-    ],
+    orderBy,
   });
   const count = await dbRead.tag.count({ where });
 

@@ -7,6 +7,8 @@ import { immer } from 'zustand/middleware/immer';
 import { devtools } from 'zustand/middleware';
 import { z } from 'zod';
 import merge from 'lodash/merge';
+import mergeWith from 'lodash/mergeWith';
+import isArray from 'lodash/isArray';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type FilterEntityInput = z.infer<typeof filterEntitySchema>;
@@ -64,7 +66,7 @@ const createFilterStore = ({ initialValues }: { initialValues: FiltersInput }) =
         ...initialValues,
         setFilters(filters) {
           set((state) => {
-            const updatedFilters = merge(state, filters);
+            const updatedFilters = mergeWith(state, filters, customizer);
             setCookie('filters', updatedFilters);
             return { ...updatedFilters };
           });
@@ -126,4 +128,10 @@ export const useQuestionFilters = () => {
   const shared = useSharedFilters('question');
   const sort = useFiltersContext((state) => state.question.sort);
   return { ...shared, sort };
+};
+
+const customizer = (objValue: unknown, srcValue: unknown) => {
+  if (isArray(objValue)) {
+    return srcValue;
+  }
 };

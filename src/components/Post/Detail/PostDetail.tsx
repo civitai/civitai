@@ -21,6 +21,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { trpc } from '~/utils/trpc';
 import { useMemo, useState } from 'react';
+import { PostControls } from '~/components/Post/Detail/PostControls';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
@@ -39,7 +40,16 @@ export function PostDetail({ postId }: { postId: number }) {
   return (
     <Container size="sm">
       <Stack>
-        {data.title && <Title>{data.title}</Title>}
+        <Group position="apart" noWrap align="top">
+          {data.title ? (
+            <Title sx={{ lineHeight: 1 }} order={2}>
+              {data.title}
+            </Title>
+          ) : (
+            <span></span>
+          )}
+          <PostControls postId={data.id} userId={data.user.id} />
+        </Group>
         <Stack>
           <ImageGuard
             connect={{ entityId: postId, entityType: 'post' }}
