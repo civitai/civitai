@@ -251,7 +251,7 @@ export const upsertModel = ({
   tagsOnModels,
   ...data
 }: ModelUpsertInput & { userId: number }) => {
-  const select = modelWithDetailsSelect();
+  const select = modelWithDetailsSelect;
 
   if (!id)
     return dbWrite.model.create({

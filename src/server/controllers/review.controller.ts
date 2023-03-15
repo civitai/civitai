@@ -186,7 +186,7 @@ export const getReviewDetailsHandler = async ({
     const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
     const result = await getReviewById({
       id,
-      select: reviewDetailSelect(canViewNsfw),
+      select: reviewDetailSelect,
       user: ctx.user,
     });
     if (!result) throw throwNotFoundError(`No review with id ${id}`);

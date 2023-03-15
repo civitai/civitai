@@ -186,7 +186,7 @@ export const deleteReviewById = async ({ id }: GetByIdInput) => {
 };
 
 export const updateReviewById = ({ id, data }: { id: number; data: Prisma.ReviewUpdateInput }) => {
-  return dbWrite.review.update({ where: { id }, data, select: getAllReviewsSelect() });
+  return dbWrite.review.update({ where: { id }, data, select: getAllReviewsSelect });
 };
 
 export const convertReviewToComment = ({
