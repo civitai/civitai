@@ -1,6 +1,8 @@
 import { createJob } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { deleteImage } from '~/utils/cf-images-utils';
+import { imageUrlInUse } from '~/server/services/image.service';
+import { isProd } from '~/env/other';
 
 export const removeDisconnectedImages = createJob(
   'remove-disconnected-images',
@@ -20,14 +22,7 @@ export const removeDisconnectedImages = createJob(
 
     for (const image of disconnectedImages) {
       try {
-        const otherImagesWithSameUrl = await dbWrite.image.count({
-          where: {
-            url: image.url,
-            id: { not: image.id },
-            connections: { modelId: { not: null } },
-          },
-        });
-        if (otherImagesWithSameUrl == 0) await deleteImage(image.url);
+        if (isProd && !imageUrlInUse(image)) await deleteImage(image.url);
         await dbWrite.image.delete({ where: { id: image.id } });
       } catch {
         // Ignore errors
