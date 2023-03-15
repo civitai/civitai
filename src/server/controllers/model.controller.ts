@@ -51,38 +51,40 @@ import {
 } from '~/components/CivitaiLink/shared-types';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { getHiddenTagsForUser } from '~/server/services/user-cache.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
-  const showNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
+  const userId = ctx.user?.id;
   try {
     const model = await getModel({
       input,
       user: ctx.user,
-      select: modelWithDetailsSelect(showNsfw, ctx.user),
+      select: modelWithDetailsSelect,
     });
     if (!model) {
       throw throwNotFoundError(`No model with id ${input.id}`);
     }
 
     const isOwnerOrModerator = model.user.id === ctx.user?.id || ctx.user?.isModerator;
+    const hiddenTags = await getHiddenTagsForUser({ userId });
     const features = getFeatureFlags({ user: ctx.user });
 
     return {
       ...model,
       modelVersions: model.modelVersions.map((version) => {
-        const images =
-          !isOwnerOrModerator && prioritizeSafeImages
-            ? version.images
-                .flatMap((x) => ({ ...x.image, tags: x.image.tags.map(({ tag }) => tag) }))
-                .sort((a, b) => {
-                  return a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1;
-                })
-            : version.images.flatMap((x) => ({
-                ...x.image,
-                tags: x.image.tags.map(({ tag }) => tag),
-              }));
+        let images = version.images.flatMap((x) => ({
+          ...x.image,
+          tags: x.image.tags.map(({ tag }) => tag),
+        }));
+        if (!isOwnerOrModerator) {
+          images = images.filter(({ tags }) => !tags.some((tag) => hiddenTags.includes(tag.id)));
+
+          if (prioritizeSafeImages)
+            images = images.sort((a, b) => (a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1));
+        }
+
         let earlyAccessDeadline = features.earlyAccessModel
           ? getEarlyAccessDeadline({
               versionCreatedAt: version.createdAt,
@@ -144,6 +146,8 @@ export const getModelsInfiniteHandler = async ({
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
 
+  const userId = ctx.user?.id;
+
   const { items } = await getModels({
     input: { ...input, take },
     user: ctx.user,
@@ -166,8 +170,10 @@ export const getModelsInfiniteHandler = async ({
           images: {
             where: {
               image: {
-                tosViolation: false,
-                OR: [{ needsReview: false }, { userId: ctx.user?.id }],
+                OR: [
+                  { userId: ctx.user?.id },
+                  { tags: { none: { tagId: { in: input.excludedTagIds } } } },
+                ],
               },
             },
             orderBy: prioritizeSafeImages

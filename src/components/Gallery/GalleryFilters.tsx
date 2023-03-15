@@ -369,21 +369,15 @@ export function GalleryCategories() {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [scrollPosition, setScrollPosition] = useState({ x: 0, y: 0 });
 
-  const { data: hiddenTags } = trpc.user.getTags.useQuery(
-    { type: 'Hide' },
-    { enabled: !!currentUser }
-  );
-
   const { data: { items: categories } = { items: [] } } = trpc.tag.getAll.useQuery(
     {
       entityType: ['Image'],
       sort: TagSort.MostImages,
-      not: hiddenTags?.map((x) => x.id),
       unlisted: false,
       categories: true,
       limit: 100,
     },
-    { enabled: !currentUser || hiddenTags !== undefined }
+    { enabled: !currentUser }
   );
 
   if (!categories.length) return null;

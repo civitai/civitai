@@ -81,27 +81,18 @@ const useStyles = createStyles((theme) => ({
 
 export function CategoryTags() {
   const { classes, cx, theme } = useStyles();
-  const currentUser = useCurrentUser();
   const router = useRouter();
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const [scrollPosition, setScrollPosition] = useState({ x: 0, y: 0 });
 
-  const { data: hiddenTags } = trpc.user.getTags.useQuery(
-    { type: 'Hide' },
-    { enabled: currentUser != null }
-  );
-  const { data: { items: categories } = { items: [] } } = trpc.tag.getAll.useQuery(
-    {
-      entityType: ['Model'],
-      sort: TagSort.MostModels,
-      not: hiddenTags?.map((x) => x.id),
-      unlisted: false,
-      categories: true,
-      limit: 100,
-    },
-    { enabled: !currentUser || hiddenTags !== undefined }
-  );
+  const { data: { items: categories } = { items: [] } } = trpc.tag.getAll.useQuery({
+    entityType: ['Model'],
+    sort: TagSort.MostModels,
+    unlisted: false,
+    categories: true,
+    limit: 100,
+  });
 
   if (!categories.length) return null;
 

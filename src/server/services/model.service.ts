@@ -57,6 +57,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     hidden,
     browsingMode,
     excludedTagIds,
+    excludedUserIds,
     excludedIds,
     checkpointType,
     status,
@@ -113,12 +114,15 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       ],
     });
   }
+  if (excludedUserIds && excludedUserIds.length && !username) {
+    AND.push({ user: { id: { notIn: excludedUserIds } } });
+  }
   if (excludedTagIds && excludedTagIds.length && !username) {
     AND.push({
       tagsOnModels: { every: { tagId: { notIn: excludedTagIds } } },
     });
   }
-  if (excludedIds) {
+  if (excludedIds && !hidden && !username) {
     AND.push({ id: { notIn: excludedIds } });
   }
   if (checkpointType && (!types?.length || types?.includes('Checkpoint'))) {
@@ -247,7 +251,7 @@ export const upsertModel = ({
   tagsOnModels,
   ...data
 }: ModelUpsertInput & { userId: number }) => {
-  const select = modelWithDetailsSelect();
+  const select = modelWithDetailsSelect;
 
   if (!id)
     return dbWrite.model.create({

@@ -346,7 +346,7 @@ export default function UserPage({
               <InfiniteModelsFilter />
             </Group>
           </Group>
-          <InfiniteModels showHidden />
+          <InfiniteModels />
         </Stack>
       </Container>
     </>

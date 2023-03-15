@@ -20,6 +20,7 @@ import { reactionRouter } from './reaction.router';
 import { reportRouter } from './report.router';
 import { reviewRouter } from './review.router';
 import { stripeRouter } from './stripe.router';
+import { moderationRouter } from '~/server/routers/moderation.router';
 import { tagRouter } from './tag.router';
 import { userLinkRouter } from './user-link.router';
 import { userRouter } from './user.router';
@@ -44,6 +45,7 @@ export const appRouter = router({
   report: reportRouter,
   review: reviewRouter,
   stripe: stripeRouter,
+  moderation: moderationRouter,
   tag: tagRouter,
   user: userRouter,
   userLink: userLinkRouter,

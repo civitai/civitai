@@ -62,6 +62,7 @@ export const getAllModelsSchema = z.object({
     z.boolean().optional().default(false)
   ),
   excludedIds: z.array(z.number()).optional(),
+  excludedUserIds: z.array(z.number()).optional(),
   excludedTagIds: z.array(z.number()).optional(),
 });
 
