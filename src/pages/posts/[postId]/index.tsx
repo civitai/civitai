@@ -22,5 +22,6 @@ export const getServerSideProps = createServerSideProps({
     if (!isNumber(postId)) return { notFound: true };
 
     await ssg?.post.get.prefetch({ id: postId });
+    await ssg?.image.getInfinite.prefetchInfinite({ postId });
   },
 });

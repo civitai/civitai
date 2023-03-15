@@ -7,6 +7,7 @@ import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 
 export default function PostCreate() {
   const router = useRouter();
+  const modelId = router.query.modelId ? Number(router.query.modelId) : undefined;
   const modelVersionId = router.query.modelVersionId
     ? Number(router.query.modelVersionId)
     : undefined;
@@ -15,6 +16,8 @@ export default function PostCreate() {
   const images = useEditPostContext((state) => state.images);
   const upload = useEditPostContext((state) => state.upload);
   const queryUtils = trpc.useContext();
+
+  //TODO.posts - get modelversions related to modelId and have the user select a modelVersion before they can drop any images
 
   const handleDrop = (files: File[]) => {
     mutate(

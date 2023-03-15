@@ -1,3 +1,4 @@
+import { applyUserPreferences, applyBrowsingMode } from './../middleware.trpc';
 import { getByIdSchema } from './../schema/base.schema';
 import { publicProcedure } from './../trpc';
 import {
@@ -24,12 +25,10 @@ import {
   updatePostImageSchema,
   getPostTagsSchema,
   postsQuerySchema,
-  PostsQueryInput,
 } from './../schema/post.schema';
 import { dbWrite } from '~/server/db/client';
 import { router, protectedProcedure, middleware } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { getHiddenTagsForUser, getHiddenUsersForUser } from '~/server/services/user-cache.service';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -56,23 +55,11 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   });
 });
 
-const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
-  const userId = ctx.user?.id;
-  const _input = input as PostsQueryInput;
-  const hiddenTags = await getHiddenTagsForUser({ userId });
-  const hiddenUsers = await getHiddenUsersForUser({ userId });
-  _input.excludedTagIds = [...hiddenTags, ...(_input.excludedTagIds ?? [])];
-  _input.excludedUserIds = [...hiddenUsers, ...(_input.excludedUserIds ?? [])];
-
-  return next({
-    ctx: { user: ctx.user },
-  });
-});
-
 export const postRouter = router({
   getInfinite: publicProcedure
     .input(postsQuerySchema)
-    .use(applyUserPreferences)
+    .use(applyUserPreferences())
+    .use(applyBrowsingMode())
     .query(getPostsInfiniteHandler),
   get: publicProcedure.input(getByIdSchema).query(getPostHandler),
   getEdit: protectedProcedure.input(getByIdSchema).query(getPostEditHandler),
