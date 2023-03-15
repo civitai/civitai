@@ -9,7 +9,7 @@ import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 
 export default function PostsPage() {
   return (
-    <Container size="xl">
+    <Container fluid style={{ maxWidth: 2500 }}>
       <Stack spacing="xs">
         <Announcements
           sx={(theme) => ({
