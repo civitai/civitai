@@ -244,6 +244,7 @@ enum ModelType {
   Controlnet
   Poses
   Wildcards
+  Other
 }
 
 enum ImportStatus {
