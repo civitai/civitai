@@ -34,15 +34,6 @@ export function SettingsCard() {
           disabled={isLoading}
           onChange={(e) => mutate({ ...user, autoplayGifs: e.target.checked })}
         />
-        {user.showNsfw && (
-          <Switch
-            name="blurNsfw"
-            label="Blur adult content"
-            checked={user.blurNsfw}
-            disabled={isLoading}
-            onChange={(e) => mutate({ ...user, blurNsfw: e.target.checked })}
-          />
-        )}
         <Divider label="Model File Preferences" mb={-12} />
         <Group noWrap grow>
           <Select
