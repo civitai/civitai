@@ -61,6 +61,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
     maxFiles: 3,
   },
+  LoCon: {
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
+    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
+    maxFiles: 3,
+  },
   TextualInversion: {
     acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
     acceptedModelFiles: ['Model', 'Negative', 'Training Data'],
@@ -82,6 +87,8 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     maxFiles: 2,
   },
   Poses: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
+  Other: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
+  Wildcards: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
 };
 
 const metadataSchema = z

@@ -4,8 +4,8 @@ import { z } from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server.mjs';
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { chunk } from 'lodash';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 const stringToNumberArraySchema = z
   .string()
