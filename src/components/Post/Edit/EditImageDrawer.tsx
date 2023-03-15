@@ -76,10 +76,11 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
     | PostEditImage
     | undefined;
 
+  const hasModerationTags = image?.tags.some((x) => x.type === TagType.Moderation);
   const meta: Record<string, unknown> = (image?.meta as Record<string, unknown>) ?? {};
   const defaultValues: z.infer<typeof schema> = {
     hideMeta: image?.hideMeta ?? false,
-    nsfw: image?.nsfw ?? false,
+    nsfw: hasModerationTags ? true : image?.nsfw ?? false,
     meta: {
       prompt: meta.prompt ?? '',
       negativePrompt: meta.negativePrompt ?? '',
@@ -141,6 +142,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
             <Stack spacing="xs">
               <InputCheckbox
                 name="nsfw"
+                disabled={hasModerationTags}
                 label={
                   <Text>
                     Mature Content{' '}
