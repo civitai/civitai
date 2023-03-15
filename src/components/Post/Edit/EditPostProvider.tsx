@@ -180,18 +180,18 @@ const createEditPostStore = ({
                       data: { ...created, previewUrl: data.url },
                     };
                   });
-                  // try {
-                  //   const imageTags = await ingestImage(created);
-                  //   set((state) => {
-                  //     const index = state.images.findIndex(
-                  //       (x) => x.type === 'image' && x.data.id === created.id
-                  //     );
-                  //     if (index === -1) throw new Error('index out of bounds');
-                  //     (state.images[index].data as PostEditImage).tags = imageTags;
-                  //   });
-                  // } catch (error) {
-                  //   console.error(error);
-                  // }
+                  try {
+                    const imageTags = await ingestImage(created);
+                    set((state) => {
+                      const index = state.images.findIndex(
+                        (x) => x.type === 'image' && x.data.id === created.id
+                      );
+                      if (index === -1) throw new Error('index out of bounds');
+                      (state.images[index].data as PostEditImage).tags = imageTags;
+                    });
+                  } catch (error) {
+                    console.error(error);
+                  }
                 })
             );
           },

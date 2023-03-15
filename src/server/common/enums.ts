@@ -72,3 +72,9 @@ export enum TagSort {
   MostImages = 'Most Images',
   MostPosts = 'Most Posts',
 }
+
+export enum ImageScanType {
+  Moderation,
+  Label,
+  FaceDetection,
+}
