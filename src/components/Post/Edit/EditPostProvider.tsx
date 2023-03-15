@@ -28,7 +28,7 @@ export type ImageUpload = {
   file: File;
 };
 type ImageProps = { type: 'image'; data: PostEditImage } | { type: 'upload'; data: ImageUpload };
-type TagProps = Omit<SimpleTag, 'id' | 'isCategory'> & { id?: number };
+type TagProps = { id?: number; name: string };
 type EditPostProps = {
   objectUrls: string[];
   id: number;
@@ -180,18 +180,18 @@ const createEditPostStore = ({
                       data: { ...created, previewUrl: data.url },
                     };
                   });
-                  // try {
-                  //   const imageTags = await ingestImage(created);
-                  //   set((state) => {
-                  //     const index = state.images.findIndex(
-                  //       (x) => x.type === 'image' && x.data.id === created.id
-                  //     );
-                  //     if (index === -1) throw new Error('index out of bounds');
-                  //     (state.images[index].data as PostEditImage).tags = imageTags;
-                  //   });
-                  // } catch (error) {
-                  //   console.error(error);
-                  // }
+                  try {
+                    const imageTags = await ingestImage(created);
+                    set((state) => {
+                      const index = state.images.findIndex(
+                        (x) => x.type === 'image' && x.data.id === created.id
+                      );
+                      if (index === -1) throw new Error('index out of bounds');
+                      (state.images[index].data as PostEditImage).tags = imageTags;
+                    });
+                  } catch (error) {
+                    console.error(error);
+                  }
                 })
             );
           },

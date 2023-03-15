@@ -4,7 +4,7 @@ import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
 
 import { env } from '~/env/server.mjs';
-import { BrowsingMode, ImageSort } from '~/server/common/enums';
+import { BrowsingMode, ImageScanType, ImageSort } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -17,7 +17,6 @@ import { deleteImage } from '~/utils/cf-images-utils';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
 import { simpleTagSelect, imageTagSelect } from '~/server/selectors/tag.selector';
-import { imageIngestion, ingestionMessageSchema } from '~/server/utils/image-ingestion';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -268,28 +267,30 @@ export const ingestImage = async ({
   image: IngestImageInput;
   user: SessionUser;
 }) => {
+  if (!env.IMAGE_SCANNING_ENDPOINT)
+    throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
   const { url, id, mimeType, ...params } = ingestImageSchema.parse(image);
   const edgeUrl = getEdgeUrl(url, params);
 
-  const payload = await ingestionMessageSchema.parseAsync({
-    source: {
-      type: 'civitai',
-      name: 'Civitai',
-      id,
-      url: '',
-      user: { id: user.id, name: user.username },
-    },
-    image: edgeUrl,
-    contentType: mimeType,
-    action: 'label',
-  });
+  const payload = {
+    imageId: id,
+    url: edgeUrl,
+    wait: true,
+    scans: [ImageScanType.Label, ImageScanType.Moderation],
+  };
 
   await dbWrite.image.update({
     where: { id },
     data: { scanRequestedAt: new Date() },
     select: { id: true },
   });
-  const msg = await imageIngestion(payload, `label-imageId-${id}`);
+
+  await fetch(env.IMAGE_SCANNING_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
   const imageTags = await dbWrite.tag.findMany({
     where: { tagsOnImage: { some: { imageId: id } } },
     select: imageTagSelect,
