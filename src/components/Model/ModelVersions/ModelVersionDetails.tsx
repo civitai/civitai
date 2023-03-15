@@ -100,7 +100,9 @@ export function ModelVersionDetails({ model, version, user }: Props) {
     {
       label: 'Trigger Words',
       visible: !!version.trainedWords?.length,
-      value: <TrainedWords trainedWords={version.trainedWords} files={version.files} />,
+      value: (
+        <TrainedWords trainedWords={version.trainedWords} files={version.files} type={model.type} />
+      ),
     },
     {
       label: 'Training Images',

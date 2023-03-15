@@ -1163,14 +1163,16 @@ model Thread {
   id     Int     @id @default(autoincrement())
   locked Boolean @default(false)
 
-  questionId Int?      @unique
-  question   Question? @relation(fields: [questionId], references: [id], onDelete: SetNull)
-  answerId   Int?      @unique
-  answer     Answer?   @relation(fields: [answerId], references: [id], onDelete: SetNull)
-  imageId    Int?      @unique
-  image      Image?    @relation(fields: [imageId], references: [id], onDelete: SetNull)
-  postId     Int?      @unique
-  post       Post?     @relation(fields: [postId], references: [id], onDelete: SetNull)
+  questionId Int?            @unique
+  question   Question?       @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  answerId   Int?            @unique
+  answer     Answer?         @relation(fields: [answerId], references: [id], onDelete: SetNull)
+  imageId    Int?            @unique
+  image      Image?          @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  postId     Int?            @unique
+  post       Post?           @relation(fields: [postId], references: [id], onDelete: SetNull)
+  reviewId   Int?            @unique
+  review     ResourceReview? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
 
   comments CommentV2[]
   ReviewV2 ReviewV2[]

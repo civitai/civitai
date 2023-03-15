@@ -1,7 +1,8 @@
-import { dbWrite, dbRead } from '~/server/db/client';
 import { ModelVersionEngagementType, Prisma } from '@prisma/client';
+import { SessionUser } from 'next-auth';
 
 import { GetByIdInput } from '~/server/schema/base.schema';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
 
 export const getModelVersion = async <TSelect extends Prisma.ModelVersionSelect>({

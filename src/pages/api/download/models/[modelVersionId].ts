@@ -63,7 +63,7 @@ export default RateLimitedEndpoint(
 
     const fileWhere: Prisma.ModelFileWhereInput = {};
     if (type) fileWhere.type = type;
-    if (format) fileWhere.format = format;
+    if (format) fileWhere.metadata = { path: ['format'], equals: format };
 
     const modelVersion = await dbRead.modelVersion.findFirst({
       where: { id: modelVersionId },
@@ -85,18 +85,28 @@ export default RateLimitedEndpoint(
         createdAt: true,
         files: {
           where: fileWhere,
-          select: { id: true, url: true, name: true, type: true, format: true },
+          select: {
+            id: true,
+            url: true,
+            name: true,
+            type: true,
+            metadata: true,
+            hashes: { select: { hash: true }, where: { type: 'SHA256' } },
+          },
         },
       },
     });
     if (!modelVersion) return notFound(req, res, 'Model not found');
 
+    const { files } = modelVersion;
+    const castedFiles = files as Array<
+      Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
+    >;
     const file =
       type != null || format != null
-        ? modelVersion.files[0]
-        : getPrimaryFile(modelVersion.files, {
-            type: session?.user?.preferredPrunedModel ? 'Pruned Model' : undefined,
-            format: session?.user?.preferredModelFormat,
+        ? castedFiles[0]
+        : getPrimaryFile(castedFiles, {
+            metadata: session?.user?.filePreferences,
           });
     if (!file) return notFound(req, res, 'Model file not found');
 
@@ -158,7 +168,7 @@ export default RateLimitedEndpoint(
         },
       });
     } catch (error) {
-      // Do nothing if we can't track the download
+      return res.status(500).json({ error: 'Invalid database operation', cause: error });
     }
 
     const fileName = getDownloadFilename({ model: modelVersion.model, modelVersion, file });

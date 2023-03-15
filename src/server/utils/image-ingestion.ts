@@ -1,6 +1,7 @@
-import z from "zod";
-import { tryDefaultChannel, tryRPC } from "../ingestion/client";
+import z from 'zod';
+import { tryDefaultChannel, tryRPC } from '../ingestion/client';
 
+export type IngestionMessageInput = z.infer<typeof ingestionMessageSchema>;
 export const ingestionMessageSchema = z.object({
   source: z.object({
     type: z.string(),
@@ -17,11 +18,10 @@ export const ingestionMessageSchema = z.object({
   action: z.string(),
 });
 
+export type IngestionMessageResponse = z.infer<typeof ingestionMessageResponseSchema>;
 export const ingestionMessageResponseSchema = z.object({
   imageLabels: z.array(z.object({ Name: z.string(), Confidence: z.number() })),
-  moderationLabels: z.array(
-    z.object({ Name: z.string(), Confidence: z.number() })
-  ),
+  moderationLabels: z.array(z.object({ Name: z.string(), Confidence: z.number() })),
 });
 
 /**
@@ -36,10 +36,7 @@ export const ingestionMessageResponseSchema = z.object({
  * }
  * ```
  */
-export const imageIngestion = async (
-  message: typeof ingestionMessageSchema,
-  id: string
-): Promise<typeof ingestionMessageResponseSchema> => {
+export const imageIngestion = async (message: IngestionMessageInput, id: string) => {
   return tryDefaultChannel().then((channel) =>
     tryRPC(message, id, ingestionMessageResponseSchema, channel)
   );
