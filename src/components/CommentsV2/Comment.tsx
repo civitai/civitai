@@ -115,7 +115,7 @@ export function Comment({ comment, ...groupProps }: CommentProps) {
                     icon={<IconFlag size={14} stroke={1.5} />}
                     onClick={() =>
                       openContext('report', {
-                        entityType: ReportEntity.Comment,
+                        entityType: ReportEntity.CommentV2,
                         entityId: comment.id,
                       })
                     }

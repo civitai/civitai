@@ -65,7 +65,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { QS } from '~/utils/qs';
-import { splitUppercase, removeTags } from '~/utils/string-helpers';
+import { removeTags, getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
@@ -410,7 +410,7 @@ export default function ModelDetail({
       value: (
         <Group spacing={0} noWrap position="apart">
           <Badge radius="sm" px={5}>
-            {splitUppercase(model.type)} {model.checkpointType}
+            {getDisplayName(model.type)} {model.checkpointType}
           </Badge>
           {model?.status !== ModelStatus.Published ? (
             <Badge color="yellow" radius="sm">
@@ -456,7 +456,11 @@ export default function ModelDetail({
       label: 'Trigger Words',
       visible: !!latestVersion?.trainedWords?.length,
       value: (
-        <TrainedWords trainedWords={latestVersion?.trainedWords} files={latestVersion?.files} />
+        <TrainedWords
+          trainedWords={latestVersion?.trainedWords}
+          files={latestVersion?.files}
+          type={model.type}
+        />
       ),
     },
   ];
@@ -653,7 +657,7 @@ export default function ModelDetail({
                     <IconExclamationMark />
                   </ThemeIcon>
                   <Text size="md">
-                    The images on this {splitUppercase(model.type).toLowerCase()} are inaccurate.
+                    The images on this {getDisplayName(model.type).toLowerCase()} are inaccurate.
                     Please submit reviews with images so that we can improve this page.
                   </Text>
                 </Group>
@@ -704,7 +708,6 @@ export default function ModelDetail({
                           disabled={!primaryFile}
                           menuItems={downloadMenuItems.length > 1 ? downloadMenuItems : []}
                           menuTooltip="Other Downloads"
-                          download
                         >
                           <Text align="center">
                             {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
@@ -774,7 +777,7 @@ export default function ModelDetail({
                   files={latestVersion.files}
                 />
                 <DescriptionTable items={modelDetails} labelWidth="30%" />
-                <CreatorCard user={model.user} />
+                {model.user.id > 0 && <CreatorCard user={model.user} />}
 
                 <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>
                   {model?.type === 'Checkpoint' && (

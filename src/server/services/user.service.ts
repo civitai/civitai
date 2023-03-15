@@ -25,7 +25,7 @@ export const getUserCreator = async (where: { username?: string; id?: number }) 
   }
 
   return dbRead.user.findFirst({
-    where: { ...where, deletedAt: null },
+    where: { id: { not: -1 }, ...where, deletedAt: null },
     select: {
       id: true,
       image: true,
@@ -74,28 +74,19 @@ export const getUserCreator = async (where: { username?: string; id?: number }) 
   });
 };
 
-export const getUsers = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>({
-  limit,
-  query,
-  email,
-  select,
-  ids,
-}: GetAllUsersInput & { select: TSelect }) => {
-  return dbRead.user.findMany({
-    take: limit,
-    select,
-    where: {
-      id: ids && ids.length > 0 ? { in: ids } : undefined,
-      username: query
-        ? {
-            contains: query,
-            mode: 'insensitive',
-          }
-        : undefined,
-      email: email,
-      deletedAt: null,
-    },
-  });
+export const getUsers = ({ limit, query, email, ids }: GetAllUsersInput) => {
+  return dbRead.$queryRawUnsafe<{ id: number; username: string }[]>(`
+    SELECT id, username
+    FROM "User"
+    WHERE
+      ${ids && ids.length > 0 ? `id IN (${ids.join(',')})` : 'TRUE'}
+      AND ${query ? `username ILIKE '${query}%'` : 'TRUE'}
+      AND ${email ? `email ILIKE '${email}%'` : 'TRUE'}
+      AND "deletedAt" IS NULL
+      AND "id" != -1
+    ORDER BY LENGTH(username) ASC
+    LIMIT ${limit}
+  `);
 };
 
 export const getUserById = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>({
@@ -112,8 +103,8 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
   username,
   select,
 }: GetByUsernameSchema & { select: TSelect }) => {
-  return dbRead.user.findUnique({
-    where: { username },
+  return dbRead.user.findFirst({
+    where: { username, deletedAt: null, id: { not: -1 } },
     select,
   });
 };

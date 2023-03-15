@@ -13,6 +13,7 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { getJoinLink } from '~/utils/join-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -20,117 +21,153 @@ const schema = z.object({
   format: z.nativeEnum(ModelFileFormat).optional(),
 });
 
-export default async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
-  // Get ip so that we can block exploits we catch
-  const ip = requestIp.getClientIp(req);
-  const blacklist = (
-    ((await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ?? ''
-  ).split(',');
-  if (ip && blacklist.includes(ip)) return res.status(403).json({ error: 'Forbidden' });
+const forbidden = (req: NextApiRequest, res: NextApiResponse) => {
+  res.status(403);
+  if (req.headers['content-type'] === 'application/json') return res.json({ error: 'Forbidden' });
+  else return res.send('Forbidden');
+};
 
-  const queryResults = schema.safeParse(req.query);
-  if (!queryResults.success)
-    return res
-      .status(400)
-      .json({ error: `Invalid id: ${queryResults.error.flatten().fieldErrors.modelVersionId}` });
+const notFound = (req: NextApiRequest, res: NextApiResponse, message = 'Not Found') => {
+  res.status(404);
+  if (req.headers['content-type'] === 'application/json') return res.json({ error: message });
+  else return res.send(message);
+};
 
-  const { type, modelVersionId, format } = queryResults.data;
-  if (!modelVersionId) return res.status(400).json({ error: 'Missing modelVersionId' });
+export default RateLimitedEndpoint(
+  async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
+    // Get ip so that we can block exploits we catch
+    const ip = requestIp.getClientIp(req);
+    const ipBlacklist = (
+      ((await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ??
+      ''
+    ).split(',');
+    if (ip && ipBlacklist.includes(ip)) return forbidden(req, res);
 
-  const fileWhere: Prisma.ModelFileWhereInput = {};
-  if (type) fileWhere.type = type;
-  if (format) fileWhere.format = format;
-
-  const modelVersion = await dbRead.modelVersion.findFirst({
-    where: { id: modelVersionId },
-    select: {
-      id: true,
-      model: {
-        select: { id: true, name: true, type: true, publishedAt: true, status: true, userId: true },
-      },
-      name: true,
-      trainedWords: true,
-      earlyAccessTimeFrame: true,
-      createdAt: true,
-      files: { where: fileWhere, select: { url: true, name: true, type: true, format: true } },
-    },
-  });
-  if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
-
-  const session = await getServerAuthSession({ req, res });
-  const file =
-    type != null || format != null
-      ? modelVersion.files[0]
-      : getPrimaryFile(modelVersion.files, {
-          type: session?.user?.preferredPrunedModel ? 'Pruned Model' : undefined,
-          format: session?.user?.preferredModelFormat,
-        });
-  if (!file) return res.status(404).json({ error: 'Model file not found' });
-
-  // Handle non-published models
-  const isMod = session?.user?.isModerator;
-  const userId = session?.user?.id;
-  const canDownload =
-    isMod ||
-    modelVersion?.model?.status === 'Published' ||
-    (userId && modelVersion?.model?.userId === userId);
-  if (!canDownload) return res.status(404).json({ error: 'Model not found' });
-
-  // Handle unauthenticated downloads
-  if (!env.UNAUTHENTICATED_DOWNLOAD && !userId) {
-    if (req.headers['content-type'] === 'application/json')
-      return res.status(401).json({ error: 'Unauthorized' });
-    else
-      return res.redirect(
-        getLoginLink({ reason: 'download-auth', returnUrl: `/models/${modelVersion.model.id}` })
-      );
-  }
-
-  // Handle early access
-  if (!session?.user?.tier && !session?.user?.isModerator) {
-    const earlyAccessDeadline = getEarlyAccessDeadline({
-      versionCreatedAt: modelVersion.createdAt,
-      publishedAt: modelVersion.model.publishedAt,
-      earlyAccessTimeframe: modelVersion.earlyAccessTimeFrame,
-    });
-    const inEarlyAccess = new Date() < earlyAccessDeadline;
-    if (inEarlyAccess) {
-      if (req.headers['content-type'] === 'application/json')
-        return res.status(403).json({ error: 'Early Access', deadline: earlyAccessDeadline });
-      else
-        return res.redirect(
-          getJoinLink({ reason: 'early-access', returnUrl: `/models/${modelVersion.model.id}` })
-        );
+    const session = await getServerAuthSession({ req, res });
+    if (!!session?.user) {
+      const userBlacklist = (
+        ((await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))
+          ?.value as string) ?? ''
+      ).split(',');
+      if (userBlacklist.includes(session.user.id.toString())) return forbidden(req, res);
     }
-  }
 
-  // Track download
-  try {
-    await dbWrite.userActivity.create({
-      data: {
-        userId,
-        activity: UserActivityType.ModelDownload,
-        details: {
-          modelId: modelVersion.model.id,
-          modelVersionId: modelVersion.id,
-          // Just so we can catch exploits
-          ...(!userId
-            ? {
-                ip,
-                userAgent: req.headers['user-agent'],
-              }
-            : {}), // You'll notice we don't include this for authed users...
+    const queryResults = schema.safeParse(req.query);
+    if (!queryResults.success)
+      return res
+        .status(400)
+        .json({ error: `Invalid id: ${queryResults.error.flatten().fieldErrors.modelVersionId}` });
+
+    const { type, modelVersionId, format } = queryResults.data;
+    if (!modelVersionId) return res.status(400).json({ error: 'Missing modelVersionId' });
+
+    const fileWhere: Prisma.ModelFileWhereInput = {};
+    if (type) fileWhere.type = type;
+    if (format) fileWhere.format = format;
+
+    const modelVersion = await dbRead.modelVersion.findFirst({
+      where: { id: modelVersionId },
+      select: {
+        id: true,
+        model: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            publishedAt: true,
+            status: true,
+            userId: true,
+          },
+        },
+        name: true,
+        trainedWords: true,
+        earlyAccessTimeFrame: true,
+        createdAt: true,
+        files: {
+          where: fileWhere,
+          select: { id: true, url: true, name: true, type: true, format: true },
         },
       },
     });
-  } catch (error) {
-    // Do nothing if we can't track the download
-  }
+    if (!modelVersion) return notFound(req, res, 'Model not found');
 
-  const fileName = getDownloadFilename({ model: modelVersion.model, modelVersion, file });
-  const { url } = await getGetUrl(file.url, { fileName });
-  res.redirect(url);
-}
+    const file =
+      type != null || format != null
+        ? modelVersion.files[0]
+        : getPrimaryFile(modelVersion.files, {
+            type: session?.user?.preferredPrunedModel ? 'Pruned Model' : undefined,
+            format: session?.user?.preferredModelFormat,
+          });
+    if (!file) return notFound(req, res, 'Model file not found');
+
+    // Handle non-published models
+    const isMod = session?.user?.isModerator;
+    const userId = session?.user?.id;
+    const canDownload =
+      isMod ||
+      modelVersion?.model?.status === 'Published' ||
+      (userId && modelVersion?.model?.userId === userId);
+    if (!canDownload) return notFound(req, res, 'Model not found');
+
+    // Handle unauthenticated downloads
+    if (!env.UNAUTHENTICATED_DOWNLOAD && !userId) {
+      if (req.headers['content-type'] === 'application/json')
+        return res.status(401).json({ error: 'Unauthorized' });
+      else
+        return res.redirect(
+          getLoginLink({ reason: 'download-auth', returnUrl: `/models/${modelVersion.model.id}` })
+        );
+    }
+
+    // Handle early access
+    if (!session?.user?.tier && !session?.user?.isModerator) {
+      const earlyAccessDeadline = getEarlyAccessDeadline({
+        versionCreatedAt: modelVersion.createdAt,
+        publishedAt: modelVersion.model.publishedAt,
+        earlyAccessTimeframe: modelVersion.earlyAccessTimeFrame,
+      });
+      const inEarlyAccess = new Date() < earlyAccessDeadline;
+      if (inEarlyAccess) {
+        if (req.headers['content-type'] === 'application/json')
+          return res.status(403).json({ error: 'Early Access', deadline: earlyAccessDeadline });
+        else
+          return res.redirect(
+            getJoinLink({ reason: 'early-access', returnUrl: `/models/${modelVersion.model.id}` })
+          );
+      }
+    }
+
+    // Track download
+    try {
+      await dbWrite.userActivity.create({
+        data: {
+          userId,
+          activity: UserActivityType.ModelDownload,
+          details: {
+            modelId: modelVersion.model.id,
+            modelVersionId: modelVersion.id,
+            fileId: file.id,
+            // Just so we can catch exploits
+            ...(!userId
+              ? {
+                  ip,
+                  userAgent: req.headers['user-agent'],
+                }
+              : {}), // You'll notice we don't include this for authed users...
+          },
+        },
+      });
+    } catch (error) {
+      // Do nothing if we can't track the download
+    }
+
+    const fileName = getDownloadFilename({ model: modelVersion.model, modelVersion, file });
+    const { url } = await getGetUrl(file.url, { fileName });
+    res.redirect(url);
+  },
+  ['GET'],
+  'download'
+);
 
 export function getDownloadFilename({
   model,

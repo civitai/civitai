@@ -9,6 +9,14 @@ export function splitUppercase(value: string) {
     .join(' ');
 }
 
+const nameOverides: Record<string, string> = {
+  LoCon: 'LyCORIS',
+  LORA: 'LoRA',
+};
+export function getDisplayName(value: string) {
+  return nameOverides[value] ?? splitUppercase(value);
+}
+
 export function getInitials(value: string) {
   return value
     .match(/(^\S\S?|\b\S)?/g)
@@ -88,4 +96,8 @@ export function postgresSlugify(str: string) {
 
 export function titleCase(val: string) {
   return val[0].toUpperCase() + val.slice(1).toLowerCase();
+}
+
+export function isUUID(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }

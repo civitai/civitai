@@ -7,7 +7,7 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { isMaintenanceMode } from '~/env/other';
 import { Session } from 'next-auth';
 
-function handleMaintenanceMode(req: NextApiRequest, res: NextApiResponse) {
+export function handleMaintenanceMode(req: NextApiRequest, res: NextApiResponse) {
   if (isMaintenanceMode) {
     res.status(503);
     if (req.headers['content-type'] == 'application/json')

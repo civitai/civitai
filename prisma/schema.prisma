@@ -241,8 +241,11 @@ enum ModelType {
   Hypernetwork
   AestheticGradient
   LORA
+  LoCon
   Controlnet
   Poses
+  Wildcards
+  Other
 }
 
 enum ImportStatus {
@@ -314,6 +317,7 @@ model Model {
   deletedByUser  User?           @relation("deletedBy", fields: [deletedBy], references: [id], onDelete: SetNull)
   checkpointType CheckpointType?
   locked         Boolean         @default(false)
+  underAttack    Boolean         @default(false)
 
   // Licensing
   allowNoCredit         Boolean       @default(true)
@@ -369,6 +373,7 @@ model ModelEngagement {
   createdAt DateTime            @default(now())
 
   @@id([userId, modelId])
+  @@index([modelId], type: Hash)
 }
 
 model ModelVersion {
@@ -404,6 +409,8 @@ model ModelVersion {
   posts            Post[]
   resourceReviews  ResourceReview[]
   hashes           ModelHash[]
+
+  @@index([modelId], type: Hash)
 }
 
 enum ModelVersionEngagementType {
@@ -471,6 +478,8 @@ model ModelFile {
   scanRequestedAt   DateTime?
   rawScanResult     Json?
   hashes            ModelFileHash[]
+
+  @@index([modelVersionId], type: Hash)
 }
 
 enum MetricTimeframe {
@@ -553,11 +562,12 @@ model Report {
   previouslyReviewedCount Int          @default(0)
   alsoReportedBy          Int[]        @default([]) // UserIds
 
-  status  ReportStatus
-  model   ModelReport?
-  review  ReviewReport?
-  comment CommentReport?
-  image   ImageReport?
+  status    ReportStatus
+  model     ModelReport?
+  review    ReviewReport?
+  comment   CommentReport?
+  commentV2 CommentV2Report?
+  image     ImageReport?
 }
 
 model ModelReport {
@@ -585,6 +595,15 @@ model CommentReport {
   report    Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, commentId])
+}
+
+model CommentV2Report {
+  commentV2Id Int
+  commentV2   CommentV2 @relation(fields: [commentV2Id], references: [id], onDelete: Cascade)
+  reportId    Int       @unique
+  report      Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, commentV2Id])
 }
 
 model ImageReport {
@@ -616,6 +635,8 @@ model Review {
   reports          ReviewReport[]
   comments         Comment[]
   imageConnections ImageConnection[]
+
+  @@index([modelId], type: Hash)
 }
 
 model ResourceReview {
@@ -733,6 +754,9 @@ model Image {
   rank            ImageRank?
   modHelper       ImageModHelper?
   resources       ImageResource[]
+
+  @@index([featuredAt])
+  @@index([postId], type: Hash)
 }
 
 model ImageResource {
@@ -774,6 +798,7 @@ model ImagesOnModels {
   index          Int?
 
   @@id([imageId, modelVersionId])
+  @@index([modelVersionId], type: Hash)
 }
 
 model ImagesOnReviews {
@@ -784,6 +809,7 @@ model ImagesOnReviews {
   index    Int?
 
   @@id([imageId, reviewId])
+  @@index([reviewId], type: Hash)
 }
 
 enum TagTarget {
@@ -831,6 +857,7 @@ model TagsOnModels {
   createdAt DateTime @default(now())
 
   @@id([modelId, tagId])
+  @@index([modelId], type: Hash)
 }
 
 model TagsOnQuestions {
@@ -840,6 +867,7 @@ model TagsOnQuestions {
   tagId      Int
 
   @@id([tagId, questionId])
+  @@index([questionId], type: Hash)
 }
 
 model TagsOnImage {
@@ -852,6 +880,8 @@ model TagsOnImage {
   confidence Int?
 
   @@id([tagId, imageId])
+  @@index([imageId], type: Hash)
+  @@index([automated], type: Hash)
 }
 
 model TagsOnPost {
@@ -862,6 +892,7 @@ model TagsOnPost {
   createdAt DateTime @default(now())
 
   @@id([tagId, postId])
+  @@index([postId], type: Hash)
 }
 
 model TagMetric {
@@ -965,6 +996,10 @@ model Comment {
   comments  Comment[]         @relation("ParentComments")
   reactions CommentReaction[]
   reports   CommentReport[]
+
+  @@index([modelId], type: Hash)
+  @@index([reviewId], type: Hash)
+  @@index([parentId], type: Hash)
 }
 
 model CommentReaction {
@@ -1114,6 +1149,9 @@ model CommentV2 {
   thread       Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
   reactions CommentV2Reaction[]
+  reports   CommentV2Report[]
+
+  @@index([threadId], type: Hash)
 }
 
 model Thread {
@@ -1132,6 +1170,11 @@ model Thread {
   review     ResourceReview? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
 
   comments CommentV2[]
+
+  @@index([reviewId], type: Hash)
+  @@index([postId], type: Hash)
+  @@index([questionId], type: Hash)
+  @@index([imageId], type: Hash)
 }
 
 model QuestionReaction {

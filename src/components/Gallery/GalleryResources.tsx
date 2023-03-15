@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles(() => ({
@@ -48,7 +48,7 @@ export function GalleryResources({ imageId, modelId, reviewId }: Props) {
                 {connections.model.name}
               </Text>
               <Badge radius="sm" size="sm">
-                {splitUppercase(connections.model.type)}
+                {getDisplayName(connections.model.type)}
               </Badge>
             </Group>
             <Group spacing={0} position="apart">

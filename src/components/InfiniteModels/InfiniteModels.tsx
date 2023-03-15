@@ -63,7 +63,7 @@ import { GetModelsInfiniteReturnType } from '~/server/controllers/model.controll
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { slugit, splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 type InfiniteModelsProps = {
@@ -367,18 +367,18 @@ export function InfiniteModels({
 //     </Text>
 //   );
 
-//   const modelBadges = (
-//     <>
-//       {data.status !== ModelStatus.Published && (
-//         <Badge color="yellow" radius="sm" size="xs">
-//           {data.status}
-//         </Badge>
-//       )}
-//       <Badge radius="sm" size="xs">
-//         {splitUppercase(data.type)}
+// const modelBadges = (
+//   <>
+//     {data.status !== ModelStatus.Published && (
+//       <Badge color="yellow" radius="sm" size="xs">
+//         {data.status}
 //       </Badge>
-//     </>
-//   );
+//     )}
+//     <Badge radius="sm" size="xs">
+//       {getDisplayName(data.type)}
+//     </Badge>
+//   </>
+// );
 
 //   const modelRating = (
 //     <IconBadge

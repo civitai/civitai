@@ -11,7 +11,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
-import { splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function EarlyAccessAlert({ versionId, modelType, deadline }: Props) {
@@ -66,7 +66,7 @@ export function EarlyAccessAlert({ versionId, modelType, deadline }: Props) {
 
   return (
     <AlertWithIcon color="green" iconColor="green" icon={<IconAlertCircle />}>
-      {`This ${splitUppercase(
+      {`This ${getDisplayName(
         modelType
       ).toLowerCase()} is in "Early Access" to collect feedback from `}{' '}
       <Text variant="link" component={NextLink} href="/pricing">

@@ -9,6 +9,8 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
   let hasNegativeEmbed = false;
   let hasConfig = false;
   let hasVAE = false;
+  const isLoCon = modelType === ModelType.LoCon;
+  const isWildcards = modelType === ModelType.Wildcards;
   if (files) {
     for (const file of files) {
       if (modelType === ModelType.TextualInversion && file.type === 'Negative')
@@ -20,6 +22,27 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
 
   return (
     <>
+      {isWildcards && (
+        <AlertWithIcon icon={<IconAlertCircle />}>
+          This is a Wildcard collection, it requires an{' '}
+          <Anchor
+            href="https://github.com/AUTOMATIC1111/stable-diffusion-webui-wildcards"
+            rel="nofollow"
+          >
+            additional extension in Automatic 1111
+          </Anchor>{' '}
+          to work.
+        </AlertWithIcon>
+      )}
+      {isLoCon && (
+        <AlertWithIcon icon={<IconAlertCircle />}>
+          This is a LyCORIS (LoCon/LoHA) model, and requires an{' '}
+          <Anchor href="https://github.com/KohakuBlueleaf/a1111-sd-webui-locon" rel="nofollow">
+            additional extension in Automatic 1111
+          </Anchor>{' '}
+          to work.
+        </AlertWithIcon>
+      )}
       {hasNegativeEmbed && (
         <AlertWithIcon icon={<IconAlertCircle />}>
           This Textual Inversion includes a{' '}

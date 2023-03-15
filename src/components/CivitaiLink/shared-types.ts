@@ -38,6 +38,7 @@ export type SocketClient = Socket<ServerToClientEvents, ClientToServerEvents>;
 // ---------------------
 
 export type ResourceType =
+  | 'LoCon'
   | 'LORA'
   | 'Checkpoint'
   | 'CheckpointConfig'
@@ -46,7 +47,9 @@ export type ResourceType =
   | 'AestheticGradient'
   | 'VAE'
   | 'Controlnet'
-  | 'Poses';
+  | 'Poses'
+  | 'Other'
+  | 'Wildcards';
 
 type CommandBase = {
   id: string;

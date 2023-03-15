@@ -1,5 +1,5 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 
 const modelDownloadMilestones = [5, 10, 20, 50, 100, 500] as const;
 const modelLikeMilestones = [100, 500, 1000, 10000, 50000] as const;
@@ -147,7 +147,7 @@ export const modelNotifications = createNotificationProcessor({
   'new-model-from-following': {
     displayName: 'New models from followed users',
     prepareMessage: ({ details }) => ({
-      message: `${details.username} released a new ${splitUppercase(
+      message: `${details.username} released a new ${getDisplayName(
         details.modelType
       ).toLowerCase()}: ${details.modelName}`,
       url: `/models/${details.modelId}`,
@@ -220,5 +220,5 @@ export const modelNotifications = createNotificationProcessor({
         details
       FROM early_access_complete;
     `,
-  }
+  },
 });
