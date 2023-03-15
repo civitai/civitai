@@ -45,11 +45,8 @@ export const getPostsInfinite = async ({
   const skip = (page - 1) * limit;
   const take = limit + 1;
 
-  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
-  if (canViewNsfw && !browsingMode) browsingMode = BrowsingMode.All;
-  else if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
-
   const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
+
   const imageAND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   if (query) AND.push({ title: { in: query, mode: 'insensitive' } });
   if (username) AND.push({ user: { username } });
@@ -59,16 +56,18 @@ export const getPostsInfinite = async ({
   }
   if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
 
+  if (browsingMode !== BrowsingMode.All) {
+    const query = { nsfw: { equals: browsingMode === BrowsingMode.NSFW } };
+    AND.push(query);
+    imageAND.push(query);
+  }
+
   const posts = await dbRead.post.findMany({
     skip,
     take,
     cursor: cursor ? { id: cursor } : undefined,
     where: {
       AND,
-      nsfw:
-        browsingMode === BrowsingMode.All
-          ? undefined
-          : { equals: browsingMode === BrowsingMode.NSFW },
     },
     select: {
       id: true,
@@ -115,16 +114,16 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
       modelVersionId: true,
       user: { select: userWithCosmeticsSelect },
       publishedAt: true,
-      images: {
-        orderBy: { index: 'asc' },
-        select: getImageV2Select({ userId: user?.id }),
-        where: {
-          OR: [
-            { userId: user?.id },
-            { tags: !!hiddenTags.length ? { none: { tagId: { in: hiddenTags } } } : undefined },
-          ],
-        },
-      },
+      // images: {
+      //   orderBy: { index: 'asc' },
+      //   select: getImageV2Select({ userId: user?.id }),
+      //   where: {
+      //     OR: [
+      //       { userId: user?.id },
+      //       { tags: !!hiddenTags.length ? { none: { tagId: { in: hiddenTags } } } : undefined },
+      //     ],
+      //   },
+      // },
       tags: { select: { tag: { select: simpleTagSelect } } },
     },
   });

@@ -1,4 +1,9 @@
-import { isImageResource, IngestImageInput, ingestImageSchema } from './../schema/image.schema';
+import {
+  isImageResource,
+  IngestImageInput,
+  ingestImageSchema,
+  GetInfiniteImagesInput,
+} from './../schema/image.schema';
 import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
@@ -17,6 +22,7 @@ import { deleteImage } from '~/utils/cf-images-utils';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
 import { simpleTagSelect, imageTagSelect } from '~/server/selectors/tag.selector';
+import { getImageV2Select } from '~/server/selectors/imagev2.selector';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -298,3 +304,64 @@ export const ingestImage = async ({
   });
   return imageTags;
 };
+
+// #region [new service methods]
+export const getAllImages = async ({
+  limit,
+  cursor,
+  postId,
+  modelId,
+  username,
+  excludedTagIds,
+  excludedUserIds,
+  browsingMode,
+  period,
+  sort,
+  userId,
+}: GetInfiniteImagesInput & { userId?: number }) => {
+  const AND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
+  if (postId) AND.push({ postId });
+  if (modelId) AND.push({ resources: { some: { modelVersion: { modelId } } } });
+  if (username) AND.push({ user: { username: { equals: username, mode: 'insensitive' } } });
+  if (browsingMode !== BrowsingMode.All)
+    AND.push({ nsfw: { equals: browsingMode === BrowsingMode.NSFW } });
+  if (!!excludedUserIds?.length) AND.push({ userId: { notIn: excludedUserIds } });
+  if (!!excludedTagIds?.length) {
+    AND.push({
+      OR: [
+        { userId },
+        { tags: !!excludedTagIds.length ? { none: { tagId: { in: excludedTagIds } } } : undefined },
+      ],
+    });
+  }
+
+  const orderBy: Prisma.Enumerable<Prisma.ImageOrderByWithRelationInput> = [];
+  if (postId) orderBy.push({ index: 'asc' });
+  else {
+    if (sort === ImageSort.MostComments)
+      orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
+    else if (sort === ImageSort.MostReactions)
+      orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
+    orderBy.push({ id: 'desc' });
+  }
+
+  const images = await dbRead.image.findMany({
+    take: cursor ? limit + 1 : limit,
+    cursor: cursor ? { id: cursor } : undefined,
+    where: { AND },
+    orderBy,
+    select: getImageV2Select({ userId }),
+  });
+
+  let nextCursor: number | undefined;
+  if (images.length > limit) {
+    const nextItem = images.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  return {
+    nextCursor,
+    items: images,
+  };
+};
+// #endregion
