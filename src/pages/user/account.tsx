@@ -10,7 +10,6 @@ import { NotificationsCard } from '~/components/Account/NotificationsCard';
 import { ProfileCard } from '~/components/Account/ProfileCard';
 import { SettingsCard } from '~/components/Account/SettingsCard';
 import { SubscriptionCard } from '~/components/Account/SubscriptionCard';
-import { TagsCard } from '~/components/Account/TagsCard';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';

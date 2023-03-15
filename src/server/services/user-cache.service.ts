@@ -30,12 +30,17 @@ async function getHiddenTags(userId: number) {
     where: { userId, type: { in: [TagEngagementType.Hide, TagEngagementType.Allow] } },
     select: { tag: { select: { id: true } }, type: true },
   });
+  const { showNsfw } =
+    (await dbWrite.user.findUnique({
+      where: { id: userId },
+      select: { showNsfw: true },
+    })) ?? {};
 
   const moderationTags = await getModerationTags();
   const hiddenTags = moderationTags.map((x) => x.id);
   for (const { tag, type } of tags) {
     if (type === TagEngagementType.Hide) hiddenTags.push(tag.id);
-    else if (type === TagEngagementType.Allow) {
+    else if (showNsfw && type === TagEngagementType.Allow) {
       const i = hiddenTags.findIndex((id) => id === tag.id);
       hiddenTags.splice(i, 1);
     }

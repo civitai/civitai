@@ -44,6 +44,7 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { isUUID } from '~/utils/string-helpers';
+import { refreshHiddenTagsForUser } from '~/server/services/user-cache.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -147,7 +148,7 @@ export const updateUserHandler = async ({
   ctx: DeepNonNullable<Context>;
   input: Partial<UserUpdateInput>;
 }) => {
-  const { id, badgeId, nameplateId, ...data } = input;
+  const { id, badgeId, nameplateId, showNsfw, ...data } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
 
@@ -162,11 +163,15 @@ export const updateUserHandler = async ({
     const payloadCosmeticIds: number[] = [];
     if (badgeId) payloadCosmeticIds.push(badgeId);
     if (nameplateId) payloadCosmeticIds.push(nameplateId);
+    if (showNsfw === false) {
+      await refreshHiddenTagsForUser({ userId: id });
+    }
 
     const updatedUser = await updateUserById({
       id,
       data: {
         ...data,
+        showNsfw,
         cosmetics: !isSettingCosmetics
           ? undefined
           : {
