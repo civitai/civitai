@@ -28,14 +28,15 @@ export function TagScroller({
   const scrollRight = () => viewportRef.current?.scrollBy({ left: 200, behavior: 'smooth' });
 
   const handleChange = (tagId: number, shouldAdd: boolean) => {
+    const tags = [...value];
+    const index = tags.findIndex((id) => id === tagId);
     if (shouldAdd) {
-      const tags = [...value];
-      const index = tags.findIndex((id) => id === tagId);
       if (index === -1) tags.push(tagId);
       else tags.splice(index, 1);
       onChange?.(tags);
     } else {
-      onChange?.([tagId]);
+      if (index === -1 || tags.length > 1) onChange?.([tagId]);
+      else onChange?.([]);
     }
   };
 
