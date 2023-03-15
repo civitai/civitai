@@ -1,6 +1,6 @@
 import { SessionUser } from 'next-auth';
 import { isNotImageResource } from './../schema/image.schema';
-import { editPostSelect, postTagSelect } from './../selectors/post.selector';
+import { editPostSelect } from './../selectors/post.selector';
 import { isDefined } from '~/utils/type-guards';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { GetByIdInput } from './../schema/base.schema';
@@ -179,18 +179,29 @@ export const deletePost = async ({ id }: GetByIdInput) => {
 
 export const getPostTags = async ({ query, limit }: GetPostTagsInput) => {
   const showTrending = query === undefined || query.length < 2;
-  return await dbRead.tag.findMany({
-    take: limit,
-    where: {
-      name: !showTrending ? { contains: query, mode: 'insensitive' } : undefined,
-      rank: { isNot: null },
-      isCategory: showTrending ? true : undefined,
-    },
-    select: postTagSelect({ trending: showTrending }),
-    orderBy: {
-      rank: !showTrending ? { postCountAllTimeRank: 'desc' } : { postCountDayRank: 'desc' },
-    },
-  });
+  return await dbRead.$queryRawUnsafe<
+    Array<{
+      id: number;
+      name: string;
+      isCategory: boolean;
+      postCount: number;
+    }>
+  >(`
+    SELECT
+      t.id,
+      t.name,
+      t."isCategory",
+      COALESCE(s.${showTrending ? '"postCountDay"' : '"postCountAllTime"'}, 0) AS "postCount"
+    FROM "Tag" t
+    LEFT JOIN "TagStat" s ON s."tagId" = t.id
+    LEFT JOIN "TagRank" r ON r."tagId" = t.id
+    WHERE
+      ${showTrending ? 't."isCategory" = true' : `t.name ILIKE '${query}%'`}
+    ORDER BY ${
+      showTrending ? 'r."postCountDayRank" DESC' : 'LENGTH(t.name), r."postCountAllTimeRank" DESC'
+    }
+    LIMIT ${limit}
+  `);
 };
 
 export const addPostTag = async ({ postId, id, name: initialName }: AddPostTagInput) => {

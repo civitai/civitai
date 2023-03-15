@@ -10,6 +10,8 @@ import {
   Stack,
   Box,
   Divider,
+  Loader,
+  Center,
 } from '@mantine/core';
 import { useDebouncedValue, getHotkeyHandler, useClickOutside } from '@mantine/hooks';
 import { IconPlus, IconX } from '@tabler/icons';
@@ -41,18 +43,15 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
   const postId = useEditPostContext((state) => state.id);
   const setTags = useEditPostContext((state) => state.setTags);
 
-  const { mutate, isLoading } = trpc.post.removeTag.useMutation();
+  const { mutate, isLoading } = trpc.post.removeTag.useMutation({
+    onMutate({ id }) {
+      setTags((tags) => tags.filter((x) => x.id !== id));
+    },
+  });
 
   const handleRemoveTag = (tag: TagProps) => {
     if (tag.id) {
-      mutate(
-        { postId, id: tag.id },
-        {
-          onSuccess: () => {
-            setTags((tags) => tags.filter((x) => x.name.toLowerCase() !== tag.name.toLowerCase()));
-          },
-        }
-      );
+      mutate({ postId, id: tag.id }, { onError: () => setTags((tags) => [...tags, tag]) });
     } else {
       setTags((tags) => tags.filter((x) => x.name.toLowerCase() !== tag.name.toLowerCase()));
     }
@@ -70,7 +69,6 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
         {tag.id && canRemove && (
           <ActionIcon
             size="xs"
-            color="red"
             variant="outline"
             radius="xl"
             onClick={() => handleRemoveTag(tag)}
@@ -107,11 +105,12 @@ function TagPicker() {
     [control, dropdown]
   );
 
-  const { data } = trpc.post.getTags.useQuery({ query: debounced });
+  const { data, isFetching } = trpc.post.getTags.useQuery(
+    { query: debounced },
+    { keepPreviousData: true }
+  );
   const { mutate } = trpc.post.addTag.useMutation({
     onSuccess: async (response) => {
-      // setEditing(false);
-      // setQuery('');
       setTags((tags) => {
         return [...tags.filter((x) => !!x.id && x.id !== response.id), response];
       });
@@ -221,9 +220,10 @@ function TagPicker() {
       </Popover.Target>
       <Popover.Dropdown p={0}>
         <Box style={{ width: 300 }} ref={setDropdown}>
-          <Text p="sm" weight={500}>
-            {label} Tags
-          </Text>
+          <Group position="apart" px="sm" py="xs">
+            <Text weight={500}>{label} Tags</Text>
+            {isFetching && <Loader variant="dots" />}
+          </Group>
           <Divider />
           {!!filteredData?.length && (
             <Stack spacing={0}>
@@ -239,7 +239,7 @@ function TagPicker() {
                 >
                   <Text size="sm">{tag.name}</Text>
                   <Text size="sm" color="dimmed">
-                    {tag.rank?.postCountAllTimeRank ?? tag.rank?.postCountDayRank} posts
+                    {tag.postCount.toString()} posts
                   </Text>
                 </Group>
               ))}
