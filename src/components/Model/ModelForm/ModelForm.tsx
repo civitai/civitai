@@ -411,6 +411,7 @@ export function ModelForm({ model }: Props) {
       case 'AestheticGradient':
       case 'Controlnet':
       case 'Poses':
+      case 'Other':
         modelVersions.forEach((_, index) => {
           form.setValue(`modelVersions.${index}.trainedWords`, []);
           form.setValue(`modelVersions.${index}.skipTrainedWords`, true);

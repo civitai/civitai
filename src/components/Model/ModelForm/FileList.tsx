@@ -34,6 +34,7 @@ const fileTypesByModelType: Record<ModelType, ModelFileType[]> = {
   Controlnet: ['Model'],
   Poses: ['Archive'],
   Wildcards: ['Archive'],
+  Other: ['Archive'],
 };
 
 export function FileList({ parentIndex, form }: Props) {

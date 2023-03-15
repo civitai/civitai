@@ -48,6 +48,7 @@ export type ResourceType =
   | 'VAE'
   | 'Controlnet'
   | 'Poses'
+  | 'Other'
   | 'Wildcards';
 
 type CommandBase = {

@@ -28,6 +28,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputProfileImageUpload, InputSelect, InputText, useForm } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { usernameSchema } from '~/server/schema/user.schema';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
@@ -37,10 +38,7 @@ import { trpc } from '~/utils/trpc';
 
 const schema = z.object({
   id: z.number(),
-  username: z
-    .string()
-    .min(3, 'Your username must be at least 3 characters long')
-    .regex(/^[A-Za-z0-9_]*$/, 'The "username" field can only contain letters, numbers, and _.'),
+  username: usernameSchema,
   image: z.string().nullable(),
   nameplateId: z.number().nullish(),
   badgeId: z.number().nullish(),

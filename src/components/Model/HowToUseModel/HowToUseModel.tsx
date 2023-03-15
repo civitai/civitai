@@ -2,7 +2,7 @@ import { Text, Tooltip } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconQuestionCircle } from '@tabler/icons';
 
-const instructions = {
+const instructions: Partial<Record<ModelType, string>> = {
   [ModelType.Checkpoint]: '#fine-tuned-model-checkpoints-dreambooth-models',
   [ModelType.TextualInversion]: '#textual-inversions',
   [ModelType.AestheticGradient]: '#aesthetic-gradients',
@@ -15,6 +15,7 @@ const instructions = {
 };
 
 export const HowToUseModel = ({ type }: ModelFileAlertProps) => {
+  if (!instructions[type]) return null;
   return (
     <Tooltip label="How to use this" position="left" withArrow>
       <Text
