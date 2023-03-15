@@ -49,8 +49,8 @@ export const getPostsInfinite = async ({
   if (query) AND.push({ title: { in: query, mode: 'insensitive' } });
   if (username) AND.push({ user: { username } });
   if (!!excludedTagIds?.length) {
-    AND.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
-    imageAND.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
+    AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
+    imageAND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
   }
   if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
 
@@ -112,7 +112,7 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
         where: {
           OR: [
             { userId: user?.id },
-            { tags: !!hiddenTags.length ? { every: { tagId: { notIn: hiddenTags } } } : undefined },
+            { tags: !!hiddenTags.length ? { none: { tagId: { in: hiddenTags } } } : undefined },
           ],
         },
       },

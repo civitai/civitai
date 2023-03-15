@@ -221,32 +221,34 @@ export const getModelsInfiniteHandler = async ({
 
   return {
     nextCursor,
-    items: items.map(({ modelVersions, reportStats, publishedAt, hashes, ...model }) => {
-      const rank = model.rank; // NOTE: null before metrics kick in
-      const latestVersion = modelVersions[0];
-      const { tags, ...image } = latestVersion?.images[0]?.image ?? {};
-      const earlyAccess =
-        !latestVersion ||
-        isEarlyAccess({
-          versionCreatedAt: latestVersion.createdAt,
-          publishedAt,
-          earlyAccessTimeframe: latestVersion.earlyAccessTimeFrame,
-        });
-      if (model.nsfw && !env.SHOW_SFW_IN_NSFW) image.nsfw = true;
-      return {
-        ...model,
-        hashes: hashes.map((hash) => hash.hash.toLowerCase()),
-        rank: {
-          downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
-          favoriteCount: rank?.[`favoriteCount${input.period}`] ?? 0,
-          commentCount: rank?.[`commentCount${input.period}`] ?? 0,
-          ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
-          rating: rank?.[`rating${input.period}`] ?? 0,
-        },
-        image,
-        earlyAccess,
-      };
-    }),
+    items: items
+      .filter((x) => !!x.modelVersions[0].images.length)
+      .map(({ modelVersions, reportStats, publishedAt, hashes, ...model }) => {
+        const rank = model.rank; // NOTE: null before metrics kick in
+        const latestVersion = modelVersions[0];
+        const { tags, ...image } = latestVersion?.images[0]?.image ?? {};
+        const earlyAccess =
+          !latestVersion ||
+          isEarlyAccess({
+            versionCreatedAt: latestVersion.createdAt,
+            publishedAt,
+            earlyAccessTimeframe: latestVersion.earlyAccessTimeFrame,
+          });
+        if (model.nsfw && !env.SHOW_SFW_IN_NSFW) image.nsfw = true;
+        return {
+          ...model,
+          hashes: hashes.map((hash) => hash.hash.toLowerCase()),
+          rank: {
+            downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
+            favoriteCount: rank?.[`favoriteCount${input.period}`] ?? 0,
+            commentCount: rank?.[`commentCount${input.period}`] ?? 0,
+            ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
+            rating: rank?.[`rating${input.period}`] ?? 0,
+          },
+          image,
+          earlyAccess,
+        };
+      }),
   };
 };
 

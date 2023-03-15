@@ -62,7 +62,7 @@ export const getGalleryImages = async <
 
   const conditionalFilters: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   if (!!excludedTagIds?.length)
-    conditionalFilters.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
+    conditionalFilters.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
 
   if (!!tags?.length) conditionalFilters.push({ tags: { some: { tagId: { in: tags } } } });
   else if (!needsReview) {
@@ -101,6 +101,7 @@ export const getGalleryImages = async <
         ? { modelVersionId, modelVersion: modelId ? { modelId } : undefined }
         : undefined,
     imagesOnReviews: reviewId ? { reviewId } : undefined,
+    tags: excludedTagIds?.length ? { none: { tagId: { in: excludedTagIds } } } : undefined,
   };
 
   if (canViewNsfw && !browsingMode) browsingMode = BrowsingMode.All;

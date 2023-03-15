@@ -172,11 +172,16 @@ export function GalleryDetail2() {
                 </AlertWithIcon>
               )}
               <Group spacing={4} px="md">
-                {image.tags
-                  .filter((x) => !x.automated)
-                  .map((tag) => (
-                    <Badge key={tag.id}>{tag.name}</Badge>
-                  ))}
+                {image.tags.map((tag) => (
+                  <Badge
+                    radius="xs"
+                    key={tag.id}
+                    variant={tag.automated ? 'filled' : undefined}
+                    color={tag.automated ? 'gray' : 'blue'}
+                  >
+                    {tag.name}
+                  </Badge>
+                ))}
                 {/* <Badge
                   style={{ cursor: 'pointer' }}
                   leftSection={
