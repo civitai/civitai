@@ -7,6 +7,7 @@ import {
   Center,
   Loader,
   Alert,
+  Group,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
@@ -28,7 +29,10 @@ export function PostImages({ postId }: { postId: number }) {
   if (isLoading)
     return (
       <Center p="xl">
-        <Loader />
+        <Group>
+          <Loader />
+          Loading Images
+        </Group>
       </Center>
     );
   if (!images) return <Alert>We could not display any images from this post</Alert>;
@@ -85,6 +89,7 @@ export function PostImages({ postId }: { postId: number }) {
                   }}
                 />
               </ImageGuard.Safe>
+              {console.log({ image })}
               {image.meta && !image.hideMeta && (
                 <ImageMetaPopover
                   meta={image.meta as ImageMetaProps}

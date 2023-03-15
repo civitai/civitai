@@ -24,7 +24,7 @@ import { isImageResource } from '~/server/schema/image.schema';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { env } from '~/env/server.mjs';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { BrowsingMode } from '~/server/common/enums';
+import { BrowsingMode, PostSort } from '~/server/common/enums';
 import { getImageV2Select } from '~/server/selectors/imagev2.selector';
 import { getHiddenTagsForUser } from '~/server/services/user-cache.service';
 
@@ -62,13 +62,19 @@ export const getPostsInfinite = async ({
     imageAND.push(query);
   }
 
+  const orderBy: Prisma.Enumerable<Prisma.PostOrderByWithRelationInput> = [];
+  if (sort === PostSort.MostComments)
+    orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
+  else if (sort === PostSort.MostReactions)
+    orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
+  orderBy.push({ id: 'desc' });
+
   const posts = await dbRead.post.findMany({
     skip,
     take,
     cursor: cursor ? { id: cursor } : undefined,
-    where: {
-      AND,
-    },
+    where: { AND },
+    orderBy,
     select: {
       id: true,
       nsfw: true,
@@ -102,8 +108,6 @@ export const getPostsInfinite = async ({
 };
 
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
-  const hiddenTags = user?.isModerator ? [] : await getHiddenTagsForUser({ userId: user?.id });
-
   const post = await dbRead.post.findUnique({
     where: { id },
     select: {
@@ -114,16 +118,6 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
       modelVersionId: true,
       user: { select: userWithCosmeticsSelect },
       publishedAt: true,
-      // images: {
-      //   orderBy: { index: 'asc' },
-      //   select: getImageV2Select({ userId: user?.id }),
-      //   where: {
-      //     OR: [
-      //       { userId: user?.id },
-      //       { tags: !!hiddenTags.length ? { none: { tagId: { in: hiddenTags } } } : undefined },
-      //     ],
-      //   },
-      // },
       tags: { select: { tag: { select: simpleTagSelect } } },
     },
   });

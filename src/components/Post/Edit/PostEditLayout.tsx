@@ -32,6 +32,7 @@ function LayoutProvider({ children }: { children: any }) {
         await queryUtils.post.get.invalidate({ id: postId });
         await queryUtils.post.getEdit.invalidate({ id: postId });
         await queryUtils.post.getInfinite.invalidate();
+        await queryUtils.image.getInfinite.invalidate({ postId });
       };
       return () => {
         handleReturn();
