@@ -20,8 +20,10 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { trpc } from '~/utils/trpc';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { PostControls } from '~/components/Post/Detail/PostControls';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
@@ -50,6 +52,11 @@ export function PostDetail({ postId }: { postId: number }) {
           )}
           <PostControls postId={data.id} userId={data.user.id} />
         </Group>
+        {data.detail && (
+          <ContentClamp maxHeight={300}>
+            <RenderHtml html={data.detail} withMentions />
+          </ContentClamp>
+        )}
         <Stack>
           <ImageGuard
             connect={{ entityId: postId, entityType: 'post' }}
