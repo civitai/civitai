@@ -26,6 +26,7 @@ import { env } from '~/env/server.mjs';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { BrowsingMode } from '~/server/common/enums';
 import { getImageV2Select } from '~/server/selectors/imagev2.selector';
+import { getHiddenTagsForUser } from '~/server/services/user-cache.service';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -44,9 +45,13 @@ export const getPostsInfinite = async ({
   const take = limit + 1;
 
   const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
+  const imageAND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   if (query) AND.push({ title: { in: query, mode: 'insensitive' } });
   if (username) AND.push({ user: { username } });
-  if (!!excludedTagIds?.length) AND.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
+  if (!!excludedTagIds?.length) {
+    AND.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
+    imageAND.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
+  }
   if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
 
   const posts = await dbRead.post.findMany({
@@ -65,6 +70,9 @@ export const getPostsInfinite = async ({
         orderBy: { index: 'asc' },
         take: 1,
         select: getImageV2Select({ userId: user?.id }),
+        where: {
+          AND: imageAND,
+        },
       },
     },
   });
@@ -86,6 +94,8 @@ export const getPostsInfinite = async ({
 };
 
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
+  const hiddenTags = user?.isModerator ? [] : await getHiddenTagsForUser({ userId: user?.id });
+
   const post = await dbRead.post.findUnique({
     where: { id },
     select: {
@@ -99,6 +109,12 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
       images: {
         orderBy: { index: 'asc' },
         select: getImageV2Select({ userId: user?.id }),
+        where: {
+          OR: [
+            { userId: user?.id },
+            { tags: !!hiddenTags.length ? { every: { tagId: { notIn: hiddenTags } } } : undefined },
+          ],
+        },
       },
       tags: { select: { tag: { select: simpleTagSelect } } },
     },
