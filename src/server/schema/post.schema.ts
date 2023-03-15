@@ -21,6 +21,8 @@ export const postsQuerySchema = postsFilterSchema.extend({
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(DEFAULT_PAGE_SIZE),
   cursor: z.preprocess((val) => Number(val), z.number()).optional(),
   query: z.string().optional(),
+  excludedTagIds: z.array(z.number()).optional(),
+  excludedUserIds: z.array(z.number()).optional(),
   username: z
     .string()
     .transform((data) => postgresSlugify(data))

@@ -34,6 +34,8 @@ export const getPostsInfinite = async ({
   cursor,
   query,
   username,
+  excludedTagIds,
+  excludedUserIds,
   period,
   sort,
   user,
@@ -44,6 +46,8 @@ export const getPostsInfinite = async ({
   const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
   if (query) AND.push({ title: { in: query, mode: 'insensitive' } });
   if (username) AND.push({ user: { username } });
+  if (!!excludedTagIds?.length) AND.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
+  if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
 
   const posts = await dbRead.post.findMany({
     skip,

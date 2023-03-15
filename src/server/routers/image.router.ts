@@ -1,5 +1,5 @@
 import { getImageDetailHandler } from './../controllers/image.controller';
-import { updateImageSchema } from './../schema/image.schema';
+import { GetGalleryImageInput, updateImageSchema } from './../schema/image.schema';
 import {
   deleteImageHandler,
   getGalleryImageDetailHandler,
@@ -23,6 +23,7 @@ import {
 } from '~/server/schema/image.schema';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { getHiddenTagsForUser, getHiddenUsersForUser } from '~/server/services/user-cache.service';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -48,6 +49,19 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   });
 });
 
+const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
+  const userId = ctx.user?.id;
+  const _input = input as GetGalleryImageInput;
+  const hiddenTags = await getHiddenTagsForUser({ userId });
+  const hiddenUsers = await getHiddenUsersForUser({ userId });
+  _input.excludedTagIds = [...hiddenTags, ...(_input.excludedTagIds ?? [])];
+  _input.excludedUserIds = [...hiddenUsers, ...(_input.excludedUserIds ?? [])];
+
+  return next({
+    ctx: { user: ctx.user },
+  });
+});
+
 export const imageRouter = router({
   getModelVersionImages: publicProcedure
     .input(getModelVersionImageSchema)
@@ -55,8 +69,12 @@ export const imageRouter = router({
   getReviewImages: publicProcedure.input(getReviewImagesSchema).query(getReviewImagesHandler),
   getGalleryImagesInfinite: publicProcedure
     .input(getGalleryImageSchema)
+    .use(applyUserPreferences)
     .query(getGalleryImagesInfiniteHandler),
-  getGalleryImages: publicProcedure.input(getGalleryImageSchema).query(getGalleryImagesHandler),
+  getGalleryImages: publicProcedure
+    .input(getGalleryImageSchema)
+    .use(applyUserPreferences)
+    .query(getGalleryImagesHandler),
   getGalleryImageDetail: publicProcedure.input(getByIdSchema).query(getGalleryImageDetailHandler),
   getConnectionData: publicProcedure
     .input(getImageConnectionsSchema)

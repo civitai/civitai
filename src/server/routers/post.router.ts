@@ -24,10 +24,12 @@ import {
   updatePostImageSchema,
   getPostTagsSchema,
   postsQuerySchema,
+  PostsQueryInput,
 } from './../schema/post.schema';
 import { dbWrite } from '~/server/db/client';
 import { router, protectedProcedure, middleware } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { getHiddenTagsForUser, getHiddenUsersForUser } from '~/server/services/user-cache.service';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -54,8 +56,24 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   });
 });
 
+const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
+  const userId = ctx.user?.id;
+  const _input = input as PostsQueryInput;
+  const hiddenTags = await getHiddenTagsForUser({ userId });
+  const hiddenUsers = await getHiddenUsersForUser({ userId });
+  _input.excludedTagIds = [...hiddenTags, ...(_input.excludedTagIds ?? [])];
+  _input.excludedUserIds = [...hiddenUsers, ...(_input.excludedUserIds ?? [])];
+
+  return next({
+    ctx: { user: ctx.user },
+  });
+});
+
 export const postRouter = router({
-  getInfinite: publicProcedure.input(postsQuerySchema).query(getPostsInfiniteHandler),
+  getInfinite: publicProcedure
+    .input(postsQuerySchema)
+    .use(applyUserPreferences)
+    .query(getPostsInfiniteHandler),
   get: publicProcedure.input(getByIdSchema).query(getPostHandler),
   getEdit: protectedProcedure.input(getByIdSchema).query(getPostEditHandler),
   create: protectedProcedure.input(postCreateSchema).mutation(createPostHandler),
