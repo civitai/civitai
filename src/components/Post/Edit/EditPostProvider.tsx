@@ -34,6 +34,7 @@ type EditPostProps = {
   id: number;
   modelVersionId?: number;
   title?: string;
+  detail?: string;
   nsfw: boolean;
   publishedAt?: Date;
   tags: TagProps[];
@@ -44,6 +45,7 @@ type EditPostProps = {
 
 interface EditPostState extends EditPostProps {
   setTitle: (title?: string) => void;
+  setDetail: (detail?: string) => void;
   toggleNsfw: (value?: boolean) => void;
   setPublishedAt: (publishedAt: Date) => void;
   toggleReorder: (value?: boolean) => void;
@@ -101,6 +103,10 @@ const createEditPostStore = ({
           setTitle: (title) =>
             set((state) => {
               state.title = title;
+            }),
+          setDetail: (detail) =>
+            set((state) => {
+              state.detail = detail;
             }),
           toggleNsfw: (value) =>
             set((state) => {

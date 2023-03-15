@@ -88,6 +88,7 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
       id: true,
       nsfw: true,
       title: true,
+      detail: true,
       modelVersionId: true,
       user: { select: userWithCosmeticsSelect },
       publishedAt: true,
@@ -139,6 +140,7 @@ export const updatePost = async (data: PostUpdateInput) => {
     data: {
       ...data,
       title: data.title !== undefined ? (data.title.length > 0 ? data.title : null) : undefined,
+      detail: data.detail !== undefined ? (data.detail.length > 0 ? data.detail : null) : undefined,
     },
   });
 };
