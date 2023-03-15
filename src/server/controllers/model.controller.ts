@@ -8,8 +8,9 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   DeleteModelSchema,
   GetAllModelsOutput,
-  GetDownloadSchema,
   ModelInput,
+  ModelUpsertInput,
+  GetDownloadSchema,
 } from '~/server/schema/model.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
@@ -27,6 +28,7 @@ import {
   restoreModelById,
   updateModel,
   updateModelById,
+  upsertModel,
 } from '~/server/services/model.service';
 import {
   throwAuthorizationError,
@@ -222,7 +224,7 @@ export const getModelsInfiniteHandler = async ({
     items: items.map(({ modelVersions, reportStats, publishedAt, hashes, ...model }) => {
       const rank = model.rank; // NOTE: null before metrics kick in
       const latestVersion = modelVersions[0];
-      const { tags, ...image } = latestVersion.images[0]?.image ?? {};
+      const { tags, ...image } = latestVersion?.images[0]?.image ?? {};
       const earlyAccess =
         !latestVersion ||
         isEarlyAccess({
@@ -290,6 +292,28 @@ export const createModelHandler = async ({
     const model = await createModel({ ...input, userId: user.id });
 
     return model;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const upsertModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ModelUpsertInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const model = await upsertModel({ ...input, userId });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    return {
+      ...model,
+      tagsOnModels: model.tagsOnModels?.map(({ tag }) => tag),
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

@@ -8,13 +8,14 @@ import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
+import { GetAllModelsOutput, ModelInput, ModelUpsertInput } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import {
   imageSelect,
   prepareCreateImage,
   prepareUpdateImage,
 } from '~/server/selectors/image.selector';
+import { modelWithDetailsSelect } from '~/server/selectors/model.selector';
 import { prepareFile } from '~/utils/file-helpers';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
@@ -158,7 +159,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       ? { some: { userId: sessionUser?.id, type: 'Hide' } }
       : undefined,
     AND: AND.length ? AND : undefined,
-    modelVersions: baseModels?.length ? { some: { baseModel: { in: baseModels } } } : undefined,
+    modelVersions: { some: { baseModel: baseModels?.length ? { in: baseModels } : undefined } },
   };
 
   const items = await dbRead.model.findMany({
@@ -243,6 +244,69 @@ const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
       }),
     };
   });
+};
+
+export const upsertModel = ({
+  id,
+  tagsOnModels,
+  ...data
+}: ModelUpsertInput & { userId: number }) => {
+  const select = modelWithDetailsSelect();
+
+  if (!id)
+    return dbWrite.model.create({
+      select,
+      data: {
+        ...data,
+        tagsOnModels: tagsOnModels
+          ? {
+              create: tagsOnModels.map((tag) => {
+                const name = tag.name.toLowerCase().trim();
+                return {
+                  tag: {
+                    connectOrCreate: {
+                      where: { name },
+                      create: { name, target: [TagTarget.Model] },
+                    },
+                  },
+                };
+              }),
+            }
+          : undefined,
+      },
+    });
+  else
+    return dbWrite.model.update({
+      select,
+      where: { id },
+      data: {
+        ...data,
+        tagsOnModels: tagsOnModels
+          ? {
+              deleteMany: {
+                tagId: {
+                  notIn: tagsOnModels.filter(isTag).map((x) => x.id),
+                },
+              },
+              connectOrCreate: tagsOnModels.filter(isTag).map((tag) => ({
+                where: { modelId_tagId: { tagId: tag.id, modelId: id as number } },
+                create: { tagId: tag.id },
+              })),
+              create: tagsOnModels.filter(isNotTag).map((tag) => {
+                const name = tag.name.toLowerCase().trim();
+                return {
+                  tag: {
+                    connectOrCreate: {
+                      where: { name },
+                      create: { name, target: [TagTarget.Model] },
+                    },
+                  },
+                };
+              }),
+            }
+          : undefined,
+      },
+    });
 };
 
 export const createModel = async ({

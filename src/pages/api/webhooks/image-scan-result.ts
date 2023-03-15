@@ -111,11 +111,22 @@ export default WebhookEndpoint(async function imageTags(req, res) {
   }
 
   try {
-    // Mark image as scanned
-    await dbWrite.image.updateMany({
-      where: { id: imageId },
-      data: { scannedAt: new Date() },
-    });
+    // Mark image as scanned and set the nsfw field based on the presence of automated tags with type 'Moderation'
+    await dbWrite.$executeRawUnsafe(`
+      UPDATE "Image"
+      SET
+        "scannedAt" = NOW(),
+        "nsfw" = EXISTS (
+          SELECT 1
+          FROM "TagsOnImage"
+          JOIN "Tag" ON "TagsOnImage"."tagId" = "Tag"."id"
+          WHERE
+            "TagsOnImage"."imageId" = ${imageId} AND
+            "TagsOnImage"."automated" = true AND
+            "Tag"."type" = '${TagType.Moderation}'
+        )
+      WHERE "id" = ${imageId};
+    `);
   } catch (e: any) {
     return res.status(500).json({ error: e.message });
   }

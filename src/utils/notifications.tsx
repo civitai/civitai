@@ -10,6 +10,7 @@ export function showErrorNotification({
   reason?: string;
   title?: string;
 }) {
+  console.error(error);
   const message = reason ?? error.message;
 
   showNotification({

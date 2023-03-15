@@ -25,16 +25,25 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
           },
         },
       })}
-      value={router.pathname === '/gallery' ? 'images' : 'models'}
+      value={
+        router.pathname === '/gallery'
+          ? 'images'
+          : router.pathname === '/posts'
+          ? 'posts'
+          : 'models'
+      }
       onChange={(value) => {
         if (value === 'images') {
           router.push('/gallery');
+        } else if (value === 'posts') {
+          router.push('/posts');
         } else {
           router.push('/');
         }
       }}
       data={[
         { label: 'Models', value: 'models' },
+        { label: 'Posts', value: 'posts' },
         { label: 'Images', value: 'images' },
       ]}
     />

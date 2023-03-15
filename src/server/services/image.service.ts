@@ -1,3 +1,4 @@
+import { isImageResource, IngestImageInput, ingestImageSchema } from './../schema/image.schema';
 import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
@@ -6,10 +7,17 @@ import { env } from '~/env/server.mjs';
 import { BrowsingMode, ImageSort } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetGalleryImageInput, GetImageConnectionsSchema } from '~/server/schema/image.schema';
+import {
+  GetGalleryImageInput,
+  GetImageConnectionsSchema,
+  UpdateImageInput,
+} from '~/server/schema/image.schema';
 import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
 import { deleteImage } from '~/utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
+import { simpleTagSelect, imageTagSelect } from '~/server/selectors/tag.selector';
+import { imageIngestion, ingestionMessageSchema } from '~/server/utils/image-ingestion';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -148,6 +156,7 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
   return await dbWrite.image.delete({ where: { id } });
 };
 
+// consider refactoring this endoint to only allow for updating `needsReview`, because that is all this endpoint is being used for...
 export const updateImageById = <TSelect extends Prisma.ImageSelect>({
   id,
   select,
@@ -205,4 +214,85 @@ export const getImageConnectionsById = ({ id, modelId, reviewId }: GetImageConne
       },
     },
   });
+};
+
+export const updateImage = async (image: UpdateImageInput) => {
+  await dbWrite.image.update({
+    where: { id: image.id },
+    data: {
+      ...image,
+      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      resources: image?.resources
+        ? {
+            deleteMany: {
+              NOT: image.resources.filter(isImageResource).map(({ id }) => ({ id })),
+            },
+            connectOrCreate: image.resources.filter(isImageResource).map((resource) => ({
+              where: { id: resource.id },
+              create: resource,
+            })),
+          }
+        : undefined,
+    },
+  });
+};
+
+export const getImageDetail = async ({ id }: GetByIdInput) => {
+  return await dbWrite.image.findUnique({
+    where: { id },
+    select: {
+      resources: {
+        select: {
+          id: true,
+          modelVersion: { select: { id: true, name: true } },
+          name: true,
+          detected: true,
+        },
+      },
+      tags: {
+        select: {
+          tag: {
+            select: simpleTagSelect,
+          },
+          automated: true,
+        },
+      },
+    },
+  });
+};
+
+export const ingestImage = async ({
+  image,
+  user,
+}: {
+  image: IngestImageInput;
+  user: SessionUser;
+}) => {
+  const { url, id, mimeType, ...params } = ingestImageSchema.parse(image);
+  const edgeUrl = getEdgeUrl(url, params);
+
+  const payload = await ingestionMessageSchema.parseAsync({
+    source: {
+      type: 'civitai',
+      name: 'Civitai',
+      id,
+      url: '',
+      user: { id: user.id, name: user.username },
+    },
+    image: edgeUrl,
+    contentType: mimeType,
+    action: 'label',
+  });
+
+  await dbWrite.image.update({
+    where: { id },
+    data: { scanRequestedAt: new Date() },
+    select: { id: true },
+  });
+  const msg = await imageIngestion(payload, `label-imageId-${id}`);
+  const imageTags = await dbWrite.tag.findMany({
+    where: { tagsOnImage: { some: { imageId: id } } },
+    select: imageTagSelect,
+  });
+  return imageTags;
 };

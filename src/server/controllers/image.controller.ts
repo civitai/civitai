@@ -1,3 +1,4 @@
+import { getImageDetail } from './../services/image.service';
 import { ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
@@ -9,6 +10,7 @@ import {
   GetGalleryImageInput,
   GetImageConnectionsSchema,
   ImageUpdateSchema,
+  UpdateImageInput,
 } from '~/server/schema/image.schema';
 import { imageGallerySelect } from '~/server/selectors/image.selector';
 import {
@@ -19,6 +21,7 @@ import {
   updateImageById,
   updateImageReportStatusByReason,
   getImageConnectionsById,
+  updateImage,
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
@@ -163,7 +166,7 @@ export const getGalleryImagesHandler = async ({
   }
 };
 
-export const updateImageHandler = async ({ input }: { input: ImageUpdateSchema }) => {
+export const moderateImageHandler = async ({ input }: { input: ImageUpdateSchema }) => {
   try {
     const { id, ...data } = input;
     const image = await updateImageById({
@@ -256,6 +259,24 @@ export const getImageConnectionDataHandler = async ({
 
     const { connections } = image;
     return connections;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const updateImageHandler = async ({ input }: { input: UpdateImageInput }) => {
+  try {
+    return await updateImage({ ...input });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getImageDetailHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    return await getImageDetail({ ...input });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

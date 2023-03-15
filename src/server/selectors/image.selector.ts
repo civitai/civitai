@@ -28,7 +28,6 @@ const { name, ...imageSelectWithoutName } = imageSelect;
 export { imageSelectWithoutName };
 
 const image = Prisma.validator<Prisma.ImageArgs>()({ select: imageSelect });
-
 export type ImageModel = Prisma.ImageGetPayload<typeof image>;
 
 export const imageGallerySelect = ({
@@ -88,6 +87,7 @@ export const prepareCreateImage = (image: ImageUploadProps) => {
           })),
         }
       : undefined,
+    resources: undefined, // TODO.posts - this is a temp value to stop typescript from complaining
   };
 
   return payload;
@@ -115,6 +115,7 @@ export const prepareUpdateImage = (image: ImageUploadProps) => {
           // })),
         }
       : undefined,
+    resources: undefined, // TODO.posts - this is a temp value to stop typescript from complaining
   };
   return payload;
 };

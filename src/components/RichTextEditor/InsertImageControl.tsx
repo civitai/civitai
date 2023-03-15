@@ -5,7 +5,7 @@ import {
 } from '@mantine/tiptap';
 import { IconPhoto } from '@tabler/icons';
 import { useRef } from 'react';
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 
 export function InsertImageControl(props: Props) {

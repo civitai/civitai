@@ -1,7 +1,7 @@
+import { IngestionMessageInput } from './../utils/image-ingestion';
 import { AMQPChannel, AMQPClient, AMQPError } from '@cloudamqp/amqp-client';
 import { env } from '~/env/server.mjs';
 import type { AMQPBaseClient } from '@cloudamqp/amqp-client/types/amqp-base-client';
-import { ingestionMessageSchema } from '../utils/image-ingestion';
 import { z } from 'zod';
 
 export const amqp = new AMQPClient(env.IMAGE_INGESTION_MESSAGE_QUEUE_SERVER ?? 'amqp://localhost');
@@ -36,7 +36,7 @@ export const isConnected = () => (connection === undefined ? false : connection.
  * const channel = await tryDefaultChannel();
  * await tryBasicPublish(channel, "ingestion", { source: {}, ... }));
  */
-export const tryBasicPublish = async <T extends typeof ingestionMessageSchema>(
+export const tryBasicPublish = async <T extends IngestionMessageInput>(
   channel: AMQPChannel,
   topic: string,
   message: T
@@ -77,12 +77,12 @@ const RPC_TIMEOUT = env.RPC_TIMEOUT ?? 10_000;
  * ```
  */
 export const tryRPC = async <T extends z.ZodTypeAny>(
-  message: unknown,
+  message: IngestionMessageInput,
   id: string,
   responseSchema: T,
   channel?: AMQPChannel,
   timeout = RPC_TIMEOUT
-): Promise<T> => {
+): Promise<z.infer<T>> => {
   return new Promise(async (resolve, reject) => {
     const ch = (await Promise.resolve(channel)) ?? (await tryDefaultChannel());
     if (ch === undefined) {
@@ -102,9 +102,18 @@ export const tryRPC = async <T extends z.ZodTypeAny>(
         return;
       }
 
-      const result = await responseSchema.parseAsync(msg);
+      // console.log({ msg });
+      try {
+        const response = JSON.parse(body);
+        const result = await responseSchema.parseAsync(response);
+        resolve(result);
+      } catch (e) {
+        console.error('Could not parse response', body);
+        throw e;
+      }
 
-      resolve(result);
+      // console.log({ msg });
+      // resolve({} as any);
 
       await consumer.cancel();
     });
@@ -124,6 +133,7 @@ export const tryRPC = async <T extends z.ZodTypeAny>(
     try {
       await consumer.wait(timeout);
     } catch (e) {
+      console.log('error', e);
       if (e instanceof AMQPError) {
         reject(new RPCError('Timed out for response'));
       } else {

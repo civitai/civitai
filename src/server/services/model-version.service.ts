@@ -2,6 +2,7 @@ import { dbWrite, dbRead } from '~/server/db/client';
 import { ModelVersionEngagementType, Prisma } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { GetByIdInput } from '~/server/schema/base.schema';
+import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
 
 export const getModelVersion = async <TSelect extends Prisma.ModelVersionSelect>({
   input: { id },
@@ -72,4 +73,12 @@ export const toggleModelVersionEngagement = async ({
 
 export const toggleNotifyModelVersion = ({ id, userId }: GetByIdInput & { userId: number }) => {
   return toggleModelVersionEngagement({ userId, versionId: id, type: 'Notify' });
+};
+
+export const upsertModelVersion = ({ id, ...data }: ModelVersionUpsertInput) => {
+  return dbWrite.modelVersion.upsert({
+    where: { id: id ?? -1 },
+    create: { ...data },
+    update: { ...data },
+  });
 };

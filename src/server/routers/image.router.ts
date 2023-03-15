@@ -1,3 +1,5 @@
+import { getImageDetailHandler } from './../controllers/image.controller';
+import { updateImageSchema } from './../schema/image.schema';
 import {
   deleteImageHandler,
   getGalleryImageDetailHandler,
@@ -7,6 +9,7 @@ import {
   getModelVersionImagesHandler,
   getReviewImagesHandler,
   setTosViolationHandler,
+  moderateImageHandler,
   updateImageHandler,
 } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
@@ -58,13 +61,18 @@ export const imageRouter = router({
   getConnectionData: publicProcedure
     .input(getImageConnectionsSchema)
     .query(getImageConnectionDataHandler),
-  update: protectedProcedure
+  moderate: protectedProcedure
     .input(imageUpdateSchema)
     .use(isOwnerOrModerator)
-    .mutation(updateImageHandler),
+    .mutation(moderateImageHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteImageHandler),
   setTosViolation: protectedProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
+  update: protectedProcedure
+    .input(updateImageSchema)
+    .use(isOwnerOrModerator)
+    .mutation(updateImageHandler),
+  getDetail: publicProcedure.input(getByIdSchema).query(getImageDetailHandler),
 });

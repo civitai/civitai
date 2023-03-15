@@ -1,11 +1,11 @@
-import { useRouter } from 'next/router';
+import Router from 'next/router';
 import { useEffect } from 'react';
 
-type Props = { unsavedChanges?: boolean };
+type Props = { unsavedChanges?: boolean; message?: string; eval?: () => boolean };
+// TODO.posts - props for hook to know only to catch navigation when leaving the site
+// TODO.posts - eval prop to that takes a method that returns a boolean
 
 export function useCatchNavigation({ unsavedChanges = false }: Props) {
-  const router = useRouter();
-
   // Display alert when closing tab/window or navigating out,
   // if there are unsaved changes
   useEffect(() => {
@@ -20,12 +20,12 @@ export function useCatchNavigation({ unsavedChanges = false }: Props) {
     function handleBrowsingAway() {
       if (!unsavedChanges) return;
       if (window.confirm(warningMessage)) return;
-      router.events.emit('routeChangeError');
+      Router.events.emit('routeChangeError');
 
       // Push state, because browser back action changes link and changes history state
       // but we stay on the same page
-      if (router.asPath !== window.location.pathname) {
-        window.history.pushState('', '', router.asPath);
+      if (Router.asPath !== window.location.pathname) {
+        window.history.pushState('', '', Router.asPath);
       }
 
       // Throw to prevent navigation
@@ -36,15 +36,15 @@ export function useCatchNavigation({ unsavedChanges = false }: Props) {
     // @see https://developer.mozilla.org/en-US/docs/Web/API/Window/beforeunload_event#usage_notes
     if (unsavedChanges) {
       window.addEventListener('beforeunload', handleWindowClose);
-      router.events.on('routeChangeStart', handleBrowsingAway);
+      Router.events.on('routeChangeStart', handleBrowsingAway);
     } else {
       window.removeEventListener('beforeunload', handleWindowClose);
-      router.events.off('routeChangeStart', handleBrowsingAway);
+      Router.events.off('routeChangeStart', handleBrowsingAway);
     }
 
     return () => {
       window.removeEventListener('beforeunload', handleWindowClose);
-      router.events.off('routeChangeStart', handleBrowsingAway);
+      Router.events.off('routeChangeStart', handleBrowsingAway);
     };
-  }, [unsavedChanges, router.asPath, router.events]);
+  }, [unsavedChanges]);
 }

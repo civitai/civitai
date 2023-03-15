@@ -35,6 +35,7 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -42,6 +43,7 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { isUUID } from '~/utils/string-helpers';
 
 export const getAllUsersHandler = async ({
   input,
@@ -125,6 +127,19 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: DeepNonNulla
   }
 };
 
+const validAvatarUrlPrefixes = [
+  'https://cdn.discordapp.com/avatars/',
+  'https://cdn.discordapp.com/embed/avatars/',
+  'https://avatars.githubusercontent.com/u/',
+  'https://lh3.googleusercontent.com/a/',
+];
+const verifyAvatar = (avatar: string) => {
+  if (avatar.startsWith('http')) {
+    return validAvatarUrlPrefixes.some((prefix) => avatar.startsWith(prefix));
+  } else if (isUUID(avatar)) return true; // Is a CF Images UUID
+  return false;
+};
+
 export const updateUserHandler = async ({
   ctx,
   input,
@@ -135,6 +150,11 @@ export const updateUserHandler = async ({
   const { id, badgeId, nameplateId, ...data } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
+
+  if (data.image) {
+    const valid = verifyAvatar(data.image);
+    if (!valid) throw throwBadRequestError('Invalid avatar URL');
+  }
 
   const isSettingCosmetics = badgeId !== undefined && nameplateId !== undefined;
 

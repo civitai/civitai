@@ -1,5 +1,5 @@
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
-import { RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 /**
  * Conserve aspect ratio of the original region. Useful when shrinking/enlarging

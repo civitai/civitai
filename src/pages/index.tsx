@@ -62,7 +62,7 @@ function Home() {
         }`}
         description="Civitai is a platform for Stable Diffusion AI Art models. We have a collection of over 1,700 models from 250+ creators. We also have a collection of 1200 reviews from the community along with 12,000+ images with prompts to get you started."
       />
-      <Container size="xl">
+      <Container fluid style={{ maxWidth: 2500 }}>
         {username && typeof username === 'string' && <Title>Models by {username}</Title>}
         {favorites && <Title>Your Liked Models</Title>}
         {hidden && <Title>Your Hidden Models</Title>}

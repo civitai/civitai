@@ -4,16 +4,25 @@ import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { tagSchema } from '~/server/schema/tag.schema';
 
-const stringToNumber = z.preprocess((value) => Number(value), z.number());
+const stringToNumber = z.preprocess(
+  (value) => (value ? Number(value) : undefined),
+  z.number().optional()
+);
 
-export const imageMetaSchema = z
-  .object({
-    prompt: z.string(),
-    negativePrompt: z.string(),
-    cfgScale: stringToNumber,
-    steps: stringToNumber,
-    sampler: z.string(),
-    seed: stringToNumber,
+const undefinedString = z.preprocess((value) => (value ? value : undefined), z.string().optional());
+
+export const imageGenerationSchema = z.object({
+  prompt: undefinedString,
+  negativePrompt: undefinedString,
+  cfgScale: stringToNumber,
+  steps: stringToNumber,
+  sampler: undefinedString,
+  seed: stringToNumber,
+});
+
+export const imageMetaSchema = imageGenerationSchema
+  .extend({
+    hashes: z.record(z.string()),
   })
   .partial()
   .passthrough();
@@ -38,6 +47,22 @@ export const imageAnalysisSchema = z.object({
   faces: z.array(faceDetectionSchema).optional(),
 });
 
+// #region [Image Resource]
+export type ImageResourceUpsertInput = z.infer<typeof imageResourceUpsertSchema>;
+export const imageResourceUpsertSchema = z.object({
+  id: z.number().optional(),
+  modelVersionId: z.number().optional(),
+  name: z.string().optional(),
+  detected: z.boolean().optional(),
+});
+export const isImageResource = (
+  entity: ImageResourceUpsertInput
+): entity is Omit<ImageResourceUpsertInput, 'id'> & { id: number } => !!entity.id;
+export const isNotImageResource = (
+  entity: ImageResourceUpsertInput
+): entity is Omit<ImageResourceUpsertInput, 'id'> & { id: undefined } => !entity.id;
+// #endregion
+
 export const imageSchema = z.object({
   id: z.number().optional(),
   name: z.string().nullish(),
@@ -57,6 +82,8 @@ export const imageSchema = z.object({
   analysis: imageAnalysisSchema.optional(),
   tags: z.array(tagSchema).optional(),
   needsReview: z.boolean().optional(),
+  postId: z.number().optional(),
+  resources: z.array(imageResourceUpsertSchema).optional(),
   mimeType: z.string().optional(),
   sizeKB: z.number().optional(),
 });
@@ -115,3 +142,25 @@ export const getImageConnectionsSchema = z.object({
   reviewId: z.number().nullish(),
 });
 export type GetImageConnectionsSchema = z.infer<typeof getImageConnectionsSchema>;
+
+export type UpdateImageInput = z.infer<typeof updateImageSchema>;
+export const updateImageSchema = z.object({
+  id: z.number(),
+  meta: z.preprocess((value) => {
+    if (typeof value !== 'object') return null;
+    if (value && !Object.keys(value).length) return null;
+    return value;
+  }, imageMetaSchema.nullish()),
+  hideMeta: z.boolean().optional(),
+  nsfw: z.boolean().optional(),
+  resources: z.array(imageResourceUpsertSchema).optional(),
+});
+
+export type IngestImageInput = z.infer<typeof ingestImageSchema>;
+export const ingestImageSchema = z.object({
+  id: z.number(),
+  url: z.string(),
+  name: z.string().optional(),
+  width: z.number(),
+  mimeType: z.string(),
+});

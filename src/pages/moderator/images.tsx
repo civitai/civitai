@@ -88,7 +88,7 @@ export default function Images() {
       showSuccessNotification({ message: 'The image has been deleted' });
     },
   });
-  const updateImageMutation = trpc.image.update.useMutation({
+  const updateImageMutation = trpc.image.moderate.useMutation({
     onMutate,
     onSuccess() {
       showSuccessNotification({ message: 'The image has been approved' });

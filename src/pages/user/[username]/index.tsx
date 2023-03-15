@@ -27,7 +27,8 @@ import {
 import { InferGetServerSidePropsType } from 'next/types';
 
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
-import { EdgeImage, getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
