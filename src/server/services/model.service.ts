@@ -377,7 +377,7 @@ export const createModel = async ({
                         },
                       })),
                     },
-                  },
+                  } as Prisma.ImageUncheckedCreateWithoutImagesOnModelsInput,
                 },
               })),
             },
