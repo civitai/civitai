@@ -5,6 +5,7 @@ import { trpc } from '~/utils/trpc';
 import { Container, Title, Text } from '@mantine/core';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export default function PostCreate() {
   const router = useRouter();
@@ -45,7 +46,7 @@ export default function PostCreate() {
   return (
     <Container size="xs">
       <Title>Create image post</Title>
-      {(version || versionLoading) && (
+      {modelVersionId && (version || versionLoading) && (
         <Text size="sm" color="dimmed">
           Posting to {version?.model.name} - {version?.name}
         </Text>

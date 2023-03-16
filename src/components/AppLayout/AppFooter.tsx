@@ -14,6 +14,7 @@ import { NextLink } from '@mantine/next';
 import { useState } from 'react';
 import { env } from '~/env/client.mjs';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 interface ScrollPosition {
   x: number;
@@ -39,6 +40,7 @@ export function AppFooter() {
   const [showHash, setShowHash] = useState(false);
   const [showFooter, setShowFooter] = useDebouncedState(true, 200);
   const mobile = useIsMobile();
+  const features = useFeatureFlags();
 
   useWindowEvent('scroll', () => {
     const scroll = getScrollPosition();
@@ -135,15 +137,17 @@ export function AppFooter() {
           >
             API
           </Button>
-          <Button
-            component={NextLink}
-            prefetch={false}
-            href="/posts/create"
-            {...buttonProps}
-            px={mobile ? 5 : 'xs'}
-          >
-            Create Post
-          </Button>
+          {features.posts && (
+            <Button
+              component={NextLink}
+              prefetch={false}
+              href="/posts/create"
+              {...buttonProps}
+              px={mobile ? 5 : 'xs'}
+            >
+              Create Post
+            </Button>
+          )}
         </Group>
         <Button
           component="a"
