@@ -1,9 +1,9 @@
+import { GetByIdInput } from '~/server/schema/base.schema';
 import { SessionUser } from 'next-auth';
 import { isNotImageResource } from './../schema/image.schema';
 import { editPostSelect } from './../selectors/post.selector';
 import { isDefined } from '~/utils/type-guards';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
-import { GetByIdInput } from './../schema/base.schema';
 import {
   PostUpdateInput,
   AddPostTagInput,
@@ -22,11 +22,9 @@ import { editPostImageSelect } from '~/server/selectors/post.selector';
 import { ModelFileType } from '~/server/common/constants';
 import { isImageResource } from '~/server/schema/image.schema';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
-import { env } from '~/env/server.mjs';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { BrowsingMode, PostSort } from '~/server/common/enums';
 import { getImageV2Select } from '~/server/selectors/imagev2.selector';
-import { getHiddenTagsForUser } from '~/server/services/user-cache.service';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -249,7 +247,7 @@ export const addPostImage = async ({
   ...image
 }: AddPostImageInput & { userId: number }) => {
   const autoResources = !!resources?.length
-    ? await dbWrite.modelFile.findMany({
+    ? await dbRead.modelFile.findMany({
         where: {
           type: { in: toInclude },
           hashes: {
@@ -320,4 +318,11 @@ export const reorderPostImages = async ({ imageIds }: ReorderPostImagesInput) =>
   );
 
   return transaction;
+};
+
+export const getPostResources = async ({ id }: GetByIdInput) => {
+  return await dbRead.postResourceHelper.findMany({
+    where: { postId: id },
+    orderBy: { modelName: 'asc' },
+  });
 };

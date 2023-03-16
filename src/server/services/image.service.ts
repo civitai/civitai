@@ -5,7 +5,7 @@ import {
   GetInfiniteImagesInput,
   GetImageInput,
 } from './../schema/image.schema';
-import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client';
+import { ModelStatus, Prisma, ReportReason, ReportStatus, TagType } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
 
@@ -22,9 +22,8 @@ import { imageGallerySelect, imageSelect } from '~/server/selectors/image.select
 import { deleteImage } from '~/utils/cf-images-utils';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
-import { simpleTagSelect, imageTagSelect } from '~/server/selectors/tag.selector';
+import { simpleTagSelect, imageTagSelect, ImageTag } from '~/server/selectors/tag.selector';
 import { getImageV2Select } from '~/server/selectors/imagev2.selector';
-import { ImageScanResultResponse } from '~/pages/api/webhooks/image-scan-result';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -269,7 +268,33 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
   });
 };
 
-export const ingestImage = async ({ image }: { image: IngestImageInput }) => {
+export type ImageScanResultResponse = {
+  ok: boolean;
+  error?: string;
+  deleted?: boolean;
+  blockedFor?: string[];
+  tags?: { type: string; name: string }[];
+};
+
+export type IngestImageReturnType =
+  | {
+      type: 'error';
+      data: { error: string };
+    }
+  | {
+      type: 'blocked';
+      data: { blockedFor?: string[]; tags?: { type: string; name: string }[] };
+    }
+  | {
+      type: 'success';
+      data: { tags: ImageTag[] };
+    };
+
+export const ingestImage = async ({
+  image,
+}: {
+  image: IngestImageInput;
+}): Promise<IngestImageReturnType> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
   const { url, id, width: oWidth, name } = ingestImageSchema.parse(image);
@@ -278,7 +303,7 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }) => {
   const gamma = anim === false ? 0.99 : undefined;
   const edgeUrl = getEdgeUrl(url, { width, anim, gamma });
 
-  const callbackHost = 'https://1202-173-207-126-206.ngrok.io';
+  const callbackHost = 'https://7eb2-96-19-177-244.ngrok.io';
   const payload = {
     imageId: id,
     url: edgeUrl,
@@ -293,19 +318,36 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }) => {
     select: { id: true },
   });
 
-  const { ok, deleted, blockedFor, tags } = (await fetch(env.IMAGE_SCANNING_ENDPOINT, {
+  const { ok, deleted, blockedFor, tags, error } = (await fetch(env.IMAGE_SCANNING_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   }).then((res) => res.json())) as ImageScanResultResponse;
 
+  if (error) {
+    return {
+      type: 'error',
+      data: { error },
+    };
+  }
+
+  if (deleted)
+    return {
+      type: 'blocked',
+      data: { tags, blockedFor },
+    };
+
   const imageTags = await dbWrite.tag.findMany({
     where: { tagsOnImage: { some: { imageId: id } } },
     select: imageTagSelect,
   });
-  return imageTags;
+  return {
+    type: 'success',
+    data: { tags: imageTags },
+  };
 };
 
+// TODO.posts - remove when post implementation is fully ready
 export const ingestNewImages = async ({
   reviewId,
   modelId,

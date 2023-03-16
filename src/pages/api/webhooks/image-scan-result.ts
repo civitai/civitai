@@ -149,11 +149,3 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 
   res.status(200).json({ ok: true });
 });
-
-export type ImageScanResultResponse = {
-  ok: boolean;
-  error?: string;
-  deleted?: boolean;
-  blockedFor?: string[];
-  tags?: { type: string; name: string }[];
-};

@@ -14,6 +14,7 @@ import {
   updatePostImageHandler,
   getPostTagsHandler,
   getPostsInfiniteHandler,
+  getPostResourcesHandler,
 } from './../controllers/post.controller';
 import {
   postCreateSchema,
@@ -93,4 +94,5 @@ export const postRouter = router({
     .input(removePostTagSchema)
     .use(isOwnerOrModerator)
     .mutation(removePostTagHandler),
+  getResources: publicProcedure.input(getByIdSchema).query(getPostResourcesHandler),
 });

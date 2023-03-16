@@ -22,6 +22,7 @@ import {
   updatePostImage,
   getPostTags,
   getPostsInfinite,
+  getPostResources,
 } from './../services/post.service';
 import { TRPCError } from '@trpc/server';
 import { PostCreateInput } from '~/server/schema/post.schema';
@@ -192,6 +193,17 @@ export const removePostTagHandler = async ({
 }) => {
   try {
     return await removePostTag({ ...input });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+// #endregion
+
+// #region [post resources]
+export const getPostResourcesHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    return await getPostResources({ ...input });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
