@@ -111,16 +111,16 @@ model User {
 
   imageReactions      ImageReaction[]
   sessionInvalidation SessionInvalidation[]
+  stats               UserStat?
+  rank                UserRank?
+  downloads           DownloadHistory[]
+  imageConnections    ImageConnection[]
   purchases           Purchase[]
   cosmetics           UserCosmetic[]
   postReactions       PostReaction[]
   posts               Post[]
   resourceReviews     ResourceReview[]
   tagVotes            TagsOnImageVote[]
-  UserStat            UserStat[]
-  UserRank            UserRank[]
-  DownloadHistory     DownloadHistory[]
-  ImageConnection     ImageConnection[]
 }
 
 model CustomerSubscription {
@@ -327,21 +327,21 @@ model Model {
   allowDerivatives      Boolean       @default(true)
   allowDifferentLicense Boolean       @default(true)
 
-  modelVersions   ModelVersion[]
-  reviews         Review[]
-  tagsOnModels    TagsOnModels[]
-  metrics         ModelMetric[]
-  saves           SavedModel[]
-  reports         ModelReport[]
-  engagements     ModelEngagement[]
-  comments        Comment[]
-  interests       ModelInterest[]
-  licenses        License[]
-  ModelRank       ModelRank[]
-  ModelReportStat ModelReportStat[]
-  DownloadHistory DownloadHistory[]
-  ImageConnection ImageConnection[]
-  ModelHash       ModelHash[]
+  modelVersions    ModelVersion[]
+  reviews          Review[]
+  tagsOnModels     TagsOnModels[]
+  metrics          ModelMetric[]
+  saves            SavedModel[]
+  reports          ModelReport[]
+  engagements      ModelEngagement[]
+  comments         Comment[]
+  interests        ModelInterest[]
+  licenses         License[]
+  rank             ModelRank?
+  reportStats      ModelReportStat?
+  downloads        DownloadHistory[]
+  imageConnections ImageConnection[]
+  hashes           ModelHash[]
 }
 
 model License {
@@ -404,13 +404,13 @@ model ModelVersion {
   files            ModelFile[]
   runStrategies    RunStrategy[]
   engagements      ModelVersionEngagement[]
+  rank             ModelVersionRank?
+  downloads        DownloadHistory[]
+  imageConnections ImageConnection[]
   imageResources   ImageResource[]
   posts            Post[]
   resourceReviews  ResourceReview[]
-  ModelVersionRank ModelVersionRank[]
-  DownloadHistory  DownloadHistory[]
-  ImageConnection  ImageConnection[]
-  ModelHash        ModelHash[]
+  hashes           ModelHash[]
 
   @@index([modelId], type: Hash)
 }
@@ -632,11 +632,11 @@ model Review {
   exclude        Boolean       @default(false)
   locked         Boolean       @default(false)
 
-  reactions       ReviewReaction[]
-  imagesOnReviews ImagesOnReviews[]
-  reports         ReviewReport[]
-  comments        Comment[]
-  ImageConnection ImageConnection[]
+  reactions        ReviewReaction[]
+  imagesOnReviews  ImagesOnReviews[]
+  reports          ReviewReport[]
+  comments         Comment[]
+  imageConnections ImageConnection[]
 
   @@index([modelId], type: Hash)
 }
@@ -692,14 +692,14 @@ model Post {
   updatedAt      DateTime      @updatedAt
   publishedAt    DateTime?
 
-  images     Image[]
-  tags       TagsOnPost[]
-  reactions  PostReaction[]
-  thread     Thread?
-  metrics    PostMetric[]
-  PostHelper PostHelper[]
-  PostStat   PostStat[]
-  PostRank   PostRank[]
+  images    Image[]
+  tags      TagsOnPost[]
+  reactions PostReaction[]
+  thread    Thread?
+  helper    PostHelper?
+  stats     PostStat?
+  rank      PostRank?
+  metrics   PostMetric[]
 }
 
 model PostMetric {
@@ -755,15 +755,15 @@ model Image {
   reports         ImageReport[]
   reactions       ImageReaction[]
   thread          Thread?
-  tags            ImageTag[]
-  tagsOnImage     TagsOnImage[]
+  tags            TagsOnImage[]
   tagVotes        TagsOnImageVote[]
+  tagComposites   ImageTag[]
   metrics         ImageMetric[]
+  connections     ImageConnection?
+  stats           ImageStat?
+  rank            ImageRank?
+  modHelper       ImageModHelper?
   resources       ImageResource[]
-  ImageConnection ImageConnection[]
-  ImageStat       ImageStat[]
-  ImageRank       ImageRank[]
-  ImageModHelper  ImageModHelper[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1095,12 +1095,12 @@ model Question {
   selectedAnswerId Int?     @unique
   selectedAnswer   Answer?  @relation("SelectedAnswer", fields: [selectedAnswerId], references: [id])
 
-  tags         TagsOnQuestions[]
-  reactions    QuestionReaction[]
-  answers      Answer[]           @relation("Question")
-  metrics      QuestionMetric[]
-  thread       Thread?
-  QuestionRank QuestionRank[]
+  tags      TagsOnQuestions[]
+  reactions QuestionReaction[]
+  answers   Answer[]           @relation("Question")
+  metrics   QuestionMetric[]
+  rank      QuestionRank?
+  thread    Thread?
 }
 
 model QuestionMetric {
@@ -1124,12 +1124,12 @@ model Answer {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  reactions  AnswerReaction[]
-  metrics    AnswerMetric[]
-  answerFor  Question?        @relation("SelectedAnswer")
-  votes      AnswerVote[]
-  thread     Thread?
-  AnswerRank AnswerRank[]
+  reactions AnswerReaction[]
+  metrics   AnswerMetric[]
+  answerFor Question?        @relation("SelectedAnswer")
+  votes     AnswerVote[]
+  rank      AnswerRank?
+  thread    Thread?
 }
 
 model AnswerVote {
