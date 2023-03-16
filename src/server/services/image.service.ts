@@ -268,23 +268,22 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
   });
 };
 
-export const ingestImage = async ({
-  image,
-  user,
-}: {
-  image: IngestImageInput;
-  user: SessionUser;
-}) => {
+export const ingestImage = async ({ image }: { image: IngestImageInput }) => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
-  const { url, id, mimeType, ...params } = ingestImageSchema.parse(image);
-  const edgeUrl = getEdgeUrl(url, params);
+  const { url, id, width: oWidth, name } = ingestImageSchema.parse(image);
+  const width = Math.min(oWidth ?? 450, 4096);
+  const anim = name?.endsWith('.gif') ? false : undefined;
+  const gamma = anim === false ? 0.99 : undefined;
+  const edgeUrl = getEdgeUrl(url, { width, anim, gamma });
 
+  const callbackHost = 'https://1202-173-207-126-206.ngrok.io';
   const payload = {
     imageId: id,
     url: edgeUrl,
     wait: true,
     scans: [ImageScanType.Label, ImageScanType.Moderation],
+    callbackUrl: `${callbackHost}/api/webhooks/image-scan-result?token=${env.WEBHOOK_TOKEN}`,
   };
 
   await dbWrite.image.update({
@@ -304,6 +303,25 @@ export const ingestImage = async ({
     select: imageTagSelect,
   });
   return imageTags;
+};
+
+export const ingestNewImages = async ({
+  reviewId,
+  modelId,
+}: {
+  reviewId?: number;
+  modelId?: number;
+}) => {
+  const images = await dbWrite.image.findMany({
+    where: {
+      imagesOnModels: modelId ? { modelVersion: { modelId } } : undefined,
+      imagesOnReviews: reviewId ? { reviewId } : undefined,
+      scanRequestedAt: null,
+    },
+    select: { id: true, url: true, width: true, name: true },
+  });
+
+  Promise.all(images.map((image) => ingestImage({ image })));
 };
 
 // #region [new service methods]

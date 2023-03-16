@@ -74,10 +74,10 @@ export const ImageProcessingProvider = ({ children }: { children: React.ReactNod
     return workerPromise.current;
   };
 
-  const workerReq = async (req: WorkerIncomingMessage) => {
-    const worker = await getWorker();
-    worker.port.postMessage(req);
-  };
+  // const workerReq = async (req: WorkerIncomingMessage) => {
+  //   const worker = await getWorker();
+  //   worker.port.postMessage(req);
+  // };
 
   const scanImages = async (files: File[], cb: MessageCallback) => {
     const displayData = files.map(
@@ -91,39 +91,27 @@ export const ImageProcessingProvider = ({ children }: { children: React.ReactNod
       })
     );
 
-    for (const item of displayData) {
-      callbackQueue[item.uuid] = cb;
-      processingQueue[item.uuid] = item;
-      cb({ type: 'processing', payload: item });
-    }
-
-    const payload = await Promise.all(
+    await Promise.all(
       displayData.map(async (item) => {
         const meta = await getMetadata(item.file);
         const img = await loadImage(item.src);
-        const imageData = await getImageData(img);
         const hashResult = blurHashImage(img);
+        const auditResult = auditMetaData(meta, false);
+        const blockedFor = !auditResult?.success ? auditResult?.blockedFor : undefined;
 
-        const processing = processingQueue[item.uuid];
         const payload: ImageProcessing = {
-          meta,
           ...hashResult,
-          ...processing,
-        };
-        processingQueue[item.uuid] = payload;
-
-        cb({ type: 'processing', payload });
-
-        return {
-          uuid: item.uuid,
-          file: item.file,
+          ...item,
+          nsfw: false,
           meta,
-          imageData,
+          status: 'finished',
+          blockedFor,
         };
+        cb({ type: 'processing', payload });
       })
     );
 
-    workerReq({ type: 'analyze', payload });
+    // workerReq({ type: 'analyze', payload });
   };
 
   return <NsfwWorkerCtx.Provider value={{ scanImages }}>{children}</NsfwWorkerCtx.Provider>;

@@ -138,7 +138,6 @@ export default createRoutedContext({
             <InputImageUpload
               name="images"
               label="Generated Images"
-              loading={isUploading}
               onChange={(values) => {
                 setIsUploading(values.some((x) => x.status === 'uploading'));
                 setIsComplete(values.filter((x) => x.status).every((x) => x.status === 'complete'));

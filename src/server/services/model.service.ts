@@ -16,6 +16,7 @@ import {
   prepareUpdateImage,
 } from '~/server/selectors/image.selector';
 import { modelWithDetailsSelect } from '~/server/selectors/model.selector';
+import { ingestNewImages } from '~/server/services/image.service';
 import { prepareFile } from '~/utils/file-helpers';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
@@ -315,23 +316,12 @@ export const createModel = async ({
   tagsOnModels,
   ...data
 }: ModelInput & { userId: number }) => {
-  // TODO Cleaning: Merge Add & Update + Transaction
-  // Create prisma transaction
-  // Upsert Model: separate function
-  // Upsert ModelVersions: separate function
-  // Upsert Tags: separate function
-  // Upsert Images: separate function
-  // Upsert ImagesOnModels: separate function
-  // Upsert ModelFiles: separate function
-  // 👆 Ideally the whole thing will only be this many lines
-  //    All of the logic would be in the separate functions
-
   const parsedModelVersions = prepareModelVersions(modelVersions);
   const allImagesNSFW = parsedModelVersions
     .flatMap((version) => version.images)
     .every((image) => image.nsfw);
 
-  return dbWrite.$transaction(async (tx) => {
+  const model = await dbWrite.$transaction(async (tx) => {
     if (tagsOnModels)
       await tx.tag.updateMany({
         where: {
@@ -399,8 +389,13 @@ export const createModel = async ({
             }
           : undefined,
       },
+      select: { id: true },
     });
   });
+
+  await ingestNewImages({ modelId: model.id });
+
+  return model;
 };
 
 export const updateModel = async ({
@@ -483,7 +478,7 @@ export const updateModel = async ({
       data: { target: { push: TagTarget.Model } },
     });
 
-  return dbWrite.model.update({
+  const model = await dbWrite.model.update({
     where: { id },
     data: {
       ...data,
@@ -619,5 +614,11 @@ export const updateModel = async ({
           }
         : undefined,
     },
+    select: { id: true },
   });
+
+  // Request scan for new images
+  await ingestNewImages({ modelId: model.id });
+
+  return model;
 };
