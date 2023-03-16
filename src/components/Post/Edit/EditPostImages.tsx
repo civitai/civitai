@@ -1,6 +1,5 @@
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { trpc } from '~/utils/trpc';
-import { useEditPostContext, ImageUpload } from './EditPostProvider';
+import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvider';
 import {
   createStyles,
   Stack,
@@ -49,7 +48,9 @@ export function EditPostImages() {
       <Stack>
         {images.map(({ type, data }, index) => (
           <Fragment key={index}>
-            {type === 'image' ? <ImageController image={data} /> : <ImageUpload {...data} />}
+            {type === 'image' && <ImageController image={data} />}
+            {type === 'upload' && <ImageUpload {...data} />}
+            {type === 'blocked' && <ImageBlocked {...data} />}
           </Fragment>
         ))}
       </Stack>
@@ -211,6 +212,50 @@ function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
           </Card>
         </>
       )}
+    </Card>
+  );
+}
+
+function ImageBlocked({ blockedFor, tags, uuid }: ImageBlocked) {
+  const { classes, cx } = useStyles();
+  const removeFile = useEditPostContext((state) => state.removeFile);
+  return (
+    <Card className={classes.container} withBorder p={0}>
+      <Alert color="red" title="TOS Violation">
+        <Group spacing={4}>
+          <Popover position="top" withinPortal withArrow>
+            <Popover.Target>
+              <ActionIcon>
+                <IconInfoCircle />
+              </ActionIcon>
+            </Popover.Target>
+            <Popover.Dropdown>
+              <Stack spacing={0}>
+                <Text size="xs" weight={500}>
+                  Blocked for
+                </Text>
+                <Code color="red">{blockedFor}</Code>
+                <Group>
+                  {tags?.map((x) => (
+                    <Badge key={x.name} color="red">
+                      {x.name}
+                    </Badge>
+                  ))}
+                </Group>
+              </Stack>
+            </Popover.Dropdown>
+          </Popover>
+          <Text>
+            The image you uploaded was determined to violate our TOS and has been completely removed
+            from our service
+          </Text>
+        </Group>
+      </Alert>
+      <div className={classes.header}>
+        <ActionIcon color="red" onClick={() => removeFile(uuid)}>
+          <IconX />
+        </ActionIcon>
+      </div>
     </Card>
   );
 }

@@ -4,6 +4,7 @@ import { EditPostControls } from '~/components/Post/Edit/EditPostControls';
 import { EditPostDetail } from '~/components/Post/Edit/EditPostDetail';
 import { EditPostImages } from '~/components/Post/Edit/EditPostImages';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
+import { EditPostReviews } from '~/components/Post/Edit/EditPostReviews';
 import { EditPostTitle } from '~/components/Post/Edit/EditPostTitle';
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import { ReorderImages } from '~/components/Post/Edit/ReorderImages';
@@ -22,7 +23,7 @@ export default function PostEdit() {
           <Stack>
             <Title size="sm">POST</Title>
             <EditPostControls />
-            {/* <EditPostReviews /> */}
+            <EditPostReviews />
           </Stack>
         </Grid.Col>
         <Grid.Col md={8} sm={6} orderSm={1}>

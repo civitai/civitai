@@ -3,13 +3,13 @@ import { createContext, useContext, useRef, useEffect, SetStateAction } from 're
 import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
 import { PostEditDetail, PostEditImage } from '~/server/controllers/post.controller';
-import { ImageTag, SimpleTag } from '~/server/selectors/tag.selector';
 import { devtools } from 'zustand/middleware';
 import { loadImage, blurHashImage } from '~/utils/blurhash';
 import { getMetadata, auditMetaData } from '~/utils/image-metadata';
 import { isDefined } from '~/utils/type-guards';
 import { trpc } from '~/utils/trpc';
 import { useCFUploadStore } from '~/store/cf-upload.store';
+import { IngestImageReturnType } from '~/server/services/image.service';
 
 //https://github.com/pmndrs/zustand/blob/main/docs/guides/initialize-state-with-props.md
 export type ImageUpload = {
@@ -27,7 +27,15 @@ export type ImageUpload = {
   mimeType: string;
   file: File;
 };
-type ImageProps = { type: 'image'; data: PostEditImage } | { type: 'upload'; data: ImageUpload };
+export type ImageBlocked = {
+  uuid: string;
+  blockedFor?: string[];
+  tags?: { type: string; name: string }[];
+};
+type ImageProps =
+  | { type: 'image'; data: PostEditImage }
+  | { type: 'upload'; data: ImageUpload }
+  | { type: 'blocked'; data: ImageBlocked };
 type TagProps = { id?: number; name: string };
 type EditPostProps = {
   objectUrls: string[];
@@ -181,14 +189,28 @@ const createEditPostStore = ({
                     };
                   });
                   try {
-                    const imageTags = await ingestImage(created);
-                    set((state) => {
-                      const index = state.images.findIndex(
-                        (x) => x.type === 'image' && x.data.id === created.id
-                      );
-                      if (index === -1) throw new Error('index out of bounds');
-                      (state.images[index].data as PostEditImage).tags = imageTags;
-                    });
+                    const result = await ingestImage(created);
+                    if (result.type === 'error') {
+                      // console.error(result.data.error);
+                    } else if (result.type === 'blocked') {
+                      set((state) => {
+                        const index = state.images.findIndex(
+                          (x) => x.type === 'image' && x.data.id === created.id
+                        );
+                        if (index === -1) throw new Error('index out of bounds');
+                        state.images[index].type = 'blocked';
+                        state.images[index].data = { ...result.data, uuid: data.uuid };
+                      });
+                    } else if (result.type === 'success') {
+                      const imageTags = result.data.tags;
+                      set((state) => {
+                        const index = state.images.findIndex(
+                          (x) => x.type === 'image' && x.data.id === created.id
+                        );
+                        if (index === -1) throw new Error('index out of bounds');
+                        (state.images[index].data as PostEditImage).tags = imageTags;
+                      });
+                    }
                   } catch (error) {
                     console.error(error);
                   }
@@ -286,6 +308,7 @@ export function useEditPostContext<T>(selector: (state: EditPostState) => T) {
 const getImageDataFromFile = async (file: File) => {
   const url = URL.createObjectURL(file);
   const meta = await getMetadata(file);
+  console.log({ meta });
   const resources = meta.hashes ? Object.values(meta.hashes) : [];
   const img = await loadImage(url);
   const hashResult = blurHashImage(img);
@@ -308,12 +331,13 @@ const getImageDataFromFile = async (file: File) => {
   };
 };
 
-const ingestImage = async (image: PostEditImage): Promise<ImageTag[]> => {
+const ingestImage = async (image: PostEditImage): Promise<IngestImageReturnType> => {
   const res = await fetch('/api/image/ingest', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(image),
     credentials: 'include',
   });
+  if (!res.ok) throw new Error((await res.json()).message);
   return await res.json();
 };
