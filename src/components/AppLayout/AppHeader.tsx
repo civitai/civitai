@@ -178,7 +178,7 @@ export function AppHeader() {
   const links: MenuLink[] = useMemo(
     () => [
       {
-        href: '/models/new',
+        href: '/models/create',
         visible: !isMuted,
         loginRedirect: 'upload-model',
         label: (

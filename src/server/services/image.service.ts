@@ -24,6 +24,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
 import { simpleTagSelect, imageTagSelect } from '~/server/selectors/tag.selector';
 import { getImageV2Select } from '~/server/selectors/imagev2.selector';
+import { ImageScanResultResponse } from '~/pages/api/webhooks/image-scan-result';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -292,11 +293,11 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }) => {
     select: { id: true },
   });
 
-  await fetch(env.IMAGE_SCANNING_ENDPOINT, {
+  const { ok, deleted, blockedFor, tags } = (await fetch(env.IMAGE_SCANNING_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  });
+  }).then((res) => res.json())) as ImageScanResultResponse;
 
   const imageTags = await dbWrite.tag.findMany({
     where: { tagsOnImage: { some: { imageId: id } } },

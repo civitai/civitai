@@ -1,7 +1,9 @@
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { TagTarget, TagType } from '@prisma/client';
+import { Prisma, TagTarget, TagType } from '@prisma/client';
+import { auditMetaData } from '~/utils/image-metadata';
+import { deleteImageById } from '~/server/services/image.service';
 
 const tagSchema = z.object({
   tag: z.string().transform((x) => x.toLowerCase().trim()),
@@ -16,19 +18,20 @@ const bodySchema = z.object({
 const tagCache: Record<string, number> = {};
 
 export default WebhookEndpoint(async function imageTags(req, res) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+  if (req.method !== 'POST')
+    return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 
   const bodyResults = bodySchema.safeParse(req.body);
   if (!bodyResults.success)
     return res
       .status(400)
-      .json({ error: `Invalid body: ${bodyResults.error.flatten().fieldErrors}` });
+      .json({ ok: false, error: `Invalid body: ${bodyResults.error.flatten().fieldErrors}` });
   const { id: imageId, isValid, tags: incomingTags } = bodyResults.data;
 
   // If image is not valid, delete image
   if (!isValid) {
     try {
-      await dbWrite.image.delete({ where: { id: imageId } });
+      await deleteImageById({ id: imageId });
     } catch {
       // Do nothing... it must already be gone
     }
@@ -107,29 +110,50 @@ export default WebhookEndpoint(async function imageTags(req, res) {
     });
     if (!image) return res.status(404).json({ error: 'Image not found' });
 
-    return res.status(500).json({ error: e.message });
+    return res.status(500).json({ ok: false, error: e.message });
   }
 
   try {
     // Mark image as scanned and set the nsfw field based on the presence of automated tags with type 'Moderation'
-    await dbWrite.$executeRawUnsafe(`
-      UPDATE "Image"
-      SET
-        "scannedAt" = NOW(),
-        "nsfw" = EXISTS (
-          SELECT 1
-          FROM "TagsOnImage"
-          JOIN "Tag" ON "TagsOnImage"."tagId" = "Tag"."id"
-          WHERE
-            "TagsOnImage"."imageId" = ${imageId} AND
-            "TagsOnImage"."automated" = true AND
-            "Tag"."type" = '${TagType.Moderation}'
-        )
-      WHERE "id" = ${imageId};
-    `);
+    const tags =
+      (
+        await dbWrite.tagsOnImage.findMany({
+          where: { imageId, automated: true },
+          select: { tag: { select: { type: true, name: true } } },
+        })
+      )?.map((x) => x.tag) ?? [];
+    const nsfw = tags.some((x) => x.type === TagType.Moderation);
+    const hasMinorTag = tags.some((x) => ['child', 'teen'].includes(x.name));
+
+    // Set scannedAt and nsfw
+    const image = await dbWrite.image.update({
+      where: { id: imageId },
+      data: { scannedAt: new Date(), nsfw, needsReview: hasMinorTag ? true : undefined },
+      select: { id: true, meta: true },
+    });
+
+    // Check metadata for blocklist if nsfw, if on blocklist, delete it...
+    const prompt = (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined;
+    if (nsfw && prompt) {
+      const { success, blockedFor } = auditMetaData({ prompt }, nsfw);
+      if (!success) {
+        await deleteImageById({ id: imageId });
+        return res
+          .status(200)
+          .json({ ok: false, error: 'Contains blocked keywords', deleted: true, blockedFor, tags });
+      }
+    }
   } catch (e: any) {
-    return res.status(500).json({ error: e.message });
+    return res.status(500).json({ ok: false, error: e.message });
   }
 
   res.status(200).json({ ok: true });
 });
+
+export type ImageScanResultResponse = {
+  ok: boolean;
+  error?: string;
+  deleted?: boolean;
+  blockedFor?: string[];
+  tags?: { type: string; name: string }[];
+};
