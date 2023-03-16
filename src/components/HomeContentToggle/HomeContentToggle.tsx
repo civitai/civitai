@@ -1,4 +1,4 @@
-import { SegmentedControl, SegmentedControlProps } from '@mantine/core';
+import { SegmentedControl, SegmentedControlItem, SegmentedControlProps } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
@@ -6,7 +6,11 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
   const router = useRouter();
   const features = useFeatureFlags();
 
-  if (!features.gallery) return null;
+  if (!features.gallery && !features.posts) return null;
+
+  const data: SegmentedControlItem[] = [{ label: 'Models', value: 'models' }];
+  if (features.posts) data.push({ label: 'Posts', value: 'posts' });
+  if (features.gallery) data.push({ label: 'Images', value: 'images' });
 
   return (
     <SegmentedControl
@@ -15,9 +19,6 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
         ...(typeof sx === 'function' ? sx(theme) : sx),
       })}
       styles={(theme) => ({
-        root: {
-          // padding: 0,
-        },
         label: {
           [theme.fn.largerThan('xs')]: {
             paddingTop: 0,
@@ -37,11 +38,7 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
           router.push('/');
         }
       }}
-      data={[
-        { label: 'Models', value: 'models' },
-        { label: 'Posts', value: 'posts' },
-        { label: 'Images', value: 'images' },
-      ]}
+      data={data}
     />
   );
 }

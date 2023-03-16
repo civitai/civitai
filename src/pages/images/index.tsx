@@ -6,8 +6,13 @@ import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { Announcements } from '~/components/Announcements/Announcements';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { NotFound } from '~/components/AppLayout/NotFound';
 
 export default function ImagesPage() {
+  const features = useFeatureFlags();
+  if (!features.gallery) return <NotFound />;
+
   return (
     <Container fluid style={{ maxWidth: 2500 }}>
       <Stack spacing="xs">

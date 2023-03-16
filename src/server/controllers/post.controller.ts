@@ -76,10 +76,6 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
   try {
     const post = await getPostDetail({ ...input, user: ctx.user });
     if (!post) throw throwNotFoundError();
-    const isOwnerOrModerator = post.user.id === ctx.user?.id || ctx.user?.isModerator;
-    // TODO.posts - additional view logic
-    const canView = isOwnerOrModerator || post.publishedAt;
-    if (!canView) throw throwNotFoundError();
     return post;
   } catch (error) {
     if (error instanceof TRPCError) throw error;

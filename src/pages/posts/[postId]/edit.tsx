@@ -1,15 +1,20 @@
-import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
-import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
-import { Container, Title, Stack, Grid } from '@mantine/core';
-import { EditPostImages } from '~/components/Post/Edit/EditPostImages';
-import { EditPostTitle } from '~/components/Post/Edit/EditPostTitle';
-import { ReorderImages } from '~/components/Post/Edit/ReorderImages';
+import { Container, Grid, Stack, Title } from '@mantine/core';
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { EditPostControls } from '~/components/Post/Edit/EditPostControls';
-import { EditPostReviews } from '~/components/Post/Edit/EditPostReviews';
 import { EditPostDetail } from '~/components/Post/Edit/EditPostDetail';
+import { EditPostImages } from '~/components/Post/Edit/EditPostImages';
+import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
+import { EditPostTitle } from '~/components/Post/Edit/EditPostTitle';
+import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
+import { ReorderImages } from '~/components/Post/Edit/ReorderImages';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export default function PostEdit() {
   const reorder = useEditPostContext((state) => state.reorder);
+
+  const features = useFeatureFlags();
+  if (!features.posts) return <NotFound />;
+
   return (
     <Container>
       <Grid gutter={30}>

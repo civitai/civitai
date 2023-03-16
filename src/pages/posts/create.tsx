@@ -4,6 +4,7 @@ import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import { trpc } from '~/utils/trpc';
 import { Container, Title, Text } from '@mantine/core';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
+import { NotFound } from '~/components/AppLayout/NotFound';
 
 export default function PostCreate() {
   const router = useRouter();
@@ -37,6 +38,9 @@ export default function PostCreate() {
       }
     );
   };
+
+  const features = useFeatureFlags();
+  if (!features.posts) return <NotFound />;
 
   return (
     <Container size="xs">

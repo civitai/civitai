@@ -6,8 +6,13 @@ import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentTog
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { PostCategories } from '~/components/Post/Infinite/PostCategories';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { NotFound } from '~/components/AppLayout/NotFound';
 
 export default function PostsPage() {
+  const features = useFeatureFlags();
+  if (!features.posts) return <NotFound />;
+
   return (
     <Container fluid style={{ maxWidth: 2500 }}>
       <Stack spacing="xs">
