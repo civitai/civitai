@@ -166,7 +166,6 @@ export const ingestImageSchema = z.object({
 });
 
 // #region [new schemas]
-
 export type GetInfiniteImagesInput = z.infer<typeof getInfiniteImagesSchema>;
 export const getInfiniteImagesSchema = z.object({
   limit: z.number().min(0).max(200).default(100),
@@ -179,5 +178,14 @@ export const getInfiniteImagesSchema = z.object({
   browsingMode: z.nativeEnum(BrowsingMode).optional(),
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
+  tags: z.array(z.number()).optional(),
+});
+
+export type GetImageInput = z.infer<typeof getImageSchema>;
+export const getImageSchema = z.object({
+  id: z.number(),
+  excludedTagIds: z.array(z.number()).optional(),
+  excludedUserIds: z.array(z.number()).optional(),
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
 });
 // #endregion

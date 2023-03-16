@@ -1,5 +1,9 @@
 import { applyBrowsingMode } from './../middleware.trpc';
-import { getImageDetailHandler, getInfiniteImagesHandler } from './../controllers/image.controller';
+import {
+  getImageDetailHandler,
+  getImageHandler,
+  getInfiniteImagesHandler,
+} from './../controllers/image.controller';
 import { updateImageSchema, getInfiniteImagesSchema } from './../schema/image.schema';
 import {
   deleteImageHandler,
@@ -86,4 +90,5 @@ export const imageRouter = router({
     .use(applyUserPreferences())
     .use(applyBrowsingMode())
     .query(getInfiniteImagesHandler),
+  get: publicProcedure.input(getByIdSchema).query(getImageHandler),
 });

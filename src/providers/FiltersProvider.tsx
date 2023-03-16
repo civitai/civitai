@@ -115,13 +115,15 @@ export const useModelFilters = () => {
 export const usePostFilters = () => {
   const shared = useSharedFilters('post');
   const sort = useFiltersContext((state) => state.post.sort);
-  return { ...shared, sort };
+  const tags = useFiltersContext((state) => state.post.tags);
+  return { ...shared, sort, tags };
 };
 
 export const useImageFilters = () => {
   const shared = useSharedFilters('image');
   const sort = useFiltersContext((state) => state.image.sort);
-  return { ...shared, sort };
+  const tags = useFiltersContext((state) => state.image.tags);
+  return { ...shared, sort, tags };
 };
 
 export const useQuestionFilters = () => {

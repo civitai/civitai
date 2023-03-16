@@ -95,7 +95,7 @@ type ImageProps = {
 type ImageGuardProps<T extends ImageProps> = {
   images: T[];
   connect?: ImageGuardConnect;
-  render: (image: T, index: number) => React.ReactNode;
+  render: (image: T, index: number) => React.ReactElement;
   /** Make all images nsfw by default */
   nsfw?: boolean;
 };

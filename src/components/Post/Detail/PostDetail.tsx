@@ -4,7 +4,6 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PostComments } from '~/components/Post/Detail/PostComments';
 import { trpc } from '~/utils/trpc';
 import { PostControls } from '~/components/Post/Detail/PostControls';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { PostImages } from '~/components/Post/Detail/PostImages';
 

@@ -3,6 +3,7 @@ import {
   IngestImageInput,
   ingestImageSchema,
   GetInfiniteImagesInput,
+  GetImageInput,
 } from './../schema/image.schema';
 import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { SessionUser } from 'next-auth';
@@ -306,6 +307,7 @@ export const ingestImage = async ({
 };
 
 // #region [new service methods]
+export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async ({
   limit,
   cursor,
@@ -318,6 +320,7 @@ export const getAllImages = async ({
   period,
   sort,
   userId,
+  tags,
 }: GetInfiniteImagesInput & { userId?: number }) => {
   const AND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   if (postId) AND.push({ postId });
@@ -334,6 +337,7 @@ export const getAllImages = async ({
       ],
     });
   }
+  if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
 
   const orderBy: Prisma.Enumerable<Prisma.ImageOrderByWithRelationInput> = [];
   if (postId) orderBy.push({ index: 'asc' });
@@ -363,5 +367,18 @@ export const getAllImages = async ({
     nextCursor,
     items: images,
   };
+};
+
+export const getImage = async ({
+  id,
+  excludedTagIds,
+  excludedUserIds,
+  browsingMode,
+  userId,
+}: GetImageInput & { userId?: number }) => {
+  const image = await dbRead.image.findUnique({
+    where: { id },
+    select: getImageV2Select({ userId }),
+  });
 };
 // #endregion

@@ -47,7 +47,7 @@ export function PostImages({ postId }: { postId: number }) {
         render={(image) => {
           const width = image.width ?? maxWidth;
           return (
-            <Paper key={image.id} radius="md" className={classes.frame}>
+            <Paper radius="md" className={classes.frame}>
               <ImageGuard.ToggleConnect
                 sx={(theme) => ({
                   backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
