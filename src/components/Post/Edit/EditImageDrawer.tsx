@@ -27,6 +27,7 @@ import { splitUppercase } from '~/utils/string-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { TagType } from '@prisma/client';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 const matureLabel = 'Mature content may include content that is suggestive or provocative';
 const tooltipProps: Partial<TooltipProps> = {
@@ -172,25 +173,46 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
             </Input.Wrapper>
             <Input.Wrapper label="Resources">
               {!!image.resources.length ? (
-                image.resources.map((r) => (
-                  <Card key={r.id} p={8} withBorder>
-                    {r.modelVersion && (
-                      <Stack>
-                        <Group spacing={4} position="apart" noWrap>
-                          <Group spacing={4} noWrap>
-                            <Text size="sm" weight={500} lineClamp={1}>
-                              {r.modelVersion.model.name}
-                            </Text>
-                            {/* <IconVersions size={16} /> */}
+                <Stack>
+                  <DismissibleAlert
+                    id="not-all-resources"
+                    color="blue"
+                    title="Missing resources?"
+                    content={
+                      <>
+                        Install the{' '}
+                        <Text
+                          component="a"
+                          href="https://github.com/civitai/sd_civitai_extension"
+                          target="_blank"
+                          variant="link"
+                        >
+                          Civitai Extension for Automatic 1111 Stable Diffusion Web UI
+                        </Text>{' '}
+                        to automatically detect all the resources used in your images.
+                      </>
+                    }
+                  ></DismissibleAlert>
+                  {image.resources.map((r) => (
+                    <Card key={r.id} p={8} withBorder>
+                      {r.modelVersion && (
+                        <Stack>
+                          <Group spacing={4} position="apart" noWrap>
+                            <Group spacing={4} noWrap>
+                              <Text size="sm" weight={500} lineClamp={1}>
+                                {r.modelVersion.model.name}
+                              </Text>
+                              {/* <IconVersions size={16} /> */}
+                            </Group>
+                            <Badge radius="sm" size="sm">
+                              {splitUppercase(r.modelVersion.model.type)}
+                            </Badge>
                           </Group>
-                          <Badge radius="sm" size="sm">
-                            {splitUppercase(r.modelVersion.model.type)}
-                          </Badge>
-                        </Group>
-                      </Stack>
-                    )}
-                  </Card>
-                ))
+                        </Stack>
+                      )}
+                    </Card>
+                  ))}
+                </Stack>
               ) : (
                 <Alert color="yellow">
                   We could not detect any resources associated with this image. If this image is
@@ -220,7 +242,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
                 />
               </Grid.Col>
               <Grid.Col span={6}>
-                <InputNumber name="meta.cfgSchale" label="Guidance scale" min={0} max={30} />
+                <InputNumber name="meta.cfgScale" label="Guidance scale" min={0} max={30} />
               </Grid.Col>
               <Grid.Col span={6}>
                 <InputNumber name="meta.steps" label="Steps" />
@@ -250,12 +272,13 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
                     'DPM++ SDE Karras',
                     'DDIM',
                     'PLMS',
+                    'UniPC',
                   ]}
                   label="Sampler"
                 />
               </Grid.Col>
               <Grid.Col span={6}>
-                <InputNumber name="meta.seed" label="Seed" />
+                <InputNumber name="meta.seed" label="Seed" format="default" />
               </Grid.Col>
             </Grid>
           </Stack>

@@ -19,6 +19,28 @@ export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: 
   }
 };
 
+export const getModelVersionHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const version = await getVersionById({
+      ...input,
+      select: {
+        id: true,
+        name: true,
+        model: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+    if (!version) throw throwNotFoundError(`Model version could not be found`);
+    return version;
+  } catch (e) {
+    throw throwDbError(e);
+  }
+};
+
 export const toggleNotifyEarlyAccessHandler = async ({
   input,
   ctx,

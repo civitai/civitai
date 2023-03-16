@@ -1,4 +1,5 @@
 import {
+  getModelVersionHandler,
   getModelVersionRunStrategiesHandler,
   toggleNotifyEarlyAccessHandler,
   upsertModelVersionHandler,
@@ -8,6 +9,7 @@ import { modelVersionUpsertSchema2 } from '~/server/schema/model-version.schema'
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const modelVersionRouter = router({
+  getById: publicProcedure.input(getByIdSchema).query(getModelVersionHandler),
   getRunStrategies: publicProcedure.input(getByIdSchema).query(getModelVersionRunStrategiesHandler),
   toggleNotifyEarlyAccess: protectedProcedure
     .input(getByIdSchema)
