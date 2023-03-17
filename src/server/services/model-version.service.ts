@@ -62,7 +62,12 @@ export const toggleNotifyModelVersion = ({ id, userId }: GetByIdInput & { userId
   return toggleModelVersionEngagement({ userId, versionId: id, type: 'Notify' });
 };
 
-export const upsertModelVersion = async ({ id, modelId, ...data }: ModelVersionUpsertInput) => {
+export const upsertModelVersion = async ({
+  id,
+  modelId,
+  userId,
+  ...data
+}: ModelVersionUpsertInput & { userId: number }) => {
   if (!id) {
     // if it's a new version, we set it at the top of the list
     // and increment the index of all other versions
@@ -90,6 +95,7 @@ export const upsertModelVersion = async ({ id, modelId, ...data }: ModelVersionU
           ...data,
           index: 0,
           modelId,
+          posts: { create: { userId } },
         },
       }),
       // update the index of all other versions

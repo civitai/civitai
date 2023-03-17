@@ -2,11 +2,14 @@ import { useRouter } from 'next/router';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import { trpc } from '~/utils/trpc';
-import { Container } from '@mantine/core';
+import { Container, Title, Text } from '@mantine/core';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
+import { NotFound } from '~/components/AppLayout/NotFound';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export default function PostCreate() {
   const router = useRouter();
+  const modelId = router.query.modelId ? Number(router.query.modelId) : undefined;
   const modelVersionId = router.query.modelVersionId
     ? Number(router.query.modelVersionId)
     : undefined;
@@ -15,6 +18,12 @@ export default function PostCreate() {
   const images = useEditPostContext((state) => state.images);
   const upload = useEditPostContext((state) => state.upload);
   const queryUtils = trpc.useContext();
+
+  //TODO.posts - get modelversions related to modelId and have the user select a modelVersion before they can drop any images
+  const { data: version, isLoading: versionLoading } = trpc.modelVersion.getById.useQuery(
+    { id: modelVersionId ?? 0 },
+    { enabled: !!modelVersionId }
+  );
 
   const handleDrop = (files: File[]) => {
     mutate(
@@ -31,9 +40,24 @@ export default function PostCreate() {
     );
   };
 
+  const features = useFeatureFlags();
+  if (!features.posts) return <NotFound />;
+
   return (
     <Container size="xs">
-      <ImageDropzone onDrop={handleDrop} loading={isLoading} count={images.length} max={50} />
+      <Title>Create image post</Title>
+      {modelVersionId && (version || versionLoading) && (
+        <Text size="sm" color="dimmed">
+          Posting to {version?.model.name} - {version?.name}
+        </Text>
+      )}
+      <ImageDropzone
+        mt="md"
+        onDrop={handleDrop}
+        loading={isLoading}
+        count={images.length}
+        max={50}
+      />
     </Container>
   );
 }

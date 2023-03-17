@@ -1,4 +1,4 @@
-import { getImageDetail } from './../services/image.service';
+import { getAllImages, getImage, getImageDetail } from './../services/image.service';
 import { ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
@@ -11,6 +11,8 @@ import {
   GetImageConnectionsSchema,
   ImageUpdateSchema,
   UpdateImageInput,
+  GetImageInput,
+  GetInfiniteImagesInput,
 } from '~/server/schema/image.schema';
 import { imageGallerySelect } from '~/server/selectors/image.selector';
 import {
@@ -282,3 +284,29 @@ export const getImageDetailHandler = async ({ input }: { input: GetByIdInput }) 
     else throw throwDbError(error);
   }
 };
+
+// #region [new handlers]
+export const getInfiniteImagesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetInfiniteImagesInput;
+  ctx: Context;
+}) => {
+  try {
+    return await getAllImages({ ...input, userId: ctx.user?.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ctx: Context }) => {
+  try {
+    return await getImage({ ...input, userId: ctx.user?.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+// #endregion

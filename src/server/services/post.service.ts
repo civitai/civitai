@@ -1,9 +1,9 @@
+import { GetByIdInput } from '~/server/schema/base.schema';
 import { SessionUser } from 'next-auth';
 import { isNotImageResource } from './../schema/image.schema';
-import { editPostSelect, postTagSelect } from './../selectors/post.selector';
+import { editPostSelect } from './../selectors/post.selector';
 import { isDefined } from '~/utils/type-guards';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
-import { GetByIdInput } from './../schema/base.schema';
 import {
   PostUpdateInput,
   AddPostTagInput,
@@ -22,9 +22,8 @@ import { editPostImageSelect } from '~/server/selectors/post.selector';
 import { ModelFileType } from '~/server/common/constants';
 import { isImageResource } from '~/server/schema/image.schema';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
-import { env } from '~/env/server.mjs';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { BrowsingMode } from '~/server/common/enums';
+import { BrowsingMode, PostSort } from '~/server/common/enums';
 import { getImageV2Select } from '~/server/selectors/imagev2.selector';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
@@ -34,24 +33,48 @@ export const getPostsInfinite = async ({
   cursor,
   query,
   username,
+  excludedTagIds,
+  excludedUserIds,
+  excludedImageIds,
   period,
   sort,
+  browsingMode,
   user,
 }: PostsQueryInput & { user?: SessionUser }) => {
   const skip = (page - 1) * limit;
   const take = limit + 1;
 
   const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
+
+  const imageAND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   if (query) AND.push({ title: { in: query, mode: 'insensitive' } });
   if (username) AND.push({ user: { username } });
+  if (!!excludedTagIds?.length) {
+    AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
+    imageAND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
+  }
+  if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
+  if (!!excludedImageIds?.length) imageAND.push({ id: { notIn: excludedImageIds } });
+
+  if (browsingMode !== BrowsingMode.All) {
+    const query = { nsfw: { equals: browsingMode === BrowsingMode.NSFW } };
+    AND.push(query);
+    imageAND.push(query);
+  }
+
+  const orderBy: Prisma.Enumerable<Prisma.PostOrderByWithRelationInput> = [];
+  if (sort === PostSort.MostComments)
+    orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
+  else if (sort === PostSort.MostReactions)
+    orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
+  orderBy.push({ id: 'desc' });
 
   const posts = await dbRead.post.findMany({
     skip,
     take,
     cursor: cursor ? { id: cursor } : undefined,
-    where: {
-      AND,
-    },
+    where: { AND },
+    orderBy,
     select: {
       id: true,
       nsfw: true,
@@ -61,6 +84,9 @@ export const getPostsInfinite = async ({
         orderBy: { index: 'asc' },
         take: 1,
         select: getImageV2Select({ userId: user?.id }),
+        where: {
+          AND: imageAND,
+        },
       },
     },
   });
@@ -88,13 +114,10 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
       id: true,
       nsfw: true,
       title: true,
+      detail: true,
       modelVersionId: true,
       user: { select: userWithCosmeticsSelect },
       publishedAt: true,
-      images: {
-        orderBy: { index: 'asc' },
-        select: getImageV2Select({ userId: user?.id }),
-      },
       tags: { select: { tag: { select: simpleTagSelect } } },
     },
   });
@@ -139,6 +162,7 @@ export const updatePost = async (data: PostUpdateInput) => {
     data: {
       ...data,
       title: data.title !== undefined ? (data.title.length > 0 ? data.title : null) : undefined,
+      detail: data.detail !== undefined ? (data.detail.length > 0 ? data.detail : null) : undefined,
     },
   });
 };
@@ -149,18 +173,29 @@ export const deletePost = async ({ id }: GetByIdInput) => {
 
 export const getPostTags = async ({ query, limit }: GetPostTagsInput) => {
   const showTrending = query === undefined || query.length < 2;
-  return await dbRead.tag.findMany({
-    take: limit,
-    where: {
-      name: !showTrending ? { contains: query, mode: 'insensitive' } : undefined,
-      rank: { isNot: null },
-      isCategory: showTrending ? true : undefined,
-    },
-    select: postTagSelect({ trending: showTrending }),
-    orderBy: {
-      rank: !showTrending ? { postCountAllTimeRank: 'desc' } : { postCountDayRank: 'desc' },
-    },
-  });
+  return await dbRead.$queryRawUnsafe<
+    Array<{
+      id: number;
+      name: string;
+      isCategory: boolean;
+      postCount: number;
+    }>
+  >(`
+    SELECT
+      t.id,
+      t.name,
+      t."isCategory",
+      COALESCE(s.${showTrending ? '"postCountDay"' : '"postCountAllTime"'}, 0) AS "postCount"
+    FROM "Tag" t
+    LEFT JOIN "TagStat" s ON s."tagId" = t.id
+    LEFT JOIN "TagRank" r ON r."tagId" = t.id
+    WHERE
+      ${showTrending ? 't."isCategory" = true' : `t.name ILIKE '${query}%'`}
+    ORDER BY ${
+      showTrending ? 'r."postCountDayRank" DESC' : 'LENGTH(t.name), r."postCountAllTimeRank" DESC'
+    }
+    LIMIT ${limit}
+  `);
 };
 
 export const addPostTag = async ({ postId, id, name: initialName }: AddPostTagInput) => {
@@ -214,7 +249,7 @@ export const addPostImage = async ({
   ...image
 }: AddPostImageInput & { userId: number }) => {
   const autoResources = !!resources?.length
-    ? await dbWrite.modelFile.findMany({
+    ? await dbRead.modelFile.findMany({
         where: {
           type: { in: toInclude },
           hashes: {
@@ -285,4 +320,11 @@ export const reorderPostImages = async ({ imageIds }: ReorderPostImagesInput) =>
   );
 
   return transaction;
+};
+
+export const getPostResources = async ({ id }: GetByIdInput) => {
+  return await dbRead.postResourceHelper.findMany({
+    where: { postId: id },
+    orderBy: { modelName: 'asc' },
+  });
 };

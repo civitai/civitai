@@ -13,10 +13,13 @@ import { IconX } from '@tabler/icons';
 import { isEqual } from 'lodash';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
+import { PostEditComposite } from '~/components/Post/Edit/PostEditComposite';
+import { PostEditWrapper } from '~/components/Post/Edit/PostEditLayout';
 
 import { Files } from '~/components/Resource/Files';
 import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
+import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
@@ -42,6 +45,8 @@ const useStyles = createStyles((theme) => ({
 export function ModelWizard() {
   const { classes } = useStyles();
   const router = useRouter();
+  const getUploadStatus = useS3UploadStore((state) => state.getStatus);
+  const { uploading, error, aborted } = getUploadStatus();
 
   const { id, step = '1' } = router.query;
   const parsedStep = Array.isArray(step) ? Number(step[0]) : Number(step);
@@ -73,7 +78,7 @@ export function ModelWizard() {
   }, [model, state.model]);
 
   const goNext = () => {
-    if (state.step < 3) {
+    if (state.step < 4) {
       setState((current) => ({
         ...current,
         step: current.step + 1,
@@ -112,6 +117,7 @@ export function ModelWizard() {
           active={state.step - 1}
           onStepClick={(step) => setState((current) => ({ ...current, step: step + 1 }))}
           allowNextStepsSelect={false}
+          size="sm"
         >
           <Stepper.Step label={editing ? 'Edit model' : 'Create your model'}>
             <Stack>
@@ -154,10 +160,38 @@ export function ModelWizard() {
               </ModelVersionUpsertForm>
             </Stack>
           </Stepper.Step>
-          <Stepper.Step label="Upload files">
+          <Stepper.Step
+            label="Upload files"
+            loading={uploading > 0}
+            color={error + aborted > 0 ? 'red' : undefined}
+          >
             <Stack>
               <Title order={3}>Upload files</Title>
-              <Files model={state.model} version={state.modelVersion} />
+              <Files
+                model={state.model}
+                version={state.modelVersion}
+                onStartUploadClick={() => goNext()}
+              />
+              <Group mt="xl" position="right">
+                <Button variant="default" onClick={goBack}>
+                  Back
+                </Button>
+                <Button onClick={goNext}>Next</Button>
+              </Group>
+            </Stack>
+          </Stepper.Step>
+          <Stepper.Step label="Create a post">
+            <Stack>
+              <Title order={3}>Create your post</Title>
+              <PostEditWrapper postId={state.modelVersion?.posts[0].id}>
+                <PostEditComposite />
+              </PostEditWrapper>
+
+              <Group mt="xl" position="right">
+                <Button variant="default" onClick={goBack}>
+                  Back
+                </Button>
+              </Group>
             </Stack>
           </Stepper.Step>
 

@@ -1,4 +1,10 @@
-import { isImageResource, IngestImageInput, ingestImageSchema } from './../schema/image.schema';
+import {
+  isImageResource,
+  IngestImageInput,
+  ingestImageSchema,
+  GetInfiniteImagesInput,
+  GetImageInput,
+} from './../schema/image.schema';
 import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
@@ -16,8 +22,9 @@ import { imageGallerySelect, imageSelect } from '~/server/selectors/image.select
 import { deleteImage } from '~/utils/cf-images-utils';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
-import { simpleTagSelect, imageTagSelect } from '~/server/selectors/tag.selector';
+import { simpleTagSelect, imageTagSelect, ImageTag } from '~/server/selectors/tag.selector';
 import { imageIngestion, ingestionMessageSchema } from '~/server/utils/image-ingestion';
+import { getImageV2Select } from '~/server/selectors/imagev2.selector';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -273,6 +280,28 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
   });
 };
 
+export type ImageScanResultResponse = {
+  ok: boolean;
+  error?: string;
+  deleted?: boolean;
+  blockedFor?: string[];
+  tags?: { type: string; name: string }[];
+};
+
+export type IngestImageReturnType =
+  | {
+      type: 'error';
+      data: { error: string };
+    }
+  | {
+      type: 'blocked';
+      data: { blockedFor?: string[]; tags?: { type: string; name: string }[] };
+    }
+  | {
+      type: 'success';
+      data: { tags: ImageTag[] };
+    };
+
 export const ingestImage = async ({
   image,
   user,
@@ -308,3 +337,82 @@ export const ingestImage = async ({
   });
   return imageTags;
 };
+
+// #region [new service methods]
+export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
+export const getAllImages = async ({
+  limit,
+  cursor,
+  postId,
+  modelId,
+  username,
+  excludedTagIds,
+  excludedUserIds,
+  excludedImageIds,
+  browsingMode,
+  period,
+  sort,
+  userId,
+  tags,
+}: GetInfiniteImagesInput & { userId?: number }) => {
+  const AND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
+  if (postId) AND.push({ postId });
+  if (modelId) AND.push({ resources: { some: { modelVersion: { modelId } } } });
+  if (username) AND.push({ user: { username: { equals: username, mode: 'insensitive' } } });
+  if (browsingMode !== BrowsingMode.All)
+    AND.push({ nsfw: { equals: browsingMode === BrowsingMode.NSFW } });
+  if (!!excludedUserIds?.length) AND.push({ userId: { notIn: excludedUserIds } });
+  if (!!excludedImageIds?.length) AND.push({ id: { notIn: excludedImageIds } });
+  if (!!excludedTagIds?.length) {
+    AND.push({
+      OR: [
+        { userId },
+        { tags: !!excludedTagIds.length ? { none: { tagId: { in: excludedTagIds } } } : undefined },
+      ],
+    });
+  }
+  if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
+
+  const orderBy: Prisma.Enumerable<Prisma.ImageOrderByWithRelationInput> = [];
+  if (postId) orderBy.push({ index: 'asc' });
+  else {
+    if (sort === ImageSort.MostComments)
+      orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
+    else if (sort === ImageSort.MostReactions)
+      orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
+    orderBy.push({ id: 'desc' });
+  }
+
+  const images = await dbRead.image.findMany({
+    take: cursor ? limit + 1 : limit,
+    cursor: cursor ? { id: cursor } : undefined,
+    where: { AND },
+    orderBy,
+    select: getImageV2Select({ userId }),
+  });
+
+  let nextCursor: number | undefined;
+  if (images.length > limit) {
+    const nextItem = images.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  return {
+    nextCursor,
+    items: images,
+  };
+};
+
+export const getImage = async ({
+  id,
+  excludedTagIds,
+  excludedUserIds,
+  browsingMode,
+  userId,
+}: GetImageInput & { userId?: number }) => {
+  const image = await dbRead.image.findUnique({
+    where: { id },
+    select: getImageV2Select({ userId }),
+  });
+};
+// #endregion

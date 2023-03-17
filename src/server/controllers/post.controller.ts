@@ -22,6 +22,7 @@ import {
   updatePostImage,
   getPostTags,
   getPostsInfinite,
+  getPostResources,
 } from './../services/post.service';
 import { TRPCError } from '@trpc/server';
 import { PostCreateInput } from '~/server/schema/post.schema';
@@ -76,10 +77,6 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
   try {
     const post = await getPostDetail({ ...input, user: ctx.user });
     if (!post) throw throwNotFoundError();
-    const isOwnerOrModerator = post.user.id === ctx.user?.id || ctx.user?.isModerator;
-    // TODO.posts - additional view logic
-    const canView = isOwnerOrModerator || post.publishedAt;
-    if (!canView) throw throwNotFoundError();
     return post;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -196,6 +193,17 @@ export const removePostTagHandler = async ({
 }) => {
   try {
     return await removePostTag({ ...input });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+// #endregion
+
+// #region [post resources]
+export const getPostResourcesHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    return await getPostResources({ ...input });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

@@ -10,5 +10,5 @@ export const upsertResourceReviewSchema = z.object({
   id: z.number().optional(),
   modelVersionId: z.number(),
   rating: z.number(),
-  details: z.string(),
+  details: z.string().optional(),
 });

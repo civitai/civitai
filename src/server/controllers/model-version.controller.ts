@@ -20,6 +20,28 @@ export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: 
   }
 };
 
+export const getModelVersionHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const version = await getVersionById({
+      ...input,
+      select: {
+        id: true,
+        name: true,
+        model: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+    if (!version) throw throwNotFoundError(`Model version could not be found`);
+    return version;
+  } catch (e) {
+    throw throwDbError(e);
+  }
+};
+
 export const toggleNotifyEarlyAccessHandler = async ({
   input,
   ctx,
@@ -47,7 +69,8 @@ export const upsertModelVersionHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const version = await upsertModelVersion({ ...input });
+    const { id: userId } = ctx.user;
+    const version = await upsertModelVersion({ ...input, userId });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
     return version;
@@ -57,13 +80,7 @@ export const upsertModelVersionHandler = async ({
   }
 };
 
-export const deleteModelVersionHandler = async ({
-  input,
-  ctx,
-}: {
-  input: GetByIdInput;
-  ctx: DeepNonNullable<Context>;
-}) => {
+export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     const version = await deleteVersionById(input);
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);

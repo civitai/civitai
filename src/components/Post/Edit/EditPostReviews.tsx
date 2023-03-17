@@ -1,46 +1,50 @@
-import { Stack, Alert, Text, Card, Group, Rating } from '@mantine/core';
+import { Stack, Alert, Text, Center, Loader } from '@mantine/core';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { trpc } from '~/utils/trpc';
-import { isDefined } from '~/utils/type-guards';
-import { removeDuplicates } from '~/utils/array-helpers';
+import { EditResourceReview } from '~/components/ResourceReview/EditResourceReview';
+import { useEffect } from 'react';
 
 export function EditPostReviews() {
-  const images = useEditPostContext((state) => state.images);
+  const id = useEditPostContext((state) => state.id);
+  const items = useEditPostContext((state) => state.images);
+  const ready = items.every((x) => x.type === 'image') && items.length > 0;
 
-  const resources = images
-    .filter((x) => x.type === 'image')
-    .flatMap((x) => (x.data as PostEditImage).resources)
-    .map((x) => x.modelVersion)
-    .filter(isDefined);
+  const images = items.filter((x) => x.type === 'image').map((x) => x.data) as PostEditImage[];
+  const missingResources = images.some((x) => !x.resources.length);
 
-  const uniqueResources = removeDuplicates(resources, 'id');
-  const resourceIds = uniqueResources.map((x) => x.id);
-  const missingResources = !resources.length;
+  const {
+    data = [],
+    isLoading,
+    refetch,
+  } = trpc.post.getResources.useQuery({ id }, { enabled: false });
 
-  const { data, isLoading } = trpc.resourceReview.get.useQuery(
-    { resourceIds },
-    { enabled: !!resourceIds.length }
-  );
+  useEffect(() => {
+    if (ready) refetch();
+  }, [ready, refetch]);
 
   return (
     <Stack>
       <Stack>
-        {uniqueResources
-          .sort((a, b) => {
-            const textA = a.model.name;
-            const textB = b.model.name;
-            return textA < textB ? -1 : textA > textB ? 1 : 0;
-          })
-          .map((resource) => (
-            <Card key={resource.id} p={8} withBorder>
-              <Stack>
-                <Group spacing={4}>
-                  <Text lineClamp={1} size="sm" weight={500}></Text>
-                </Group>
-              </Stack>
-            </Card>
-          ))}
+        {isLoading ? (
+          <Center p="xl">
+            <Loader></Loader>
+          </Center>
+        ) : (
+          data.map((resource, index) => (
+            <EditResourceReview
+              key={index}
+              id={resource.reviewId}
+              rating={resource.reviewRating}
+              details={resource.reviewDetails}
+              createdAt={resource.reviewCreatedAt}
+              modelName={resource.modelName}
+              modelVersionId={resource.modelVersionId}
+              modelVersionName={resource.modelVersionName}
+              name={resource.name}
+            />
+          ))
+        )}
       </Stack>
 
       {missingResources && (
@@ -61,12 +65,4 @@ export function EditPostReviews() {
       )}
     </Stack>
   );
-}
-
-function ResourceWithReview({}) {
-  return <></>;
-}
-
-function ResourceWithoutReview({}) {
-  return <></>;
 }

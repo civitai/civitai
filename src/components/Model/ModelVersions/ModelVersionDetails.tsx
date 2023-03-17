@@ -12,6 +12,7 @@ import {
   Text,
   Title,
   Tooltip,
+  UnstyledButton,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
@@ -38,7 +39,6 @@ import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
-import { MultiActionButton } from '~/components/MultiActionButton/MultiActionButton';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RunButton } from '~/components/RunStrategy/RunButton';
@@ -50,7 +50,7 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
-import { splitUppercase } from '~/utils/string-helpers';
+import { removeTags, splitUppercase } from '~/utils/string-helpers';
 
 export function ModelVersionDetails({ model, version, user, isFavorite, onFavoriteClick }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
@@ -197,9 +197,12 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
     </Card>
   ));
 
+  // TODO.manuel: Figure out why this is not working
   useEffect(() => {
     setHasClampControl(!!controlRef.current);
   }, []);
+
+  const cleanDescription = version.description ? removeTags(version.description) : '';
 
   const isOwnerOrMod = model.user?.id === user?.id || user?.isModerator;
   const filesCount = version.files.length;
@@ -415,10 +418,16 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                     <RenderHtml html={version.description} />
                   </ContentClamp>
                 )}
-                {hasClampControl ? (
-                  <Button variant="subtle" size="xs" p={0} onClick={toggle} compact>
+                {cleanDescription.length > 150 ? (
+                  <Text
+                    variant="link"
+                    size="xs"
+                    onClick={toggle}
+                    tabIndex={0}
+                    sx={{ cursor: 'pointer' }}
+                  >
                     Show more
-                  </Button>
+                  </Text>
                 ) : null}
               </Group>
             </Stack>

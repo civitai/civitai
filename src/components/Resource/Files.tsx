@@ -125,7 +125,7 @@ const checkConflictingFiles = (files: TrackedFile[]) => {
   return Object.values(conflictCount).every((count) => count === 1);
 };
 
-export function Files({ model, version }: Props) {
+export function Files({ model, version, onStartUploadClick }: Props) {
   const theme = useMantineTheme();
   const { items, upload, setItems } = useS3UploadStore();
 
@@ -189,6 +189,8 @@ export function Files({ model, version }: Props) {
         ),
       });
     }
+
+    onStartUploadClick?.();
 
     await Promise.all(
       files.map(({ file, meta }) => {
@@ -331,6 +333,7 @@ export function Files({ model, version }: Props) {
 type Props = {
   model?: ModelUpsertInput;
   version?: ModelById['modelVersions'][number];
+  onStartUploadClick?: VoidFunction;
 };
 
 type FileStatus = 'success' | 'pending' | 'error' | 'aborted';

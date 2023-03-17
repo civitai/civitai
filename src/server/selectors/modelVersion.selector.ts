@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 
 import { imageSelectWithoutName } from '~/server/selectors/image.selector';
+import { editPostSelect } from '~/server/selectors/post.selector';
 
 export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersionSelect>()({
   id: true,
@@ -41,6 +42,9 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
         },
       },
     },
+  },
+  posts: {
+    select: editPostSelect,
   },
 });
 

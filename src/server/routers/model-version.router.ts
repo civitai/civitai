@@ -1,5 +1,6 @@
 import {
   deleteModelVersionHandler,
+  getModelVersionHandler,
   getModelVersionRunStrategiesHandler,
   toggleNotifyEarlyAccessHandler,
   upsertModelVersionHandler,
@@ -39,6 +40,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, input, next }) => {
 });
 
 export const modelVersionRouter = router({
+  getById: publicProcedure.input(getByIdSchema).query(getModelVersionHandler),
   getRunStrategies: publicProcedure.input(getByIdSchema).query(getModelVersionRunStrategiesHandler),
   toggleNotifyEarlyAccess: protectedProcedure
     .input(getByIdSchema)

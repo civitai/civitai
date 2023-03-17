@@ -1,5 +1,9 @@
-import { getImageDetailHandler } from './../controllers/image.controller';
-import { updateImageSchema } from './../schema/image.schema';
+import {
+  getImageDetailHandler,
+  getImageHandler,
+  getInfiniteImagesHandler,
+} from './../controllers/image.controller';
+import { getInfiniteImagesSchema, updateImageSchema } from './../schema/image.schema';
 import {
   deleteImageHandler,
   getGalleryImageDetailHandler,
@@ -23,6 +27,7 @@ import {
 } from '~/server/schema/image.schema';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { applyUserPreferences, applyBrowsingMode } from '~/server/middleware.trpc';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -75,4 +80,10 @@ export const imageRouter = router({
     .use(isOwnerOrModerator)
     .mutation(updateImageHandler),
   getDetail: publicProcedure.input(getByIdSchema).query(getImageDetailHandler),
+  getInfinite: publicProcedure
+    .input(getInfiniteImagesSchema)
+    .use(applyUserPreferences())
+    .use(applyBrowsingMode())
+    .query(getInfiniteImagesHandler),
+  get: publicProcedure.input(getByIdSchema).query(getImageHandler),
 });

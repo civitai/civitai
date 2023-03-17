@@ -1,3 +1,4 @@
+import { applyUserPreferences, applyBrowsingMode } from './../middleware.trpc';
 import { getByIdSchema } from './../schema/base.schema';
 import { publicProcedure } from './../trpc';
 import {
@@ -13,6 +14,7 @@ import {
   updatePostImageHandler,
   getPostTagsHandler,
   getPostsInfiniteHandler,
+  getPostResourcesHandler,
 } from './../controllers/post.controller';
 import {
   postCreateSchema,
@@ -55,7 +57,11 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 });
 
 export const postRouter = router({
-  getInfinite: publicProcedure.input(postsQuerySchema).query(getPostsInfiniteHandler),
+  getInfinite: publicProcedure
+    .input(postsQuerySchema)
+    .use(applyUserPreferences())
+    .use(applyBrowsingMode())
+    .query(getPostsInfiniteHandler),
   get: publicProcedure.input(getByIdSchema).query(getPostHandler),
   getEdit: protectedProcedure.input(getByIdSchema).query(getPostEditHandler),
   create: protectedProcedure.input(postCreateSchema).mutation(createPostHandler),
@@ -88,4 +94,5 @@ export const postRouter = router({
     .input(removePostTagSchema)
     .use(isOwnerOrModerator)
     .mutation(removePostTagHandler),
+  getResources: publicProcedure.input(getByIdSchema).query(getPostResourcesHandler),
 });

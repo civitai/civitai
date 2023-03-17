@@ -55,7 +55,6 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
   const nsfwPoi = form.watch(['nsfw', 'poi']);
   const { isDirty, errors } = form.formState;
-  console.log({ isDirty });
   const editing = !!model;
 
   const handleModelTypeChange = (value: ModelType) => {

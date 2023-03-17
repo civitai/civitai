@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
+import { editPostSelect } from '~/server/selectors/post.selector';
 
 export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
@@ -214,6 +215,7 @@ export const modelWithDetailsSelect = (includeNSFW = true, user?: SessionUser) =
             },
           },
         },
+        posts: { select: editPostSelect },
       },
     },
     rank: {
