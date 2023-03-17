@@ -13,6 +13,8 @@ import {
   ScrollArea,
   CloseButton,
   Alert,
+  ActionIcon,
+  Popover,
 } from '@mantine/core';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -28,6 +30,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { TagType } from '@prisma/client';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { IconInfoCircle } from '@tabler/icons';
 
 const matureLabel = 'Mature content may include content that is suggestive or provocative';
 const tooltipProps: Partial<TooltipProps> = {
@@ -172,7 +175,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
               </Group>
             </Input.Wrapper>
             <Input.Wrapper label="Resources">
-              {!!image.resources.length ? (
+              {!!image.resourceHelper.length ? (
                 <Stack>
                   <DismissibleAlert
                     id="not-all-resources"
@@ -192,24 +195,53 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
                         to automatically detect all the resources used in your images.
                       </>
                     }
-                  ></DismissibleAlert>
-                  {image.resources.map((r) => (
-                    <Card key={r.id} p={8} withBorder>
-                      {r.modelVersion && (
-                        <Stack>
-                          <Group spacing={4} position="apart" noWrap>
-                            <Group spacing={4} noWrap>
-                              <Text size="sm" weight={500} lineClamp={1}>
-                                {r.modelVersion.model.name}
-                              </Text>
-                              {/* <IconVersions size={16} /> */}
-                            </Group>
-                            <Badge radius="sm" size="sm">
-                              {splitUppercase(r.modelVersion.model.type)}
-                            </Badge>
+                  />
+                  {image.resourceHelper.map((resource) => (
+                    <Card key={resource.id} p={8} withBorder>
+                      <Stack>
+                        <Group spacing={4} position="apart" noWrap align="flex-start">
+                          <Group spacing={4} noWrap>
+                            {resource.modelVersionId ? (
+                              <Group spacing={4}>
+                                {resource.modelName && (
+                                  <Text size="sm" weight={500} lineClamp={1}>
+                                    {resource.modelName}
+                                  </Text>
+                                )}
+                                {resource.modelVersionName && (
+                                  <Badge style={{ textTransform: 'none' }}>
+                                    {resource.modelVersionName}
+                                  </Badge>
+                                )}
+                              </Group>
+                            ) : (
+                              <Group spacing={4}>
+                                <Popover width={300} withinPortal withArrow>
+                                  <Popover.Target>
+                                    <ActionIcon size="xs">
+                                      <IconInfoCircle size={16} />
+                                    </ActionIcon>
+                                  </Popover.Target>
+                                  <Popover.Dropdown>
+                                    <Text>
+                                      The detected image resource was not found in our system
+                                    </Text>
+                                  </Popover.Dropdown>
+                                </Popover>
+                                <Text size="sm" weight={500} lineClamp={1}>
+                                  {resource.name}
+                                </Text>
+                              </Group>
+                            )}
+                            {/* <IconVersions size={16} /> */}
                           </Group>
-                        </Stack>
-                      )}
+                          {resource.modelType && (
+                            <Badge radius="sm" size="sm">
+                              {splitUppercase(resource.modelType)}
+                            </Badge>
+                          )}
+                        </Group>
+                      </Stack>
                     </Card>
                   ))}
                 </Stack>

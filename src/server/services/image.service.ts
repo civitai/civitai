@@ -339,7 +339,12 @@ export const ingestImage = async ({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  }).then((res) => res.json())) as ImageScanResultResponse;
+  }).then(async (res) => {
+    if (res.status === 204) return {};
+    return res.json();
+  })) as ImageScanResultResponse;
+
+  console.log('made it this far', blockedFor, tags, error);
 
   if (error) {
     return {

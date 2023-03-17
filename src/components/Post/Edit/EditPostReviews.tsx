@@ -11,7 +11,7 @@ export function EditPostReviews() {
   const ready = items.every((x) => x.type === 'image') && items.length > 0;
 
   const images = items.filter((x) => x.type === 'image').map((x) => x.data) as PostEditImage[];
-  const missingResources = images.some((x) => !x.resources.length);
+  const missingResources = images.some((x) => !x.resourceHelper.length);
 
   const {
     data = [],

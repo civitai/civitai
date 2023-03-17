@@ -88,7 +88,7 @@ export const updatePostImageSchema = z.object({
   }, imageMetaSchema.nullish()),
   hideMeta: z.boolean().optional(),
   nsfw: z.boolean().optional(),
-  resources: z.array(imageResourceUpsertSchema),
+  // resources: z.array(imageResourceUpsertSchema),
 });
 
 export type ReorderPostImagesInput = z.infer<typeof reorderPostImagesSchema>;

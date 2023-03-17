@@ -72,7 +72,7 @@ function ImageController({
     meta,
     generationProcess,
     needsReview,
-    resources,
+    resourceHelper,
     tags,
   },
 }: {
@@ -110,9 +110,9 @@ function ImageController({
               Missing Generation Data
             </Badge>
           )}
-          {resources.length ? (
+          {resourceHelper.length ? (
             <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
-              Resources: {resources.length}
+              Resources: {resourceHelper.length}
             </Badge>
           ) : (
             <Badge {...blockingBadgeProps} onClick={handleSelectImageClick}>

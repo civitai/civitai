@@ -25,6 +25,8 @@ import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { BrowsingMode, PostSort } from '~/server/common/enums';
 import { getImageV2Select } from '~/server/selectors/imagev2.selector';
+import uniqWith from 'lodash/uniqWith';
+import isEqual from 'lodash/isEqual';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -244,42 +246,50 @@ export const removePostTag = async ({ postId, id }: RemovePostTagInput) => {
 
 const toInclude: ModelFileType[] = ['Model', 'Pruned Model', 'Negative'];
 export const addPostImage = async ({
-  resources,
+  // resources,
   modelVersionId,
+  meta,
   ...image
 }: AddPostImageInput & { userId: number }) => {
-  const autoResources = !!resources?.length
-    ? await dbRead.modelFile.findMany({
+  const metaResources = meta?.hashes
+    ? Object.entries(meta.hashes).map(([name, hash]) => ({ name, hash }))
+    : [];
+
+  const modelFileHashes = !!metaResources.length
+    ? await dbRead.modelFileHash.findMany({
         where: {
-          type: { in: toInclude },
-          hashes: {
-            some: {
-              hash: { in: resources, mode: 'insensitive' },
-            },
-          },
+          file: { type: { in: toInclude } },
+          hash: { in: metaResources.map((x) => x.hash), mode: 'insensitive' },
         },
         select: {
-          modelVersionId: true,
+          hash: true,
+          file: {
+            select: { modelVersionId: true },
+          },
         },
       })
     : [];
 
-  const uniqueResources = [
-    modelVersionId,
-    ...new Set(autoResources.map((x) => x.modelVersionId)),
-  ].filter(isDefined);
+  const resources: Prisma.ImageResourceUncheckedCreateWithoutImageInput[] = metaResources.map(
+    ({ name, hash }) => {
+      const modelFile = modelFileHashes.find((x) => x.hash === hash);
+      if (modelFile) return { modelVersionId: modelFile.file.modelVersionId };
+      else return { name };
+    }
+  );
+  if (modelVersionId) resources.unshift({ modelVersionId });
+
+  const uniqueResources = uniqWith(resources, isEqual);
 
   const result = await dbWrite.image.create({
     data: {
       ...image,
-      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      generationProcess: image.meta
-        ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
-        : null,
+      meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      generationProcess: meta ? getImageGenerationProcess(meta as Prisma.JsonObject) : null,
       resources: !!uniqueResources.length
         ? {
-            create: uniqueResources.map((modelVersionId) => ({
-              modelVersionId,
+            create: uniqueResources.map((resource) => ({
+              ...resource,
               detected: true,
             })),
           }
@@ -291,20 +301,20 @@ export const addPostImage = async ({
 };
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
-  const updateResources = image.resources.filter(isImageResource);
-  const createResources = image.resources.filter(isNotImageResource);
+  // const updateResources = image.resources.filter(isImageResource);
+  // const createResources = image.resources.filter(isNotImageResource);
 
   const result = await dbWrite.image.update({
     where: { id: image.id },
     data: {
       ...image,
       meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      resources: {
-        deleteMany: {
-          NOT: updateResources.map((r) => ({ id: r.id })),
-        },
-        createMany: { data: createResources.map((r) => ({ modelVersionId: r.id, name: r.name })) },
-      },
+      // resources: {
+      //   deleteMany: {
+      //     NOT: updateResources.map((r) => ({ id: r.id })),
+      //   },
+      //   createMany: { data: createResources.map((r) => ({ modelVersionId: r.id, name: r.name })) },
+      // },
     },
     select: editPostImageSelect,
   });

@@ -2,7 +2,7 @@ import { Card, Group, Rating, Stack, Text, Divider, Button } from '@mantine/core
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { trpc } from '~/utils/trpc';
 import { useState } from 'react';
-import { IconCaretDown } from '@tabler/icons';
+import { IconChevronDown } from '@tabler/icons';
 import { InputRTE, useForm, Form } from '~/libs/form';
 import { z } from 'zod';
 
@@ -56,7 +56,6 @@ export function EditResourceReview({
 
   const form = useForm({ schema, defaultValues: { details: details ?? undefined } });
   const handleSubmit = ({ details }: z.infer<typeof schema>) => {
-    console.log({ rating });
     if (!modelVersionId || !id || !rating) return;
     mutate(
       { id, modelVersionId, rating, details },
@@ -64,6 +63,7 @@ export function EditResourceReview({
         onSuccess: async (response, request) => {
           setDetails(details);
           form.reset({ details });
+          toggleEditDetail();
         },
       }
     );
@@ -71,59 +71,68 @@ export function EditResourceReview({
 
   return (
     <Card p={8} withBorder>
-      {modelVersionId ? (
-        <Stack>
-          <Group align="center" position="apart" noWrap>
-            <Stack spacing={0}>
-              {modelName && <Text lineClamp={1}>{modelName}</Text>}
-              {modelVersionName && (
-                <Text lineClamp={1} size="xs" color="dimmed">
-                  {modelVersionName}
-                </Text>
-              )}
-            </Stack>
-            <Rating value={rating} onChange={handleRatingChange} />
-          </Group>
-          {createdAt && (
-            <Text size="xs">
-              Reviewed <DaysFromNow date={createdAt} />
-            </Text>
-          )}
-        </Stack>
-      ) : (
-        <Text>{name}</Text>
-      )}
-      {id && (
-        <>
-          <Card.Section>
-            <Divider p={0} />
-          </Card.Section>
-          <Stack>
-            {!editDetail ? (
-              <Text variant="link" onClick={toggleEditDetail}>
-                <IconCaretDown size={16} /> {!details ? 'Add' : 'Edit'} Review Comments
+      <Stack spacing="xs">
+        {modelVersionId ? (
+          <Stack spacing={4}>
+            <Group align="center" position="apart" noWrap>
+              <Stack spacing={0}>
+                {modelName && <Text lineClamp={1}>{modelName}</Text>}
+                {modelVersionName && (
+                  <Text lineClamp={1} size="xs" color="dimmed">
+                    {modelVersionName}
+                  </Text>
+                )}
+              </Stack>
+              <Rating value={rating} onChange={handleRatingChange} />
+            </Group>
+            {createdAt && (
+              <Text size="xs">
+                Reviewed <DaysFromNow date={createdAt} />
               </Text>
-            ) : (
-              <Form form={form} onSubmit={handleSubmit}>
-                <Stack>
-                  <InputRTE
-                    name="details"
-                    includeControls={['formatting', 'link']}
-                    editorSize="md"
-                    placeholder="Add review comments..."
-                  />
-                  <Button.Group>
-                    <Button variant="default" onClick={toggleEditDetail}>
-                      Cancel
-                    </Button>
-                    <Button type="submit">Save</Button>
-                  </Button.Group>
-                </Stack>
-              </Form>
             )}
           </Stack>
-        </>
-      )}
+        ) : (
+          <Text>{name}</Text>
+        )}
+        {id && (
+          <>
+            <Card.Section>
+              <Divider />
+            </Card.Section>
+            <Stack>
+              {!editDetail ? (
+                <Text variant="link" onClick={toggleEditDetail} size="sm">
+                  <Group spacing={4}>
+                    <IconChevronDown size={16} />{' '}
+                    <span>{!details ? 'Add' : 'Edit'} Review Comments</span>
+                  </Group>
+                </Text>
+              ) : (
+                <Form form={form} onSubmit={handleSubmit}>
+                  <Stack spacing="xs">
+                    <InputRTE
+                      name="details"
+                      includeControls={['formatting', 'link']}
+                      hideToolbar
+                      editorSize="sm"
+                      placeholder="Add review comments..."
+                      styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
+                    />
+                    <Group grow spacing="xs">
+                      <Button variant="default" onClick={toggleEditDetail}>
+                        Cancel
+                      </Button>
+                      <Button type="submit" loading={isLoading}>
+                        Save
+                      </Button>
+                    </Group>
+                  </Stack>
+                </Form>
+              )}
+            </Stack>
+          </>
+        )}
+      </Stack>
     </Card>
   );
 }

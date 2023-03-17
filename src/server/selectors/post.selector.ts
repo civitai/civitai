@@ -1,4 +1,3 @@
-import { imageResourceSelect } from './imagev2.selector';
 import { simpleTagSelect, imageTagSelect } from './tag.selector';
 import { Prisma } from '@prisma/client';
 
@@ -16,7 +15,7 @@ export const editPostImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   needsReview: true,
   mimeType: true,
   tags: { select: { tag: { select: imageTagSelect } } },
-  resources: { select: imageResourceSelect },
+  resourceHelper: true,
 });
 type PostImageNavigationProps = { previewUrl?: string };
 export type PostImage = Prisma.ImageGetPayload<typeof postImage> & PostImageNavigationProps;
