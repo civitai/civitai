@@ -34,7 +34,7 @@ const statuses = [
 ] as const;
 
 export const civitaiLinkStatusColors: Record<CivitaiLinkStatus, MantineColor | undefined> = {
-  'not-connected': 'undefined',
+  'not-connected': undefined,
   'no-instances': undefined,
   'no-selected-instance': 'yellow',
   'no-socket-connection': 'red',
