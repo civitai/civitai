@@ -307,6 +307,7 @@ export function useEditPostContext<T>(selector: (state: EditPostState) => T) {
 const getImageDataFromFile = async (file: File) => {
   const url = URL.createObjectURL(file);
   const meta = await getMetadata(file);
+  console.log({ meta });
   const img = await loadImage(url);
   const hashResult = blurHashImage(img);
   const auditResult = await auditMetaData(meta, false);

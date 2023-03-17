@@ -6,9 +6,33 @@ import { trpc } from '~/utils/trpc';
 import { PostControls } from '~/components/Post/Detail/PostControls';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { PostImages } from '~/components/Post/Detail/PostImages';
+import Router from 'next/router';
+import { useEffect } from 'react';
+import { QS } from '~/utils/qs';
 
 export function PostDetail({ postId }: { postId: number }) {
   const { data: post, isLoading: postLoading } = trpc.post.get.useQuery({ id: postId });
+
+  // when a user navigates back in their browser, set the previous url with the query string post={postId}
+  useEffect(() => {
+    Router.beforePopState(({ as, url }) => {
+      if (as === '/posts' || as.startsWith('/posts?')) {
+        const [route, queryString] = as.split('?');
+        const [, otherQueryString] = url.split('?');
+        const queryParams = QS.parse(queryString);
+        const otherParams = QS.parse(otherQueryString);
+        Router.replace(
+          { pathname: route, query: { ...queryParams, ...otherParams, post: postId } },
+          as,
+          { shallow: true }
+        );
+        return false;
+      }
+      return true;
+    });
+
+    return () => Router.beforePopState(() => true);
+  }, [postId]); // Add any state variables to dependencies array if needed.
 
   if (postLoading) return <PageLoader />;
   if (!post) return <NotFound />;

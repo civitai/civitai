@@ -3,8 +3,11 @@ import { PostsCard } from '~/components/Post/Infinite/PostsCard';
 import { trpc } from '~/utils/trpc';
 import { useMemo, useEffect } from 'react';
 import { usePostFilters } from '~/providers/FiltersProvider';
+import { useRouter } from 'next/router';
 
 export default function PostsInfinite({ columnWidth = 300 }: { columnWidth?: number }) {
+  const router = useRouter();
+  const postId = router.query.post ? Number(router.query.post) : undefined;
   const filters = usePostFilters();
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.post.getInfinite.useInfiniteQuery(
@@ -36,6 +39,7 @@ export default function PostsInfinite({ columnWidth = 300 }: { columnWidth?: num
         columnWidth={columnWidth}
         render={PostsCard}
         filters={filters}
+        scrollToIndex={(data) => data.findIndex((x) => x.id === postId)}
       />
     </>
   );

@@ -272,7 +272,7 @@ export const addPostImage = async ({
 
   const resources: Prisma.ImageResourceUncheckedCreateWithoutImageInput[] = metaResources.map(
     ({ name, hash }) => {
-      const modelFile = modelFileHashes.find((x) => x.hash === hash);
+      const modelFile = modelFileHashes.find((x) => x.hash.toLowerCase() === hash.toLowerCase());
       if (modelFile) return { modelVersionId: modelFile.file.modelVersionId };
       else return { name };
     }
