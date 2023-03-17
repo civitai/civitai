@@ -7,18 +7,18 @@ import {
   Loader,
   useMantineTheme,
 } from '@mantine/core';
-import {
-  IconArrowBigDown,
-  IconArrowBigTop,
-  IconChevronLeft,
-  IconChevronRight,
-} from '@tabler/icons';
+import { IconArrowBigDown, IconArrowBigTop, IconChevronDown, IconChevronUp } from '@tabler/icons';
 import { useMemo, useState } from 'react';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { TagVotableEntityType } from '~/libs/tags';
 import { trpc } from '~/utils/trpc';
 
-export function VotableTags({ id, type, limit = 6, ...props }: GalleryTagProps) {
+export function VotableTags({
+  entityId: id,
+  entityType: type,
+  limit = 6,
+  ...props
+}: GalleryTagProps) {
   const queryUtils = trpc.useContext();
   const theme = useMantineTheme();
   const { data: tags, isLoading } = trpc.tag.getVotableTags.useQuery({ id, type });
@@ -142,7 +142,7 @@ export function VotableTags({ id, type, limit = 6, ...props }: GalleryTagProps) 
       })}
       {tags.length > limit && (
         <ActionIcon variant="transparent" size="sm" onClick={() => setShowAll((prev) => !prev)}>
-          {showAll ? <IconChevronLeft strokeWidth={3} /> : <IconChevronRight strokeWidth={3} />}
+          {showAll ? <IconChevronUp strokeWidth={3} /> : <IconChevronDown strokeWidth={3} />}
         </ActionIcon>
       )}
     </Group>
@@ -150,7 +150,7 @@ export function VotableTags({ id, type, limit = 6, ...props }: GalleryTagProps) 
 }
 
 type GalleryTagProps = {
-  id: number;
-  type: TagVotableEntityType;
+  entityId: number;
+  entityType: TagVotableEntityType;
   limit?: number;
 } & Omit<GroupProps, 'id'>;

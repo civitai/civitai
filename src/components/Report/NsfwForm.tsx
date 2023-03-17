@@ -4,15 +4,28 @@ import { withWatcher } from '~/libs/form/hoc/withWatcher';
 import { withController } from '~/libs/form/hoc/withController';
 import { reportNsfwDetailsSchema } from '~/server/schema/report.schema';
 import { Accordion, Badge, Chip, Group, Input, InputWrapperProps, Text } from '@mantine/core';
-import { moderationCategories } from '~/libs/moderation';
+import { entityModerationCategories } from '~/libs/moderation';
 import { InputTextArea } from '~/libs/form';
+import { TagVotableEntityType } from '~/libs/tags';
 
-export const NsfwForm = createReportForm({
+export const ImageNsfwForm = createReportForm({
   schema: reportNsfwDetailsSchema,
   Element: () => {
     return (
       <>
-        <InputModerationTags name="tags" label="Select all that apply" required />
+        <InputModerationTags type="image" name="tags" label="Select all that apply" required />
+        <InputTextArea name="comment" label="Comment (optional)" />
+      </>
+    );
+  },
+});
+
+export const ModelNsfwForm = createReportForm({
+  schema: reportNsfwDetailsSchema,
+  Element: () => {
+    return (
+      <>
+        <InputModerationTags type="model" name="tags" label="Select all that apply" required />
         <InputTextArea name="comment" label="Comment (optional)" />
       </>
     );
@@ -21,16 +34,24 @@ export const NsfwForm = createReportForm({
 
 type ModerationTagsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: string[];
+  type: TagVotableEntityType;
   onChange?: (value: string[]) => void;
 };
 
-function ModerationTagsInput({ value = [], onChange, ...props }: ModerationTagsInputProps) {
+const defaultAccordions: Record<TagVotableEntityType, string[]> = {
+  model: ['explicit nudity'],
+  image: ['suggestive', 'explicit nudity'],
+};
+function ModerationTagsInput({ value = [], onChange, type, ...props }: ModerationTagsInputProps) {
   value = Array.isArray(value) ? value : value ? [value] : [];
 
   const toggleTag = (tag: string) => {
     const updated = value.includes(tag) ? value.filter((x) => x !== tag) : [...value, tag];
     onChange?.(updated);
   };
+
+  console.log(type);
+  const moderationCategories = useMemo(() => entityModerationCategories[type], [type]);
 
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -44,7 +65,7 @@ function ModerationTagsInput({ value = [], onChange, ...props }: ModerationTagsI
 
   return (
     <Input.Wrapper {...props}>
-      <Accordion defaultValue={['suggestive', 'explicit nudity']} variant="contained" multiple>
+      <Accordion defaultValue={defaultAccordions[type]} variant="contained" multiple>
         {moderationCategories
           .filter((x) => !!x.children?.length && !x.noInput)
           .map((category) => {

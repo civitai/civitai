@@ -1,3 +1,5 @@
+import { TagVotableEntityType } from '~/libs/tags';
+
 export type ModerationCategory = {
   label: string;
   value: string;
@@ -5,6 +7,40 @@ export type ModerationCategory = {
   noInput?: boolean;
   children?: ModerationCategory[];
 };
+
+export const modelModerationCategories: ModerationCategory[] = [
+  {
+    label: 'Explicit Nudity',
+    value: 'explicit nudity',
+    children: [{ label: 'Sexual Activity', value: 'sexual activity' }],
+  },
+  {
+    label: 'Violence',
+    value: 'violence',
+    children: [
+      { label: 'Graphic Violence Or Gore', value: 'graphic violence or gore' },
+      { label: 'Weapons', value: 'weapons' },
+    ],
+  },
+  {
+    label: 'Visually Disturbing',
+    value: 'visually disturbing',
+    children: [
+      { label: 'Emaciated Bodies', value: 'emaciated bodies' },
+      { label: 'Corpses', value: 'corpses' },
+      { label: 'Hanging', value: 'hanging' },
+    ],
+  },
+  {
+    label: 'Hate Symbols',
+    value: 'hate symbols',
+    children: [
+      { label: 'Nazi Party', value: 'nazi party' },
+      { label: 'White Supremacy', value: 'white supremacy' },
+      { label: 'Extremist', value: 'extremist' },
+    ],
+  },
+];
 
 export const moderationCategories: ModerationCategory[] = [
   {
@@ -108,3 +144,8 @@ export const moderationCategories: ModerationCategory[] = [
     ],
   },
 ];
+
+export const entityModerationCategories: Record<TagVotableEntityType, ModerationCategory[]> = {
+  image: moderationCategories,
+  model: modelModerationCategories,
+};
