@@ -11,14 +11,20 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 export function PostEditLayout(page: any) {
   return (
     <AppLayout>
-      <LayoutProvider>{page}</LayoutProvider>
+      <PostEditWrapper>{page}</PostEditWrapper>
     </AppLayout>
   );
 }
 
-function LayoutProvider({ children }: { children: any }) {
+export function PostEditWrapper({
+  children,
+  postId: initialPostId,
+}: {
+  children: any;
+  postId?: number;
+}) {
   const router = useRouter();
-  const postId = router.query.postId ? Number(router.query.postId) : 0;
+  const postId = initialPostId ?? router.query.postId ? Number(router.query.postId) : 0;
   const queryUtils = trpc.useContext();
 
   const { data, isLoading, isRefetching } = trpc.post.getEdit.useQuery(

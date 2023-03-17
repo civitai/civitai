@@ -6,7 +6,6 @@ import { EditResourceReview } from '~/components/ResourceReview/EditResourceRevi
 import { useEffect } from 'react';
 
 export function EditPostReviews() {
-  const staleRef = useRef;
   const id = useEditPostContext((state) => state.id);
   const items = useEditPostContext((state) => state.images);
   const ready = items.every((x) => x.type === 'image') && items.length > 0;
@@ -42,6 +41,7 @@ export function EditPostReviews() {
               modelName={resource.modelName}
               modelVersionId={resource.modelVersionId}
               modelVersionName={resource.modelVersionName}
+              name={resource.name}
             />
           ))
         )}
