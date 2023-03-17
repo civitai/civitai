@@ -1,13 +1,16 @@
 import {
+  addTagsHandler,
   addTagVotesHandler,
   getAllTagsHandler,
   getTagWithModelCountHandler,
   getTrendingTagsHandler,
   getVotableTagsHandler,
   removeTagVotesHandler,
+  disableTagsHandler,
 } from '~/server/controllers/tag.controller';
 import {
   addTagVotesSchema,
+  adjustTagsSchema,
   getTagByNameSchema,
   getTagsInput,
   getTrendingTagsSchema,
@@ -15,7 +18,13 @@ import {
   removeTagVotesSchema,
 } from '~/server/schema/tag.schema';
 import { getHiddenTagsForUser } from '~/server/services/user-cache.service';
-import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  middleware,
+  moderatorProcedure,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 
 const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
   const userId = ctx.user?.id;
@@ -43,4 +52,6 @@ export const tagRouter = router({
   getVotableTags: publicProcedure.input(getVotableTagsSchema).query(getVotableTagsHandler),
   addTagVotes: protectedProcedure.input(addTagVotesSchema).mutation(addTagVotesHandler),
   removeTagVotes: protectedProcedure.input(removeTagVotesSchema).mutation(removeTagVotesHandler),
+  addTags: moderatorProcedure.input(adjustTagsSchema).mutation(addTagsHandler),
+  disableTags: moderatorProcedure.input(adjustTagsSchema).mutation(disableTagsHandler),
 });

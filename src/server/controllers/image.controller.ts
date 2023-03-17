@@ -1,5 +1,14 @@
-import { GetImageInput, GetInfiniteImagesInput } from './../schema/image.schema';
-import { getAllImages, getImage, getImageDetail } from './../services/image.service';
+import {
+  GetImageInput,
+  GetInfiniteImagesInput,
+  ImageModerationSchema,
+} from './../schema/image.schema';
+import {
+  getAllImages,
+  getImage,
+  getImageDetail,
+  moderateImages,
+} from './../services/image.service';
 import { ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
@@ -167,17 +176,9 @@ export const getGalleryImagesHandler = async ({
   }
 };
 
-export const moderateImageHandler = async ({ input }: { input: ImageUpdateSchema }) => {
+export const moderateImageHandler = async ({ input }: { input: ImageModerationSchema }) => {
   try {
-    const { id, ...data } = input;
-    const image = await updateImageById({
-      id,
-      data,
-      select: { id: true, url: true, name: true, nsfw: true, needsReview: true },
-    });
-    if (!image) throw throwNotFoundError(`No image with id ${id}`);
-
-    return image;
+    await moderateImages(input);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

@@ -1,6 +1,7 @@
 import { constants } from '~/server/common/constants';
 import {
   AddTagVotesSchema,
+  AdjustTagsSchema,
   GetTagByNameInput,
   GetTagsInput,
   GetTrendingTagsSchema,
@@ -8,6 +9,8 @@ import {
   RemoveTagVotesSchema,
 } from '~/server/schema/tag.schema';
 import {
+  addTags,
+  disableTags,
   addTagVotes,
   getTags,
   getTagWithModelCount,
@@ -109,6 +112,22 @@ export const removeTagVotesHandler = async ({
 }) => {
   try {
     await removeTagVotes({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const addTagsHandler = async ({ input }: { input: AdjustTagsSchema }) => {
+  try {
+    await addTags(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const disableTagsHandler = async ({ input }: { input: AdjustTagsSchema }) => {
+  try {
+    await disableTags(input);
   } catch (error) {
     throw throwDbError(error);
   }

@@ -1,3 +1,7 @@
+-- AlterTable
+ALTER TABLE "TagsOnImage" ADD COLUMN     "disabled" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "needsReview" BOOLEAN NOT NULL DEFAULT false;
+
 -- CreateTable
 CREATE TABLE "TagsOnModelsVote" (
     "modelId" INTEGER NOT NULL,
@@ -31,6 +35,9 @@ CREATE INDEX "TagsOnImageVote_imageId_idx" ON "TagsOnImageVote" USING HASH ("ima
 
 -- CreateIndex
 CREATE INDEX "TagsOnImageVote_userId_idx" ON "TagsOnImageVote" USING HASH ("userId");
+
+-- CreateIndex
+CREATE INDEX "TagsOnImage_disabled_idx" ON "TagsOnImage"("disabled");
 
 -- AddForeignKey
 ALTER TABLE "TagsOnModelsVote" ADD CONSTRAINT "TagsOnModelsVote_modelId_fkey" FOREIGN KEY ("modelId") REFERENCES "Model"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -96,6 +103,7 @@ WITH image_tags AS (
 		0 "upVotes",
 		0 "downVotes"
 	FROM "TagsOnImage" toi
+	WHERE NOT toi.disabled
 
 	UNION
 

@@ -4,7 +4,11 @@ import {
   getImageHandler,
   getInfiniteImagesHandler,
 } from './../controllers/image.controller';
-import { updateImageSchema, getInfiniteImagesSchema } from './../schema/image.schema';
+import {
+  updateImageSchema,
+  getInfiniteImagesSchema,
+  imageModerationSchema,
+} from './../schema/image.schema';
 import {
   deleteImageHandler,
   getGalleryImageDetailHandler,
@@ -26,7 +30,13 @@ import {
   getReviewImagesSchema,
   imageUpdateSchema,
 } from '~/server/schema/image.schema';
-import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  middleware,
+  moderatorProcedure,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { applyUserPreferences } from '~/server/middleware.trpc';
 
@@ -71,10 +81,7 @@ export const imageRouter = router({
   getConnectionData: publicProcedure
     .input(getImageConnectionsSchema)
     .query(getImageConnectionDataHandler),
-  moderate: protectedProcedure
-    .input(imageUpdateSchema)
-    .use(isOwnerOrModerator)
-    .mutation(moderateImageHandler),
+  moderate: moderatorProcedure.input(imageModerationSchema).mutation(moderateImageHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)

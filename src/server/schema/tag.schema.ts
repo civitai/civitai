@@ -1,6 +1,6 @@
 import { TagTarget } from '@prisma/client';
 import { z } from 'zod';
-import { tagVotableEntitySchema } from '~/libs/tags';
+import { taggableEntitySchema, tagVotableEntitySchema } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 
@@ -54,16 +54,17 @@ export const getVotableTagsSchema = z.object({
 });
 export type GetVotableTagsSchema = z.infer<typeof getVotableTagsSchema>;
 
+const tagIdsOrNamesSchema = z.union([
+  z
+    .string()
+    .transform((val) => val.toLowerCase().trim())
+    .array(),
+  z.number().array(),
+]);
 export const addTagVotesSchema = z.object({
   type: tagVotableEntitySchema,
   id: z.number(),
-  tags: z.union([
-    z
-      .string()
-      .transform((val) => val.toLowerCase().trim())
-      .array(),
-    z.number().array(),
-  ]),
+  tags: tagIdsOrNamesSchema,
   vote: z.number().min(-1, 'Vote must be between -1 and 1').max(1, 'Vote must be between -1 and 1'),
 });
 export type AddTagVotesSchema = z.infer<typeof addTagVotesSchema>;
@@ -71,12 +72,13 @@ export type AddTagVotesSchema = z.infer<typeof addTagVotesSchema>;
 export const removeTagVotesSchema = z.object({
   type: tagVotableEntitySchema,
   id: z.number(),
-  tags: z.union([
-    z
-      .string()
-      .transform((val) => val.toLowerCase().trim())
-      .array(),
-    z.number().array(),
-  ]),
+  tags: tagIdsOrNamesSchema,
 });
 export type RemoveTagVotesSchema = z.infer<typeof removeTagVotesSchema>;
+
+export const adjustTagsSchema = z.object({
+  tags: tagIdsOrNamesSchema,
+  entityIds: z.number().array(),
+  entityType: taggableEntitySchema,
+});
+export type AdjustTagsSchema = z.infer<typeof adjustTagsSchema>;

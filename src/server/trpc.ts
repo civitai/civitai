@@ -59,6 +59,16 @@ const isMuted = middleware(async ({ ctx, next }) => {
   });
 });
 
+const isMod = t.middleware(({ ctx: { user, acceptableOrigin }, next }) => {
+  if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  if (!user.isModerator)
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'You do not have permission to perform this action',
+    });
+  return next({ ctx: { user, acceptableOrigin } });
+});
+
 export const isFlagProtected = (flag: keyof FeatureFlags) =>
   middleware(({ ctx, next }) => {
     const features = getFeatureFlags({ user: ctx.user });
@@ -71,6 +81,11 @@ export const isFlagProtected = (flag: keyof FeatureFlags) =>
  * Protected procedure
  **/
 export const protectedProcedure = publicProcedure.use(isAuthed);
+
+/**
+ * Protected procedure
+ **/
+export const moderatorProcedure = protectedProcedure.use(isMod);
 
 /**
  * Guarded procedure to prevent users from making actions

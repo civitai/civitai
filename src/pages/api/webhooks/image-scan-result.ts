@@ -122,13 +122,23 @@ export default WebhookEndpoint(async function imageTags(req, res) {
           select: { tag: { select: { type: true, name: true } } },
         })
       )?.map((x) => x.tag) ?? [];
-    const nsfw = tags.some((x) => x.type === TagType.Moderation);
-    const hasMinorTag = tags.some((x) => ['child', 'teen'].includes(x.name));
+
+    let hasAdultTag = false,
+      hasMinorTag = false,
+      hasAnimatedTag = false,
+      nsfw = false;
+    for (const { name, type } of tags) {
+      if (type === TagType.Moderation) nsfw = true;
+      if (['child', 'teen'].includes(name)) hasMinorTag = true;
+      else if (['anime', 'cartoon', 'comics', 'manga'].includes(name)) hasAnimatedTag = true;
+      else if (['adult'].includes(name)) hasAdultTag = true;
+    }
 
     // Set scannedAt and nsfw
+    const shouldReview = hasMinorTag && !hasAdultTag && (!hasAnimatedTag || nsfw);
     const image = await dbWrite.image.update({
       where: { id: imageId },
-      data: { scannedAt: new Date(), nsfw, needsReview: hasMinorTag ? true : undefined },
+      data: { scannedAt: new Date(), nsfw, needsReview: shouldReview ? true : undefined },
       select: { id: true, meta: true },
     });
 

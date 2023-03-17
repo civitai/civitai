@@ -309,7 +309,7 @@ function UploadedImage({
           </HoverCard.Target>
           <HoverCard.Dropdown>
             <Text size="sm" weight={500}>
-              Flagged by age detection
+              Flagged for review
             </Text>
             <Text size="sm" sx={{ lineHeight: 1.2 }}>
               After submission this image will be reviewed by a moderator.
