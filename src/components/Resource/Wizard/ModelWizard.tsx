@@ -53,7 +53,7 @@ export function ModelWizard() {
   const { data: model } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
 
   useDidUpdate(() => {
-    router.replace(`/models/${id}/wizard?step=${state.step}`, undefined, { shallow: true });
+    router.replace(`/models/v2/${id}/wizard?step=${state.step}`, undefined, { shallow: true });
   }, [id, state.step]);
 
   useEffect(() => {
@@ -102,7 +102,7 @@ export function ModelWizard() {
         radius="xl"
         variant="light"
         onClick={() =>
-          editing && hasVersions && hasFiles ? router.push(`/models/${id}`) : router.back()
+          editing && hasVersions && hasFiles ? router.push(`/models/v2/${id}`) : router.back()
         }
       >
         <IconX />
@@ -120,7 +120,7 @@ export function ModelWizard() {
                 model={state.model}
                 onSubmit={({ id }) => {
                   if (editing) return goNext();
-                  router.push(`/models/${id}/wizard?step=2`);
+                  router.push(`/models/v2/${id}/wizard?step=2`);
                 }}
               >
                 {({ loading }) => (
@@ -133,9 +133,9 @@ export function ModelWizard() {
               </ModelUpsertForm>
             </Stack>
           </Stepper.Step>
-          <Stepper.Step label={editing ? 'Edit version' : 'Add version'}>
+          <Stepper.Step label={hasVersions ? 'Edit version' : 'Add version'}>
             <Stack>
-              <Title order={3}>{editing ? 'Edit version' : 'Add version'}</Title>
+              <Title order={3}>{hasVersions ? 'Edit version' : 'Add version'}</Title>
               <ModelVersionUpsertForm
                 model={state.model}
                 version={state.modelVersion}

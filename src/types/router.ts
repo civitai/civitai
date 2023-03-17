@@ -7,6 +7,7 @@ export type RouterInput = inferRouterInputs<AppRouter>;
 type ModelRouter = RouterOutput['model'];
 export type ModelById = ModelRouter['getById'];
 export type ModelGetAll = ModelRouter['getAll'];
+export type ModelGetVersions = ModelRouter['getVersions'];
 
 type ReviewRouter = RouterOutput['review'];
 export type ReviewGetAll = ReviewRouter['getAll'];

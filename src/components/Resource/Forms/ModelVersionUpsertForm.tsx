@@ -61,8 +61,11 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         ? String(version.earlyAccessTimeFrame)
         : '0',
     modelId: model?.id ?? -1,
+    description: version?.description ?? null,
+    epochs: version?.epochs ?? null,
+    steps: version?.steps ?? null,
   };
-  const form = useForm({ schema, defaultValues, shouldUnregister: false });
+  const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
 
   const skipTrainedWords = !isTextualInversion && (form.watch('skipTrainedWords') ?? false);
   const trainedWords = form.watch('trainedWords') ?? [];
@@ -80,6 +83,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     if (isDirty) {
       const result = await upsertVersionMutation.mutateAsync({
         ...data,
+        modelId: model?.id ?? -1,
         earlyAccessTimeFrame: Number(data.earlyAccessTimeFrame),
         trainedWords: skipTrainedWords ? [] : trainedWords,
       });
@@ -94,6 +98,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     if (version)
       form.reset({
         ...version,
+        modelId: version?.modelId ?? model?.id ?? -1,
         baseModel: version.baseModel as BaseModel,
         skipTrainedWords: version.trainedWords
           ? !version.trainedWords.length

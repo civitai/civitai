@@ -134,8 +134,8 @@ export function GalleryDetail2() {
                 <Link
                   href={
                     image.connections.reviewId
-                      ? `/models/${image.connections.modelId}?modal=reviewThread&reviewId=${image.connections.reviewId}`
-                      : `/models/${image.connections.modelId}`
+                      ? `/models/v2/${image.connections.modelId}?modal=reviewThread&reviewId=${image.connections.reviewId}`
+                      : `/models/v2/${image.connections.modelId}`
                   }
                   passHref
                 >

@@ -42,7 +42,7 @@ export const getServerSideProps = createServerSideProps({
 
     const isOwner = model.userId === session.user?.id;
     const isModerator = session.user?.isModerator ?? false;
-    if (!isOwner || !isModerator)
+    if (!isOwner && !isModerator)
       return {
         redirect: {
           destination: `/models/v2/${params.id}`,
@@ -56,7 +56,7 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default function EditModelVersion({ modelId, versionId }: Props) {
+export default function ModelVersionEdit({ modelId, versionId }: Props) {
   const { data, isLoading } = trpc.model.getById.useQuery({ id: modelId });
   // Take out tagsOnModels to avoid type errors since we don't need it anyway
   const { tagsOnModels, ...model } = data as ModelById;

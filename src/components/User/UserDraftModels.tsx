@@ -18,6 +18,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 
 import { NoContent } from '~/components/NoContent/NoContent';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { formatDate } from '~/utils/date-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -50,11 +51,15 @@ const useStyles = createStyles((theme) => ({
 export function UserDraftModels() {
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useContext();
+  const currentUser = useCurrentUser();
 
   const [page, setPage] = useState(1);
   const [scrolled, setScrolled] = useState(false);
 
-  const { data, isLoading } = trpc.model.getMyDraftModels.useQuery({ page, limit: 10 });
+  const { data, isLoading } = trpc.model.getMyDraftModels.useQuery(
+    { page, limit: 10 },
+    { enabled: !!currentUser }
+  );
   const { items, ...pagination } = data || {
     items: [],
     totalItems: 0,
@@ -117,8 +122,8 @@ export function UserDraftModels() {
                       <Link
                         href={
                           hasVersion && hasFiles
-                            ? `/models/${model.id}`
-                            : `/models/${model.id}/edit?step=${hasVersion ? '3' : '2'}`
+                            ? `/models/v2/${model.id}`
+                            : `/models/v2/${model.id}/edit?step=${hasVersion ? '3' : '2'}`
                         }
                         passHref
                       >

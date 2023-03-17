@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Anchor,
   Button,
   Card,
   Group,
@@ -12,6 +13,7 @@ import {
 } from '@mantine/core';
 import { Dropzone, FileWithPath } from '@mantine/dropzone';
 import { randomId, useViewportSize } from '@mantine/hooks';
+import { showNotification } from '@mantine/notifications';
 import { ModelType } from '@prisma/client';
 import {
   IconBan,
@@ -24,6 +26,7 @@ import {
   IconX,
 } from '@tabler/icons';
 import startCase from 'lodash/startCase';
+import Link from 'next/link';
 import { MasonryScroller, useContainerPosition, usePositioner, useResizeObserver } from 'masonic';
 import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
@@ -90,6 +93,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   },
   Poses: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
   Wildcards: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
+  Other: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
 };
 
 const metadataSchema = modelFileMetadataSchema
@@ -147,6 +151,17 @@ export function Files({ model, version }: Props) {
       setItems((items) =>
         items.map((item) => (item.id === result.id ? { ...item, id: result.id } : item))
       );
+      showNotification({
+        autoClose: false,
+        color: 'green',
+        title: `Finished uploading ${result.name}`,
+        styles: { root: { alignItems: 'flex-start' } },
+        message: (
+          <Link href={`/models/v2/${model?.id}?modelVersionId=${result.modelVersionId}`} passHref>
+            <Anchor size="sm">Go to model</Anchor>
+          </Link>
+        ),
+      });
     },
     onError(error) {
       showErrorNotification({

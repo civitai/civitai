@@ -13,6 +13,7 @@ import {
   getModelsWithVersionsHandler,
   getModelVersionsHandler,
   getMyDraftModelsHandler,
+  reorderModelVersionsHandler,
   restoreModelHandler,
   unpublishModelHandler,
   updateModelHandler,
@@ -27,6 +28,7 @@ import {
   ModelInput,
   modelSchema,
   modelUpsertSchema,
+  reorderModelVersionsSchema,
 } from '~/server/schema/model.schema';
 import {
   guardedProcedure,
@@ -117,4 +119,8 @@ export const modelRouter = router({
     .query(getModelDetailsForReviewHandler),
   restore: protectedProcedure.input(getByIdSchema).mutation(restoreModelHandler),
   getDownloadCommand: protectedProcedure.input(getDownloadSchema).query(getDownloadCommandHandler),
+  reorderVersions: protectedProcedure
+    .input(reorderModelVersionsSchema)
+    .use(isOwnerOrModerator)
+    .mutation(reorderModelVersionsHandler),
 });

@@ -178,7 +178,7 @@ export function AppHeader() {
   const links: MenuLink[] = useMemo(
     () => [
       {
-        href: '/models/create',
+        href: '/models/v2/new',
         visible: !isMuted,
         loginRedirect: 'upload-model',
         label: (
@@ -304,7 +304,7 @@ export function AppHeader() {
   const userMenuItems = useMemo(
     () =>
       links
-        .filter(({ href, visible }) => visible !== false && href !== '/models/create')
+        .filter(({ href, visible }) => visible !== false && href !== '/models/v2/new')
         .map((link) => (
           <Menu.Item key={link.href} component={NextLink} href={link.href}>
             {link.label}
@@ -324,11 +324,11 @@ export function AppHeader() {
               </Anchor>
             </Link>
             {!isMuted && (
-              <LoginRedirect reason="upload-model" returnUrl="/models/create">
+              <LoginRedirect reason="upload-model" returnUrl="/models/v2/new">
                 <Button
                   className={classes.links}
                   component={NextLink}
-                  href="/models/create"
+                  href="/models/v2/new"
                   variant="filled"
                   size="xs"
                   pl={5}

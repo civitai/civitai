@@ -1,8 +1,18 @@
 import { Carousel } from '@mantine/carousel';
-import { Center, AspectRatio, createStyles } from '@mantine/core';
+import {
+  AspectRatio,
+  Button,
+  Center,
+  createStyles,
+  Group,
+  Paper,
+  Stack,
+  Text,
+} from '@mantine/core';
 import { useRouter } from 'next/router';
 
 import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
+import { useGalleryFilters } from '~/components/Gallery/GalleryFilters';
 import { CustomImageModel, ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
@@ -37,7 +47,45 @@ const useStyles = createStyles((theme) => ({
 export function ModelCarousel({ modelId, modelVersionId, images, nsfw, mobile = false }: Props) {
   const router = useRouter();
   const { classes, cx } = useStyles();
-  if (!images.length) return null;
+  const { filters, clearFilters } = useGalleryFilters();
+
+  if (!images.length) {
+    const hasTagFilters = filters.tags && filters.tags.length > 0;
+
+    return (
+      <Paper
+        p="xl"
+        radius="md"
+        className={cx(!mobile && classes.carousel, mobile && classes.mobileBlock)}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: mobile ? 300 : 600,
+        }}
+        withBorder
+      >
+        <Stack>
+          <Stack spacing={4}>
+            <Text size="lg">No images found</Text>
+            <Text size="sm" color="dimmed">
+              {hasTagFilters
+                ? 'Try removing your images filters'
+                : 'Be the first to share your creation for this model'}
+            </Text>
+          </Stack>
+          <Group position="center">
+            <Button
+              variant="outline"
+              onClick={() => (hasTagFilters ? clearFilters() : router.push('/posts/create'))}
+            >
+              {hasTagFilters ? 'Clear Filters' : 'Share Images'}
+            </Button>
+          </Group>
+        </Stack>
+      </Paper>
+    );
+  }
 
   return (
     <Carousel

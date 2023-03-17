@@ -37,19 +37,25 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const defaultValues: ModelUpsertInput = {
     ...model,
     name: model?.name ?? '',
+    description: model?.description ?? null,
+    tagsOnModels: model?.tagsOnModels ?? [],
     status: model?.status ?? 'Draft',
     type: model?.type ?? 'Checkpoint',
+    checkpointType: model?.checkpointType,
+    poi: model?.poi ?? false,
+    nsfw: model?.nsfw ?? false,
     allowCommercialUse: model?.allowCommercialUse ?? CommercialUse.Sell,
     allowDerivatives: model?.allowDerivatives ?? true,
     allowNoCredit: model?.allowNoCredit ?? true,
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
   };
-  const form = useForm({ schema, defaultValues, shouldUnregister: false });
+  const form = useForm({ schema, mode: 'onChange', defaultValues, shouldUnregister: false });
   const queryUtils = trpc.useContext();
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
   const nsfwPoi = form.watch(['nsfw', 'poi']);
   const { isDirty, errors } = form.formState;
+  console.log({ isDirty });
   const editing = !!model;
 
   const handleModelTypeChange = (value: ModelType) => {

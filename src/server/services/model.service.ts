@@ -185,7 +185,7 @@ export const getModelVersionsMicro = ({ id }: { id: number }) => {
   return dbRead.modelVersion.findMany({
     where: { modelId: id },
     orderBy: { index: 'asc' },
-    select: { id: true, name: true },
+    select: { id: true, name: true, index: true },
   });
 };
 
@@ -247,6 +247,7 @@ const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
 export const upsertModel = ({
   id,
   tagsOnModels,
+  userId,
   ...data
 }: ModelUpsertInput & { userId: number }) => {
   const select = modelWithDetailsSelect();
@@ -256,6 +257,7 @@ export const upsertModel = ({
       select,
       data: {
         ...data,
+        userId,
         tagsOnModels: tagsOnModels
           ? {
               create: tagsOnModels.map((tag) => {

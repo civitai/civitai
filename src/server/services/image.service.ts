@@ -66,7 +66,7 @@ export const getGalleryImages = async <
     conditionalFilters.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
 
   if (!!tags?.length) conditionalFilters.push({ tags: { some: { tagId: { in: tags } } } });
-  else if (!needsReview) {
+  else if (!needsReview && !(modelId || modelVersionId || reviewId)) {
     const periodStart = decreaseDate(new Date(), 3, 'days');
     conditionalFilters.push({ featuredAt: { gt: periodStart } });
   }

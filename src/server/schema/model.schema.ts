@@ -122,3 +122,11 @@ export const modelUpsertSchema = licensingSchema.extend({
   poi: z.boolean().optional(),
   locked: z.boolean().optional(),
 });
+
+export type ReorderModelVersionsSchema = z.infer<typeof reorderModelVersionsSchema>;
+export const reorderModelVersionsSchema = z.object({
+  id: z.number(),
+  modelVersions: z.array(
+    z.object({ id: z.number(), name: z.string(), index: z.number().nullable() })
+  ),
+});

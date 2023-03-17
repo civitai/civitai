@@ -1,6 +1,8 @@
 import {
+  Accordion,
   Badge,
   Button,
+  Card,
   Grid,
   Group,
   Menu,
@@ -8,23 +10,29 @@ import {
   Rating,
   Stack,
   Text,
+  Title,
   Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
+import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
-import { IconDownload, IconLicense, IconMessageCircle2 } from '@tabler/icons';
+import { IconDownload, IconHeart, IconLicense, IconMessageCircle2 } from '@tabler/icons';
 import { startCase } from 'lodash';
 import { SessionUser } from 'next-auth';
+import { useEffect, useRef, useState } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
+import { FileInfo } from '~/components/FileInfo/FileInfo';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
@@ -42,11 +50,13 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
-import { removeTags, splitUppercase } from '~/utils/string-helpers';
+import { splitUppercase } from '~/utils/string-helpers';
 
-export function ModelVersionDetails({ model, version, user }: Props) {
+export function ModelVersionDetails({ model, version, user, isFavorite, onFavoriteClick }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
 
+  const controlRef = useRef<HTMLButtonElement | null>(null);
+  const [hasClampControl, setHasClampControl] = useState(false);
   const [opened, { toggle }] = useDisclosure(false);
 
   const primaryFile = getPrimaryFile(version.files, {
@@ -126,15 +136,19 @@ export function ModelVersionDetails({ model, version, user }: Props) {
     },
   ];
 
-  const primaryFileDetails = primaryFile && (
+  const getFileDetails = (file: any) => (
     <Group position="apart" noWrap spacing={0}>
-      <VerifiedText file={primaryFile} />
-      <Text size="xs" color="dimmed">
-        {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-        {primaryFile.metadata.format}
-      </Text>
+      <VerifiedText file={file} />
+      <Group spacing={4}>
+        <Text size="xs" color="dimmed">
+          {file.type === 'Pruned Model' ? 'Pruned ' : ''}
+          {file.metadata.format}
+        </Text>
+        <FileInfo file={file} />
+      </Group>
     </Group>
   );
+  const primaryFileDetails = primaryFile && getFileDetails(primaryFile);
 
   const downloadMenuItems = version.files.map((file) => (
     <Menu.Item
@@ -154,11 +168,44 @@ export function ModelVersionDetails({ model, version, user }: Props) {
       } (${formatKBytes(file.sizeKB)})`}
     </Menu.Item>
   ));
+  const downloadFileItems = version.files.map((file) => (
+    <Card key={file.id}>
+      <Stack spacing={4}>
+        <Group position="apart" noWrap>
+          <Text size="xs" weight={500} lineClamp={2}>
+            {`${
+              ['Model', 'Pruned Model'].includes(file.type) ? file.metadata.format + ' ' : ''
+            }${startCase(file.type)} (${formatKBytes(file.sizeKB)})`}
+          </Text>
+          <Button
+            component="a"
+            variant="subtle"
+            size="xs"
+            href={createModelFileDownloadUrl({
+              versionId: version.id,
+              type: file.type,
+              format: file.metadata.format,
+            })}
+            download
+            compact
+          >
+            Download
+          </Button>
+        </Group>
+        {getFileDetails(file)}
+      </Stack>
+    </Card>
+  ));
 
-  const cleanDescription = version.description ? removeTags(version.description) : '';
+  useEffect(() => {
+    setHasClampControl(!!controlRef.current);
+  }, []);
+
+  const isOwnerOrMod = model.user?.id === user?.id || user?.isModerator;
+  const filesCount = version.files.length;
 
   return (
-    <Grid gutter="xl" mt="xs">
+    <Grid gutter="xl">
       <Grid.Col xs={12} md={4} orderMd={2}>
         <Stack>
           <ModelCarousel
@@ -196,7 +243,7 @@ export function ModelVersionDetails({ model, version, user }: Props) {
                 </Stack>
               ) : (
                 <Stack sx={{ flex: 1 }} spacing={4}>
-                  <MultiActionButton
+                  <Button
                     component="a"
                     href={createModelFileDownloadUrl({
                       versionId: version.id,
@@ -204,14 +251,12 @@ export function ModelVersionDetails({ model, version, user }: Props) {
                     })}
                     leftIcon={<IconDownload size={16} />}
                     disabled={!primaryFile}
-                    menuItems={downloadMenuItems.length > 1 ? downloadMenuItems : []}
-                    menuTooltip="Other Downloads"
                     download
                   >
                     <Text align="center">
-                      {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+                      {primaryFile ? `Download (${formatKBytes(primaryFile.sizeKB)})` : 'No file'}
                     </Text>
-                  </MultiActionButton>
+                  </Button>
                   {primaryFileDetails}
                 </Stack>
               )
@@ -251,6 +296,19 @@ export function ModelVersionDetails({ model, version, user }: Props) {
             ) : (
               <RunButton modelVersionId={version.id} />
             )}
+            <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
+              <div>
+                <LoginRedirect reason="favorite-model">
+                  <Button
+                    onClick={onFavoriteClick}
+                    color={isFavorite ? 'red' : 'gray'}
+                    sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                  >
+                    <IconHeart color="#fff" />
+                  </Button>
+                </LoginRedirect>
+              </div>
+            </Tooltip>
           </Group>
           <EarlyAccessAlert
             versionId={version.id}
@@ -258,7 +316,34 @@ export function ModelVersionDetails({ model, version, user }: Props) {
             deadline={version.earlyAccessDeadline}
           />
           <ModelFileAlert versionId={version.id} modelType={model.type} files={version.files} />
-          <DescriptionTable items={modelDetails} labelWidth="30%" />
+          <Accordion variant="separated" defaultValue={['version-details']} multiple>
+            <Accordion.Item value="version-details">
+              <Accordion.Control>Details</Accordion.Control>
+              <Accordion.Panel>
+                <DescriptionTable items={modelDetails} labelWidth="30%" />
+              </Accordion.Panel>
+            </Accordion.Item>
+            <Accordion.Item value="version-files">
+              <Accordion.Control>
+                <Group position="apart">
+                  {filesCount ? `${filesCount === 1 ? '1 File' : `${filesCount} Files`}` : 'Files'}
+                  {isOwnerOrMod && (
+                    <Text
+                      component={NextLink}
+                      variant="link"
+                      size="sm"
+                      href={`/models/v2/${model.id}/model-versions/${version.id}/edit`}
+                    >
+                      Manage Files
+                    </Text>
+                  )}
+                </Group>
+              </Accordion.Control>
+              <Accordion.Panel>
+                <Stack spacing={8}>{downloadFileItems}</Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
+          </Accordion>
           <CreatorCard user={model.user} />
 
           <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>
@@ -316,14 +401,22 @@ export function ModelVersionDetails({ model, version, user }: Props) {
             </AlertWithIcon>
           )}
           {version.description && (
-            <Stack spacing={0}>
-              <Text size="lg" weight={500}>
+            <Stack spacing={4}>
+              <Title order={3} weight={500}>
                 About this version
-              </Text>
+              </Title>
               <Group spacing={4}>
-                <Text lineClamp={3}>{cleanDescription}</Text>
-                {cleanDescription.length > 150 ? (
-                  <Button variant="subtle" size="xs" onClick={toggle} compact>
+                {version.description && (
+                  <ContentClamp
+                    maxHeight={150}
+                    controlRef={controlRef}
+                    styles={{ control: { display: 'none' } }}
+                  >
+                    <RenderHtml html={version.description} />
+                  </ContentClamp>
+                )}
+                {hasClampControl ? (
+                  <Button variant="subtle" size="xs" p={0} onClick={toggle} compact>
                     Show more
                   </Button>
                 ) : null}
@@ -344,12 +437,19 @@ export function ModelVersionDetails({ model, version, user }: Props) {
           },
         })}
       >
-        <ModelCarousel
-          modelId={model.id}
-          nsfw={model.nsfw}
-          modelVersionId={version.id}
-          images={version.images}
-        />
+        <Stack>
+          <ModelCarousel
+            modelId={model.id}
+            nsfw={model.nsfw}
+            modelVersionId={version.id}
+            images={version.images}
+          />
+          {model.description ? (
+            <ContentClamp maxHeight={300}>
+              <RenderHtml html={model.description} withMentions />
+            </ContentClamp>
+          ) : null}
+        </Stack>
       </Grid.Col>
       {version.description && (
         <Modal
@@ -369,5 +469,7 @@ export function ModelVersionDetails({ model, version, user }: Props) {
 type Props = {
   version: ModelById['modelVersions'][number];
   model: ModelById;
+  onFavoriteClick: VoidFunction;
   user?: SessionUser | null;
+  isFavorite?: boolean;
 };

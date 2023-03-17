@@ -14,7 +14,7 @@ export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
 
         return (
           <Group key={download.id} style={{ flexWrap: 'nowrap' }}>
-            <Link href={`/models/${download.model.id}/${slugit(download.model.name)}`} passHref>
+            <Link href={`/models/v2/${download.model.id}/${slugit(download.model.name)}`} passHref>
               <Text
                 component="a"
                 sx={(theme) => ({

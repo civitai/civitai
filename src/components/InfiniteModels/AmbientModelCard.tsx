@@ -323,7 +323,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
       styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
       sx={{ opacity: isHidden ? 0.1 : undefined }}
     >
-      <Link href={`/models/${id}/${slugit(name)}`} passHref>
+      <Link href={`/models/v2/${id}/${slugit(name)}`} passHref>
         <MasonryCard
           ref={ref}
           withBorder

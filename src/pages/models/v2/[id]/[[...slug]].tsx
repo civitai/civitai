@@ -4,41 +4,39 @@ import {
   Badge,
   Box,
   Button,
-  Center,
   Container,
   createStyles,
   Divider,
   Group,
   Menu,
-  Paper,
   Rating,
   ScrollArea,
   Stack,
-  Tabs,
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
 import {
+  IconAlertTriangle,
+  IconArrowsSort,
+  IconBan,
   IconClock,
+  IconDotsVertical,
+  IconDownload,
+  IconEdit,
   IconExclamationMark,
+  IconFlag,
   IconHeart,
   IconMessage,
+  IconPhotoEdit,
   IconPlus,
-  IconStar,
-  IconDotsVertical,
-  IconBan,
   IconRecycle,
-  IconTrash,
-  IconEdit,
-  IconFlag,
   IconTagOff,
-  IconAlertTriangle,
-  IconDownload,
+  IconTrash,
 } from '@tabler/icons';
 import truncate from 'lodash/truncate';
 import { InferGetServerSidePropsType } from 'next';
@@ -48,32 +46,33 @@ import { useRef, useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Announcements } from '~/components/Announcements/Announcements';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { Collection } from '~/components/Collection/Collection';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
-import { ModelDiscussion } from '~/components/Model/ModelDiscussion/ModelDiscussion';
+import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
+import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
+import { ModelGallery } from '~/components/Model/ModelGallery/ModelGallery';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
-import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { scrollToTop } from '~/utils/scroll-utils';
 import { removeTags, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { Collection } from '~/components/Collection/Collection';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -86,12 +85,12 @@ export const getServerSideProps = createServerSideProps({
     await ssg?.model.getById.prefetch({ id });
 
     return {
-      props: {
-        id,
-      },
+      props: { id },
     };
   },
 });
+
+type ModelVersionDetail = ModelById['modelVersions'][number];
 
 export default function ModelDetailsV2({
   id,
@@ -101,16 +100,32 @@ export default function ModelDetailsV2({
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
 
+  const [opened, { toggle }] = useDisclosure();
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
-  const [selectedTab, setSelectedTab] = useState<string | null>(null);
 
-  const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({ id });
+  const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery(
+    { id },
+    {
+      onSuccess(result) {
+        const latestVersion = result.modelVersions[0];
+        if (latestVersion) setSelectedVersion(latestVersion);
+      },
+    }
+  );
   const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
     trpc.user.getEngagedModels.useQuery(undefined, {
       enabled: !!currentUser,
       cacheTime: Infinity,
       staleTime: Infinity,
     });
+
+  const rawVersionId = router.query.modelVersionId;
+  const modelVersionId = Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId;
+  const latestVersion =
+    model?.modelVersions.find((version) => version.id === Number(modelVersionId)) ??
+    model?.modelVersions[0] ??
+    null;
+  const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
 
   const deleteMutation = trpc.model.delete.useMutation({
     async onSuccess(_, { permanently }) {
@@ -207,10 +222,13 @@ export default function ModelDetailsV2({
         );
     },
   });
+  const handleToggleFavorite = () => {
+    toggleFavoriteModelMutation.mutate({ modelId: id });
+  };
 
   const deleteVersionMutation = trpc.modelVersion.delete.useMutation({
     async onSuccess() {
-      if (latestVersion) setSelectedTab(latestVersion.id.toString());
+      if (latestVersion) setSelectedVersion(latestVersion);
       await queryUtils.model.getById.invalidate({ id });
       closeAllModals();
     },
@@ -229,7 +247,7 @@ export default function ModelDetailsV2({
         'Are you sure you want to delete this version? This action is destructive and cannot be reverted.',
       centered: true,
       labels: { confirm: 'Delete Version', cancel: "No, don't delete it" },
-      confirmProps: { color: 'red', disabled: deleteVersionMutation.isLoading },
+      confirmProps: { color: 'red', loading: deleteVersionMutation.isLoading },
       closeOnConfirm: false,
       onConfirm: () => deleteVersionMutation.mutate({ id: versionId }),
     });
@@ -242,7 +260,6 @@ export default function ModelDetailsV2({
   const isOwner = model.user.id === currentUser?.id || isModerator;
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
   const nsfw = userNotBlurringNsfw && model.nsfw === true;
-  const latestVersion = model.modelVersions[0];
 
   const meta = (
     <Meta
@@ -264,7 +281,7 @@ export default function ModelDetailsV2({
       </>
     );
 
-  const isFavorite = favoriteModels.find((modelId) => modelId === id);
+  const isFavorite = !!favoriteModels.find((modelId) => modelId === id);
   const deleted = !!model.deletedAt && model.status === 'Deleted';
   const published = model.status === ModelStatus.Published;
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
@@ -300,7 +317,7 @@ export default function ModelDetailsV2({
                         />
                       }
                       sx={{ cursor: 'pointer' }}
-                      onClick={() => toggleFavoriteModelMutation.mutate({ modelId: id })}
+                      onClick={handleToggleFavorite}
                     >
                       <Text className={classes.modelBadgeText}>
                         {abbreviateNumber(model.rank?.favoriteCountAllTime ?? 0)}
@@ -386,9 +403,14 @@ export default function ModelDetailsV2({
                           component={NextLink}
                           href={`/models/v2/${id}/edit`}
                           icon={<IconEdit size={14} stroke={1.5} />}
-                          shallow
                         >
                           Edit Model
+                        </Menu.Item>
+                        <Menu.Item
+                          icon={<IconArrowsSort size={14} stroke={1.5} />}
+                          onClick={toggle}
+                        >
+                          Reorder Versions
                         </Menu.Item>
                       </>
                     )}
@@ -466,118 +488,115 @@ export default function ModelDetailsV2({
               </Alert>
             )}
           </Stack>
-          <Tabs
-            value={selectedTab ?? latestVersion?.id.toString()}
-            onTabChange={setSelectedTab}
-            keepMounted={false}
-          >
+          <Group spacing={4} noWrap>
+            {isOwner || isModerator ? (
+              <Button
+                component={NextLink}
+                href={`/models/v2/${model.id}/model-versions/new`}
+                color="gray"
+                leftIcon={<IconPlus size={16} />}
+                compact
+              >
+                Add Version
+              </Button>
+            ) : null}
             <ScrollArea type="never">
-              <Tabs.List sx={{ flexWrap: 'nowrap' }}>
-                {model.modelVersions.map((version) => (
-                  <Tabs.Tab
-                    key={version.id}
-                    value={version.id.toString()}
-                    icon={
-                      !version.files.length ? (
-                        <ThemeIcon
-                          color="yellow"
-                          variant="light"
-                          radius="xl"
-                          size="sm"
-                          sx={{ backgroundColor: 'transparent' }}
-                        >
-                          <IconAlertTriangle size={14} />
-                        </ThemeIcon>
-                      ) : undefined
-                    }
-                    rightSection={
-                      isOwner || isModerator ? (
-                        <Menu withinPortal>
-                          <Menu.Target>
-                            <Box
-                              tabIndex={0}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                e.preventDefault();
-                              }}
-                            >
-                              <IconDotsVertical size={14} />
-                            </Box>
-                          </Menu.Target>
-                          <Menu.Dropdown>
-                            {versionCount > 1 && (
-                              <Menu.Item
-                                color="red"
-                                icon={<IconTrash size={14} stroke={1.5} />}
-                                onClick={() => handleDeleteVersion(version.id)}
-                              >
-                                Delete version
-                              </Menu.Item>
-                            )}
-                            <Menu.Item
-                              component={NextLink}
-                              icon={<IconEdit size={14} stroke={1.5} />}
-                              href={`/models/v2/${id}/model-versions/${version.id}/edit`}
-                            >
-                              Edit
-                            </Menu.Item>
-                          </Menu.Dropdown>
-                        </Menu>
-                      ) : undefined
-                    }
-                  >
-                    {version.name}
-                  </Tabs.Tab>
-                ))}
-                {isOwner || isModerator ? (
-                  <Tooltip label="Add new version" withinPortal>
-                    <ActionIcon
-                      aria-label="Add new version"
-                      radius="xl"
-                      sx={{ alignSelf: 'center' }}
-                      onClick={() =>
-                        router.push(`/models/v2/${model.id}/model-versions/new`, undefined, {
-                          shallow: true,
-                        })
+              <Group spacing={4} noWrap>
+                {model.modelVersions.map((version) => {
+                  const active = selectedVersion?.id === version.id;
+                  return (
+                    <Button
+                      key={version.id}
+                      variant={
+                        active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'
                       }
+                      color={active ? 'blue' : 'gray'}
+                      onClick={() => setSelectedVersion(version)}
+                      leftIcon={
+                        !version.files.length ? (
+                          <ThemeIcon
+                            color="yellow"
+                            variant="light"
+                            radius="xl"
+                            size="sm"
+                            sx={{ backgroundColor: 'transparent' }}
+                          >
+                            <IconAlertTriangle size={14} />
+                          </ThemeIcon>
+                        ) : undefined
+                      }
+                      rightIcon={
+                        isOwner || isModerator ? (
+                          <Menu withinPortal>
+                            <Menu.Target>
+                              <Box
+                                tabIndex={0}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                }}
+                              >
+                                <IconDotsVertical size={14} />
+                              </Box>
+                            </Menu.Target>
+                            <Menu.Dropdown>
+                              {versionCount > 1 && (
+                                <Menu.Item
+                                  color="red"
+                                  icon={<IconTrash size={14} stroke={1.5} />}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    handleDeleteVersion(version.id);
+                                  }}
+                                >
+                                  Delete version
+                                </Menu.Item>
+                              )}
+                              <Menu.Item
+                                component={NextLink}
+                                icon={<IconEdit size={14} stroke={1.5} />}
+                                onClick={(e) => e.stopPropagation()}
+                                href={`/models/v2/${id}/model-versions/${version.id}/edit`}
+                              >
+                                Edit version
+                              </Menu.Item>
+                              <Menu.Item
+                                icon={<IconPhotoEdit size={14} stroke={1.5} />}
+                                // TODO.manuel: add carousel edit
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                Edit carousel
+                              </Menu.Item>
+                            </Menu.Dropdown>
+                          </Menu>
+                        ) : undefined
+                      }
+                      compact
                     >
-                      <IconPlus stroke={1.5} />
-                    </ActionIcon>
-                  </Tooltip>
-                ) : null}
-              </Tabs.List>
+                      {version.name}
+                    </Button>
+                  );
+                })}
+              </Group>
             </ScrollArea>
-            {model.modelVersions.map((version) => (
-              <Tabs.Panel key={version.id} value={version.id.toString()}>
-                <ModelVersionDetails model={model} version={version} user={currentUser} />
-              </Tabs.Panel>
-            ))}
-          </Tabs>
-
-          {model.description ? (
-            <ContentClamp maxHeight={300}>
-              <RenderHtml html={model.description} withMentions />
-            </ContentClamp>
-          ) : null}
+          </Group>
+          {!!selectedVersion && (
+            <ModelVersionDetails
+              model={model}
+              version={selectedVersion}
+              user={currentUser}
+              isFavorite={isFavorite}
+              onFavoriteClick={handleToggleFavorite}
+            />
+          )}
           {!model.locked ? (
-            <Stack spacing="xl">
+            <Stack spacing="md">
               <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
                 <Group spacing="xs">
                   <Title order={2}>Discussion</Title>
-
                   {canDiscuss ? (
                     <>
-                      <LoginRedirect reason="create-review">
-                        <Button
-                          className={classes.discussionActionButton}
-                          leftIcon={<IconStar size={16} />}
-                          variant="outline"
-                          size="xs"
-                          onClick={() => openRoutedContext('reviewEdit', {})}
-                        >
-                          Add Review
-                        </Button>
-                      </LoginRedirect>
                       <LoginRedirect reason="create-comment">
                         <Button
                           className={classes.discussionActionButton}
@@ -607,16 +626,33 @@ export default function ModelDetailsV2({
                   )}
                 </Group>
               </Group>
-              <ModelDiscussion modelId={model.id} limit={4} />
+              <ModelDiscussionV2 modelId={model.id} />
             </Stack>
-          ) : (
-            <Paper p="lg">
-              <Center>
-                <Text size="sm">Discussions are turned off for this model.</Text>
-              </Center>
-            </Paper>
-          )}
+          ) : null}
+          <Stack spacing="md">
+            <Group spacing="xs">
+              <Title order={2}>Gallery</Title>
+              <LoginRedirect reason="create-review">
+                <Button
+                  component={NextLink}
+                  className={classes.discussionActionButton}
+                  variant="outline"
+                  size="xs"
+                  leftIcon={<IconPlus size={16} />}
+                  href={`/posts/create?modelId=${model.id}${
+                    selectedVersion ? `&modelVersionId=${selectedVersion.id}` : ''
+                  }`}
+                >
+                  Add post
+                </Button>
+              </LoginRedirect>
+            </Group>
+            <ModelGallery modelId={model.id} />
+          </Stack>
         </Stack>
+        {versionCount > 1 ? (
+          <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />
+        ) : null}
       </Container>
     </>
   );
@@ -687,11 +723,6 @@ const useStyles = createStyles((theme) => ({
         minWidth: 16,
         minHeight: 16,
       },
-    },
-
-    [theme.fn.smallerThan('sm')]: {
-      minWidth: 32,
-      minHeight: 32,
     },
   },
 }));

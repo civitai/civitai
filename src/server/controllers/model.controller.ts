@@ -163,6 +163,7 @@ export const getModelsInfiniteHandler = async ({
       modelVersions: {
         orderBy: { index: 'asc' },
         take: 1,
+        where: { status: ModelStatus.Published },
         select: {
           earlyAccessTimeFrame: true,
           createdAt: true,
@@ -273,7 +274,7 @@ export const getModelVersionsHandler = async ({ input }: { input: GetByIdInput }
     const modelVersions = await getModelVersionsMicro(input);
     return modelVersions;
   } catch (error) {
-    throwDbError(error);
+    throw throwDbError(error);
   }
 };
 
@@ -630,5 +631,31 @@ export const getMyDraftModelsHandler = async ({
     return results;
   } catch (error) {
     throw throwDbError(error);
+  }
+};
+
+export const reorderModelVersionsHandler = async ({
+  input,
+}: {
+  input: { id: number; modelVersions: any[] };
+}) => {
+  try {
+    const model = await updateModelById({
+      id: input.id,
+      data: {
+        modelVersions: {
+          update: input.modelVersions.map((modelVersion, index) => ({
+            where: { id: modelVersion.id },
+            data: { index },
+          })),
+        },
+      },
+    });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    return model;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };

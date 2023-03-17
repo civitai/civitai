@@ -15,10 +15,7 @@ export const upsertFile = (data: ModelFileUpsertInput) => {
 
   return dbWrite.modelFile.update({
     where: { id: file.id },
-    data: {
-      ...file,
-      modelVersionId: data.modelVersionId,
-    },
+    data: { ...file },
   });
 };
 
