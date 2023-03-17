@@ -59,11 +59,13 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
   const stringified = JSON.stringify(filters);
   const previousFilters = usePrevious(stringified);
   const filtersChanged = previousFilters !== stringified;
+  const prevData = usePrevious(data) ?? [];
 
   const currentFetching = isRefetching && !isFetchingNextPage;
   const previousFetching = usePrevious(isRefetching && !isFetchingNextPage);
   const positionerDep =
-    (previousFetching && !currentFetching) || (filtersChanged && !currentFetching);
+    (previousFetching && !currentFetching) ||
+    (filtersChanged && !currentFetching && prevData.length !== data.length);
   // #endregion
 
   // #region [base masonic settings]

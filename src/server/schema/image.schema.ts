@@ -181,6 +181,7 @@ export const getInfiniteImagesSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
   tags: z.array(z.number()).optional(),
+  generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
 });
 
 export type GetImageInput = z.infer<typeof getImageSchema>;
