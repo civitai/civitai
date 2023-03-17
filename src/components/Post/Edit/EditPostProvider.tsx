@@ -17,7 +17,6 @@ export type ImageUpload = {
   url: string;
   name: string;
   meta: any;
-  resources?: string[];
   height: number;
   width: number;
   hash: string;
@@ -309,7 +308,6 @@ const getImageDataFromFile = async (file: File) => {
   const url = URL.createObjectURL(file);
   const meta = await getMetadata(file);
   console.log({ meta });
-  const resources = meta.hashes ? Object.values(meta.hashes) : [];
   const img = await loadImage(url);
   const hashResult = blurHashImage(img);
   const auditResult = await auditMetaData(meta, false);
@@ -323,7 +321,6 @@ const getImageDataFromFile = async (file: File) => {
     name: file.name,
     meta,
     url,
-    resources,
     mimeType,
     ...hashResult,
     status: blockedFor ? 'blocked' : 'uploading',

@@ -695,14 +695,15 @@ model Post {
   updatedAt      DateTime      @updatedAt
   publishedAt    DateTime?
 
-  images    Image[]
-  tags      TagsOnPost[]
-  reactions PostReaction[]
-  thread    Thread?
-  helper    PostHelper?
-  stats     PostStat?
-  rank      PostRank?
-  metrics   PostMetric[]
+  images         Image[]
+  tags           TagsOnPost[]
+  reactions      PostReaction[]
+  thread         Thread?
+  helper         PostHelper?
+  stats          PostStat?
+  rank           PostRank?
+  metrics        PostMetric[]
+  resourceHelper PostResourceHelper[]
 }
 
 model PostMetric {
@@ -767,6 +768,7 @@ model Image {
   rank            ImageRank?
   modHelper       ImageModHelper?
   resources       ImageResource[]
+  resourceHelper  ImageResourceHelper[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1970,4 +1972,50 @@ model ModelTag {
   downVotes Int
 
   @@id([modelId, tagId])
+}
+
+///@view
+model ImageResourceHelper {
+  id                    Int        @id
+  imageId               Int
+  image                 Image      @relation(fields: [imageId], references: [id])
+  reviewId              Int?
+  reviewRating          Int?
+  reviewDetails         String?
+  reviewCreatedAt       DateTime?
+  name                  String?
+  modelVersionId        Int?
+  modelVersionName      String?
+  modelVersionCreatedAt DateTime?
+  modelId               Int?
+  modelName             String?
+  modelRating           Int?
+  modelRatingCount      Int?
+  modelDownloadCount    Int?
+  modelCommentCount     Int?
+  modelFavoriteCount    Int?
+  modelType             ModelType?
+}
+
+///@view
+model PostResourceHelper {
+  id                    Int        @id
+  postId                Int
+  post                  Post       @relation(fields: [postId], references: [id])
+  reviewId              Int?
+  reviewRating          Int?
+  reviewDetails         String?
+  reviewCreatedAt       DateTime?
+  name                  String?
+  modelVersionId        Int?
+  modelVersionName      String?
+  modelVersionCreatedAt DateTime?
+  modelId               Int?
+  modelName             String?
+  modelRating           Int?
+  modelRatingCount      Int?
+  modelDownloadCount    Int?
+  modelCommentCount     Int?
+  modelFavoriteCount    Int?
+  modelType             ModelType?
 }

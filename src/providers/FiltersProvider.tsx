@@ -1,44 +1,51 @@
 import { useRef, createContext, useContext } from 'react';
-import { MetricTimeframe } from '@prisma/client';
+import { ImageGenerationProcess, MetricTimeframe } from '@prisma/client';
 import { BrowsingMode, ImageSort, ModelSort, PostSort, QuestionSort } from '~/server/common/enums';
 import { setCookie } from '~/utils/cookies-helpers';
 import { createStore, useStore } from 'zustand';
-import { immer } from 'zustand/middleware/immer';
 import { devtools } from 'zustand/middleware';
 import { z } from 'zod';
-import merge from 'lodash/merge';
 import mergeWith from 'lodash/mergeWith';
 import isArray from 'lodash/isArray';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
+export const modelFilterSchema = z
+  .object({
+    sort: z.nativeEnum(ModelSort).default(ModelSort.HighestRated),
+    tags: z.number().array().optional(),
+  })
+  .default({});
+
+export const postFilterSchema = z
+  .object({
+    sort: z.nativeEnum(PostSort).default(PostSort.MostReactions),
+    tags: z.number().array().optional(),
+  })
+  .default({});
+
+export const imageFilterSchema = z
+  .object({
+    sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
+    tags: z.number().array().optional(),
+    generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
+    excludedTags: z.number().array().optional(),
+  })
+  .default({});
+
+export const questionFilterSchema = z
+  .object({
+    sort: z.nativeEnum(QuestionSort).default(QuestionSort.Newest),
+    tags: z.number().array().optional(),
+  })
+  .default({});
+
 type FilterEntityInput = z.infer<typeof filterEntitySchema>;
 export type FilterSubTypes = keyof FilterEntityInput;
-// TODO - implement model/image/question filters
 const filterEntitySchema = z.object({
-  model: z
-    .object({
-      sort: z.nativeEnum(ModelSort).default(ModelSort.HighestRated),
-      tags: z.number().array().optional(),
-    })
-    .default({}),
-  post: z
-    .object({
-      sort: z.nativeEnum(PostSort).default(PostSort.MostReactions),
-      tags: z.number().array().optional(),
-    })
-    .default({}),
-  image: z
-    .object({
-      sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
-      tags: z.number().array().optional(),
-    })
-    .default({}),
-  question: z
-    .object({
-      sort: z.nativeEnum(QuestionSort).default(QuestionSort.Newest),
-      tags: z.number().array().optional(),
-    })
-    .default({}),
+  model: modelFilterSchema,
+  post: postFilterSchema,
+  image: imageFilterSchema,
+  question: questionFilterSchema,
 });
 
 export type FiltersInput = z.infer<typeof filtersSchema>;
@@ -123,7 +130,9 @@ export const useImageFilters = () => {
   const shared = useSharedFilters('image');
   const sort = useFiltersContext((state) => state.image.sort);
   const tags = useFiltersContext((state) => state.image.tags);
-  return { ...shared, sort, tags };
+  const excludedTags = useFiltersContext((state) => state.image.excludedTags);
+  const generation = useFiltersContext((state) => state.image.generation);
+  return { ...shared, sort, tags, excludedTags, generation };
 };
 
 export const useQuestionFilters = () => {

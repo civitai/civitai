@@ -2,10 +2,11 @@ import { useRouter } from 'next/router';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import { trpc } from '~/utils/trpc';
-import { Container, Title, Text } from '@mantine/core';
+import { Container, Title, Text, Select } from '@mantine/core';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useState } from 'react';
 
 export default function PostCreate() {
   const router = useRouter();
@@ -20,20 +21,29 @@ export default function PostCreate() {
   const queryUtils = trpc.useContext();
 
   //TODO.posts - get modelversions related to modelId and have the user select a modelVersion before they can drop any images
+
+  const { data: versions, isLoading: versionsLoading } = trpc.model.getVersions.useQuery(
+    { id: modelId ?? 0 },
+    { enabled: !!modelId }
+  );
+
   const { data: version, isLoading: versionLoading } = trpc.modelVersion.getById.useQuery(
     { id: modelVersionId ?? 0 },
     { enabled: !!modelVersionId }
   );
 
+  const [selected, setSelected] = useState<string>();
+
   const handleDrop = (files: File[]) => {
+    const versionId = selected ? Number(selected) : modelVersionId;
     mutate(
-      { modelVersionId },
+      { modelVersionId: versionId },
       {
         onSuccess: async (response) => {
           reset();
           const postId = response.id;
           queryUtils.post.getEdit.setData({ id: postId }, () => response);
-          upload({ postId, modelVersionId }, files);
+          upload({ postId, modelVersionId: versionId }, files);
           router.push({ pathname: `/posts/${postId}/edit` });
         },
       }
@@ -50,6 +60,17 @@ export default function PostCreate() {
         <Text size="sm" color="dimmed">
           Posting to {version?.model.name} - {version?.name}
         </Text>
+      )}
+      {versions && (
+        <Select
+          description="Select a resource to ensure that all uploaded images receive correct resource attribution"
+          placeholder="Select a resource"
+          value={selected}
+          data={versions.map(({ id, name }) => ({ label: name, value: id.toString() }))}
+          onChange={(value) => {
+            if (value) setSelected(value);
+          }}
+        />
       )}
       <ImageDropzone
         mt="md"

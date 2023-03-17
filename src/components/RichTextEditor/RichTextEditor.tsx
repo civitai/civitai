@@ -1,4 +1,4 @@
-import { createStyles, Input, InputWrapperProps, MantineSize } from '@mantine/core';
+import { createStyles, CSSObject, Input, InputWrapperProps, MantineSize } from '@mantine/core';
 import { Link, RichTextEditor as RTE, RichTextEditorProps } from '@mantine/tiptap';
 import Image from '@tiptap/extension-image';
 import Mention from '@tiptap/extension-mention';
@@ -18,6 +18,22 @@ const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
   md: '50px',
   lg: '70px',
   xl: '90px',
+};
+
+const mapEditorSize: Omit<Record<MantineSize, CSSObject>, 'xs'> = {
+  sm: {
+    minHeight: 30,
+    fontSize: 14,
+  },
+  md: {
+    minHeight: 50,
+  },
+  lg: {
+    minHeight: 70,
+  },
+  xl: {
+    minHeight: 90,
+  },
 };
 
 const useStyles = createStyles((theme) => ({
@@ -182,7 +198,8 @@ export function RichTextEditor({
           },
 
           '& .ProseMirror': {
-            minHeight: mapEditorSizeHeight[editorSize],
+            ...mapEditorSize[editorSize],
+            // minHeight: mapEditorSizeHeight[editorSize],
 
             '& p.is-editor-empty:first-of-type::before': {
               color: error ? theme.colors.red[8] : undefined,
