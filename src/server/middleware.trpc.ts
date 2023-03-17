@@ -1,4 +1,4 @@
-import { getHiddenTagsForUser, getHiddenUsersForUser } from '~/server/services/user-cache.service';
+import { userCache } from '~/server/services/user-cache.service';
 import { middleware } from '~/server/trpc';
 import { z } from 'zod';
 import { BrowsingMode } from '~/server/common/enums';
@@ -8,16 +8,20 @@ type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
 const userPreferencesSchema = z.object({
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
+  excludedImageIds: z.array(z.number()).optional(),
 });
 
 export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
   middleware(async ({ input, ctx, next }) => {
     const userId = ctx.user?.id;
     const _input = input as TInput;
-    const hiddenTags = await getHiddenTagsForUser({ userId });
-    const hiddenUsers = await getHiddenUsersForUser({ userId });
+    const { hidden } = userCache(userId);
+    const hiddenTags = await hidden.tags.get();
+    const hiddenUsers = await hidden.users.get();
+    const hiddenImages = await hidden.images.get();
     _input.excludedTagIds = [...hiddenTags, ...(_input.excludedTagIds ?? [])];
     _input.excludedUserIds = [...hiddenUsers, ...(_input.excludedUserIds ?? [])];
+    _input.excludedImageIds = [...hiddenImages, ...(_input.excludedUserIds ?? [])];
 
     return next({
       ctx: { user: ctx.user },

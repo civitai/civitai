@@ -333,7 +333,8 @@ function UploadedImage({
       >
         {!showLoading && (!image.status || image.status === 'complete') && (
           <>
-            <Tooltip label="Toggle NSFW">
+            {/* Disable as part of move to advanced self-mod */}
+            {/* <Tooltip label="Toggle NSFW">
               <ActionIcon
                 color={image.nsfw ? 'red' : undefined}
                 variant={image.nsfw ? 'filled' : 'outline'}
@@ -342,7 +343,7 @@ function UploadedImage({
               >
                 <IconRating18Plus />
               </ActionIcon>
-            </Tooltip>
+            </Tooltip> */}
             {withMeta && (
               <ImageMetaPopover
                 meta={image.meta}

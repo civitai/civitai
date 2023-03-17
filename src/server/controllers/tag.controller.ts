@@ -1,8 +1,22 @@
 import { constants } from '~/server/common/constants';
-import { GetTagByNameInput, GetTagsInput, GetTrendingTagsSchema } from '~/server/schema/tag.schema';
-import { getTags, getTagWithModelCount } from '~/server/services/tag.service';
+import {
+  AddTagVotesSchema,
+  GetTagByNameInput,
+  GetTagsInput,
+  GetTrendingTagsSchema,
+  GetVotableTagsSchema,
+  RemoveTagVotesSchema,
+} from '~/server/schema/tag.schema';
+import {
+  addTagVotes,
+  getTags,
+  getTagWithModelCount,
+  getVotableTags,
+  removeTagVotes,
+} from '~/server/services/tag.service';
 import { throwDbError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { Context } from '~/server/createContext';
 
 export const getTagWithModelCountHandler = async ({
   input: { name },
@@ -47,4 +61,55 @@ export const getTrendingTagsHandler = async ({ input }: { input: GetTrendingTags
   });
 
   return items;
+};
+
+export const getVotableTagsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetVotableTagsSchema;
+  ctx: Context;
+}) => {
+  try {
+    const results = await getVotableTags({
+      ...input,
+      userId: ctx.user?.id,
+    });
+
+    return results;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const addTagVotesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: AddTagVotesSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    await addTagVotes({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const removeTagVotesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: RemoveTagVotesSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    await removeTagVotes({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    throw throwDbError(error);
+  }
 };

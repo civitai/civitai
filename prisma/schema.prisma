@@ -120,7 +120,8 @@ model User {
   postReactions       PostReaction[]
   posts               Post[]
   resourceReviews     ResourceReview[]
-  tagVotes            TagsOnImageVote[]
+  tagImageVotes       TagsOnImageVote[]
+  tagModelVotes       TagsOnModelsVote[]
 }
 
 model CustomerSubscription {
@@ -327,21 +328,23 @@ model Model {
   allowDerivatives      Boolean       @default(true)
   allowDifferentLicense Boolean       @default(true)
 
-  modelVersions    ModelVersion[]
-  reviews          Review[]
-  tagsOnModels     TagsOnModels[]
-  metrics          ModelMetric[]
-  saves            SavedModel[]
-  reports          ModelReport[]
-  engagements      ModelEngagement[]
-  comments         Comment[]
-  interests        ModelInterest[]
-  licenses         License[]
-  rank             ModelRank?
-  reportStats      ModelReportStat?
-  downloads        DownloadHistory[]
-  imageConnections ImageConnection[]
-  hashes           ModelHash[]
+  modelVersions     ModelVersion[]
+  reviews           Review[]
+  tagsOnModels      TagsOnModels[]
+  tagsOnModelsVotes TagsOnModelsVote[]
+  tags              ModelTag[]
+  metrics           ModelMetric[]
+  saves             SavedModel[]
+  reports           ModelReport[]
+  engagements       ModelEngagement[]
+  comments          Comment[]
+  interests         ModelInterest[]
+  licenses          License[]
+  rank              ModelRank?
+  reportStats       ModelReportStat?
+  downloads         DownloadHistory[]
+  imageConnections  ImageConnection[]
+  hashes            ModelHash[]
 }
 
 model License {
@@ -848,15 +851,18 @@ model Tag {
   unfeatured Boolean     @default(false)
   isCategory Boolean     @default(false)
 
-  tagsOnModels     TagsOnModels[]
-  tagsOnQuestion   TagsOnQuestions[]
-  tagsOnImage      TagsOnImage[]
-  tagsOnImageVotes TagsOnImageVote[]
-  tagsOnPosts      TagsOnPost[]
-  usersEngaged     TagEngagement[]
-  metrics          TagMetric[]
-  stats            TagStat?
-  rank             TagRank?
+  tagsOnModels         TagsOnModels[]
+  tagsOnModelsVotes    TagsOnModelsVote[]
+  tagsOnQuestion       TagsOnQuestions[]
+  tagsOnImage          TagsOnImage[]
+  tagsOnImageVotes     TagsOnImageVote[]
+  tagsOnPosts          TagsOnPost[]
+  tagsOnImageComposite ImageTag[]
+  tagsOnModelComposite ModelTag[]
+  usersEngaged         TagEngagement[]
+  metrics              TagMetric[]
+  stats                TagStat?
+  rank                 TagRank?
 
   @@unique([name])
 }
@@ -870,6 +876,21 @@ model TagsOnModels {
 
   @@id([modelId, tagId])
   @@index([modelId], type: Hash)
+}
+
+model TagsOnModelsVote {
+  modelId   Int
+  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vote      Int // 1 or -1
+  createdAt DateTime @default(now())
+
+  @@id([tagId, modelId, userId])
+  @@index([modelId], type: Hash)
+  @@index([userId], type: Hash)
 }
 
 model TagsOnQuestions {
@@ -1921,12 +1942,29 @@ model ImageTag {
   imageId    Int
   image      Image   @relation(fields: [imageId], references: [id], onDelete: Cascade)
   tagId      Int
+  tag        Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
   tagName    String
   tagType    TagType
   automated  Boolean
   confidence Int?
+  score      Int
   upVotes    Int
   downVotes  Int
 
   @@id([imageId, tagId])
+}
+
+/// @view
+model ModelTag {
+  modelId   Int
+  model     Model   @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagName   String
+  tagType   TagType
+  score     Int
+  upVotes   Int
+  downVotes Int
+
+  @@id([modelId, tagId])
 }

@@ -40,6 +40,8 @@ import { GalleryDetailContextMenu } from '~/components/Gallery/GalleryDetailCont
 import Link from 'next/link';
 import { GalleryResources } from '~/components/Gallery/GalleryResources';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 
 export function GalleryDetail2() {
   const { classes, cx } = useStyles();
@@ -171,28 +173,7 @@ export function GalleryDetail2() {
                   {`This image won't be visible to other users until it's reviewed by our moderators.`}
                 </AlertWithIcon>
               )}
-              <Group spacing={4} px="md">
-                {image.tags.map((tag) => (
-                  <Badge
-                    radius="xs"
-                    key={tag.id}
-                    variant={tag.automated ? 'filled' : undefined}
-                    color={tag.automated ? 'gray' : 'blue'}
-                  >
-                    {tag.name}
-                  </Badge>
-                ))}
-                {/* <Badge
-                  style={{ cursor: 'pointer' }}
-                  leftSection={
-                    <Center>
-                      <IconPlus size={14} />
-                    </Center>
-                  }
-                >
-                  Add Tags
-                </Badge> */}
-              </Group>
+              <VotableTags type="image" id={image.id} />
               <div>
                 <Divider
                   label="Discussion"

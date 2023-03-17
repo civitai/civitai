@@ -58,6 +58,7 @@ export const getGalleryImages = async <
   tags,
   excludedTagIds,
   excludedUserIds,
+  excludedImageIds,
   isFeatured,
   types,
   browsingMode,
@@ -80,6 +81,9 @@ export const getGalleryImages = async <
   if (isFeatured) conditionalFilters.push({ featuredAt: { not: null } });
 
   if (!!excludedUserIds?.length) conditionalFilters.push({ userId: { notIn: excludedUserIds } });
+
+  console.log({ excludedImageIds });
+  if (!!excludedImageIds?.length) conditionalFilters.push({ id: { notIn: excludedImageIds } });
 
   if (types && types.length) conditionalFilters.push({ generationProcess: { in: types } });
 
@@ -109,6 +113,7 @@ export const getGalleryImages = async <
         : undefined,
     imagesOnReviews: reviewId ? { reviewId } : undefined,
     tags: excludedTagIds?.length ? { none: { tagId: { in: excludedTagIds } } } : undefined,
+    id: excludedImageIds?.length ? { notIn: excludedImageIds } : undefined,
   };
 
   if (canViewNsfw && !browsingMode) browsingMode = BrowsingMode.All;
@@ -389,6 +394,7 @@ export const getAllImages = async ({
   username,
   excludedTagIds,
   excludedUserIds,
+  excludedImageIds,
   browsingMode,
   period,
   sort,
@@ -402,6 +408,7 @@ export const getAllImages = async ({
   if (browsingMode !== BrowsingMode.All)
     AND.push({ nsfw: { equals: browsingMode === BrowsingMode.NSFW } });
   if (!!excludedUserIds?.length) AND.push({ userId: { notIn: excludedUserIds } });
+  if (!!excludedImageIds?.length) AND.push({ id: { notIn: excludedImageIds } });
   if (!!excludedTagIds?.length) {
     AND.push({
       OR: [

@@ -51,7 +51,7 @@ import {
 } from '~/components/CivitaiLink/shared-types';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { getHiddenTagsForUser } from '~/server/services/user-cache.service';
+import { getHiddenImagesForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -69,6 +69,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
 
     const isOwnerOrModerator = model.user.id === ctx.user?.id || ctx.user?.isModerator;
     const hiddenTags = await getHiddenTagsForUser({ userId });
+    const hiddenImages = await getHiddenImagesForUser({ userId });
     const features = getFeatureFlags({ user: ctx.user });
 
     return {
@@ -79,7 +80,10 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           tags: x.image.tags.map(({ tag }) => tag),
         }));
         if (!isOwnerOrModerator) {
-          images = images.filter(({ tags }) => !tags.some((tag) => hiddenTags.includes(tag.id)));
+          images = images.filter(
+            ({ id, tags }) =>
+              !hiddenImages.includes(id) && !tags.some((tag) => hiddenTags.includes(tag.id))
+          );
 
           if (prioritizeSafeImages)
             images = images.sort((a, b) => (a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1));
@@ -172,7 +176,12 @@ export const getModelsInfiniteHandler = async ({
               image: {
                 OR: [
                   { userId: ctx.user?.id },
-                  { tags: { none: { tagId: { in: input.excludedTagIds } } } },
+                  {
+                    AND: [
+                      { tags: { none: { tagId: { in: input.excludedTagIds } } } },
+                      { id: { notIn: input.excludedImageIds } },
+                    ],
+                  },
                 ],
               },
             },

@@ -20,6 +20,8 @@ import { immer } from 'zustand/middleware/immer';
 import { ReportImageNsfwButton } from '~/components/Image/ImageNsfwButton/ImageNsfwButton';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { ReportEntity } from '~/server/schema/report.schema';
 import { useImageStore } from '~/store/images.store';
 import { isDefined } from '~/utils/type-guards';
 
@@ -162,8 +164,7 @@ function ImageGuardContentProvider({
   const showToggleConnect = !!connect && nsfw;
   const canToggleNsfw = shouldBlur;
   // Only show the quick nsfw report if the user is logged in and is a member or moderator
-  const showReportNsfw =
-    safe && !nsfw && !!currentUser && (currentUser.isMember || currentUser.isModerator === true);
+  const showReportNsfw = safe && !nsfw && !!currentUser;
 
   return (
     <ImageGuardContentCtx.Provider
@@ -195,54 +196,52 @@ ImageGuard.Safe = function Safe({ children }: { children?: React.ReactNode }) {
   return safe ? <>{children}</> : null;
 };
 
-ImageGuard.ReportNSFW = function ReportNSFW({
+ImageGuard.Report = function ReportImage({
   position = 'top-right',
-  sx,
-  className,
 }: {
   position?: 'static' | 'top-left' | 'top-right';
-  sx?: Sx;
-  className?: string;
 }) {
   const { image, showReportNsfw } = useImageGuardContentContext();
   if (!showReportNsfw) return null;
+
+  const handleClick = (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openContext('report', { entityType: ReportEntity.Image, entityId: image.id });
+  };
+
   return (
-    <ReportImageNsfwButton imageId={image.id}>
-      {({ onClick, isLoading }) => (
-        <Menu position="left-start" withArrow offset={-5}>
-          <Menu.Target>
-            <ActionIcon
-              variant="transparent"
-              loading={isLoading}
-              p={0}
-              onClick={(e: React.MouseEvent) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-              sx={{
-                width: 30,
-                position: 'absolute',
-                top: 5,
-                left: position === 'top-left' ? 5 : undefined,
-                right: position === 'top-right' ? 5 : undefined,
-                zIndex: 8,
-              }}
-            >
-              <IconDotsVertical
-                size={26}
-                color="#fff"
-                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-              />
-            </ActionIcon>
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={onClick}>
-              Report adult content
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
-      )}
-    </ReportImageNsfwButton>
+    <Menu position="left-start" withArrow offset={-5}>
+      <Menu.Target>
+        <ActionIcon
+          variant="transparent"
+          p={0}
+          onClick={(e: React.MouseEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          sx={{
+            width: 30,
+            position: 'absolute',
+            top: 5,
+            left: position === 'top-left' ? 5 : undefined,
+            right: position === 'top-right' ? 5 : undefined,
+            zIndex: 8,
+          }}
+        >
+          <IconDotsVertical
+            size={26}
+            color="#fff"
+            filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+          />
+        </ActionIcon>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleClick}>
+          Report image
+        </Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
   );
 };
 

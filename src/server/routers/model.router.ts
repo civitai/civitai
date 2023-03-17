@@ -92,6 +92,7 @@ const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
   _input.excludedTagIds = [...hidden.tags, ...(_input.excludedTagIds ?? [])];
   _input.excludedIds = [...hidden.models, ...(_input.excludedIds ?? [])];
   _input.excludedUserIds = [...hidden.users, ...(_input.excludedUserIds ?? [])];
+  _input.excludedImageIds = [...hidden.images, ...(_input.excludedImageIds ?? [])];
 
   return next({
     ctx: { user: ctx.user },

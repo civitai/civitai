@@ -25,13 +25,16 @@ import { createContextModal } from '~/components/Modals/utils/createContextModal
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';
 import { useRouter } from 'next/router';
+import { getLoginLink } from '~/utils/login-helpers';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEffect } from 'react';
 
 const reports = [
   {
     reason: ReportReason.NSFW,
-    label: 'NSFW',
+    label: 'Mature Content',
     Element: NsfwForm,
-    availableFor: [ReportEntity.Model, ReportEntity.Review, ReportEntity.Image],
+    availableFor: [ReportEntity.Model, ReportEntity.Image],
   },
   {
     reason: ReportReason.TOSViolation,
@@ -147,10 +150,13 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
             case ReportEntity.CommentV2:
               break;
             case ReportEntity.Image:
-              if (variables.reason === ReportReason.NSFW)
+              if (variables.reason === ReportReason.NSFW) {
                 await queryUtils.image.getGalleryImageDetail.invalidate();
-              await queryUtils.image.getGalleryImagesInfinite.invalidate();
-              await queryUtils.image.getGalleryImages.invalidate();
+                await queryUtils.image.getGalleryImagesInfinite.invalidate();
+                await queryUtils.image.getGalleryImages.invalidate();
+                await queryUtils.tag.getVotableTags.invalidate({ id: variables.id, type: 'image' });
+              }
+
               // review invalidate
               if (reviewId) {
                 await queryUtils.review.getDetail.setData(
@@ -208,7 +214,6 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
     const handleSubmit = (data: Record<string, unknown>) => {
       const details: any = Object.fromEntries(Object.entries(data).filter(([_, v]) => v != null));
       if (!reason) return;
-      console.log({ entityId });
       mutate({
         type: entityType,
         reason,
@@ -216,6 +221,14 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
         details,
       });
     };
+
+    const currentUser = useCurrentUser();
+    useEffect(() => {
+      if (currentUser) return;
+      router.push(getLoginLink({ returnUrl: router.asPath, reason: 'report-content' }));
+      context.close();
+    }, [currentUser]);
+
     return (
       <Stack>
         <Group position="apart" noWrap>

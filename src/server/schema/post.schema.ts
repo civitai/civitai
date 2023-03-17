@@ -23,6 +23,7 @@ export const postsQuerySchema = postsFilterSchema.extend({
   query: z.string().optional(),
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
+  excludedImageIds: z.array(z.number()).optional(),
   username: z
     .string()
     .transform((data) => postgresSlugify(data))

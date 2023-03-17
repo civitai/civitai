@@ -35,6 +35,7 @@ export const getPostsInfinite = async ({
   username,
   excludedTagIds,
   excludedUserIds,
+  excludedImageIds,
   period,
   sort,
   browsingMode,
@@ -53,6 +54,7 @@ export const getPostsInfinite = async ({
     imageAND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
   }
   if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
+  if (!!excludedImageIds?.length) imageAND.push({ id: { notIn: excludedImageIds } });
 
   if (browsingMode !== BrowsingMode.All) {
     const query = { nsfw: { equals: browsingMode === BrowsingMode.NSFW } };

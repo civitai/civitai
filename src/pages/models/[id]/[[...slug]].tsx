@@ -979,7 +979,7 @@ function ModelCarousel({
             <Center style={{ height: '100%', width: '100%' }}>
               <div style={{ width: '100%', position: 'relative' }}>
                 <ImageGuard.ToggleConnect />
-                <ImageGuard.ReportNSFW />
+                <ImageGuard.Report />
                 <ImageGuard.Unsafe>
                   <AspectRatio
                     ratio={(image.width ?? 1) / (image.height ?? 1)}

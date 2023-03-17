@@ -7,7 +7,7 @@ import {
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 
-const HIDDEN_CACHE_EXPIRY = 60 * 60 * 24;
+const HIDDEN_CACHE_EXPIRY = 60 * 60 * 4;
 
 // #region [hidden tags]
 async function getModerationTags() {
@@ -117,7 +117,18 @@ async function getHiddenModels(userId: number) {
     select: { model: { select: { id: true } } },
   });
 
-  const hiddenModels = models?.map((x) => x.model.id) ?? [];
+  const hiddenTags = await getHiddenTagsForUser({ userId });
+  const votedHideModels = await dbWrite.tagsOnModelsVote.findMany({
+    where: { userId, tagId: { in: hiddenTags }, vote: { gt: 0 } },
+    select: { modelId: true },
+  });
+
+  const hiddenModels = [
+    ...new Set([
+      ...(models?.map((x) => x.model.id) ?? []),
+      ...(votedHideModels?.map((x) => x.modelId) ?? []),
+    ]),
+  ];
   return hiddenModels;
 }
 
@@ -146,6 +157,43 @@ export async function refreshHiddenModelsForUser({ userId }: { userId: number })
 }
 // #endregion
 
+// #region [hidden images]
+async function getHiddenImages(userId: number) {
+  const hiddenTags = await getHiddenTagsForUser({ userId });
+  const votedHideImages = await dbWrite.tagsOnImageVote.findMany({
+    where: { userId, tagId: { in: hiddenTags }, vote: { gt: 0 } },
+    select: { imageId: true },
+  });
+
+  const hiddenImages = [...new Set(votedHideImages?.map((x) => x.imageId) ?? [])];
+  return hiddenImages;
+}
+
+export async function getHiddenImagesForUser({
+  userId = -1, // Default to civitai account
+  refreshCache,
+}: {
+  userId?: number;
+  refreshCache?: boolean;
+}) {
+  const cachedImages = await redis.get(`user:${userId}:hidden-images`);
+  if (cachedImages && !refreshCache) return JSON.parse(cachedImages) as number[];
+  if (refreshCache) await redis.del(`user:${userId}:hidden-images`);
+
+  const hiddenImages = await getHiddenImages(userId);
+  await redis.set(`user:${userId}:hidden-images`, JSON.stringify(hiddenImages), {
+    EX: HIDDEN_CACHE_EXPIRY,
+  });
+
+  return hiddenImages;
+}
+
+export async function refreshHiddenImagesForUser({ userId }: { userId: number }) {
+  console.log('refreshing hidden images for user', userId);
+  await redis.del(`user:${userId}:hidden-images`);
+}
+// #endregion
+
 export async function getAllHiddenForUser({
   userId = -1, // Default to civitai account
   refreshCache,
@@ -153,11 +201,46 @@ export async function getAllHiddenForUser({
   userId?: number;
   refreshCache?: boolean;
 }) {
-  const [tags, users, models] = await Promise.all([
+  const [tags, users, models, images] = await Promise.all([
     getHiddenTagsForUser({ userId, refreshCache }),
     getHiddenUsersForUser({ userId, refreshCache }),
     getHiddenModelsForUser({ userId, refreshCache }),
+    getHiddenImagesForUser({ userId, refreshCache }),
   ]);
 
-  return { tags, users, models };
+  return { tags, users, models, images };
 }
+
+export async function refreshAllHiddenForUser({ userId }: { userId: number }) {
+  await Promise.all([
+    refreshHiddenTagsForUser({ userId }),
+    refreshHiddenUsersForUser({ userId }),
+    refreshHiddenModelsForUser({ userId }),
+    refreshHiddenImagesForUser({ userId }),
+  ]);
+}
+
+export const userCache = (userId?: number) => ({
+  hidden: {
+    all: {
+      get: (refreshCache = false) => getAllHiddenForUser({ userId, refreshCache }),
+      refresh: () => userId && refreshAllHiddenForUser({ userId }),
+    },
+    tags: {
+      get: (refreshCache = false) => getHiddenTagsForUser({ userId, refreshCache }),
+      refresh: () => userId && refreshHiddenTagsForUser({ userId }),
+    },
+    users: {
+      get: (refreshCache = false) => getHiddenUsersForUser({ userId, refreshCache }),
+      refresh: () => userId && refreshHiddenUsersForUser({ userId }),
+    },
+    models: {
+      get: (refreshCache = false) => getHiddenModelsForUser({ userId, refreshCache }),
+      refresh: () => userId && refreshHiddenModelsForUser({ userId }),
+    },
+    images: {
+      get: (refreshCache = false) => getHiddenImagesForUser({ userId, refreshCache }),
+      refresh: () => userId && refreshHiddenImagesForUser({ userId }),
+    },
+  },
+});
