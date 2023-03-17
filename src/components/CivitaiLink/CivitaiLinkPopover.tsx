@@ -35,6 +35,7 @@ import {
   IconCheck,
   IconCopy,
   IconAlertTriangle,
+  IconNetworkOff,
 } from '@tabler/icons';
 import { useCallback, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -66,7 +67,7 @@ export function CivitaiLinkPopover() {
 
 function LinkDropdown() {
   const [manage, setManage] = useState(false);
-  const { instance, instances, status } = useCivitaiLink();
+  const { instance, instances, status, error } = useCivitaiLink();
 
   const handleManageClick = () => {
     setManage((o) => !o);
@@ -100,8 +101,8 @@ function LinkDropdown() {
         <InstancesManager />
       ) : (
         {
-          'not-connected': <NotConnected />,
-          'no-socket-connection': <LostConnection />,
+          'not-connected': <NotConnected error={error} />,
+          'no-socket-connection': <LostConnection error={error} />,
           'no-instances': <GetStarted />,
           'no-selected-instance': <InstancesManager />,
           'link-pending': <GetReconnected />,
@@ -112,19 +113,39 @@ function LinkDropdown() {
   );
 }
 
-function NotConnected() {
+function NotConnected({ error }: { error?: string }) {
   return (
-    <Center p="xl">
-      <Text color="dimmed">Not connected</Text>
-    </Center>
+    <Stack p="xl" align="center" spacing={0}>
+      <IconNetworkOff size={60} strokeWidth={1} />
+      <Text>Cannot Connect</Text>
+      <Text
+        color="dimmed"
+        size="xs"
+      >{`We're unable to connect to the Civitai Link Coordination Server.`}</Text>
+      {error && (
+        <Text color="red" size="xs">
+          {error}
+        </Text>
+      )}
+    </Stack>
   );
 }
 
-function LostConnection() {
+function LostConnection({ error }: { error?: string }) {
   return (
-    <Center p="xl">
-      <Text color="dimmed">Lost Connection</Text>
-    </Center>
+    <Stack p="xl" align="center" spacing={0}>
+      <IconNetworkOff size={60} strokeWidth={1} />
+      <Text>Connection Lost</Text>
+      <Text
+        color="dimmed"
+        size="xs"
+      >{`We've lost connect to the Civitai Link Coordination Server.`}</Text>
+      {error && (
+        <Text color="red" size="xs">
+          {error}
+        </Text>
+      )}
+    </Stack>
   );
 }
 

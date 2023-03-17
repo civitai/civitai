@@ -5,11 +5,11 @@ import { useEffect } from 'react';
 import { z } from 'zod';
 import { useForm, Form, InputText } from '~/libs/form';
 import { showErrorNotification } from '~/utils/notifications';
-import { safeUrl } from '~/utils/schema-helpers';
+import { zc } from '~/utils/schema-helpers';
 import { trpc } from '~/utils/trpc';
 
 const schema = z.object({
-  url: safeUrl,
+  url: zc.safeUrl,
 });
 
 export function SocialLinkModal({

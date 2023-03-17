@@ -1,5 +1,6 @@
 // @ts-check
 import { z } from 'zod';
+import { zc } from '~/utils/schema-helpers';
 
 /**
  * Specify your server-side environment variables schema here.
@@ -30,7 +31,7 @@ export const serverSchema = z.object({
   REDDIT_CLIENT_SECRET: z.string(),
   EMAIL_HOST: z.string(),
   EMAIL_PORT: z.preprocess((x) => parseInt(String(x)), z.number()),
-  EMAIL_SECURE: z.preprocess((val) => val === true || val === 'true', z.boolean()),
+  EMAIL_SECURE: zc.booleanString,
   EMAIL_USER: z.string(),
   EMAIL_PASS: z.string(),
   EMAIL_FROM: z.string(),
@@ -47,16 +48,16 @@ export const serverSchema = z.object({
   S3_FORCE_PATH_STYLE: z
     .preprocess((val) => val === true || val === 'true', z.boolean())
     .default(false),
-  RATE_LIMITING: z.preprocess((val) => val === true || val === 'true', z.boolean()),
+  RATE_LIMITING: zc.booleanString,
   CF_ACCOUNT_ID: z.string(),
   CF_IMAGES_TOKEN: z.string(),
   JOB_TOKEN: z.string(),
   WEBHOOK_TOKEN: z.string(),
   SCANNING_ENDPOINT: z.string(),
   SCANNING_TOKEN: z.string(),
-  UNAUTHENTICATED_DOWNLOAD: z.preprocess((val) => val === true || val === 'true', z.boolean()),
-  UNAUTHENTICATED_LIST_NSFW: z.preprocess((val) => val === true || val === 'true', z.boolean()),
-  SHOW_SFW_IN_NSFW: z.preprocess((val) => val === true || val === 'true', z.boolean()),
+  UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
+  UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
+  SHOW_SFW_IN_NSFW: zc.booleanString,
   STRIPE_SECRET_KEY: z.string(),
   STRIPE_WEBHOOK_SECRET: z.string(),
   STRIPE_DONATE_ID: z.string(),

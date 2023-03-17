@@ -57,6 +57,11 @@ export default defineNextConfig({
         permanent: true,
       },
       {
+        source: '/reddit',
+        destination: 'https://reddit.com/r/civitai',
+        permanent: true,
+      },
+      {
         source: '/ideas',
         destination: 'https://github.com/civitai/civitai/discussions/categories/ideas',
         permanent: true,
