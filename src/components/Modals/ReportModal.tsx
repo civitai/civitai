@@ -16,7 +16,7 @@ import { IconArrowLeft } from '@tabler/icons';
 import { useMemo, useState } from 'react';
 import { AdminAttentionForm } from '~/components/Report/AdminAttentionForm';
 import { ClaimForm } from '~/components/Report/ClaimForm';
-import { NsfwForm } from '~/components/Report/NsfwForm';
+import { ImageNsfwForm, ModelNsfwForm, NsfwForm } from '~/components/Report/NsfwForm';
 import { OwnershipForm } from '~/components/Report/OwnershipForm';
 import { TosViolationForm } from '~/components/Report/TosViolationForm';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -33,8 +33,14 @@ const reports = [
   {
     reason: ReportReason.NSFW,
     label: 'Mature Content',
-    Element: NsfwForm,
-    availableFor: [ReportEntity.Model, ReportEntity.Image],
+    Element: ModelNsfwForm,
+    availableFor: [ReportEntity.Model],
+  },
+  {
+    reason: ReportReason.NSFW,
+    label: 'Mature Content',
+    Element: ImageNsfwForm,
+    availableFor: [ReportEntity.Image],
   },
   {
     reason: ReportReason.TOSViolation,
@@ -91,11 +97,15 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
     const [reason, setReason] = useState<ReportReason>();
     const [uploading, setUploading] = useState(false);
     const ReportForm = useMemo(
-      () => reports.find((x) => x.reason === reason)?.Element ?? null,
+      () =>
+        reports.find((x) => x.reason === reason && x.availableFor.includes(entityType))?.Element ??
+        null,
       [reason]
     );
     const title = useMemo(
-      () => reports.find((x) => x.reason === reason)?.label ?? `Report ${entityType}`,
+      () =>
+        reports.find((x) => x.reason === reason && x.availableFor.includes(entityType))?.label ??
+        `Report ${entityType}`,
       [reason, entityType]
     );
 
@@ -151,7 +161,6 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
               break;
             case ReportEntity.Image:
               if (variables.reason === ReportReason.NSFW) {
-                await queryUtils.image.getGalleryImageDetail.invalidate();
                 await queryUtils.image.getGalleryImagesInfinite.invalidate();
                 await queryUtils.image.getGalleryImages.invalidate();
                 await queryUtils.tag.getVotableTags.invalidate({ id: variables.id, type: 'image' });

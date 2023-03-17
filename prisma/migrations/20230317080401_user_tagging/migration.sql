@@ -92,7 +92,7 @@ WITH image_tags AS (
 	  "tagId",
 	  automated,
 	  confidence,
-	  5 * confidence/100 "score",
+	  10 * confidence/100 "score",
 		0 "upVotes",
 		0 "downVotes"
 	FROM "TagsOnImage" toi

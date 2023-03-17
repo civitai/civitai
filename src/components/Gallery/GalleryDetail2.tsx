@@ -173,7 +173,7 @@ export function GalleryDetail2() {
                   {`This image won't be visible to other users until it's reviewed by our moderators.`}
                 </AlertWithIcon>
               )}
-              <VotableTags type="image" id={image.id} />
+              <VotableTags entityType="image" entityId={image.id} />
               <div>
                 <Divider
                   label="Discussion"
