@@ -68,8 +68,12 @@ export const imageGallerySelect = ({
   });
 
 export const prepareCreateImage = (image: ImageUploadProps) => {
+  let name = image.name;
+  if (!name && image.mimeType === 'image/gif') name = image.url + '.gif';
+
   const payload: Omit<Prisma.ImageCreateInput, 'user'> = {
     ...image,
+    name,
     needsReview: getNeedsReview(image),
     meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
     generationProcess: image.meta
