@@ -103,42 +103,33 @@ export function AppFooter() {
           >
             Privacy
           </Button>
-          <Button
-            component="a"
-            href="https://github.com/civitai/civitai"
-            {...buttonProps}
-            target="_blank"
-          >
+          <Button component="a" href="/github" {...buttonProps} target="_blank">
             GitHub
           </Button>
-          <Button
-            component="a"
-            href="https://discord.gg/UwX5wKwm6c"
-            {...buttonProps}
-            target="_blank"
-          >
+          <Button component="a" href="/discord" {...buttonProps} target="_blank">
             Discord
           </Button>
-          <Button
-            component="a"
-            href="https://twitter.com/HelloCivitai"
-            {...buttonProps}
-            target="_blank"
-          >
+          <Button component="a" href="/twitter" {...buttonProps} target="_blank">
             Twitter
+          </Button>
+          <Button component="a" href="/reddit" {...buttonProps} target="_blank">
+            Reddit
           </Button>
           <Button
             component="a"
-            href="https://github.com/civitai/civitai/wiki/REST-API-Reference"
+            href="/github/wiki/REST-API-Reference"
             {...buttonProps}
             target="_blank"
           >
             API
           </Button>
+          <Button component="a" href="https://status.civitai.com" {...buttonProps} target="_blank">
+            Status
+          </Button>
         </Group>
         <Button
           component="a"
-          href="https://github.com/civitai/civitai/discussions/categories/ideas"
+          href="/github/discussions/categories/ideas"
           ml="auto"
           variant="light"
           color="yellow"
