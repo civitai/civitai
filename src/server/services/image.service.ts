@@ -146,10 +146,22 @@ export const getGalleryImages = async <
   }));
 };
 
+export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) => {
+  const otherImagesWithSameUrl = await dbWrite.image.count({
+    where: {
+      url: url,
+      id: { not: id },
+      connections: { modelId: { not: null } },
+    },
+  });
+
+  return otherImagesWithSameUrl > 0;
+};
+
 export const deleteImageById = async ({ id }: GetByIdInput) => {
   try {
     const image = await dbRead.image.findUnique({ where: { id }, select: { url: true } });
-    if (isProd && image) await deleteImage(image.url); // Remove from storage
+    if (isProd && image && !imageUrlInUse({ url: image.url, id })) await deleteImage(image.url); // Remove from storage
   } catch {
     // Ignore errors
   }

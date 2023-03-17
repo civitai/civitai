@@ -20,7 +20,7 @@ const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   'Training Data': '.zip',
   Config: '.yaml,.yml',
   VAE: '.pt,.ckpt,.safetensors',
-  'Text Encoder': '.pt',
+  'Text Encoder': '.yaml,.yml',
   Archive: '.zip',
 };
 
