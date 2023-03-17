@@ -792,8 +792,9 @@ export function ModelForm({ model }: Props) {
                                   <Menu.Label>Versions</Menu.Label>
                                   {modelVersions.map((version, i) => {
                                     if (i === index) return null;
-                                    const versionName =
-                                      form.getValues(`modelVersions.${i}.name`) ?? `Version ${i}`;
+                                    let versionName = form.getValues(`modelVersions.${i}.name`);
+                                    if (!versionName || versionName === '')
+                                      versionName = `Version ${i + 1}`;
                                     return (
                                       <Menu.Item
                                         key={i}
