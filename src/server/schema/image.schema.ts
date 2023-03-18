@@ -104,6 +104,14 @@ export const imageUpdateSchema = z.object({
 });
 export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
 
+export const imageModerationSchema = z.object({
+  ids: z.number().array(),
+  nsfw: z.boolean().optional(),
+  needsReview: z.boolean().optional(),
+  delete: z.boolean().optional(),
+});
+export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
+
 export type GetModelVersionImagesSchema = z.infer<typeof getModelVersionImageSchema>;
 export const getModelVersionImageSchema = z.object({
   modelVersionId: z.number(),

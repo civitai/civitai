@@ -3,7 +3,7 @@ import { TagVotableEntityType, VotableTag } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
 
 import { dbWrite, dbRead } from '~/server/db/client';
-import { GetTagsInput, GetVotableTagsSchema } from '~/server/schema/tag.schema';
+import { AdjustTagsSchema, GetTagsInput, GetVotableTagsSchema } from '~/server/schema/tag.schema';
 import { userCache } from '~/server/services/user-cache.service';
 
 export const getTagWithModelCount = async ({ name }: { name: string }) => {
@@ -194,3 +194,60 @@ export const addTagVotes = async ({ userId, type, id, tags, isModerator }: TagVo
   await clearCache(userId, type);
 };
 // #endregion
+
+export const addTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema) => {
+  const isTagIds = typeof tags[0] === 'number';
+  const tagSelector = isTagIds ? 'id' : 'name';
+  const tagIn = (isTagIds ? tags : tags.map((tag) => `'${tag}'`)).join(', ');
+
+  if (entityType === 'model') {
+    await dbWrite.$executeRawUnsafe(`
+      INSERT INTO "TagsOnModels" ("modelId", "tagId")
+      SELECT
+        m."id", t."id"
+      FROM "Model" m
+      JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
+      WHERE m."id" IN (${entityIds.join(', ')})
+      ON CONFLICT DO NOTHING
+    `);
+  } else if (entityType === 'image') {
+    await dbWrite.$executeRawUnsafe(`
+      INSERT INTO "TagsOnImage" ("imageId", "tagId")
+      SELECT
+        i."id", t."id"
+      FROM "Image" i
+      JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
+      WHERE i."id" IN (${entityIds.join(', ')})
+      ON CONFLICT ("imageId", "tagId") DO UPDATE SET "disabled" = false, "needsReview" = false
+    `);
+  }
+};
+
+export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema) => {
+  const isTagIds = typeof tags[0] === 'number';
+  const tagIn = (isTagIds ? tags : tags.map((tag) => `'${tag}'`)).join(', ');
+
+  if (entityType === 'model') {
+    await dbWrite.$executeRawUnsafe(`
+      UPDATE "TagsOnModels"
+      SET "disabled" = true
+      WHERE "modelId" IN (${entityIds.join(', ')})
+      ${
+        isTagIds
+          ? `AND "tagId" IN (${tagIn})`
+          : `AND "tagId" IN (SELECT id FROM "Tag" WHERE name IN (${tagIn}))`
+      }
+    `);
+  } else if (entityType === 'image') {
+    await dbWrite.$executeRawUnsafe(`
+      UPDATE "TagsOnImage"
+      SET "disabled" = true, "needsReview" = false
+      WHERE "imageId" IN (${entityIds.join(', ')})
+      ${
+        isTagIds
+          ? `AND "tagId" IN (${tagIn})`
+          : `AND "tagId" IN (SELECT id FROM "Tag" WHERE name IN (${tagIn}))`
+      }
+    `);
+  }
+};

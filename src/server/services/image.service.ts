@@ -193,6 +193,27 @@ export const updateImageById = <TSelect extends Prisma.ImageSelect>({
   return dbWrite.image.update({ where: { id }, data, select });
 };
 
+export const moderateImages = async ({
+  ids,
+  nsfw,
+  needsReview,
+  delete: deleteImages,
+}: {
+  ids: number[];
+  nsfw?: boolean;
+  needsReview?: boolean;
+  delete?: boolean;
+}) => {
+  if (deleteImages) {
+    await Promise.all(ids.map((id) => deleteImageById({ id })));
+  } else {
+    await dbWrite.image.updateMany({
+      where: { id: { in: ids } },
+      data: { nsfw, needsReview },
+    });
+  }
+};
+
 export const updateImageReportStatusByReason = ({
   id,
   reason,
@@ -280,6 +301,7 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
           },
           automated: true,
         },
+        where: { disabled: false },
       },
     },
   });

@@ -166,7 +166,7 @@ export function GalleryDetail2() {
                   icon={<IconAlertTriangle />}
                   color="yellow"
                   iconColor="yellow"
-                  title="Flagged by age detection"
+                  title="Flagged for review"
                   radius={0}
                   px="md"
                 >
