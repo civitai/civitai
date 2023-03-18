@@ -339,12 +339,14 @@ export const ingestImage = async ({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  }).then(async (res) => {
-    if (res.status === 204) return {};
-    return res.json();
-  })) as ImageScanResultResponse;
+  }).then((res) => res.json())) as ImageScanResultResponse;
 
-  console.log('made it this far', blockedFor, tags, error);
+  console.log('made it this far', deleted, blockedFor, tags, error);
+  if (deleted)
+    return {
+      type: 'blocked',
+      data: { tags, blockedFor },
+    };
 
   if (error) {
     return {
@@ -352,12 +354,6 @@ export const ingestImage = async ({
       data: { error },
     };
   }
-
-  if (deleted)
-    return {
-      type: 'blocked',
-      data: { tags, blockedFor },
-    };
 
   const imageTags = await dbWrite.tag.findMany({
     where: { tagsOnImage: { some: { imageId: id } } },

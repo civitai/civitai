@@ -42,25 +42,19 @@ export function EditPostReviews() {
   return (
     <Stack>
       <Stack>
-        {isLoading ? (
-          <Center p="xl">
-            <Loader></Loader>
-          </Center>
-        ) : (
-          data.map((resource, index) => (
-            <EditResourceReview
-              key={resource.modelVersionId ?? resource.name ?? index}
-              id={resource.reviewId}
-              rating={resource.reviewRating}
-              details={resource.reviewDetails}
-              createdAt={resource.reviewCreatedAt}
-              modelName={resource.modelName}
-              modelVersionId={resource.modelVersionId}
-              modelVersionName={resource.modelVersionName}
-              name={resource.name}
-            />
-          ))
-        )}
+        {data?.map((resource, index) => (
+          <EditResourceReview
+            key={resource.modelVersionId ?? resource.name ?? index}
+            id={resource.reviewId}
+            rating={resource.reviewRating}
+            details={resource.reviewDetails}
+            createdAt={resource.reviewCreatedAt}
+            modelName={resource.modelName}
+            modelVersionId={resource.modelVersionId}
+            modelVersionName={resource.modelVersionName}
+            name={resource.name}
+          />
+        ))}
       </Stack>
 
       {missingResources && (

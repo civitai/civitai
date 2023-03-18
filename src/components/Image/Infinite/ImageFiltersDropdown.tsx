@@ -67,8 +67,8 @@ export function ImageFiltersDropdown() {
             </Chip>
           ))}
         </Chip.Group>
-        <Divider label="Excluded tags" labelProps={{ weight: 'bold' }} />
-        {/* <MultiSelect
+        {/* <Divider label="Excluded tags" labelProps={{ weight: 'bold' }} />
+        <MultiSelect
           placeholder="Select tags"
           defaultValue={excludedTags.map(String)}
           data={tags.map((tag) => ({ value: tag.id.toString(), label: tag.name }))}

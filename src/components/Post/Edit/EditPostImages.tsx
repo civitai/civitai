@@ -221,41 +221,49 @@ function ImageBlocked({ blockedFor, tags, uuid }: ImageBlocked) {
   const removeFile = useEditPostContext((state) => state.removeFile);
   return (
     <Card className={classes.container} withBorder p={0}>
-      <Alert color="red" title="TOS Violation">
-        <Group spacing={4}>
-          <Popover position="top" withinPortal withArrow>
-            <Popover.Target>
-              <ActionIcon>
-                <IconInfoCircle />
-              </ActionIcon>
-            </Popover.Target>
-            <Popover.Dropdown>
-              <Stack spacing={0}>
-                <Text size="xs" weight={500}>
-                  Blocked for
-                </Text>
-                <Code color="red">{blockedFor}</Code>
-                <Group>
-                  {tags?.map((x) => (
-                    <Badge key={x.name} color="red">
-                      {x.name}
-                    </Badge>
-                  ))}
-                </Group>
-              </Stack>
-            </Popover.Dropdown>
-          </Popover>
-          <Text>
-            The image you uploaded was determined to violate our TOS and has been completely removed
-            from our service
-          </Text>
-        </Group>
+      <Alert
+        color="red"
+        styles={{ label: { width: '100%' } }}
+        title={
+          <Group noWrap position="apart" sx={{ width: '100%' }}>
+            <Group spacing={4} noWrap>
+              <Popover position="top" withinPortal withArrow width={300}>
+                <Popover.Target>
+                  <ActionIcon>
+                    <IconInfoCircle />
+                  </ActionIcon>
+                </Popover.Target>
+                <Popover.Dropdown>
+                  <Stack spacing="xs">
+                    <Text size="xs" weight={500}>
+                      Blocked for
+                    </Text>
+                    <Code color="red">{blockedFor}</Code>
+                    <Group spacing="xs">
+                      {tags
+                        ?.filter((x) => x.type === 'Moderation')
+                        .map((x) => (
+                          <Badge key={x.name} color="red">
+                            {x.name}
+                          </Badge>
+                        ))}
+                    </Group>
+                  </Stack>
+                </Popover.Dropdown>
+              </Popover>
+              <Text>TOS Violation</Text>
+            </Group>
+            <ActionIcon color="red" onClick={() => removeFile(uuid)}>
+              <IconX />
+            </ActionIcon>
+          </Group>
+        }
+      >
+        <Text>
+          The image you uploaded was determined to violate our TOS and has been completely removed
+          from our service
+        </Text>
       </Alert>
-      <div className={classes.header}>
-        <ActionIcon color="red" onClick={() => removeFile(uuid)}>
-          <IconX />
-        </ActionIcon>
-      </div>
     </Card>
   );
 }

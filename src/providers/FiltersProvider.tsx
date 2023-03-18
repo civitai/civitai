@@ -4,10 +4,10 @@ import { BrowsingMode, ImageSort, ModelSort, PostSort, QuestionSort } from '~/se
 import { setCookie } from '~/utils/cookies-helpers';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
+// import { immer } from 'zustand/middleware/immer';
 import { z } from 'zod';
-import mergeWith from 'lodash/mergeWith';
-import isArray from 'lodash/isArray';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isArguments, mergeWith, isArray, isObject } from 'lodash-es';
 
 export const modelFilterSchema = z
   .object({
@@ -141,8 +141,12 @@ export const useQuestionFilters = () => {
   return { ...shared, sort };
 };
 
+// #region [merge logic]
+// issue with undefined values here: https://github.com/lodash/lodash/blob/2da024c3b4f9947a48517639de7560457cd4ec6c/.internal/assignMergeValue.js#L14
 const customizer = (objValue: unknown, srcValue: unknown) => {
+  console.log({ objValue, srcValue });
   if (isArray(objValue)) {
     return srcValue;
   }
 };
+// #endregion

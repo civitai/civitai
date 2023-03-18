@@ -31,6 +31,7 @@ import { PostEditImage } from '~/server/controllers/post.controller';
 import { TagType } from '@prisma/client';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { IconInfoCircle } from '@tabler/icons';
+import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 
 const matureLabel = 'Mature content may include content that is suggestive or provocative';
 const tooltipProps: Partial<TooltipProps> = {
@@ -80,7 +81,13 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
     | PostEditImage
     | undefined;
 
-  const hasModerationTags = image?.tags.some((x) => x.type === TagType.Moderation);
+  const moderationTags = image?.tags.filter((x) => x.type === TagType.Moderation) ?? [];
+  const labelTags = image?.tags.filter((x) => x.type === TagType.Label) ?? [];
+  const tags = [
+    ...sortAlphabeticallyBy(moderationTags, (x) => x.name),
+    ...sortAlphabeticallyBy(labelTags, (x) => x.name),
+  ];
+  const hasModerationTags = !!moderationTags.length;
   const meta: Record<string, unknown> = (image?.meta as Record<string, unknown>) ?? {};
   const defaultValues: z.infer<typeof schema> = {
     hideMeta: image?.hideMeta ?? false,
@@ -160,8 +167,8 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
             </Stack>
             <Input.Wrapper label="Tags">
               <Group spacing={4}>
-                {!!image.tags.length ? (
-                  image.tags.map((tag) => (
+                {!!tags.length ? (
+                  tags.map((tag) => (
                     <Badge key={tag.id} color={tag.type === TagType.Moderation ? 'red' : undefined}>
                       {tag.name}
                     </Badge>

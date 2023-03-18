@@ -219,7 +219,7 @@ const createEditPostStore = ({
           removeFile: (uuid) =>
             set((state) => {
               const index = state.images.findIndex(
-                (x) => x.type === 'upload' && x.data.uuid === uuid
+                (x) => (x.type === 'upload' || x.type === 'blocked') && x.data.uuid === uuid
               );
               if (index === -1) throw new Error('index out of bounds');
               state.images.splice(index, 1);
