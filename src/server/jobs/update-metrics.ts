@@ -212,6 +212,7 @@ export const updateMetricsJob = createJob(
                   CAST(a.details ->> '${tableId}' AS INT) AS ${viewId},
                   a."createdAt" AS created_at
                 FROM "UserActivity" a
+                WHERE a.activity = 'ModelDownload'
               ) t
               GROUP BY user_id, ${viewId}
             ) a
