@@ -209,8 +209,8 @@ export const updateMetricsJob = createJob(
               FROM (
                 SELECT
                   COALESCE(CAST(a."userId" as text), a.details->>'ip') user_id,
-                  (details -> 'modelId'::text)::integer AS model_id,
-                  (details -> 'modelVersionId'::text)::integer AS model_version_id,
+                  CAST(a.details ->> 'modelId' AS INT) AS model_id,
+                  CAST(a.details ->> 'modelVersionId' AS INT) AS model_version_id,
                   a."createdAt" AS created_at
                 FROM "UserActivity" a
                 WHERE a.activity = 'ModelDownload'
