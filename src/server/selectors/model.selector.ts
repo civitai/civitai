@@ -170,6 +170,7 @@ export const modelWithDetailsSelect = (includeNSFW = true, user?: SessionUser) =
         inaccurate: true,
         baseModel: true,
         earlyAccessTimeFrame: true,
+        status: true,
         images: {
           orderBy: { index: 'asc' },
           select: {

@@ -19,6 +19,7 @@ import { useState } from 'react';
 
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { getModelWizardUrl } from '~/server/common/model-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -115,18 +116,12 @@ export function UserDraftModels() {
               items.map((model) => {
                 const hasVersion = model._count.modelVersions > 0;
                 const hasFiles = model.modelVersions.some((version) => version._count.files > 0);
+                const hasPosts = model.modelVersions.some((version) => version._count.posts > 0);
 
                 return (
                   <tr key={model.id}>
                     <td>
-                      <Link
-                        href={
-                          hasVersion && hasFiles
-                            ? `/models/v2/${model.id}`
-                            : `/models/v2/${model.id}/edit?step=${hasVersion ? '3' : '2'}`
-                        }
-                        passHref
-                      >
+                      <Link href={getModelWizardUrl(model)} passHref>
                         <Anchor target="_blank" lineClamp={2}>
                           {model.name} <IconExternalLink size={16} stroke={1.5} />
                         </Anchor>
@@ -138,16 +133,16 @@ export function UserDraftModels() {
                     <td>{formatDate(model.createdAt)}</td>
                     <td>{model.updatedAt ? formatDate(model.updatedAt) : 'N/A'}</td>
                     <td>
-                      {!hasVersion || !hasFiles ? (
-                        <Group>
+                      <Group>
+                        {(!hasVersion || !hasFiles || !hasPosts) && (
                           <IconAlertCircle size={16} color="orange" />
-                          {hasVersion ? (
-                            <Text inherit>Needs model files</Text>
-                          ) : (
-                            <Text inherit>Needs version</Text>
-                          )}
-                        </Group>
-                      ) : null}
+                        )}
+                        <Stack spacing={4}>
+                          {!hasVersion && <Text inherit>Needs model version</Text>}
+                          {!hasFiles && <Text inherit>Needs model files</Text>}
+                          {!hasPosts && <Text inherit>Needs model post</Text>}
+                        </Stack>
+                      </Group>
                     </td>
                     <td>
                       <Group position="right" pr="xs">

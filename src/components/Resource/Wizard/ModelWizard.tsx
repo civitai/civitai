@@ -13,9 +13,9 @@ import { IconX } from '@tabler/icons';
 import { isEqual } from 'lodash';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
+
 import { PostEditComposite } from '~/components/Post/Edit/PostEditComposite';
 import { PostEditWrapper } from '~/components/Post/Edit/PostEditLayout';
-
 import { Files } from '~/components/Resource/Files';
 import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
@@ -46,7 +46,6 @@ export function ModelWizard() {
   const { classes } = useStyles();
   const router = useRouter();
   const getUploadStatus = useS3UploadStore((state) => state.getStatus);
-  const { uploading, error, aborted } = getUploadStatus();
 
   const { id, step = '1' } = router.query;
   const parsedStep = Array.isArray(step) ? Number(step[0]) : Number(step);
@@ -58,7 +57,7 @@ export function ModelWizard() {
   const { data: model } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
 
   useDidUpdate(() => {
-    router.replace(`/models/v2/${id}/wizard?step=${state.step}`, undefined, { shallow: true });
+    router.push(`/models/v2/${id}/wizard?step=${state.step}`, undefined, { shallow: true });
   }, [id, state.step]);
 
   useEffect(() => {
@@ -99,6 +98,10 @@ export function ModelWizard() {
   const hasVersions = model && model.modelVersions.length > 0;
   const hasFiles = model && model.modelVersions.some((version) => version.files.length > 0);
 
+  const { uploading, error, aborted } = getUploadStatus(
+    (file) => file.meta?.versionId === state.modelVersion?.id
+  );
+
   return (
     <Container size="sm">
       <ActionIcon
@@ -126,7 +129,7 @@ export function ModelWizard() {
                 model={state.model}
                 onSubmit={({ id }) => {
                   if (editing) return goNext();
-                  router.push(`/models/v2/${id}/wizard?step=2`);
+                  router.replace(`/models/v2/${id}/wizard?step=2`);
                 }}
               >
                 {({ loading }) => (
@@ -183,7 +186,7 @@ export function ModelWizard() {
           <Stepper.Step label="Create a post">
             <Stack>
               <Title order={3}>Create your post</Title>
-              <PostEditWrapper postId={state.modelVersion?.posts[0].id}>
+              <PostEditWrapper postId={state.modelVersion?.posts[0]?.id}>
                 <PostEditComposite />
               </PostEditWrapper>
 
@@ -194,10 +197,6 @@ export function ModelWizard() {
               </Group>
             </Stack>
           </Stepper.Step>
-
-          <Stepper.Completed>
-            Completed, click back button to get to previous step
-          </Stepper.Completed>
         </Stepper>
       </Stack>
     </Container>

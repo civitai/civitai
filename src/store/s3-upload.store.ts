@@ -51,7 +51,7 @@ type StoreProps = {
   items: TrackedFile[];
   setItems: (dispatch: (items: TrackedFile[]) => TrackedFile[]) => void;
   clear: (predicate?: (item: TrackedFile) => boolean) => void;
-  getStatus: () => {
+  getStatus: (predicate?: (item: TrackedFile) => boolean) => {
     pending: number;
     error: number;
     uploading: number;
@@ -129,8 +129,8 @@ export const useS3UploadStore = create<StoreProps>()(
           if (state.items.length === 0) deregisterCatchNavigation();
         });
       },
-      getStatus: () => {
-        const items = get().items;
+      getStatus: (predicate) => {
+        const items = predicate ? get().items.filter(predicate) : get().items;
         return {
           pending: items.filter((x) => x.status === 'pending').length,
           error: items.filter((x) => x.status === 'error').length,
@@ -156,7 +156,8 @@ export const useS3UploadStore = create<StoreProps>()(
       },
       upload: async ({ file, type, options, meta }, cb) => {
         // register catch navigation if beginning upload queue
-        if (get().items.length === 0) registerCatchNavigation();
+        if (get().items.filter((item) => item.status === 'uploading').length === 0)
+          registerCatchNavigation();
         const filename = encodeURIComponent(file.name);
 
         const requestExtras = options?.endpoint?.request ?? {
@@ -362,7 +363,7 @@ const registerCatchNavigation = () => {
     register({
       name: 'file-upload',
       message: 'Files are still uploading. Upload progress will be lost',
-      predicate: () => useS3UploadStore.getState().getStatus().uploading === 0,
+      predicate: () => useS3UploadStore.getState().getStatus().uploading > 0,
       event: 'beforeunload',
     });
 };

@@ -12,7 +12,6 @@ import {
   Text,
   Title,
   Tooltip,
-  UnstyledButton,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
@@ -75,9 +74,9 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
           <Badge radius="sm" px={5}>
             {splitUppercase(model.type)} {model.checkpointType}
           </Badge>
-          {model?.status !== ModelStatus.Published ? (
+          {version.status !== ModelStatus.Published ? (
             <Badge color="yellow" radius="sm">
-              {model.status}
+              {version.status}
             </Badge>
           ) : (
             <HowToUseModel type={model.type} />
@@ -136,7 +135,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
     },
   ];
 
-  const getFileDetails = (file: any) => (
+  const getFileDetails = (file: ModelById['modelVersions'][number]['files'][number]) => (
     <Group position="apart" noWrap spacing={0}>
       <VerifiedText file={file} />
       <Group spacing={4}>
@@ -319,11 +318,16 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
             deadline={version.earlyAccessDeadline}
           />
           <ModelFileAlert versionId={version.id} modelType={model.type} files={version.files} />
-          <Accordion variant="separated" defaultValue={['version-details']} multiple>
+          <Accordion
+            variant="separated"
+            defaultValue={['version-details']}
+            styles={{ content: { padding: 0 } }}
+            multiple
+          >
             <Accordion.Item value="version-details">
               <Accordion.Control>Details</Accordion.Control>
               <Accordion.Panel>
-                <DescriptionTable items={modelDetails} labelWidth="30%" />
+                <DescriptionTable items={modelDetails} labelWidth="30%" withBorder={false} />
               </Accordion.Panel>
             </Accordion.Item>
             <Accordion.Item value="version-files">
@@ -336,6 +340,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                       variant="link"
                       size="sm"
                       href={`/models/v2/${model.id}/model-versions/${version.id}/edit`}
+                      onClick={(e) => e.stopPropagation()}
                     >
                       Manage Files
                     </Text>
@@ -350,7 +355,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
           <CreatorCard user={model.user} />
 
           <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>
-            {model?.type === 'Checkpoint' && (
+            {model.type === 'Checkpoint' && (
               <Group spacing={4} noWrap style={{ flex: 1, overflow: 'hidden' }} align="flex-start">
                 <IconLicense size={16} />
                 <Text
@@ -363,7 +368,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                     lineHeight: 1.1,
                   }}
                 >
-                  License{model?.licenses.length > 0 ? 's' : ''}:
+                  License{model.licenses.length > 0 ? 's' : ''}:
                 </Text>
                 <Stack spacing={0}>
                   <Text
@@ -378,7 +383,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                   >
                     creativeml-openrail-m
                   </Text>
-                  {model?.licenses.map(({ url, name }) => (
+                  {model.licenses.map(({ url, name }) => (
                     <Text
                       key={name}
                       component="a"

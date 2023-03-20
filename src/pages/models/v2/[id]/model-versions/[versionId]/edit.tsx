@@ -11,8 +11,8 @@ import {
 } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 
-import { Files } from '~/components/Resource/Files';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -57,6 +57,7 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function ModelVersionEdit({ modelId, versionId }: Props) {
+  const router = useRouter();
   const { data, isLoading } = trpc.model.getById.useQuery({ id: modelId });
   // Take out tagsOnModels to avoid type errors since we don't need it anyway
   const { tagsOnModels, ...model } = data as ModelById;
@@ -88,6 +89,7 @@ export default function ModelVersionEdit({ modelId, versionId }: Props) {
                   title: 'Success',
                   message: 'The version was saved successfully.',
                 });
+                router.push(`/models/v2/${modelId}`);
               }}
             >
               {({ loading }) => (
@@ -98,10 +100,6 @@ export default function ModelVersionEdit({ modelId, versionId }: Props) {
                 </Group>
               )}
             </ModelVersionUpsertForm>
-          </Stack>
-          <Stack spacing="xs">
-            <Title order={2}>Add files</Title>
-            <Files model={model} version={modelVersion} />
           </Stack>
         </Stack>
       )}

@@ -1,7 +1,7 @@
 import { Box, Paper, Table, TableProps, Text } from '@mantine/core';
 import React from 'react';
 
-export function DescriptionTable({ items, title, labelWidth, ...props }: Props) {
+export function DescriptionTable({ items, title, labelWidth, withBorder = true, ...props }: Props) {
   const rows = [];
   for (let i = 0; i < items.length; i += 1) {
     const item = items[i];
@@ -25,7 +25,7 @@ export function DescriptionTable({ items, title, labelWidth, ...props }: Props) 
   }
 
   return (
-    <Paper radius="sm" withBorder>
+    <Paper radius="sm" withBorder={withBorder}>
       {title && typeof title === 'string' ? (
         <Text size="md" weight="500" p="xs">
           {title}
@@ -54,4 +54,5 @@ export type Props = TableProps & {
   items: Array<{ label: React.ReactNode; value: React.ReactNode; visible?: boolean }>;
   title?: React.ReactNode;
   labelWidth?: React.CSSProperties['width'];
+  withBorder?: boolean;
 };

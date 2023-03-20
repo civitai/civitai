@@ -20,6 +20,7 @@ import Link from 'next/link';
 import { ModelById } from '~/types/router';
 import { useRouter } from 'next/router';
 import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
+import { ModelVersionWizard } from '~/components/Resource/Wizard/ModelVersionWizard';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -60,47 +61,16 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function NewModelVersion({ modelId }: Props) {
-  const router = useRouter();
-  const { data, isLoading } = trpc.model.getById.useQuery({ id: modelId });
-  // Take out tagsOnModels to avoid type errors since we don't need it anyway
-  const { tagsOnModels, ...model } = data as ModelById;
+  // const router = useRouter();
+  // const { data, isLoading } = trpc.model.getById.useQuery({ id: modelId });
+  // // Take out tagsOnModels to avoid type errors since we don't need it anyway
+  // const { tagsOnModels, ...model } = data as ModelById;
 
-  const handleSubmit = (data?: ModelVersionUpsertInput) => {
-    if (data) router.replace(`/models/v2/${modelId}/model-versions/${data.id}/edit`);
-  };
+  // const handleSubmit = (data?: ModelVersionUpsertInput) => {
+  //   if (data) router.replace(`/models/v2/${modelId}/model-versions/${data.id}/edit`);
+  // };
 
-  return (
-    <Container size="sm">
-      {isLoading && !model ? (
-        <Center>
-          <Loader />
-        </Center>
-      ) : (
-        <Stack spacing="xl">
-          <Link href={`/models/v2/${modelId}`} passHref>
-            <Anchor size="xs">
-              <Group spacing={4}>
-                <IconArrowLeft size={12} />
-                <Text inherit>Back to {model.name} page</Text>
-              </Group>
-            </Anchor>
-          </Link>
-          <Stack spacing="xs">
-            <Title>Add new version</Title>
-            <ModelVersionUpsertForm model={model} onSubmit={handleSubmit}>
-              {({ loading }) => (
-                <Group mt="xl" position="right">
-                  <Button type="submit" loading={loading}>
-                    Save
-                  </Button>
-                </Group>
-              )}
-            </ModelVersionUpsertForm>
-          </Stack>
-        </Stack>
-      )}
-    </Container>
-  );
+  return <ModelVersionWizard />;
 }
 
 type Props = { modelId: number };

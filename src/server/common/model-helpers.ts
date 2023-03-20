@@ -1,5 +1,6 @@
 import { ImageGenerationProcess, Prisma } from '@prisma/client';
 import { ModelFileType } from '~/server/common/constants';
+import { MyDraftModelGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
 
 export const createModelFileDownloadUrl = ({
@@ -29,4 +30,16 @@ export function getImageGenerationProcess(meta: Prisma.JsonObject): ImageGenerat
   if (denoiseStrength && !hiresFixed) return ImageGenerationProcess.img2img;
   if (denoiseStrength && hiresFixed) return ImageGenerationProcess.txt2imgHiRes;
   return ImageGenerationProcess.txt2img;
+}
+
+export function getModelWizardUrl(model: MyDraftModelGetAll['items'][number]) {
+  const hasVersion = model._count.modelVersions > 0;
+  const hasFiles = model.modelVersions.some((version) => version._count.files > 0);
+  const hasPosts = model.modelVersions.some((version) => version._count.posts > 0);
+
+  if (!hasVersion) return `/models/v2/${model.id}/wizard?step=2`;
+  if (hasVersion && !hasFiles && !hasPosts) return `/models/v2/${model.id}/wizard?step=3`;
+  if (hasVersion && hasFiles && !hasPosts) return `/models/v2/${model.id}/wizard?step=4`;
+
+  return `/models/v2/${model.id}`;
 }

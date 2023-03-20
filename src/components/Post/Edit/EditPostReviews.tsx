@@ -26,9 +26,9 @@ export function EditPostReviews() {
   return (
     <Stack>
       <Stack>
-        {isLoading ? (
+        {isLoading && ready ? (
           <Center p="xl">
-            <Loader></Loader>
+            <Loader />
           </Center>
         ) : (
           data.map((resource, index) => (

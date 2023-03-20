@@ -2,7 +2,6 @@ import {
   ActionIcon,
   Alert,
   Badge,
-  Box,
   Button,
   Container,
   createStyles,
@@ -10,7 +9,6 @@ import {
   Group,
   Menu,
   Rating,
-  ScrollArea,
   Stack,
   Text,
   ThemeIcon,
@@ -21,7 +19,6 @@ import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
 import {
-  IconAlertTriangle,
   IconArrowsSort,
   IconBan,
   IconClock,
@@ -32,7 +29,6 @@ import {
   IconFlag,
   IconHeart,
   IconMessage,
-  IconPhotoEdit,
   IconPlus,
   IconRecycle,
   IconTagOff,
@@ -57,6 +53,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
 import { ModelGallery } from '~/components/Model/ModelGallery/ModelGallery';
+import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
@@ -76,7 +73,6 @@ import { isNumber } from '~/utils/type-guards';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  prefetch: 'always',
   resolver: async ({ ssg, ctx }) => {
     const params = (ctx.params ?? {}) as { id: string; slug: string[] };
     const id = Number(params.id);
@@ -121,9 +117,11 @@ export default function ModelDetailsV2({
 
   const rawVersionId = router.query.modelVersionId;
   const modelVersionId = Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId;
+  const publishedVersions =
+    model?.modelVersions.filter((v) => v.status === ModelStatus.Published) ?? [];
   const latestVersion =
-    model?.modelVersions.find((version) => version.id === Number(modelVersionId)) ??
-    model?.modelVersions[0] ??
+    publishedVersions.find((version) => version.id === Number(modelVersionId)) ??
+    publishedVersions[0] ??
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
 
@@ -500,86 +498,13 @@ export default function ModelDetailsV2({
                 Add Version
               </Button>
             ) : null}
-            <ScrollArea type="never">
-              <Group spacing={4} noWrap>
-                {model.modelVersions.map((version) => {
-                  const active = selectedVersion?.id === version.id;
-                  return (
-                    <Button
-                      key={version.id}
-                      variant={
-                        active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'
-                      }
-                      color={active ? 'blue' : 'gray'}
-                      onClick={() => setSelectedVersion(version)}
-                      leftIcon={
-                        !version.files.length ? (
-                          <ThemeIcon
-                            color="yellow"
-                            variant="light"
-                            radius="xl"
-                            size="sm"
-                            sx={{ backgroundColor: 'transparent' }}
-                          >
-                            <IconAlertTriangle size={14} />
-                          </ThemeIcon>
-                        ) : undefined
-                      }
-                      rightIcon={
-                        isOwner || isModerator ? (
-                          <Menu withinPortal>
-                            <Menu.Target>
-                              <Box
-                                tabIndex={0}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  e.preventDefault();
-                                }}
-                              >
-                                <IconDotsVertical size={14} />
-                              </Box>
-                            </Menu.Target>
-                            <Menu.Dropdown>
-                              {versionCount > 1 && (
-                                <Menu.Item
-                                  color="red"
-                                  icon={<IconTrash size={14} stroke={1.5} />}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    e.preventDefault();
-                                    handleDeleteVersion(version.id);
-                                  }}
-                                >
-                                  Delete version
-                                </Menu.Item>
-                              )}
-                              <Menu.Item
-                                component={NextLink}
-                                icon={<IconEdit size={14} stroke={1.5} />}
-                                onClick={(e) => e.stopPropagation()}
-                                href={`/models/v2/${id}/model-versions/${version.id}/edit`}
-                              >
-                                Edit version
-                              </Menu.Item>
-                              <Menu.Item
-                                icon={<IconPhotoEdit size={14} stroke={1.5} />}
-                                // TODO.manuel: add carousel edit
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                Edit carousel
-                              </Menu.Item>
-                            </Menu.Dropdown>
-                          </Menu>
-                        ) : undefined
-                      }
-                      compact
-                    >
-                      {version.name}
-                    </Button>
-                  );
-                })}
-              </Group>
-            </ScrollArea>
+            <ModelVersionList
+              versions={model.modelVersions}
+              selected={selectedVersion?.id}
+              onVersionClick={setSelectedVersion}
+              onDeleteClick={handleDeleteVersion}
+              showMenu={isOwner || isModerator}
+            />
           </Group>
           {!!selectedVersion && (
             <ModelVersionDetails

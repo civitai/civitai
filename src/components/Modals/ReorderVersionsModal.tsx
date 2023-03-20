@@ -55,7 +55,6 @@ export function ReorderVersionsModal({ modelId, opened, onClose }: Props) {
       return { previousData };
     },
     async onSuccess() {
-      onClose();
       await queryUtils.model.getVersions.invalidate({ id: modelId });
     },
     onError(error, payload, context) {
@@ -65,7 +64,7 @@ export function ReorderVersionsModal({ modelId, opened, onClose }: Props) {
   });
   const handleSave = () => {
     if (!isEqual(data, versions)) {
-      return reorderMutation.mutate({ id: modelId, modelVersions: versions });
+      reorderMutation.mutate({ id: modelId, modelVersions: versions });
     }
 
     onClose();

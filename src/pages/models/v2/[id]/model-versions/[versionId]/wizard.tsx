@@ -1,13 +1,12 @@
-import { ModelWizard } from '~/components/Resource/Wizard/ModelWizard';
+import { ModelVersionWizard } from '~/components/Resource/Wizard/ModelVersionWizard';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isNumber } from '~/utils/type-guards';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  prefetch: 'always',
-  resolver: async ({ ctx, ssg, session }) => {
-    const params = ctx.params as { id?: string };
+  resolver: async ({ session, ssg, ctx }) => {
+    const params = ctx.params as { id: string; versionId: string };
     if (!session)
       return {
         redirect: {
@@ -17,7 +16,8 @@ export const getServerSideProps = createServerSideProps({
       };
 
     const id = Number(params.id);
-    if (!isNumber(id)) return { notFound: true };
+    const versionId = Number(params.versionId);
+    if (!isNumber(id) || !isNumber(versionId)) return { notFound: true };
 
     const model = await dbRead.model.findUnique({ where: { id }, select: { userId: true } });
     if (!model) return { notFound: true };
@@ -33,11 +33,11 @@ export const getServerSideProps = createServerSideProps({
       };
 
     await ssg?.model.getById.prefetch({ id });
+
+    return { props: { modelId: id, versionId } };
   },
 });
 
-export default function ModelEdit() {
-  return <ModelWizard />;
+export default function Wizard() {
+  return <ModelVersionWizard />;
 }
-
-ModelEdit.getLayout = (page: React.ReactElement) => <>{page}</>;

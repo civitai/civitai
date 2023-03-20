@@ -8,6 +8,7 @@ type ModelRouter = RouterOutput['model'];
 export type ModelById = ModelRouter['getById'];
 export type ModelGetAll = ModelRouter['getAll'];
 export type ModelGetVersions = ModelRouter['getVersions'];
+export type MyDraftModelGetAll = ModelRouter['getMyDraftModels'];
 
 type ReviewRouter = RouterOutput['review'];
 export type ReviewGetAll = ReviewRouter['getAll'];
