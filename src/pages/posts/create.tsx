@@ -2,11 +2,12 @@ import { useRouter } from 'next/router';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import { trpc } from '~/utils/trpc';
-import { Container, Title, Text, Select } from '@mantine/core';
+import { Container, Title, Text, Select, Group } from '@mantine/core';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useState } from 'react';
+import { BackButton } from '~/components/BackButton/BackButton';
 
 export default function PostCreate() {
   const router = useRouter();
@@ -52,10 +53,15 @@ export default function PostCreate() {
 
   const features = useFeatureFlags();
   if (!features.posts) return <NotFound />;
+  let backButtonUrl = modelId ? `/models/${modelId}` : '/';
+  if (modelVersionId) backButtonUrl += `?modelVersionId=${modelVersionId}`;
 
   return (
     <Container size="xs">
-      <Title>Create image post</Title>
+      <Group spacing="xs">
+        <BackButton url={backButtonUrl} />
+        <Title>Create image post</Title>
+      </Group>
       {modelVersionId && (version || versionLoading) && (
         <Text size="sm" color="dimmed">
           Posting to {version?.model.name} - {version?.name}

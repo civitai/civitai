@@ -17,7 +17,6 @@ import { useRouter } from 'next/router';
 import React, { cloneElement, createContext, useContext, useState, useCallback } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { ReportImageNsfwButton } from '~/components/Image/ImageNsfwButton/ImageNsfwButton';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -27,7 +26,7 @@ import { isDefined } from '~/utils/type-guards';
 
 export type ImageGuardConnect = {
   entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post';
-  entityId: number;
+  entityId: string | number;
 };
 // #region [store]
 type SfwStore = {
