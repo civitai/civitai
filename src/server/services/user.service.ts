@@ -80,7 +80,7 @@ export const getUsers = ({ limit, query, email, ids }: GetAllUsersInput) => {
     FROM "User"
     WHERE
       ${ids && ids.length > 0 ? `id IN (${ids.join(',')})` : 'TRUE'}
-      AND ${query ? `username ILIKE '${query}%'` : 'TRUE'}
+      AND ${query ? `username LIKE '${query}%'` : 'TRUE'}
       AND ${email ? `email ILIKE '${email}%'` : 'TRUE'}
       AND "deletedAt" IS NULL
       AND "id" != -1

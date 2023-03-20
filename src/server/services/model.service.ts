@@ -88,7 +88,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (query) {
     AND.push({
       OR: [
-        { name: { contains: query } },
+        { name: { contains: query, mode: 'insensitive' } },
         {
           modelVersions: {
             some: {

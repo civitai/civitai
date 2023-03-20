@@ -20,7 +20,7 @@ export const getTagWithModelCount = async ({ name }: { name: string }) => {
       )
     ) as count
     FROM "public"."Tag"
-    WHERE "public"."Tag"."name" ILIKE ${name}
+    WHERE "public"."Tag"."name" LIKE ${name}
     LIMIT 1 OFFSET 0
   `;
 };
