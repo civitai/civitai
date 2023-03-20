@@ -42,7 +42,7 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
   skip?: number;
 }) => {
   const where: Prisma.TagWhereInput = {
-    name: query ? { startsWith: query, mode: 'insensitive' } : undefined,
+    name: query ? { startsWith: query } : undefined,
     target: { hasSome: entityType },
     tagsOnModels: modelId ? { some: { modelId } } : undefined,
     id: not ? { notIn: not } : undefined,

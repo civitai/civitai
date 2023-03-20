@@ -88,14 +88,14 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (query) {
     AND.push({
       OR: [
-        { name: { contains: query, mode: 'insensitive' } },
+        { name: { contains: query } },
         {
           modelVersions: {
             some: {
               files: query
                 ? {
                     some: {
-                      hashes: { some: { hash: { equals: query, mode: 'insensitive' } } },
+                      hashes: { some: { hash: query } },
                     },
                   }
                 : undefined,
@@ -133,10 +133,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   else if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
 
   const where: Prisma.ModelWhereInput = {
-    tagsOnModels:
-      tagname ?? tag
-        ? { some: { tag: { name: { equals: tagname ?? tag, mode: 'insensitive' } } } }
-        : undefined,
+    tagsOnModels: tagname ?? tag ? { some: { tag: { name: tagname ?? tag } } } : undefined,
     user: username || user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
     nsfw:
