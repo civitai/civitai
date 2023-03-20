@@ -29,7 +29,7 @@ export default function TagPage() {
   const tagname = router.query.tagname as string;
 
   const { data: tag } = trpc.tag.getTagWithModelCount.useQuery({ name: tagname });
-  const count = tag?._count.tagsOnModels ?? 0;
+  const count = tag?.count ?? 0;
 
   return (
     <>

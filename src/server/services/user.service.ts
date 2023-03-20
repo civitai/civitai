@@ -80,7 +80,7 @@ export const getUsers = ({ limit, query, email, ids }: GetAllUsersInput) => {
     FROM "User"
     WHERE
       ${ids && ids.length > 0 ? `id IN (${ids.join(',')})` : 'TRUE'}
-      AND ${query ? `username ILIKE '${query}%'` : 'TRUE'}
+      AND ${query ? `username LIKE '${query}%'` : 'TRUE'}
       AND ${email ? `email ILIKE '${email}%'` : 'TRUE'}
       AND "deletedAt" IS NULL
       AND "id" != -1
@@ -159,12 +159,7 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
   excludeIds?: number[];
 }) => {
   const where: Prisma.UserWhereInput = {
-    username: query
-      ? {
-          contains: query,
-          mode: 'insensitive',
-        }
-      : undefined,
+    username: query ? { contains: query } : undefined,
     models: { some: {} },
     id: excludeIds.length ? { notIn: excludeIds } : undefined,
     deletedAt: null,
