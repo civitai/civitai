@@ -8,10 +8,11 @@ import Youtube from '@tiptap/extension-youtube';
 import { BubbleMenu, Editor, Extension, Extensions, nodePasteRule, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useEffect, useImperativeHandle, useRef } from 'react';
+import { getResourceSuggestion } from '~/components/RichTextEditor/resourceSuggestion';
 
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
-import { getSuggestions } from './suggestion';
+import { getUserSuggestions } from './userSuggestion';
 
 const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
   sm: '30px',
@@ -23,6 +24,9 @@ const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 const useStyles = createStyles((theme) => ({
   mention: {
     color: theme.colors.blue[4],
+  },
+  mentionResource: {
+    color: theme.colors.teal[4],
   },
 }));
 
@@ -53,6 +57,7 @@ export function RichTextEditor({
   const addLink = includeControls.includes('link');
   const addMedia = includeControls.includes('media');
   const addMentions = includeControls.includes('mentions');
+  const addResources = includeControls.includes('resources');
 
   const extensions: Extensions = [
     Placeholder.configure({ placeholder }),
@@ -67,59 +72,69 @@ export function RichTextEditor({
       blockquote: !addFormatting ? false : undefined,
       codeBlock: !addFormatting ? false : undefined,
     }),
-    ...(onSuperEnter
-      ? [
-          Extension.create({
-            name: 'onSubmitShortcut',
-            addKeyboardShortcuts: () => ({
-              'Mod-Enter': () => {
-                onSuperEnter();
-                return true; // Dunno why they want a boolean here
-              },
-            }),
-          }),
-        ]
-      : []),
-    ...(addFormatting ? [Underline] : []),
-    ...(addLink ? [Link] : []),
-    // Casting width as any to be able to use `100%`
-    // since the tiptap extension API doesn't allow
-    // strings for its value
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ...(addMedia
-      ? [
-          Image,
-          Youtube.configure({
-            width: '100%' as any,
-            addPasteHandler: false,
-            modestBranding: false,
-          }).extend({
-            addPasteRules() {
-              return [
-                nodePasteRule({
-                  find: /^(https?:\/\/)?(www\.|music\.)?(youtube\.com|youtu\.be)(?!.*\/channel\/)(?!\/@)(.+)?$/g,
-                  type: this.type,
-                  getAttributes: (match) => ({ src: match.input }),
-                }),
-              ];
-            },
-          }),
-        ]
-      : []),
-    ...(addMentions
-      ? [
-          Mention.configure({
-            suggestion: getSuggestions({ defaultSuggestions }),
-            HTMLAttributes: {
-              class: classes.mention,
-            },
-            renderLabel({ options, node }) {
-              return `${options.suggestion.char}${node.attrs.label ?? node.attrs.id}`;
-            },
-          }),
-        ]
-      : []),
   ];
+  if (addFormatting) extensions.push(Underline);
+  if (addLink) extensions.push(Link);
+  if (addMedia) {
+    extensions.push(
+      Image,
+      Youtube.configure({
+        // Casting width as any to be able to use `100%`
+        // since the tiptap extension API doesn't allow
+        // strings for its value
+        width: '100%' as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+        addPasteHandler: false,
+        modestBranding: false,
+      }).extend({
+        addPasteRules() {
+          return [
+            nodePasteRule({
+              find: /^(https?:\/\/)?(www\.|music\.)?(youtube\.com|youtu\.be)(?!.*\/channel\/)(?!\/@)(.+)?$/g,
+              type: this.type,
+              getAttributes: (match) => ({ src: match.input }),
+            }),
+          ];
+        },
+      })
+    );
+  }
+  // if (addMentions) {
+  //   extensions.push(
+  //     Mention.configure({
+  //       suggestion: getUserSuggestions({ defaultSuggestions }),
+  //       HTMLAttributes: {
+  //         class: classes.mention,
+  //       },
+  //       renderLabel({ options, node }) {
+  //         return `${options.suggestion.char}${node.attrs.label ?? node.attrs.id}`;
+  //       },
+  //     })
+  //   );
+  // }
+  if (addResources) {
+    extensions.push(
+      Mention.configure({
+        suggestion: getResourceSuggestion(),
+        HTMLAttributes: { class: classes.mentionResource },
+        renderLabel({ options, node }) {
+          return `${options.suggestion.char}${node.attrs.label ?? node.attrs.id}`;
+        },
+      })
+    );
+  }
+  if (onSuperEnter) {
+    extensions.push(
+      Extension.create({
+        name: 'onSubmitShortcut',
+        addKeyboardShortcuts: () => ({
+          'Mod-Enter': () => {
+            onSuperEnter();
+            return true; // Dunno why they want a boolean here
+          },
+        }),
+      })
+    );
+  }
 
   const editor = useEditor({
     extensions,
@@ -256,7 +271,7 @@ export function RichTextEditor({
 
 export type EditorCommandsRef = { insertContentAtCursor: (value: string) => void };
 
-type ControlType = 'heading' | 'formatting' | 'list' | 'link' | 'media' | 'mentions';
+type ControlType = 'heading' | 'formatting' | 'list' | 'link' | 'media' | 'mentions' | 'resources';
 type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;

@@ -95,7 +95,7 @@ export default createRoutedContext({
             <InputRTE
               name="content"
               placeholder="Type your thoughts..."
-              includeControls={['formatting', 'link', 'mentions']}
+              includeControls={['formatting', 'link', 'mentions', 'resources']}
               editorSize="xl"
               onSuperEnter={() => form.handleSubmit(handleSaveComment)()}
             />

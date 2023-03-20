@@ -8,7 +8,7 @@ import { QS } from '~/utils/qs';
 
 type Options = { defaultSuggestions?: Array<{ id: number; label: string }> };
 
-export function getSuggestions(options?: Options) {
+export function getUserSuggestions(options?: Options) {
   const { defaultSuggestions = [] } = options || {};
   const suggestion: Omit<SuggestionOptions, 'editor'> = {
     items: async ({ query }) => {
