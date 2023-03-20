@@ -295,13 +295,13 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
         },
       },
       tags: {
+        where: { disabled: false },
         select: {
+          automated: true,
           tag: {
             select: simpleTagSelect,
           },
-          automated: true,
         },
-        where: { disabled: false },
       },
     },
   });

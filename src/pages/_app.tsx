@@ -28,7 +28,7 @@ import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { FeatureFlags } from '~/server/services/feature-flags.service';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
-import { RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
+import { FreezeProvider, RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
 import { isDev, isMaintenanceMode } from '~/env/other';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -106,7 +106,9 @@ function MyApp(props: CustomAppProps) {
                 <CivitaiLinkProvider>
                   <CustomModalsProvider>
                     <NotificationsProvider>
-                      <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                      <FreezeProvider>
+                        <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                      </FreezeProvider>
                       <RoutedContextProvider2 />
                     </NotificationsProvider>
                   </CustomModalsProvider>
@@ -200,6 +202,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       },
       ...appProps,
     };
+  } else if (isClient) {
   } else {
     const session = !isClient ? await getSession(appContext.ctx) : undefined;
     const flags = getFeatureFlags({ user: session?.user });

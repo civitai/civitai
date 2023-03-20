@@ -35,7 +35,6 @@ export function EditPostReviews() {
 
   useEffect(() => {
     const shouldRefetch = imageResources.length !== data.length;
-    console.log({ shouldRefetch });
     if (shouldRefetch) refetch();
   }, [imageResources, refetch]); //eslint-disable-line
 

@@ -98,6 +98,7 @@ import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import truncate from 'lodash/truncate';
+import { Freeze } from 'react-freeze';
 
 //TODO - Break model query into multiple queries
 /*
@@ -211,6 +212,7 @@ export default function ModelDetail({
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();
   const { connected: civitaiLinked } = useCivitaiLink();
+  const router = useRouter();
 
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
 

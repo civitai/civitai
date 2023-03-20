@@ -187,7 +187,7 @@ export const getPostTags = async ({ query, limit }: GetPostTagsInput) => {
       t.id,
       t.name,
       t."isCategory",
-      COALESCE(s.${showTrending ? '"postCountDay"' : '"postCountAllTime"'}, 0) AS "postCount"
+      COALESCE(s.${showTrending ? '"postCountDay"' : '"postCountAllTime"'}, 0)::int AS "postCount"
     FROM "Tag" t
     LEFT JOIN "TagStat" s ON s."tagId" = t.id
     LEFT JOIN "TagRank" r ON r."tagId" = t.id

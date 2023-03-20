@@ -1,10 +1,11 @@
-import React, { ComponentType, useEffect, useState } from 'react';
+import React, { ComponentType, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import Router, { NextRouter, useRouter } from 'next/router';
 import Link from 'next/link';
 import { QS } from '~/utils/qs';
 import { getHasClientHistory } from '~/store/ClientHistoryStore';
-import { useDidUpdate, useWindowEvent } from '@mantine/hooks';
+import { create } from 'zustand';
+import { Freeze } from 'react-freeze';
 
 const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
 const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLightbox'));
@@ -101,6 +102,7 @@ export function openRoutedContext<TName extends keyof typeof registry>(
   props: React.ComponentProps<(typeof registry)[TName]['Component']>,
   optionsOverride?: { replace?: boolean }
 ) {
+  useFreezeStore.getState().setFreeze(true);
   const resolve = registry[modal].resolve;
   const [url, as, options] = resolve(props as any) as Parameters<NextRouter['push']>;
   Router.push(url, as, { ...options, ...optionsOverride });
@@ -121,6 +123,11 @@ export function closeRoutedContext() {
 export function RoutedContextProvider2() {
   const router = useRouter();
   const modal = router.query.modal;
+  const setFreeze = useFreezeStore((state) => state.setFreeze);
+
+  useEffect(() => {
+    if (!modal) setFreeze(false);
+  }, [modal]) //eslint-disable-line
 
   if (!modal) return null;
 
@@ -148,5 +155,37 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
     <Link href={url} as={as} {...options}>
       {children}
     </Link>
+  );
+}
+
+export const useFreezeStore = create<{
+  freeze: boolean;
+  placeholder?: React.ReactNode;
+  setFreeze: (freeze: boolean) => void;
+}>((set, get) => ({
+  freeze: false,
+  placeholder: undefined,
+  setFreeze: (freeze: boolean) =>
+    set((state) => {
+      if (state.freeze === freeze) return {};
+      let placeholder: React.ReactNode | undefined;
+      if (freeze) {
+        const placeholderContent = document.getElementById('freezeBlock')?.innerHTML;
+        placeholder = placeholderContent ? (
+          <div dangerouslySetInnerHTML={{ __html: placeholderContent }} />
+        ) : undefined;
+      }
+
+      return { freeze, placeholder };
+    }),
+}));
+
+export function FreezeProvider({ children }: { children: React.ReactElement }) {
+  const freeze = useFreezeStore((state) => state.freeze);
+  const placeholder = useFreezeStore((state) => state.placeholder);
+  return (
+    <Freeze freeze={freeze} placeholder={placeholder}>
+      <div id="freezeBlock">{children}</div>
+    </Freeze>
   );
 }

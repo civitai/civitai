@@ -1,5 +1,6 @@
 import { useRouter } from 'next/router';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { QS } from '~/utils/qs';
 
 export default function ImagePage() {
   const router = useRouter();
@@ -11,9 +12,21 @@ export default function ImagePage() {
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ctx, ssg }) => {
-    const params = (ctx.params ?? {}) as { postId: string; modelId: string; username: string };
-    const postId = Number(params.postId);
+    const { imageId, ...params } = QS.parse(QS.stringify(ctx.params ?? {})) as {
+      imageId: number;
+    } & { [key: string]: unknown };
+    // const params = (ctx.params ?? {}) as {
+    //   imageId: string;
+    //   postId: string;
+    //   modelId: string;
+    //   username: string | undefined;
+    // };
+    // const imageId = Number(params.imageId);
+    // const postId = params.postId ? Number(params.postId) : undefined;
+    // const modelId = params.modelId ? Number(params.modelId) : undefined;
+    // const username = params.username;
 
-    await ssg?.image.getInfinite.prefetchInfinite({ postId });
+    await ssg?.image.getInfinite.prefetchInfinite(params);
+    await ssg?.image.getDetail.prefetch({ id: imageId });
   },
 });
