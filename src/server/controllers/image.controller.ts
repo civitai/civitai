@@ -91,7 +91,7 @@ export const getGalleryImageDetailHandler = async ({
         heartCount: stats?.heartCountAllTime,
         commentCount: stats?.commentCountAllTime,
       },
-      tags: tags.map(({ tag, automated }) => ({ ...tag, automated })),
+      tags: tags.map(({ tag, ...other }) => ({ ...tag, ...other })),
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -125,7 +125,7 @@ export const getGalleryImagesInfiniteHandler = async ({
       nextCursor,
       items: items.map(({ tags, ...item }) => ({
         ...item,
-        tags: tags.map(({ tag, automated }) => ({ ...tag, automated })),
+        tags: tags.map(({ tag, ...other }) => ({ ...tag, ...other })),
       })),
     };
   } catch (error) {
@@ -162,7 +162,7 @@ export const getGalleryImagesHandler = async ({
     });
     const parsedItems = items.map(({ tags, ...item }) => ({
       ...item,
-      tags: tags.map(({ tag, automated }) => ({ ...tag, automated })),
+      tags: tags.map(({ tag, ...other }) => ({ ...tag, ...other })),
     }));
 
     const isOwnerOrModerator =

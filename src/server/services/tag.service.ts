@@ -3,7 +3,12 @@ import { TagVotableEntityType, VotableTag } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
 
 import { dbWrite, dbRead } from '~/server/db/client';
-import { AdjustTagsSchema, GetTagsInput, GetVotableTagsSchema } from '~/server/schema/tag.schema';
+import {
+  AdjustTagsSchema,
+  GetTagsInput,
+  GetVotableTagsSchema,
+  ModerateTagsSchema,
+} from '~/server/schema/tag.schema';
 import { userCache } from '~/server/services/user-cache.service';
 
 export const getTagWithModelCount = async ({ name }: { name: string }) => {
@@ -150,6 +155,7 @@ type TagVotingInput = {
   type: TagVotableEntityType;
   id: number;
   tags: number[] | string[];
+  vote: number;
   isModerator?: boolean;
 };
 const clearCache = async (userId: number, entityType: TagVotableEntityType) => {
@@ -176,8 +182,15 @@ export const removeTagVotes = async ({ userId, type, id, tags }: TagVotingInput)
 };
 
 const MODERATOR_VOTE_WEIGHT = 10;
-export const addTagVotes = async ({ userId, type, id, tags, isModerator }: TagVotingInput) => {
-  const vote = isModerator ? MODERATOR_VOTE_WEIGHT : 1;
+export const addTagVotes = async ({
+  userId,
+  type,
+  id,
+  tags,
+  isModerator,
+  vote,
+}: TagVotingInput) => {
+  vote *= isModerator ? MODERATOR_VOTE_WEIGHT : 1;
   const isTagIds = typeof tags[0] === 'number';
   const tagSelector = isTagIds ? 'id' : 'name';
   const tagIn = (isTagIds ? tags : tags.map((tag) => `'${tag}'`)).join(', ');
@@ -218,7 +231,7 @@ export const addTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema)
       FROM "Image" i
       JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
       WHERE i."id" IN (${entityIds.join(', ')})
-      ON CONFLICT ("imageId", "tagId") DO UPDATE SET "disabled" = false, "needsReview" = false
+      ON CONFLICT ("imageId", "tagId") DO UPDATE SET "disabled" = false, "needsReview" = false, automated = false
     `);
   }
 };
@@ -249,5 +262,40 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
           : `AND "tagId" IN (SELECT id FROM "Tag" WHERE name IN (${tagIn}))`
       }
     `);
+  }
+};
+
+export const moderateTags = async ({ entityIds, entityType, disable }: ModerateTagsSchema) => {
+  if (entityType === 'model') {
+    // We aren't doing user model tagging quite yet...
+    throw new Error('Not implemented');
+    // await dbWrite.$executeRawUnsafe(`
+    //   UPDATE "TagsOnModels"
+    //   SET "disabled" = ${disable}, "needsReview" = false
+    //   WHERE "needsReview" = true AND "modelId" IN (${entityIds.join(', ')})
+    // `);
+  } else if (entityType === 'image') {
+    await dbWrite.$executeRawUnsafe(`
+      UPDATE "TagsOnImage"
+      SET "disabled" = ${disable}, "needsReview" = false, "automated" = false
+      WHERE "needsReview" = true AND "imageId" IN (${entityIds.join(', ')})
+    `);
+
+    // Update nsfw baseline
+    console.log(disable);
+    if (disable) {
+      await dbWrite.$executeRawUnsafe(`
+        -- Update NSFW baseline
+        UPDATE "Image" SET nsfw = false
+        WHERE id IN (${entityIds.join(', ')})
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "TagsOnImage" toi
+            JOIN "Tag" t ON t.id = toi."tagId" AND t.type = 'Moderation'
+            WHERE toi."imageId" = "Image".id
+              AND toi."disabled" = false
+          )
+      `);
+    }
   }
 };

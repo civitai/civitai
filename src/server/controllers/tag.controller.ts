@@ -6,11 +6,13 @@ import {
   GetTagsInput,
   GetTrendingTagsSchema,
   GetVotableTagsSchema,
+  ModerateTagsSchema,
   RemoveTagVotesSchema,
 } from '~/server/schema/tag.schema';
 import {
   addTags,
   disableTags,
+  moderateTags,
   addTagVotes,
   getTags,
   getTagWithModelCount,
@@ -128,6 +130,14 @@ export const addTagsHandler = async ({ input }: { input: AdjustTagsSchema }) => 
 export const disableTagsHandler = async ({ input }: { input: AdjustTagsSchema }) => {
   try {
     await disableTags(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const moderateTagsHandler = async ({ input }: { input: ModerateTagsSchema }) => {
+  try {
+    await moderateTags(input);
   } catch (error) {
     throw throwDbError(error);
   }

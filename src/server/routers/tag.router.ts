@@ -7,6 +7,7 @@ import {
   getVotableTagsHandler,
   removeTagVotesHandler,
   disableTagsHandler,
+  moderateTagsHandler,
 } from '~/server/controllers/tag.controller';
 import {
   addTagVotesSchema,
@@ -15,6 +16,7 @@ import {
   getTagsInput,
   getTrendingTagsSchema,
   getVotableTagsSchema,
+  moderateTagsSchema,
   removeTagVotesSchema,
 } from '~/server/schema/tag.schema';
 import { getHiddenTagsForUser } from '~/server/services/user-cache.service';
@@ -54,4 +56,5 @@ export const tagRouter = router({
   removeTagVotes: protectedProcedure.input(removeTagVotesSchema).mutation(removeTagVotesHandler),
   addTags: moderatorProcedure.input(adjustTagsSchema).mutation(addTagsHandler),
   disableTags: moderatorProcedure.input(adjustTagsSchema).mutation(disableTagsHandler),
+  moderateTags: moderatorProcedure.input(moderateTagsSchema).mutation(moderateTagsHandler),
 });

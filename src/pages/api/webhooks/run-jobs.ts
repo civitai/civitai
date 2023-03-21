@@ -18,6 +18,7 @@ import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
 import { Job } from '~/server/jobs/job';
 import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
+import { disabledVotedTags } from '~/server/jobs/disabled-voted-tags';
 
 const jobs: Job[] = [
   scanFilesJob,
@@ -31,6 +32,7 @@ const jobs: Job[] = [
   removeDisconnectedImages,
   pushDiscordMetadata,
   applyVotedTags,
+  disabledVotedTags,
   ...applyDiscordRoles,
 ];
 

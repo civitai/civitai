@@ -7,6 +7,7 @@ import {
   Center,
   Checkbox,
   Container,
+  Divider,
   Group,
   Loader,
   Menu,
@@ -18,6 +19,7 @@ import {
 import { useListState } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import {
+  IconBan,
   IconCheck,
   IconInfoCircle,
   IconReload,
@@ -58,25 +60,22 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
   return { props: {} };
 };
 
-const REMOVABLE_TAGS = ['child', 'teen'];
-const ADDABLE_TAGS = ['anime', 'cartoon', 'comics', 'manga', 'explicit nudity', 'suggestive'];
-
-export default function Images() {
+export default function Tags() {
   const { ref, inView } = useInView();
   const queryUtils = trpc.useContext();
   const [selected, selectedHandlers] = useListState([] as number[]);
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching, refetch } =
     trpc.image.getGalleryImagesInfinite.useInfiniteQuery(
-      { needsReview: true },
+      { tagReview: true },
       { getNextPageParam: (lastPage) => lastPage.nextCursor }
     );
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
 
-  const moderateImagesMutation = trpc.image.moderate.useMutation({
-    async onMutate({ ids, needsReview, delete: deleted }) {
+  const moderateTagsMutation = trpc.tag.moderateTags.useMutation({
+    async onMutate({ entityIds, disable }) {
       await queryUtils.image.getGalleryImagesInfinite.cancel();
-      queryUtils.image.getGalleryImagesInfinite.setInfiniteData({ needsReview: true }, (data) => {
+      queryUtils.image.getGalleryImagesInfinite.setInfiniteData({ tagReview: true }, (data) => {
         if (!data) {
           return {
             pages: [],
@@ -84,26 +83,24 @@ export default function Images() {
           };
         }
 
+        // Remove tag from selected images
         return {
           ...data,
           pages: data.pages.map((page) => ({
             ...page,
             items: page.items.map((item) =>
-              ids.includes(item.id)
-                ? { ...item, needsReview: deleted === true || needsReview === false ? false : true }
-                : item
+              !entityIds.includes(item.id)
+                ? item
+                : {
+                    ...item,
+                    tags: disable
+                      ? item.tags.filter((tag) => !tag.needsReview)
+                      : item.tags.map((tag) => ({ ...tag, needsReview: false })),
+                  }
             ),
           })),
         };
       });
-    },
-    onSuccess(_, input) {
-      const actions: string[] = [];
-      if (input.delete) actions.push('deleted');
-      else if (!input.needsReview) actions.push('approved');
-      else if (input.nsfw) actions.push('marked as NSFW');
-
-      showSuccessNotification({ message: `The images have been ${actions.join(', ')}` });
     },
   });
 
@@ -111,7 +108,7 @@ export default function Images() {
     async onMutate({ tags, entityIds }) {
       const isTagIds = typeof tags[0] === 'number';
       await queryUtils.image.getGalleryImagesInfinite.cancel();
-      queryUtils.image.getGalleryImagesInfinite.setInfiniteData({ needsReview: true }, (data) => {
+      queryUtils.image.getGalleryImagesInfinite.setInfiniteData({ tagReview: true }, (data) => {
         if (!data) {
           return {
             pages: [],
@@ -140,46 +137,6 @@ export default function Images() {
     },
   });
 
-  const addTagMutation = trpc.tag.addTags.useMutation({
-    async onMutate({ tags, entityIds }) {
-      const isTagIds = typeof tags[0] === 'number';
-      await queryUtils.image.getGalleryImagesInfinite.cancel();
-
-      queryUtils.image.getGalleryImagesInfinite.setInfiniteData({ needsReview: true }, (data) => {
-        if (!data) {
-          return {
-            pages: [],
-            pageParams: [],
-          };
-        }
-
-        // Add tag to selected images
-        return {
-          ...data,
-          pages: data.pages.map((page) => ({
-            ...page,
-            items: page.items.map((item) =>
-              entityIds.includes(item.id)
-                ? {
-                    ...item,
-                    tags: [
-                      ...item.tags,
-                      ...tags.map((x) => ({
-                        id: isTagIds ? (x as number) : 0,
-                        name: !isTagIds ? (x as string) : '',
-                        automated: false,
-                        isCategory: false,
-                      })),
-                    ],
-                  }
-                : item
-            ),
-          })),
-        };
-      });
-    },
-  });
-
   const handleSelect = (id: number, checked: boolean) => {
     const idIndex = selected.indexOf(id);
     if (checked && idIndex == -1) selectedHandlers.append(id);
@@ -193,14 +150,6 @@ export default function Images() {
       entityType: 'image',
     });
 
-  const handleDeleteSelected = () => {
-    moderateImagesMutation.mutate({
-      ids: selected,
-      delete: true,
-    });
-    selectedHandlers.setState([]);
-  };
-
   const handleSelectAll = () => {
     if (selected.length === images.length) handleClearAll();
     else selectedHandlers.setState(images.map((x) => x.id));
@@ -210,25 +159,18 @@ export default function Images() {
     selectedHandlers.setState([]);
   };
 
-  const handleApproveSelected = () =>
-    moderateImagesMutation.mutate({
-      ids: selected,
-      needsReview: false,
-    });
-
-  const handleAddTag = (tag: string) =>
-    addTagMutation.mutate({
-      tags: [tag],
-      entityIds: selected,
-      entityType: 'image',
-    });
-
-  const handleDisableTag = (tag: string) =>
-    disableTagMutation.mutate({
-      tags: [tag],
-      entityIds: selected,
-      entityType: 'image',
-    });
+  const handleSelected = (disable: boolean) => {
+    moderateTagsMutation.mutate(
+      {
+        entityIds: selected,
+        entityType: 'image',
+        disable,
+      },
+      {
+        onSuccess: handleClearAll,
+      }
+    );
+  };
 
   const handleRefresh = () => {
     handleClearAll();
@@ -270,40 +212,10 @@ export default function Images() {
             <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
               <IconSquareOff size="1.25rem" />
             </ActionIcon>
-            <Menu>
-              <Menu.Target>
-                <ActionIcon variant="outline" disabled={!selected.length}>
-                  <IconTag size="1.25rem" />
-                </ActionIcon>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Label>Add Tag</Menu.Label>
-                {ADDABLE_TAGS.map((tag) => (
-                  <Menu.Item key={tag} onClick={() => handleAddTag(tag)}>
-                    {tag}
-                  </Menu.Item>
-                ))}
-              </Menu.Dropdown>
-            </Menu>
-            <Menu>
-              <Menu.Target>
-                <ActionIcon variant="outline" disabled={!selected.length}>
-                  <IconTagOff size="1.25rem" />
-                </ActionIcon>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Label>Remove Tag</Menu.Label>
-                {REMOVABLE_TAGS.map((tag) => (
-                  <Menu.Item key={tag} onClick={() => handleDisableTag(tag)}>
-                    {tag}
-                  </Menu.Item>
-                ))}
-              </Menu.Dropdown>
-            </Menu>
             <PopConfirm
-              message={`Are you sure you want to approve ${selected.length} image(s)?`}
+              message={`Are you sure you want to approve ${selected.length} tag removal(s)?`}
               position="bottom-end"
-              onConfirm={handleApproveSelected}
+              onConfirm={() => handleSelected(true)}
               withArrow
             >
               <ActionIcon variant="outline" disabled={!selected.length} color="green">
@@ -311,13 +223,13 @@ export default function Images() {
               </ActionIcon>
             </PopConfirm>
             <PopConfirm
-              message={`Are you sure you want to delete ${selected.length} image(s)?`}
+              message={`Are you sure you want to decline ${selected.length} tag removal(s)?`}
               position="bottom-end"
-              onConfirm={handleDeleteSelected}
+              onConfirm={() => handleSelected(false)}
               withArrow
             >
               <ActionIcon variant="outline" disabled={!selected.length} color="red">
-                <IconTrash size="1.25rem" />
+                <IconBan size="1.25rem" />
               </ActionIcon>
             </PopConfirm>
             <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
@@ -327,10 +239,9 @@ export default function Images() {
         </Paper>
 
         <Stack spacing={0} mb="lg">
-          <Title order={1}>Images Needing Review</Title>
+          <Title order={1}>Tags Needing Review</Title>
           <Text color="dimmed">
-            These are images that have been marked by our AI which needs further attention from the
-            mods
+            These are images with moderation tags that users have voted to remove.
           </Text>
         </Stack>
 
@@ -353,7 +264,7 @@ export default function Images() {
             )}
           />
         ) : (
-          <NoContent mt="lg" message="There are no images that need review" />
+          <NoContent mt="lg" message="There are no tags that need review" />
         )}
         {!isLoading && hasNextPage && (
           <Group position="center" ref={ref}>
@@ -380,13 +291,28 @@ function ImageGridItem({
     return Math.min(imageHeight, 600);
   }, [itemWidth, image.width, image.height]);
 
+  const tags = useMemo(
+    () => ({
+      toReview: image.tags.filter((x) => x.needsReview),
+      other: image.tags.filter((x) => !x.needsReview),
+    }),
+    [image.tags]
+  );
+  const needsReview = tags.toReview.length > 0;
+
+  const renderTag = (tag: (typeof tags.toReview)[number]) => (
+    <Badge key={tag.id} variant="filled" color="gray" pr={0}>
+      <Group spacing={0}>
+        {tag.name}
+        <ActionIcon size="sm" variant="transparent" onClick={() => disableTag(image.id, tag.id)}>
+          <IconX strokeWidth={3} size=".75rem" />
+        </ActionIcon>
+      </Group>
+    </Badge>
+  );
+
   return (
-    <Card
-      shadow="sm"
-      p="xs"
-      sx={{ opacity: image.needsReview === false ? 0.2 : undefined }}
-      withBorder
-    >
+    <Card shadow="sm" p="xs" sx={{ opacity: !needsReview ? 0.2 : undefined }} withBorder>
       <Card.Section sx={{ height: `${height}px` }}>
         <Checkbox
           checked={selected}
@@ -454,21 +380,17 @@ function ImageGridItem({
           )}
         />
       </Card.Section>
+      {needsReview && (
+        <>
+          <Divider label="Pending removal" mt="xs" />
+          <Group pt="xs" spacing={4}>
+            {tags.toReview.map(renderTag)}
+          </Group>
+        </>
+      )}
+      <Divider label="Other tags" mt="xs" />
       <Group pt="xs" spacing={4}>
-        {image.tags.map((tag) => (
-          <Badge key={tag.id} variant="filled" color="gray" pr={0}>
-            <Group spacing={0}>
-              {tag.name}
-              <ActionIcon
-                size="sm"
-                variant="transparent"
-                onClick={() => disableTag(image.id, tag.id)}
-              >
-                <IconX strokeWidth={3} size=".75rem" />
-              </ActionIcon>
-            </Group>
-          </Badge>
-        ))}
+        {tags.other.map(renderTag)}
       </Group>
     </Card>
   );

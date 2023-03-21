@@ -114,7 +114,7 @@ export const createReport = async ({
     switch (type) {
       case ReportEntity.Model:
         if (data.reason === ReportReason.NSFW)
-          await addTagVotes({ userId, type, id, tags: data.details.tags, isModerator });
+          await addTagVotes({ userId, type, id, tags: data.details.tags, isModerator, vote: 1 });
 
         await tx.modelReport.create({
           data: {
@@ -149,7 +149,7 @@ export const createReport = async ({
         break;
       case ReportEntity.Image:
         if (data.reason === ReportReason.NSFW)
-          addTagVotes({ userId, type, id, tags: data.details.tags, isModerator });
+          addTagVotes({ userId, type, id, tags: data.details.tags, isModerator, vote: 1 });
 
         await tx.imageReport.create({
           data: {

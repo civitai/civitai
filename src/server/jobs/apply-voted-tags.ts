@@ -50,7 +50,7 @@ export const applyVotedTags = createJob('apply-voted-tags', '*/10 * * * *', asyn
       FROM "TagsOnImage" toi
       JOIN "Image" i ON i.id = toi."imageId" AND i.nsfw IS FALSE
       JOIN "Tag" t ON t.id = toi."tagId" AND t.type = 'Moderation'
-      WHERE toi."createdAt" > '2023-03-17'
+      WHERE toi."createdAt" > '${lastApplied}'
     )
   `);
 
