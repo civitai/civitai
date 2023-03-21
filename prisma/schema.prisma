@@ -33,6 +33,7 @@ model Account {
   user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
+  @@index([provider, userId])
 }
 
 // We aren't using DB sessions, but next-auth likes this... I guess.
@@ -344,6 +345,9 @@ model Model {
   downloads         DownloadHistory[]
   imageConnections  ImageConnection[]
   hashes            ModelHash[]
+
+  @@index([name])
+  @@index([status, nsfw])
 }
 
 model License {
@@ -539,6 +543,7 @@ model UserActivity {
   createdAt DateTime         @default(now())
 
   @@index([userId, createdAt])
+  @@index([createdAt])
 }
 
 enum ReportReason {
@@ -1975,7 +1980,7 @@ model ModelTag {
   @@id([modelId, tagId])
 }
 
-///@view
+/// @view
 model ImageResourceHelper {
   id                    Int        @id
   imageId               Int
@@ -1998,7 +2003,7 @@ model ImageResourceHelper {
   modelType             ModelType?
 }
 
-///@view
+/// @view
 model PostResourceHelper {
   id                    Int        @id
   postId                Int
