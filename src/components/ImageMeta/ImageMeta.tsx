@@ -48,7 +48,7 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
       if (!value) continue;
       const label = labelDictionary[key];
       if (value.length > 30 || key === 'prompt') long.push({ label, value });
-      else if (value.length > 14) medium.push({ label, value });
+      else if (value.length > 14 || key === 'Model') medium.push({ label, value });
       else short.push({ label, value });
     }
     return { long, medium, short };

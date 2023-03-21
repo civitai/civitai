@@ -34,6 +34,7 @@ export default defineNextConfig({
     // scrollRestoration: true,
     largePageDataBytes: 512 * 100000,
   },
+  poweredByHeader: false,
   redirects: async () => {
     return [
       {

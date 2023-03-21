@@ -59,14 +59,14 @@ export default WebhookEndpoint(async (req, res) => {
     }
 
     const processJob = async () => {
+      const jobStart = Date.now();
       try {
         log(`${name} starting`);
         await redis?.set(`job:${name}`, 'true', { EX: options.lockExpiration });
-        const jobStart = Date.now();
         await run();
-        log(`${name} successful: ${((jobStart - Date.now()) / 1000).toFixed(2)}ms`);
+        log(`${name} successful: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`);
       } catch (e) {
-        log(`${name} failed`, e);
+        log(`${name} failed: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`, e);
       } finally {
         await redis?.del(`job:${name}`);
       }

@@ -24,9 +24,7 @@ export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
   const { take, skip } = getPagination(limit, page);
   const where: Prisma.QuestionWhereInput = {
     title: query ? { contains: query, mode: 'insensitive' } : undefined,
-    tags: tagname
-      ? { some: { tag: { name: { equals: tagname, mode: 'insensitive' } } } }
-      : undefined,
+    tags: tagname ? { some: { tag: { name: tagname } } } : undefined,
     answers:
       status === QuestionStatus.Answered
         ? { some: {} }

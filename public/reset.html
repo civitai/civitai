@@ -47,10 +47,9 @@
     button.innerHTML = 'Running...';
 
     // Clear indexedDB
-    const dbs = await window.indexedDB.databases();
-    dbs.forEach((db) => {
-      if (db.name) window.indexedDB.deleteDatabase(db.name);
-    });
+    const dbNames = ['keyval-store', 'tensorflowjs'];
+    for (const dbName of dbNames) window.indexedDB.deleteDatabase(dbName);
+
 
     // Clear cache
     const cache = await caches.keys();

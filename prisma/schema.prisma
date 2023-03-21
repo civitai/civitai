@@ -56,7 +56,6 @@ model User {
   id                   Int                   @id @default(autoincrement())
   name                 String?
   username             String?               @unique @db.Citext
-  // displayName       String?          @db.Citext // [deleted]
   email                String?               @unique
   emailVerified        DateTime?
   image                String?
@@ -299,7 +298,7 @@ enum CheckpointType {
 
 model Model {
   id             Int             @id @default(autoincrement())
-  name           String
+  name           String          @db.Citext
   description    String?
   type           ModelType
   createdAt      DateTime        @default(now())
@@ -445,10 +444,11 @@ model ModelFileHash {
   file      ModelFile     @relation(fields: [fileId], references: [id], onDelete: Cascade)
   fileId    Int
   type      ModelHashType
-  hash      String
+  hash      String        @db.Citext
   createdAt DateTime      @default(now())
 
   @@id([fileId, type])
+  @@index([hash], type: Hash)
 }
 
 enum ScanResultCode {
@@ -843,7 +843,7 @@ enum TagType {
 
 model Tag {
   id         Int         @id @default(autoincrement())
-  name       String
+  name       String      @db.Citext
   color      String?
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
@@ -1116,7 +1116,7 @@ model Question {
   user             User     @relation(fields: [userId], references: [id])
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
-  title            String
+  title            String   @db.Citext
   content          String
   selectedAnswerId Int?     @unique
   selectedAnswer   Answer?  @relation("SelectedAnswer", fields: [selectedAnswerId], references: [id])
@@ -1750,6 +1750,7 @@ model ImageConnection {
   reviewId       Int?
   review         Review?       @relation(fields: [reviewId], references: [id], onDelete: NoAction)
   index          Int?
+  visible        Boolean       @default(false)
 }
 
 /// @view
