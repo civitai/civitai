@@ -246,6 +246,21 @@ enum ModelType {
   Other
 }
 
+enum CategoryType {
+  RealisticModels
+  SemiRealisticModels
+  AnimeModels
+  Models
+  Characters
+  Places
+  Concepts
+  Clothings
+  Styles
+  Poses
+  QualityEnhancements
+  Others
+}
+
 enum ImportStatus {
   Pending
   Processing
@@ -297,6 +312,7 @@ model Model {
   name           String          @db.Citext
   description    String?
   type           ModelType
+  category       CategoryType    @default(Models)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   lastVersionAt  DateTime?

@@ -424,6 +424,16 @@ export default function ModelDetail({
       ),
     },
     {
+      label: 'Category',
+      value: (
+        <Group spacing={0} noWrap position="apart">
+          <Badge radius="sm" px={5}>
+            {splitUppercase(model.category)}
+          </Badge>
+        </Group>
+      ),
+    },
+    {
       label: 'Downloads',
       value: <Text>{(model.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>,
     },

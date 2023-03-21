@@ -149,6 +149,7 @@ export const getModelsInfiniteHandler = async ({
       id: true,
       name: true,
       type: true,
+      category: true,
       nsfw: true,
       status: true,
       createdAt: true,
