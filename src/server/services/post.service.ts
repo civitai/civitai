@@ -30,7 +30,6 @@ import isEqual from 'lodash/isEqual';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
-  page,
   limit,
   cursor,
   query,
@@ -44,20 +43,24 @@ export const getPostsInfinite = async ({
   user,
   tags,
 }: PostsQueryInput & { user?: SessionUser }) => {
-  const skip = (page - 1) * limit;
-  const take = limit + 1;
-
   const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
   const imageAND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   const orderBy: Prisma.Enumerable<Prisma.PostOrderByWithRelationInput> = [];
   const isOwnerRequest = user && user.username === username;
   if (username) AND.push({ user: { username } });
-  if (!isOwnerRequest) {
+  if (isOwnerRequest) {
+    orderBy.push({ id: 'desc' });
+  } else {
     AND.push({ publishedAt: { not: null } });
     if (query) AND.push({ title: { in: query, mode: 'insensitive' } });
     if (!!excludedTagIds?.length) {
-      AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
-      imageAND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
+      AND.push({
+        OR: [{ userId: user?.id }, { tags: { none: { tagId: { in: excludedTagIds } } } }],
+      });
+      imageAND.push({
+        OR: [{ userId: user?.id }, { tags: { none: { tagId: { in: excludedTagIds } } } }],
+      });
+      imageAND.push({ OR: [{ userId: user?.id }, { scannedAt: { not: null } }] });
     }
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
     if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
@@ -75,13 +78,10 @@ export const getPostsInfinite = async ({
     else if (sort === PostSort.MostReactions)
       orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
     orderBy.push({ publishedAt: 'desc' });
-  } else {
-    orderBy.push({ id: 'desc' });
   }
 
   const posts = await dbRead.post.findMany({
-    skip,
-    take,
+    take: limit + 1,
     cursor: cursor ? { id: cursor } : undefined,
     where: { AND },
     orderBy,
@@ -104,7 +104,7 @@ export const getPostsInfinite = async ({
 
   const postsWithImage = posts.filter((x) => !!x.images.length);
   let nextCursor: number | undefined;
-  if (postsWithImage.length > limit) {
+  if (posts.length > limit) {
     const nextItem = postsWithImage.pop();
     nextCursor = nextItem?.id;
   }

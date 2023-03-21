@@ -1,7 +1,7 @@
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { PostsCard } from '~/components/Post/Infinite/PostsCard';
 import { trpc } from '~/utils/trpc';
-import { useMemo, useEffect } from 'react';
+import { useMemo } from 'react';
 import { usePostFilters } from '~/providers/FiltersProvider';
 import { useRouter } from 'next/router';
 import { Alert, Center, Loader } from '@mantine/core';

@@ -11,6 +11,9 @@ export function PostControls({ postId, userId }: { postId: number; userId: numbe
   const isOwner = userId === currentUser?.id;
   const isModerator = currentUser?.isModerator ?? false;
   const isOwnerOrModerator = isOwner || isModerator;
+  // TODO.posts - add ability to report a post
+  if (!isOwnerOrModerator) return null;
+
   return (
     <Menu position="bottom-end" transition="pop-top-right">
       <Menu.Target>
