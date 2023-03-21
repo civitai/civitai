@@ -82,8 +82,6 @@ export const imageSchema = z.object({
   analysis: imageAnalysisSchema.optional(),
   tags: z.array(tagSchema).optional(),
   needsReview: z.boolean().optional(),
-  postId: z.number().optional(),
-  resources: z.array(imageResourceUpsertSchema).optional(),
   mimeType: z.string().optional(),
   sizeKB: z.number().optional(),
   postId: z.number().optional(),

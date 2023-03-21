@@ -12,6 +12,7 @@ import {
   Menu,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
+import { Prisma } from '@prisma/client';
 import { IconDotsVertical, IconEye, IconEyeOff, IconFlag, IconLock, IconPlus } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import React, { cloneElement, createContext, useContext, useState, useCallback } from 'react';
@@ -21,6 +22,8 @@ import { immer } from 'zustand/middleware/immer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { ImageModel } from '~/server/selectors/image.selector';
+import { SimpleTag } from '~/server/selectors/tag.selector';
 import { useImageStore } from '~/store/images.store';
 import { isDefined } from '~/utils/type-guards';
 

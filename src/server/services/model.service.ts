@@ -252,11 +252,9 @@ export const upsertModel = ({
   userId,
   ...data
 }: ModelUpsertInput & { userId: number }) => {
-  const select = modelWithDetailsSelect();
-
   if (!id)
     return dbWrite.model.create({
-      select,
+      select: modelWithDetailsSelect,
       data: {
         ...data,
         userId,
@@ -279,7 +277,7 @@ export const upsertModel = ({
     });
   else
     return dbWrite.model.update({
-      select,
+      select: modelWithDetailsSelect,
       where: { id },
       data: {
         ...data,
