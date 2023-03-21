@@ -77,6 +77,22 @@ export const getUserCreatorHandler = async ({
   }
 };
 
+export const getUsernameAvailableHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByUsernameSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const user = await getUserByUsername({ ...input, select: { id: true } });
+    return !user || user.id === ctx.user.id;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
 export const getUserByIdHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     const user = await getUserById({ ...input, select: simpleUserSelect });

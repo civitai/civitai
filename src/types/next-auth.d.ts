@@ -18,6 +18,7 @@ interface ExtendedUser {
   muted?: boolean;
   bannedAt?: Date;
   autoplayGifs?: boolean;
+  onboarded?: boolean;
 }
 
 declare module 'next-auth' {

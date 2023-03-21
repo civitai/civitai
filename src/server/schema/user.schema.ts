@@ -26,6 +26,7 @@ export const userUpdateSchema = z.object({
   showNsfw: z.boolean().optional(),
   blurNsfw: z.boolean().optional(),
   tos: z.boolean().optional(),
+  onboarded: z.boolean().optional(),
   email: z.string().email().optional(),
   image: z.string().nullish(),
   preferredModelFormat: z.nativeEnum(ModelFileFormat).optional(),

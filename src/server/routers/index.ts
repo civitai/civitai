@@ -24,6 +24,7 @@ import { moderationRouter } from '~/server/routers/moderation.router';
 import { tagRouter } from './tag.router';
 import { userLinkRouter } from './user-link.router';
 import { userRouter } from './user.router';
+import { contentRouter } from './content.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -51,6 +52,7 @@ export const appRouter = router({
   userLink: userLinkRouter,
   post: postRouter,
   resourceReview: resourceReviewRouter,
+  content: contentRouter,
 });
 
 // export type definition of API
