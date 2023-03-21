@@ -9,6 +9,7 @@ import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { useState } from 'react';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
+import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 
 export function ImagesCard({
   data: image,
@@ -31,7 +32,7 @@ export function ImagesCard({
   return (
     <InView>
       {({ inView, ref }) => (
-        <Link href={`/images/${image.id}`} passHref>
+        <RoutedContextLink modal="imageDetailModal" imageId={image.id}>
           <MasonryCard
             withBorder
             shadow="sm"
@@ -45,7 +46,7 @@ export function ImagesCard({
           >
             {inView && (
               <>
-                <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} />
+                {/* <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} /> */}
                 <ImageGuard
                   images={[image]}
                   render={(image) => (
@@ -97,7 +98,7 @@ export function ImagesCard({
               </>
             )}
           </MasonryCard>
-        </Link>
+        </RoutedContextLink>
       )}
     </InView>
   );

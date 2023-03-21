@@ -21,8 +21,6 @@ export default function PostCreate() {
   const upload = useEditPostContext((state) => state.upload);
   const queryUtils = trpc.useContext();
 
-  //TODO.posts - get modelversions related to modelId and have the user select a modelVersion before they can drop any images
-
   const { data: versions, isLoading: versionsLoading } = trpc.model.getVersions.useQuery(
     { id: modelId ?? 0 },
     { enabled: !!modelId }

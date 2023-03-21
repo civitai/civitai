@@ -38,12 +38,9 @@ function ManagePostStatus() {
   const id = useEditPostContext((state) => state.id);
   const tags = useEditPostContext((state) => state.tags);
   const title = useEditPostContext((state) => state.title);
-  // TODO.posts - don't allow publish if no images
   const images = useEditPostContext((state) => state.images);
   const publishedAt = useEditPostContext((state) => state.publishedAt);
   const setPublishedAt = useEditPostContext((state) => state.setPublishedAt);
-
-  //TODO.posts - on publish, redirect to user posts
 
   const { mutate, isLoading } = trpc.post.update.useMutation();
 
