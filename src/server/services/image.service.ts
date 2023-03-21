@@ -5,12 +5,12 @@ import {
   GetInfiniteImagesInput,
   GetImageInput,
 } from './../schema/image.schema';
-import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client';
+import { ModelStatus, Prisma, ReportReason, ReportStatus, TagType } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
 
 import { env } from '~/env/server.mjs';
-import { BrowsingMode, ImageSort } from '~/server/common/enums';
+import { BrowsingMode, ImageScanType, ImageSort } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -23,8 +23,12 @@ import { deleteImage } from '~/utils/cf-images-utils';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
 import { simpleTagSelect, imageTagSelect, ImageTag } from '~/server/selectors/tag.selector';
-import { imageIngestion, ingestionMessageSchema } from '~/server/utils/image-ingestion';
 import { getImageV2Select } from '~/server/selectors/imagev2.selector';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -59,21 +63,24 @@ export const getGalleryImages = async <
   tags,
   excludedTagIds,
   excludedUserIds,
+  excludedImageIds,
   isFeatured,
   types,
   browsingMode,
+  tagReview,
   needsReview,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const isMod = user?.isModerator ?? false;
   needsReview = isMod ? needsReview : false;
+  tagReview = isMod ? tagReview : false;
 
   const conditionalFilters: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   if (!!excludedTagIds?.length)
-    conditionalFilters.push({ tags: { every: { tagId: { notIn: excludedTagIds } } } });
+    conditionalFilters.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
 
   if (!!tags?.length) conditionalFilters.push({ tags: { some: { tagId: { in: tags } } } });
-  else if (!needsReview && !(modelId || modelVersionId || reviewId)) {
+  else if (!needsReview && !tagReview && !(modelId || modelVersionId || reviewId)) {
     const periodStart = decreaseDate(new Date(), 3, 'days');
     conditionalFilters.push({ featuredAt: { gt: periodStart } });
   }
@@ -81,6 +88,8 @@ export const getGalleryImages = async <
   if (isFeatured) conditionalFilters.push({ featuredAt: { not: null } });
 
   if (!!excludedUserIds?.length) conditionalFilters.push({ userId: { notIn: excludedUserIds } });
+
+  if (!!excludedImageIds?.length) conditionalFilters.push({ id: { notIn: excludedImageIds } });
 
   if (types && types.length) conditionalFilters.push({ generationProcess: { in: types } });
 
@@ -109,27 +118,31 @@ export const getGalleryImages = async <
         ? { modelVersionId, modelVersion: modelId ? { modelId } : undefined }
         : undefined,
     imagesOnReviews: reviewId ? { reviewId } : undefined,
+    tags: excludedTagIds?.length ? { none: { tagId: { in: excludedTagIds } } } : undefined,
+    id: excludedImageIds?.length ? { notIn: excludedImageIds } : undefined,
   };
 
   if (canViewNsfw && !browsingMode) browsingMode = BrowsingMode.All;
   else if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
 
+  let where: Prisma.ImageWhereInput = {};
+  if (needsReview) where.needsReview = true;
+  else if (tagReview) where.tags = { some: { needsReview: true } };
+  else {
+    where = {
+      userId,
+      nsfw: browsingMode === BrowsingMode.All ? undefined : browsingMode === BrowsingMode.NSFW,
+      tosViolation: !isMod ? false : undefined,
+      OR: [{ needsReview: false }, { userId: user?.id }],
+      ...(infinite ? infiniteWhere : finiteWhere),
+    };
+  }
+
   const items = await dbRead.image.findMany({
     cursor: cursor ? { id: cursor } : undefined,
     take: limit,
-    where: needsReview
-      ? { needsReview: true }
-      : {
-          userId,
-          nsfw:
-            browsingMode === BrowsingMode.All
-              ? undefined
-              : { equals: browsingMode === BrowsingMode.NSFW },
-          tosViolation: !isMod ? false : undefined,
-          OR: [{ needsReview: false }, { userId: user?.id }],
-          ...(infinite ? infiniteWhere : finiteWhere),
-        },
-    select: imageGallerySelect({ user, needsReview }),
+    where,
+    select: imageGallerySelect({ user }),
     orderBy: orderBy ?? [
       ...(sort === ImageSort.MostComments
         ? [{ rank: { [`commentCount${period}Rank`]: 'asc' } }]
@@ -186,6 +199,27 @@ export const updateImageById = <TSelect extends Prisma.ImageSelect>({
   select: TSelect;
 }) => {
   return dbWrite.image.update({ where: { id }, data, select });
+};
+
+export const moderateImages = async ({
+  ids,
+  nsfw,
+  needsReview,
+  delete: deleteImages,
+}: {
+  ids: number[];
+  nsfw?: boolean;
+  needsReview?: boolean;
+  delete?: boolean;
+}) => {
+  if (deleteImages) {
+    await Promise.all(ids.map((id) => deleteImageById({ id })));
+  } else {
+    await dbWrite.image.updateMany({
+      where: { id: { in: ids } },
+      data: { nsfw, needsReview },
+    });
+  }
 };
 
 export const updateImageReportStatusByReason = ({
@@ -269,11 +303,12 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
         },
       },
       tags: {
+        where: { disabled: false },
         select: {
+          automated: true,
           tag: {
             select: simpleTagSelect,
           },
-          automated: true,
         },
       },
     },
@@ -304,38 +339,77 @@ export type IngestImageReturnType =
 
 export const ingestImage = async ({
   image,
-  user,
 }: {
   image: IngestImageInput;
-  user: SessionUser;
-}) => {
-  const { url, id, mimeType, ...params } = ingestImageSchema.parse(image);
-  const edgeUrl = getEdgeUrl(url, params);
+}): Promise<IngestImageReturnType> => {
+  if (!env.IMAGE_SCANNING_ENDPOINT)
+    throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
+  const { url, id, width: oWidth, name } = ingestImageSchema.parse(image);
+  const width = Math.min(oWidth ?? 450, 4096);
+  const anim = name?.endsWith('.gif') ? false : undefined;
+  const gamma = anim === false ? 0.99 : undefined;
+  const edgeUrl = getEdgeUrl(url, { width, anim, gamma });
 
-  const payload = await ingestionMessageSchema.parseAsync({
-    source: {
-      type: 'civitai',
-      name: 'Civitai',
-      id,
-      url: '',
-      user: { id: user.id, name: user.username },
-    },
-    image: edgeUrl,
-    contentType: mimeType,
-    action: 'label',
-  });
+  const payload = {
+    imageId: id,
+    url: edgeUrl,
+    wait: true,
+    scans: [ImageScanType.Label, ImageScanType.Moderation],
+  };
 
   await dbWrite.image.update({
     where: { id },
     data: { scanRequestedAt: new Date() },
     select: { id: true },
   });
-  const msg = await imageIngestion(payload, `label-imageId-${id}`);
+
+  const { ok, deleted, blockedFor, tags, error } = (await fetch(env.IMAGE_SCANNING_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then((res) => res.json())) as ImageScanResultResponse;
+
+  if (deleted)
+    return {
+      type: 'blocked',
+      data: { tags, blockedFor },
+    };
+
+  if (error) {
+    return {
+      type: 'error',
+      data: { error },
+    };
+  }
+
   const imageTags = await dbWrite.tag.findMany({
     where: { tagsOnImage: { some: { imageId: id } } },
     select: imageTagSelect,
   });
-  return imageTags;
+  return {
+    type: 'success',
+    data: { tags: imageTags },
+  };
+};
+
+// TODO.posts - remove when post implementation is fully ready
+export const ingestNewImages = async ({
+  reviewId,
+  modelId,
+}: {
+  reviewId?: number;
+  modelId?: number;
+}) => {
+  const images = await dbWrite.image.findMany({
+    where: {
+      imagesOnModels: modelId ? { modelVersion: { modelId } } : undefined,
+      imagesOnReviews: reviewId ? { reviewId } : undefined,
+      scanRequestedAt: null,
+    },
+    select: { id: true, url: true, width: true, name: true },
+  });
+
+  Promise.all(images.map((image) => ingestImage({ image })));
 };
 
 // #region [new service methods]
@@ -345,6 +419,7 @@ export const getAllImages = async ({
   cursor,
   postId,
   modelId,
+  modelVersionId,
   username,
   excludedTagIds,
   excludedUserIds,
@@ -354,10 +429,12 @@ export const getAllImages = async ({
   sort,
   userId,
   tags,
+  generation,
 }: GetInfiniteImagesInput & { userId?: number }) => {
   const AND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   if (postId) AND.push({ postId });
-  if (modelId) AND.push({ resources: { some: { modelVersion: { modelId } } } });
+  if (modelId || modelVersionId)
+    AND.push({ resourceHelper: { some: { modelVersionId, modelId } } });
   if (username) AND.push({ user: { username: { equals: username, mode: 'insensitive' } } });
   if (browsingMode !== BrowsingMode.All)
     AND.push({ nsfw: { equals: browsingMode === BrowsingMode.NSFW } });
@@ -372,6 +449,7 @@ export const getAllImages = async ({
     });
   }
   if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
+  if (!!generation?.length) AND.push({ generationProcess: { in: generation } });
 
   const orderBy: Prisma.Enumerable<Prisma.ImageOrderByWithRelationInput> = [];
   if (postId) orderBy.push({ index: 'asc' });
@@ -403,16 +481,36 @@ export const getAllImages = async ({
   };
 };
 
-export const getImage = async ({
-  id,
-  excludedTagIds,
-  excludedUserIds,
-  browsingMode,
-  userId,
-}: GetImageInput & { userId?: number }) => {
+export const getImage = async ({ id, userId }: GetImageInput & { userId?: number }) => {
   const image = await dbRead.image.findUnique({
     where: { id },
     select: getImageV2Select({ userId }),
+  });
+  if (!image) throw throwAuthorizationError();
+  return image;
+};
+
+export const getImageResources = async ({ id }: GetByIdInput) => {
+  return await dbRead.imageResourceHelper.findMany({
+    where: { imageId: id },
+    select: {
+      reviewId: true,
+      reviewRating: true,
+      reviewDetails: true,
+      reviewCreatedAt: true,
+      name: true,
+      modelVersionId: true,
+      modelVersionName: true,
+      modelVersionCreatedAt: true,
+      modelId: true,
+      modelName: true,
+      modelRating: true,
+      modelRatingCount: true,
+      modelDownloadCount: true,
+      modelCommentCount: true,
+      modelFavoriteCount: true,
+      modelType: true,
+    },
   });
 };
 // #endregion

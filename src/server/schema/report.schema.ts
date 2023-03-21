@@ -14,7 +14,9 @@ export enum ReportEntity {
 // #region [report reason detail schemas]
 const baseDetailSchema = z.object({ comment: z.string().optional() });
 
-export const reportNsfwDetailsSchema = baseDetailSchema;
+export const reportNsfwDetailsSchema = baseDetailSchema.extend({
+  tags: z.string().array().min(1, 'Please select at least one reason'),
+});
 
 export const reportOwnershipDetailsSchema = baseDetailSchema.extend({
   name: z.string(),
@@ -46,6 +48,7 @@ const baseSchema = z.object({
 
 export const reportNsfwSchema = baseSchema.extend({
   reason: z.literal(ReportReason.NSFW),
+  details: reportNsfwDetailsSchema,
 });
 
 export const reportTOSViolationSchema = baseSchema.extend({

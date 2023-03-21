@@ -13,6 +13,8 @@ import {
   ScrollArea,
   CloseButton,
   Alert,
+  ActionIcon,
+  Popover,
 } from '@mantine/core';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -27,6 +29,9 @@ import { splitUppercase } from '~/utils/string-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { TagType } from '@prisma/client';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { IconInfoCircle } from '@tabler/icons';
+import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 
 const matureLabel = 'Mature content may include content that is suggestive or provocative';
 const tooltipProps: Partial<TooltipProps> = {
@@ -76,10 +81,17 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
     | PostEditImage
     | undefined;
 
+  const moderationTags = image?.tags.filter((x) => x.type === TagType.Moderation) ?? [];
+  const labelTags = image?.tags.filter((x) => x.type === TagType.Label) ?? [];
+  const tags = [
+    ...sortAlphabeticallyBy(moderationTags, (x) => x.name),
+    ...sortAlphabeticallyBy(labelTags, (x) => x.name),
+  ];
+  const hasModerationTags = !!moderationTags.length;
   const meta: Record<string, unknown> = (image?.meta as Record<string, unknown>) ?? {};
   const defaultValues: z.infer<typeof schema> = {
     hideMeta: image?.hideMeta ?? false,
-    nsfw: image?.nsfw ?? false,
+    nsfw: hasModerationTags ? true : image?.nsfw ?? false,
     meta: {
       prompt: meta.prompt ?? '',
       negativePrompt: meta.negativePrompt ?? '',
@@ -141,6 +153,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
             <Stack spacing="xs">
               <InputCheckbox
                 name="nsfw"
+                disabled={hasModerationTags}
                 label={
                   <Text>
                     Mature Content{' '}
@@ -154,8 +167,8 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
             </Stack>
             <Input.Wrapper label="Tags">
               <Group spacing={4}>
-                {!!image.tags.length ? (
-                  image.tags.map((tag) => (
+                {!!tags.length ? (
+                  tags.map((tag) => (
                     <Badge key={tag.id} color={tag.type === TagType.Moderation ? 'red' : undefined}>
                       {tag.name}
                     </Badge>
@@ -169,26 +182,76 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
               </Group>
             </Input.Wrapper>
             <Input.Wrapper label="Resources">
-              {!!image.resources.length ? (
-                image.resources.map((r) => (
-                  <Card key={r.id} p={8} withBorder>
-                    {r.modelVersion && (
+              {!!image.resourceHelper.length ? (
+                <Stack>
+                  <DismissibleAlert
+                    id="not-all-resources"
+                    color="blue"
+                    title="Missing resources?"
+                    content={
+                      <>
+                        Install the{' '}
+                        <Text
+                          component="a"
+                          href="https://github.com/civitai/sd_civitai_extension"
+                          target="_blank"
+                          variant="link"
+                        >
+                          Civitai Extension for Automatic 1111 Stable Diffusion Web UI
+                        </Text>{' '}
+                        to automatically detect all the resources used in your images.
+                      </>
+                    }
+                  />
+                  {image.resourceHelper.map((resource) => (
+                    <Card key={resource.id} p={8} withBorder>
                       <Stack>
-                        <Group spacing={4} position="apart" noWrap>
+                        <Group spacing={4} position="apart" noWrap align="flex-start">
                           <Group spacing={4} noWrap>
-                            <Text size="sm" weight={500} lineClamp={1}>
-                              {r.modelVersion.model.name}
-                            </Text>
+                            {resource.modelVersionId ? (
+                              <Group spacing={4}>
+                                {resource.modelName && (
+                                  <Text size="sm" weight={500} lineClamp={1}>
+                                    {resource.modelName}
+                                  </Text>
+                                )}
+                                {resource.modelVersionName && (
+                                  <Badge style={{ textTransform: 'none' }}>
+                                    {resource.modelVersionName}
+                                  </Badge>
+                                )}
+                              </Group>
+                            ) : (
+                              <Group spacing={4}>
+                                <Popover width={300} withinPortal withArrow>
+                                  <Popover.Target>
+                                    <ActionIcon size="xs">
+                                      <IconInfoCircle size={16} />
+                                    </ActionIcon>
+                                  </Popover.Target>
+                                  <Popover.Dropdown>
+                                    <Text>
+                                      The detected image resource was not found in our system
+                                    </Text>
+                                  </Popover.Dropdown>
+                                </Popover>
+                                <Text size="sm" weight={500} lineClamp={1}>
+                                  {resource.name}
+                                </Text>
+                              </Group>
+                            )}
                             {/* <IconVersions size={16} /> */}
                           </Group>
-                          <Badge radius="sm" size="sm">
-                            {splitUppercase(r.modelVersion.model.type)}
-                          </Badge>
+                          {resource.modelType && (
+                            <Badge radius="sm" size="sm">
+                              {splitUppercase(resource.modelType)}
+                            </Badge>
+                          )}
                         </Group>
                       </Stack>
-                    )}
-                  </Card>
-                ))
+                    </Card>
+                  ))}
+                </Stack>
               ) : (
                 <Alert color="yellow">
                   We could not detect any resources associated with this image. If this image is
@@ -218,7 +281,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
                 />
               </Grid.Col>
               <Grid.Col span={6}>
-                <InputNumber name="meta.cfgSchale" label="Guidance scale" min={0} max={30} />
+                <InputNumber name="meta.cfgScale" label="Guidance scale" min={0} max={30} />
               </Grid.Col>
               <Grid.Col span={6}>
                 <InputNumber name="meta.steps" label="Steps" />
@@ -248,12 +311,13 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
                     'DPM++ SDE Karras',
                     'DDIM',
                     'PLMS',
+                    'UniPC',
                   ]}
                   label="Sampler"
                 />
               </Grid.Col>
               <Grid.Col span={6}>
-                <InputNumber name="meta.seed" label="Seed" />
+                <InputNumber name="meta.seed" label="Seed" format="default" />
               </Grid.Col>
             </Grid>
           </Stack>

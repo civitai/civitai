@@ -899,17 +899,35 @@ model TagsOnQuestions {
 }
 
 model TagsOnImage {
-  imageId    Int
-  image      Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  tagId      Int
-  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  createdAt  DateTime @default(now())
-  automated  Boolean  @default(false)
-  confidence Int?
+  imageId     Int
+  image       Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  tagId       Int
+  tag         Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  automated   Boolean  @default(false)
+  confidence  Int?
+  disabled    Boolean  @default(false)
+  needsReview Boolean  @default(false)
 
   @@id([tagId, imageId])
   @@index([imageId], type: Hash)
   @@index([automated], type: Hash)
+  @@index([disabled])
+}
+
+model TagsOnImageVote {
+  imageId   Int
+  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vote      Int // 1 or -1
+  createdAt DateTime @default(now())
+
+  @@id([tagId, imageId, userId])
+  @@index([imageId], type: Hash)
+  @@index([userId], type: Hash)
 }
 
 model TagsOnImageVote {

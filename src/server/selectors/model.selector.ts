@@ -107,125 +107,117 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
   },
 });
 
-export const modelWithDetailsSelect = (includeNSFW = true, user?: SessionUser) =>
-  Prisma.validator<Prisma.ModelSelect>()({
-    id: true,
-    name: true,
-    description: true,
-    poi: true,
-    nsfw: true,
-    type: true,
-    updatedAt: true,
-    deletedAt: true,
-    status: true,
-    checkpointType: true,
-    allowNoCredit: true,
-    allowCommercialUse: true,
-    allowDerivatives: true,
-    allowDifferentLicense: true,
-    licenses: true,
-    publishedAt: true,
-    locked: true,
-    reportStats: {
-      select: {
-        ownershipProcessing: true,
-      },
+export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
+  id: true,
+  name: true,
+  description: true,
+  poi: true,
+  nsfw: true,
+  type: true,
+  updatedAt: true,
+  deletedAt: true,
+  status: true,
+  checkpointType: true,
+  allowNoCredit: true,
+  allowCommercialUse: true,
+  allowDerivatives: true,
+  allowDifferentLicense: true,
+  licenses: true,
+  publishedAt: true,
+  locked: true,
+  reportStats: {
+    select: {
+      ownershipProcessing: true,
     },
-    user: {
-      select: {
-        id: true,
-        image: true,
-        username: true,
-        deletedAt: true,
-        rank: { select: { leaderboardRank: true } },
-        cosmetics: {
-          where: { equippedAt: { not: null } },
-          select: {
-            cosmetic: {
-              select: {
-                id: true,
-                data: true,
-                type: true,
-                source: true,
-                name: true,
-              },
+  },
+  user: {
+    select: {
+      id: true,
+      image: true,
+      username: true,
+      deletedAt: true,
+      rank: { select: { leaderboardRank: true } },
+      cosmetics: {
+        where: { equippedAt: { not: null } },
+        select: {
+          cosmetic: {
+            select: {
+              id: true,
+              data: true,
+              type: true,
+              source: true,
+              name: true,
             },
           },
         },
       },
     },
-    // TODO - why is this not referencing `getModelVersionDetailsSelect`? If they are out of sync, we should sync it up
-    modelVersions: {
-      orderBy: { index: 'asc' },
-      select: {
-        id: true,
-        modelId: true,
-        name: true,
-        description: true,
-        steps: true,
-        epochs: true,
-        createdAt: true,
-        updatedAt: true,
-        trainedWords: true,
-        inaccurate: true,
-        baseModel: true,
-        earlyAccessTimeFrame: true,
-        status: true,
-        images: {
-          orderBy: { index: 'asc' },
-          select: {
-            index: true,
-            image: {
-              select: imageSelect,
-            },
-          },
-          where: {
-            image: {
-              nsfw: includeNSFW ? undefined : false,
-              tosViolation: false,
-              OR: [{ needsReview: false }, { userId: user?.id }],
-            },
+  },
+  // TODO - why is this not referencing `getModelVersionDetailsSelect`? If they are out of sync, we should sync it up
+  modelVersions: {
+    orderBy: { index: 'asc' },
+    select: {
+      id: true,
+      modelId: true,
+      name: true,
+      description: true,
+      steps: true,
+      epochs: true,
+      createdAt: true,
+      updatedAt: true,
+      trainedWords: true,
+      inaccurate: true,
+      baseModel: true,
+      earlyAccessTimeFrame: true,
+      status: true,
+      images: {
+        orderBy: { index: 'asc' },
+        select: {
+          index: true,
+          image: {
+            select: imageSelect,
           },
         },
-        rank: {
-          select: {
-            downloadCountAllTime: true,
-            ratingCountAllTime: true,
-            ratingAllTime: true,
-          },
-        },
-        files: {
-          select: {
-            id: true,
-            url: true,
-            sizeKB: true,
-            name: true,
-            type: true,
-            metadata: true,
-            pickleScanResult: true,
-            pickleScanMessage: true,
-            virusScanResult: true,
-            virusScanMessage: true,
-            scannedAt: true,
-            rawScanResult: true,
-            hashes: {
-              select: {
-                type: true,
-                hash: true,
-              },
-            },
-          },
-        },
-        posts: { select: editPostSelect },
       },
-    },
-    rank: {
-      select: {
-        downloadCountAllTime: true,
-        ratingCountAllTime: true,
-        ratingAllTime: true,
-        favoriteCountAllTime: true,
+      rank: {
+        select: {
+          downloadCountAllTime: true,
+          ratingCountAllTime: true,
+          ratingAllTime: true,
+        },
       },
+      files: {
+        select: {
+          id: true,
+          url: true,
+          sizeKB: true,
+          name: true,
+          type: true,
+          metadata: true,
+          pickleScanResult: true,
+          pickleScanMessage: true,
+          virusScanResult: true,
+          virusScanMessage: true,
+          scannedAt: true,
+          rawScanResult: true,
+          hashes: {
+            select: {
+              type: true,
+              hash: true,
+            },
+          },
+        },
+      },
+      posts: { select: editPostSelect },
     },
-    tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
-  });
+  },
+  rank: {
+    select: {
+      downloadCountAllTime: true,
+      ratingCountAllTime: true,
+      ratingAllTime: true,
+      favoriteCountAllTime: true,
+    },
+  },
+  tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
+});

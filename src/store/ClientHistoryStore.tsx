@@ -80,7 +80,11 @@ export function ClientHistoryStore() {
 
 export function useHasClientHistory() {
   const index = useClientHistoryStore((state) => state.index ?? 0);
-  return index > 0;
+  if (hasNavigation) {
+    return navigation.currentEntry.index > 0;
+  } else {
+    return index > 0;
+  }
 }
 
 export const getHasClientHistory = () => {

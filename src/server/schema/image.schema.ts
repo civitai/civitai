@@ -82,6 +82,8 @@ export const imageSchema = z.object({
   analysis: imageAnalysisSchema.optional(),
   tags: z.array(tagSchema).optional(),
   needsReview: z.boolean().optional(),
+  postId: z.number().optional(),
+  resources: z.array(imageResourceUpsertSchema).optional(),
   mimeType: z.string().optional(),
   sizeKB: z.number().optional(),
   postId: z.number().optional(),
@@ -103,6 +105,14 @@ export const imageUpdateSchema = z.object({
   needsReview: z.boolean().optional(),
 });
 export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
+
+export const imageModerationSchema = z.object({
+  ids: z.number().array(),
+  nsfw: z.boolean().optional(),
+  needsReview: z.boolean().optional(),
+  delete: z.boolean().optional(),
+});
+export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 
 export type GetModelVersionImagesSchema = z.infer<typeof getModelVersionImageSchema>;
 export const getModelVersionImageSchema = z.object({
@@ -129,11 +139,13 @@ export const getGalleryImageSchema = z.object({
   tags: z.array(z.number()).optional(),
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
+  excludedImageIds: z.array(z.number()).optional(),
   singleImageModel: z.boolean().optional(),
   singleImageAlbum: z.boolean().optional(),
   isFeatured: z.boolean().optional(),
   types: z.nativeEnum(ImageGenerationProcess).array().optional(),
   needsReview: z.boolean().optional(),
+  tagReview: z.boolean().optional(),
 });
 
 export const getImageConnectionsSchema = z.object({
@@ -160,9 +172,9 @@ export type IngestImageInput = z.infer<typeof ingestImageSchema>;
 export const ingestImageSchema = z.object({
   id: z.number(),
   url: z.string(),
-  name: z.string().optional(),
-  width: z.number(),
-  mimeType: z.string(),
+  name: z.string().optional().nullable(),
+  width: z.number().optional().nullable(),
+  mimeType: z.string().optional().nullable(),
 });
 
 // #region [new schemas]
@@ -172,6 +184,7 @@ export const getInfiniteImagesSchema = z.object({
   cursor: z.number().optional(),
   postId: z.number().optional(),
   modelId: z.number().optional(),
+  modelVersionId: z.number().optional(),
   username: z.string().optional(),
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
@@ -180,13 +193,14 @@ export const getInfiniteImagesSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
   tags: z.array(z.number()).optional(),
+  generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
 });
 
 export type GetImageInput = z.infer<typeof getImageSchema>;
 export const getImageSchema = z.object({
   id: z.number(),
-  excludedTagIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
-  browsingMode: z.nativeEnum(BrowsingMode).optional(),
+  // excludedTagIds: z.array(z.number()).optional(),
+  // excludedUserIds: z.array(z.number()).optional(),
+  // browsingMode: z.nativeEnum(BrowsingMode).optional(),
 });
 // #endregion

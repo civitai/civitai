@@ -309,7 +309,7 @@ function UploadedImage({
           </HoverCard.Target>
           <HoverCard.Dropdown>
             <Text size="sm" weight={500}>
-              Flagged by age detection
+              Flagged for review
             </Text>
             <Text size="sm" sx={{ lineHeight: 1.2 }}>
               After submission this image will be reviewed by a moderator.
@@ -333,7 +333,8 @@ function UploadedImage({
       >
         {!showLoading && (!image.status || image.status === 'complete') && (
           <>
-            <Tooltip label="Toggle NSFW">
+            {/* Disable as part of move to advanced self-mod */}
+            {/* <Tooltip label="Toggle NSFW">
               <ActionIcon
                 color={image.nsfw ? 'red' : undefined}
                 variant={image.nsfw ? 'filled' : 'outline'}
@@ -342,7 +343,7 @@ function UploadedImage({
               >
                 <IconRating18Plus />
               </ActionIcon>
-            </Tooltip>
+            </Tooltip> */}
             {withMeta && (
               <ImageMetaPopover
                 meta={image.meta}

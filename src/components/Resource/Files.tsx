@@ -68,8 +68,8 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   },
   LoCon: {
     acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
-    acceptedModelFiles: ['Model', 'Training Data'],
-    maxFiles: 2,
+    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
+    maxFiles: 3,
   },
   TextualInversion: {
     acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],

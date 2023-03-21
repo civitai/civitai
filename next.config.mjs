@@ -34,6 +34,7 @@ export default defineNextConfig({
     // scrollRestoration: true,
     largePageDataBytes: 512 * 100000,
   },
+  poweredByHeader: false,
   redirects: async () => {
     return [
       {
@@ -76,6 +77,12 @@ export default defineNextConfig({
         destination: 'https://youtu.be/fs-Zs-fvxb0',
         permanent: false,
       },
+      // TODO: Uncomment this after completing the new image detail page
+      // {
+      //   source: '/gallery/:path*',
+      //   destination: '/images/:path*',
+      //   permanent: true,
+      // },
     ];
   },
   output: 'standalone',

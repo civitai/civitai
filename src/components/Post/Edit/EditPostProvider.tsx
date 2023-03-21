@@ -17,7 +17,6 @@ export type ImageUpload = {
   url: string;
   name: string;
   meta: any;
-  resources?: string[];
   height: number;
   width: number;
   hash: string;
@@ -220,7 +219,7 @@ const createEditPostStore = ({
           removeFile: (uuid) =>
             set((state) => {
               const index = state.images.findIndex(
-                (x) => x.type === 'upload' && x.data.uuid === uuid
+                (x) => (x.type === 'upload' || x.type === 'blocked') && x.data.uuid === uuid
               );
               if (index === -1) throw new Error('index out of bounds');
               state.images.splice(index, 1);
@@ -309,7 +308,6 @@ const getImageDataFromFile = async (file: File) => {
   const url = URL.createObjectURL(file);
   const meta = await getMetadata(file);
   console.log({ meta });
-  const resources = meta.hashes ? Object.values(meta.hashes) : [];
   const img = await loadImage(url);
   const hashResult = blurHashImage(img);
   const auditResult = await auditMetaData(meta, false);
@@ -323,7 +321,6 @@ const getImageDataFromFile = async (file: File) => {
     name: file.name,
     meta,
     url,
-    resources,
     mimeType,
     ...hashResult,
     status: blockedFor ? 'blocked' : 'uploading',

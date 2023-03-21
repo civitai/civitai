@@ -1,9 +1,15 @@
+import { applyBrowsingMode } from './../middleware.trpc';
 import {
   getImageDetailHandler,
   getImageHandler,
+  getImageResourcesHandler,
   getInfiniteImagesHandler,
 } from './../controllers/image.controller';
-import { getInfiniteImagesSchema, updateImageSchema } from './../schema/image.schema';
+import {
+  updateImageSchema,
+  getInfiniteImagesSchema,
+  imageModerationSchema,
+} from './../schema/image.schema';
 import {
   deleteImageHandler,
   getGalleryImageDetailHandler,
@@ -25,9 +31,15 @@ import {
   getReviewImagesSchema,
   imageUpdateSchema,
 } from '~/server/schema/image.schema';
-import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  middleware,
+  moderatorProcedure,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { applyUserPreferences, applyBrowsingMode } from '~/server/middleware.trpc';
+import { applyUserPreferences } from '~/server/middleware.trpc';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -60,16 +72,17 @@ export const imageRouter = router({
   getReviewImages: publicProcedure.input(getReviewImagesSchema).query(getReviewImagesHandler),
   getGalleryImagesInfinite: publicProcedure
     .input(getGalleryImageSchema)
+    .use(applyUserPreferences())
     .query(getGalleryImagesInfiniteHandler),
-  getGalleryImages: publicProcedure.input(getGalleryImageSchema).query(getGalleryImagesHandler),
+  getGalleryImages: publicProcedure
+    .input(getGalleryImageSchema)
+    .use(applyUserPreferences())
+    .query(getGalleryImagesHandler),
   getGalleryImageDetail: publicProcedure.input(getByIdSchema).query(getGalleryImageDetailHandler),
   getConnectionData: publicProcedure
     .input(getImageConnectionsSchema)
     .query(getImageConnectionDataHandler),
-  moderate: protectedProcedure
-    .input(imageUpdateSchema)
-    .use(isOwnerOrModerator)
-    .mutation(moderateImageHandler),
+  moderate: moderatorProcedure.input(imageModerationSchema).mutation(moderateImageHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
@@ -86,4 +99,5 @@ export const imageRouter = router({
     .use(applyBrowsingMode())
     .query(getInfiniteImagesHandler),
   get: publicProcedure.input(getByIdSchema).query(getImageHandler),
+  getResources: publicProcedure.input(getByIdSchema).query(getImageResourcesHandler),
 });

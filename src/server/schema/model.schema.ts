@@ -61,7 +61,9 @@ export const getAllModelsSchema = z.object({
     z.boolean().optional().default(false)
   ),
   excludedIds: z.array(z.number()).optional(),
+  excludedUserIds: z.array(z.number()).optional(),
   excludedTagIds: z.array(z.number()).optional(),
+  excludedImageIds: z.array(z.number()).optional(),
 });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
@@ -100,6 +102,20 @@ export const mergePermissionInput = licensingSchema.extend({
 
 export const deleteModelSchema = getByIdSchema.extend({ permanently: z.boolean().optional() });
 export type DeleteModelSchema = z.infer<typeof deleteModelSchema>;
+
+export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
+export const modelUpsertSchema = licensingSchema.extend({
+  id: z.number().optional(),
+  name: z.string().min(1, 'Name cannot be empty.'),
+  description: getSanitizedStringSchema().nullish(),
+  type: z.nativeEnum(ModelType),
+  status: z.nativeEnum(ModelStatus),
+  checkpointType: z.nativeEnum(CheckpointType).nullish(),
+  tagsOnModels: z.array(tagSchema).nullish(),
+  nsfw: z.boolean().optional(),
+  poi: z.boolean().optional(),
+  locked: z.boolean().optional(),
+});
 
 export const getDownloadSchema = z.object({
   modelId: z.preprocess((val) => Number(val), z.number()),

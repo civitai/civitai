@@ -1,6 +1,5 @@
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { trpc } from '~/utils/trpc';
-import { useEditPostContext, ImageUpload } from './EditPostProvider';
+import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvider';
 import {
   createStyles,
   Stack,
@@ -49,7 +48,9 @@ export function EditPostImages() {
       <Stack>
         {images.map(({ type, data }, index) => (
           <Fragment key={index}>
-            {type === 'image' ? <ImageController image={data} /> : <ImageUpload {...data} />}
+            {type === 'image' && <ImageController image={data} />}
+            {type === 'upload' && <ImageUpload {...data} />}
+            {type === 'blocked' && <ImageBlocked {...data} />}
           </Fragment>
         ))}
       </Stack>
@@ -71,7 +72,7 @@ function ImageController({
     meta,
     generationProcess,
     needsReview,
-    resources,
+    resourceHelper,
     tags,
   },
 }: {
@@ -109,9 +110,9 @@ function ImageController({
               Missing Generation Data
             </Badge>
           )}
-          {resources.length ? (
+          {resourceHelper.length ? (
             <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
-              Resources: {resources.length}
+              Resources: {resourceHelper.length}
             </Badge>
           ) : (
             <Badge {...blockingBadgeProps} onClick={handleSelectImageClick}>
@@ -211,6 +212,58 @@ function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
           </Card>
         </>
       )}
+    </Card>
+  );
+}
+
+function ImageBlocked({ blockedFor, tags, uuid }: ImageBlocked) {
+  const { classes, cx } = useStyles();
+  const removeFile = useEditPostContext((state) => state.removeFile);
+  return (
+    <Card className={classes.container} withBorder p={0}>
+      <Alert
+        color="red"
+        styles={{ label: { width: '100%' } }}
+        title={
+          <Group noWrap position="apart" sx={{ width: '100%' }}>
+            <Group spacing={4} noWrap>
+              <Popover position="top" withinPortal withArrow width={300}>
+                <Popover.Target>
+                  <ActionIcon>
+                    <IconInfoCircle />
+                  </ActionIcon>
+                </Popover.Target>
+                <Popover.Dropdown>
+                  <Stack spacing="xs">
+                    <Text size="xs" weight={500}>
+                      Blocked for
+                    </Text>
+                    <Code color="red">{blockedFor}</Code>
+                    <Group spacing="xs">
+                      {tags
+                        ?.filter((x) => x.type === 'Moderation')
+                        .map((x) => (
+                          <Badge key={x.name} color="red">
+                            {x.name}
+                          </Badge>
+                        ))}
+                    </Group>
+                  </Stack>
+                </Popover.Dropdown>
+              </Popover>
+              <Text>TOS Violation</Text>
+            </Group>
+            <ActionIcon color="red" onClick={() => removeFile(uuid)}>
+              <IconX />
+            </ActionIcon>
+          </Group>
+        }
+      >
+        <Text>
+          The image you uploaded was determined to violate our TOS and has been completely removed
+          from our service
+        </Text>
+      </Alert>
     </Card>
   );
 }

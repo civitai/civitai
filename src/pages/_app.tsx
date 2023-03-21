@@ -28,12 +28,13 @@ import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { FeatureFlags } from '~/server/services/feature-flags.service';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
-import { RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
+import { FreezeProvider, RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
 import { isDev, isMaintenanceMode } from '~/env/other';
-import { MetaPWA } from '~/components/Meta/MetaPWA';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { MetaPWA } from '~/components/Meta/MetaPWA';
 import { FiltersProvider, FiltersInput, parseFiltersCookie } from '~/providers/FiltersProvider';
+import PlausibleProvider from 'next-plausible';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -106,7 +107,9 @@ function MyApp(props: CustomAppProps) {
                 <CivitaiLinkProvider>
                   <CustomModalsProvider>
                     <NotificationsProvider>
-                      <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                      <FreezeProvider>
+                        <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                      </FreezeProvider>
                       <RoutedContextProvider2 />
                     </NotificationsProvider>
                   </CustomModalsProvider>
@@ -123,11 +126,6 @@ function MyApp(props: CustomAppProps) {
     <>
       <Head>
         <title>Civitai | Share your models</title>
-        <script
-          defer
-          data-domain="civitai.com"
-          src="https://analytics.civitai.com/js/script.js"
-        ></script>
         <MetaPWA />
       </Head>
 
@@ -170,7 +168,13 @@ function MyApp(props: CustomAppProps) {
           withGlobalStyles
           withNormalizeCSS
         >
-          {content}
+          <PlausibleProvider
+            domain="civitai.com"
+            customDomain="https://analytics.civitai.com"
+            selfHosted
+          >
+            {content}
+          </PlausibleProvider>
         </MantineProvider>
       </ColorSchemeProvider>
       {isDev && <ReactQueryDevtools />}

@@ -25,6 +25,8 @@ import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { BrowsingMode, PostSort } from '~/server/common/enums';
 import { getImageV2Select } from '~/server/selectors/imagev2.selector';
+import uniqWith from 'lodash/uniqWith';
+import isEqual from 'lodash/isEqual';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -40,34 +42,42 @@ export const getPostsInfinite = async ({
   sort,
   browsingMode,
   user,
+  tags,
 }: PostsQueryInput & { user?: SessionUser }) => {
   const skip = (page - 1) * limit;
   const take = limit + 1;
 
   const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
-
   const imageAND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
-  if (query) AND.push({ title: { in: query, mode: 'insensitive' } });
-  if (username) AND.push({ user: { username } });
-  if (!!excludedTagIds?.length) {
-    AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
-    imageAND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
-  }
-  if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
-  if (!!excludedImageIds?.length) imageAND.push({ id: { notIn: excludedImageIds } });
-
-  if (browsingMode !== BrowsingMode.All) {
-    const query = { nsfw: { equals: browsingMode === BrowsingMode.NSFW } };
-    AND.push(query);
-    imageAND.push(query);
-  }
-
   const orderBy: Prisma.Enumerable<Prisma.PostOrderByWithRelationInput> = [];
-  if (sort === PostSort.MostComments)
-    orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
-  else if (sort === PostSort.MostReactions)
-    orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
-  orderBy.push({ id: 'desc' });
+  const isOwnerRequest = user && user.username === username;
+  if (username) AND.push({ user: { username } });
+  if (!isOwnerRequest) {
+    AND.push({ publishedAt: { not: null } });
+    if (query) AND.push({ title: { in: query, mode: 'insensitive' } });
+    if (!!excludedTagIds?.length) {
+      AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
+      imageAND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
+    }
+    if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
+    if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
+    if (!!excludedImageIds?.length) imageAND.push({ id: { notIn: excludedImageIds } });
+
+    if (browsingMode !== BrowsingMode.All) {
+      const query = { nsfw: { equals: browsingMode === BrowsingMode.NSFW } };
+      AND.push(query);
+      imageAND.push(query);
+    }
+
+    // sorting
+    if (sort === PostSort.MostComments)
+      orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
+    else if (sort === PostSort.MostReactions)
+      orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
+    orderBy.push({ publishedAt: 'desc' });
+  } else {
+    orderBy.push({ id: 'desc' });
+  }
 
   const posts = await dbRead.post.findMany({
     skip,
@@ -80,6 +90,7 @@ export const getPostsInfinite = async ({
       nsfw: true,
       title: true,
       user: { select: userWithCosmeticsSelect },
+      publishedAt: true,
       images: {
         orderBy: { index: 'asc' },
         take: 1,
@@ -185,7 +196,7 @@ export const getPostTags = async ({ query, limit }: GetPostTagsInput) => {
       t.id,
       t.name,
       t."isCategory",
-      COALESCE(s.${showTrending ? '"postCountDay"' : '"postCountAllTime"'}, 0) AS "postCount"
+      COALESCE(s.${showTrending ? '"postCountDay"' : '"postCountAllTime"'}, 0)::int AS "postCount"
     FROM "Tag" t
     LEFT JOIN "TagStat" s ON s."tagId" = t.id
     LEFT JOIN "TagRank" r ON r."tagId" = t.id
@@ -244,42 +255,50 @@ export const removePostTag = async ({ postId, id }: RemovePostTagInput) => {
 
 const toInclude: ModelFileType[] = ['Model', 'Pruned Model', 'Negative'];
 export const addPostImage = async ({
-  resources,
+  // resources,
   modelVersionId,
+  meta,
   ...image
 }: AddPostImageInput & { userId: number }) => {
-  const autoResources = !!resources?.length
-    ? await dbRead.modelFile.findMany({
+  const metaResources = meta?.hashes
+    ? Object.entries(meta.hashes).map(([name, hash]) => ({ name, hash }))
+    : [];
+
+  const modelFileHashes = !!metaResources.length
+    ? await dbRead.modelFileHash.findMany({
         where: {
-          type: { in: toInclude },
-          hashes: {
-            some: {
-              hash: { in: resources, mode: 'insensitive' },
-            },
-          },
+          file: { type: { in: toInclude } },
+          hash: { in: metaResources.map((x) => x.hash), mode: 'insensitive' },
         },
         select: {
-          modelVersionId: true,
+          hash: true,
+          file: {
+            select: { modelVersionId: true },
+          },
         },
       })
     : [];
 
-  const uniqueResources = [
-    modelVersionId,
-    ...new Set(autoResources.map((x) => x.modelVersionId)),
-  ].filter(isDefined);
+  const resources: Prisma.ImageResourceUncheckedCreateWithoutImageInput[] = metaResources.map(
+    ({ name, hash }) => {
+      const modelFile = modelFileHashes.find((x) => x.hash.toLowerCase() === hash.toLowerCase());
+      if (modelFile) return { modelVersionId: modelFile.file.modelVersionId };
+      else return { name };
+    }
+  );
+  if (modelVersionId) resources.unshift({ modelVersionId });
+
+  const uniqueResources = uniqWith(resources, isEqual);
 
   const result = await dbWrite.image.create({
     data: {
       ...image,
-      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      generationProcess: image.meta
-        ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
-        : null,
+      meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      generationProcess: meta ? getImageGenerationProcess(meta as Prisma.JsonObject) : null,
       resources: !!uniqueResources.length
         ? {
-            create: uniqueResources.map((modelVersionId) => ({
-              modelVersionId,
+            create: uniqueResources.map((resource) => ({
+              ...resource,
               detected: true,
             })),
           }
@@ -291,20 +310,20 @@ export const addPostImage = async ({
 };
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
-  const updateResources = image.resources.filter(isImageResource);
-  const createResources = image.resources.filter(isNotImageResource);
+  // const updateResources = image.resources.filter(isImageResource);
+  // const createResources = image.resources.filter(isNotImageResource);
 
   const result = await dbWrite.image.update({
     where: { id: image.id },
     data: {
       ...image,
       meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      resources: {
-        deleteMany: {
-          NOT: updateResources.map((r) => ({ id: r.id })),
-        },
-        createMany: { data: createResources.map((r) => ({ modelVersionId: r.id, name: r.name })) },
-      },
+      // resources: {
+      //   deleteMany: {
+      //     NOT: updateResources.map((r) => ({ id: r.id })),
+      //   },
+      //   createMany: { data: createResources.map((r) => ({ modelVersionId: r.id, name: r.name })) },
+      // },
     },
     select: editPostImageSelect,
   });

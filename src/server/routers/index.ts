@@ -7,11 +7,13 @@ import { apiKeyRouter } from './apiKey.router';
 import { authRouter } from './auth.router';
 import { commentRouter } from './comment.router';
 import { commentv2Router } from './commentv2.router';
+import { contentRouter } from './content.router';
 import { downloadRouter } from './download.router';
 import { imageRouter } from './image.router';
 import { modelFileRouter } from './model-file.router';
 import { modelVersionRouter } from './model-version.router';
 import { modelRouter } from './model.router';
+import { moderationRouter } from '~/server/routers/moderation.router';
 import { notificationRouter } from './notification.router';
 import { partnerRouter } from './partner.router';
 import { postRouter } from './post.router';
@@ -33,11 +35,13 @@ export const appRouter = router({
   auth: authRouter,
   comment: commentRouter,
   commentv2: commentv2Router,
+  content: contentRouter,
   download: downloadRouter,
   image: imageRouter,
   model: modelRouter,
   modelFile: modelFileRouter,
   modelVersion: modelVersionRouter,
+  moderation: moderationRouter,
   notification: notificationRouter,
   partner: partnerRouter,
   post: postRouter,

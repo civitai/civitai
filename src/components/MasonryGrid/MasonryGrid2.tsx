@@ -13,8 +13,8 @@ import { usePrevious } from '@mantine/hooks';
 import { useWindowSize } from '@react-hook/window-size';
 import { useInView } from 'react-intersection-observer';
 
-type Props<T> = Omit<
-  UseMasonryOptions<T>,
+type Props<TData, TFilters extends Record<string, unknown>> = Omit<
+  UseMasonryOptions<TData>,
   | 'containerRef'
   | 'positioner'
   | 'resizeObserver'
@@ -24,7 +24,7 @@ type Props<T> = Omit<
   | 'scrollTop'
   | 'isScrolling'
 > & {
-  data?: T[];
+  data?: TData[];
   isLoading?: boolean;
   hasNextPage?: boolean;
   isRefetching?: boolean;
@@ -32,12 +32,13 @@ type Props<T> = Omit<
   columnWidth: number;
   columnGutter?: number;
   maxColumnCount?: number;
+  filters: TFilters;
   fetchNextPage?: () => void;
   /** using the data in the grid, determine the index to scroll to */
-  scrollToIndex?: (data: T[]) => number;
+  scrollToIndex?: (data: TData[]) => number;
 };
 
-export function MasonryGrid2<T>({
+export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
   data = [],
   isLoading,
   hasNextPage,
@@ -48,20 +49,23 @@ export function MasonryGrid2<T>({
   maxColumnCount,
   scrollToIndex,
   fetchNextPage,
+  filters,
   ...masonicProps
-}: Props<T>) {
+}: Props<T, TFilters>) {
   const theme = useMantineTheme();
   const { ref, inView } = useInView();
 
-  // #region [track data changes]
-  const counterRef = useRef(0);
-  const previousFetching = usePrevious(isRefetching && !isFetchingNextPage);
-  // if (previousFetching) counterRef.current++;
+  // #region [track data/filter changes]
+  const stringified = JSON.stringify(filters);
+  const previousFilters = usePrevious(stringified);
+  const filtersChanged = previousFilters !== stringified;
+  const prevData = usePrevious(data) ?? [];
 
-  useEffect(() => {
-    // console.log({ previousFetching });
-    if (previousFetching) counterRef.current++;
-  }, [previousFetching]);
+  const currentFetching = isRefetching && !isFetchingNextPage;
+  const previousFetching = usePrevious(isRefetching && !isFetchingNextPage);
+  const positionerDep =
+    (previousFetching && !currentFetching) ||
+    (filtersChanged && !currentFetching && prevData.length !== data.length);
   // #endregion
 
   // #region [base masonic settings]
@@ -75,7 +79,7 @@ export function MasonryGrid2<T>({
       columnWidth,
       columnGutter: columnGutter ?? theme.spacing.md,
     },
-    [counterRef.current]
+    [positionerDep]
   );
   const resizeObserver = useResizeObserver(positioner);
   // #endregion

@@ -305,7 +305,7 @@ export function ModelForm({ model }: Props) {
       const { asDraft } = options;
 
       const commonOptions = {
-        async onSuccess(results: Model | undefined, input: { id?: number }) {
+        async onSuccess(results: { id?: number; name?: string }, input: { id?: number }) {
           const modelLink = `/models/${results?.id}/${slugit(results?.name ?? '')}`;
 
           showSuccessNotification({

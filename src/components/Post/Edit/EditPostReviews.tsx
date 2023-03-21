@@ -1,50 +1,53 @@
-import { Stack, Alert, Text, Center, Loader } from '@mantine/core';
+import { Stack, Alert, Text } from '@mantine/core';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { trpc } from '~/utils/trpc';
 import { EditResourceReview } from '~/components/ResourceReview/EditResourceReview';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
+import { isDefined } from '~/utils/type-guards';
+import uniqWith from 'lodash/uniqWith';
+import isEqual from 'lodash/isEqual';
 
 export function EditPostReviews() {
   const id = useEditPostContext((state) => state.id);
   const items = useEditPostContext((state) => state.images);
-  const ready = items.every((x) => x.type === 'image') && items.length > 0;
 
-  const images = items.filter((x) => x.type === 'image').map((x) => x.data) as PostEditImage[];
-  const missingResources = images.some((x) => !x.resources.length);
+  const images = useMemo(
+    () => items.filter((x) => x.type === 'image').map((x) => x.data) as PostEditImage[],
+    [items]
+  );
+  const imageResources = useMemo(() => {
+    const resources = images
+      .flatMap((x) => x.resourceHelper)
+      .map(({ modelVersionId, name }) => ({ modelVersionId, name }))
+      .filter(isDefined);
+    return uniqWith(resources, isEqual);
+  }, [images]);
+  const missingResources = images.some((x) => !x.resourceHelper.length);
 
-  const {
-    data = [],
-    isLoading,
-    refetch,
-  } = trpc.post.getResources.useQuery({ id }, { enabled: false });
+  const { data = [], refetch } = trpc.post.getResources.useQuery({ id }, { enabled: false });
 
   useEffect(() => {
-    if (ready) refetch();
-  }, [ready, refetch]);
+    const shouldRefetch = imageResources.length !== data.length;
+    if (shouldRefetch) refetch();
+  }, [imageResources, refetch]); //eslint-disable-line
 
   return (
     <Stack>
       <Stack>
-        {isLoading && ready ? (
-          <Center p="xl">
-            <Loader />
-          </Center>
-        ) : (
-          data.map((resource, index) => (
-            <EditResourceReview
-              key={index}
-              id={resource.reviewId}
-              rating={resource.reviewRating}
-              details={resource.reviewDetails}
-              createdAt={resource.reviewCreatedAt}
-              modelName={resource.modelName}
-              modelVersionId={resource.modelVersionId}
-              modelVersionName={resource.modelVersionName}
-              name={resource.name}
-            />
-          ))
-        )}
+        {data?.map((resource, index) => (
+          <EditResourceReview
+            key={resource.modelVersionId ?? resource.name ?? index}
+            id={resource.reviewId}
+            rating={resource.reviewRating}
+            details={resource.reviewDetails}
+            createdAt={resource.reviewCreatedAt}
+            modelName={resource.modelName}
+            modelVersionId={resource.modelVersionId}
+            modelVersionName={resource.modelVersionName}
+            name={resource.name}
+          />
+        ))}
       </Stack>
 
       {missingResources && (

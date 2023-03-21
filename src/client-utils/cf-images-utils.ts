@@ -25,10 +25,5 @@ export function getEdgeUrl(src: string, { name, ...variantParams }: Omit<EdgeUrl
     .map(([key, value]) => `${key}=${value}`)
     .join(',');
 
-  return [
-    env.NEXT_PUBLIC_IMAGE_LOCATION,
-    src,
-    params.toString(),
-    ...(name ? [encodeURIComponent(name)] : [src]),
-  ].join('/');
+  return [env.NEXT_PUBLIC_IMAGE_LOCATION, src, params.toString(), name ?? src].join('/');
 }

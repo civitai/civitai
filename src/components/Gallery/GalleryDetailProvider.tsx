@@ -1,6 +1,6 @@
 import { useHotkeys } from '@mantine/hooks';
 
-import Router, { useRouter } from 'next/router';
+import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useMemo, useRef } from 'react';
 
 import { useGalleryFilters } from '~/components/Gallery/GalleryFilters';
@@ -104,14 +104,14 @@ export function GalleryDetailProvider({ children }: GalleryDetailProviderProps) 
   };
 
   useEffect(() => {
-    Router.events.on('routeChangeStart', handleClosingStart);
-    Router.events.on('routeChangeComplete', handleClosingEnd);
+    router.events.on('routeChangeStart', handleClosingStart);
+    router.events.on('routeChangeComplete', handleClosingEnd);
 
     return () => {
-      Router.events.off('routeChangeStart', handleClosingStart);
-      Router.events.off('routeChangeComplete', handleClosingEnd);
+      router.events.off('routeChangeStart', handleClosingStart);
+      router.events.off('routeChangeComplete', handleClosingEnd);
     };
-  }, []);
+  }, []); //eslint-disable-line
   // #endregion
 
   // #region [info toggle]
@@ -137,9 +137,9 @@ export function GalleryDetailProvider({ children }: GalleryDetailProviderProps) 
   const canNavigate = index > -1 ? images.length > 1 : images.length > 0; // see notes
 
   const navigate = (id: number) => {
-    const { galleryImageId, ...query } = Router.query;
-    const [, queryString] = Router.asPath.split('?');
-    Router.replace(
+    const { galleryImageId, ...query } = router.query;
+    const [, queryString] = router.asPath.split('?');
+    router.replace(
       { query: { ...query, galleryImageId: id } },
       {
         pathname: `/gallery/${id}`,

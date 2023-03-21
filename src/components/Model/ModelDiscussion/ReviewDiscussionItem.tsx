@@ -317,7 +317,7 @@ function ReviewCarousel({
                     />
                   </AnchorNoTravel>
                 )}
-                <ImageGuard.ReportNSFW />
+                <ImageGuard.Report />
               </ImageGuard.Safe>
             </Carousel.Slide>
           )}

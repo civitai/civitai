@@ -24,6 +24,7 @@ export const postsQuerySchema = postsFilterSchema.extend({
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
   excludedImageIds: z.array(z.number()).optional(),
+  tags: z.number().array().optional(),
   username: z
     .string()
     .transform((data) => postgresSlugify(data))
@@ -88,7 +89,7 @@ export const updatePostImageSchema = z.object({
   }, imageMetaSchema.nullish()),
   hideMeta: z.boolean().optional(),
   nsfw: z.boolean().optional(),
-  resources: z.array(imageResourceUpsertSchema),
+  // resources: z.array(imageResourceUpsertSchema),
 });
 
 export type ReorderPostImagesInput = z.infer<typeof reorderPostImagesSchema>;

@@ -31,34 +31,17 @@ export function SettingsCard() {
         <Switch
           name="autoplayGifs"
           label="Autoplay GIFs"
-          defaultChecked={user.autoplayGifs}
+          checked={user.autoplayGifs}
           disabled={isLoading}
           onChange={(e) => mutate({ ...user, autoplayGifs: e.target.checked })}
         />
-        <Switch
-          name="showNsfw"
-          label="Show me adult content"
-          description="If you are not of legal age to view adult content, please do not enable this option"
-          defaultChecked={user.showNsfw}
-          disabled={isLoading}
-          onChange={(e) => mutate({ ...user, showNsfw: e.target.checked })}
-        />
-        {user.showNsfw && (
-          <Switch
-            name="blurNsfw"
-            label="Blur adult content"
-            defaultChecked={user.blurNsfw}
-            disabled={isLoading}
-            onChange={(e) => mutate({ ...user, blurNsfw: e.target.checked })}
-          />
-        )}
         <Divider label="Model File Preferences" mb={-12} />
         <Group noWrap grow>
           <Select
             label="Preferred Format"
             name="fileFormat"
             data={validModelFormats}
-            defaultValue={user.filePreferences?.format ?? 'SafeTensor'}
+            value={user.filePreferences?.format ?? 'SafeTensor'}
             onChange={(value: ModelFileFormat) =>
               mutate({ ...user, filePreferences: { ...user.filePreferences, format: value } })
             }
@@ -71,7 +54,7 @@ export function SettingsCard() {
               value: size,
               label: splitUppercase(size),
             }))}
-            defaultValue={user.filePreferences?.size ?? 'pruned'}
+            value={user.filePreferences?.size ?? 'pruned'}
             onChange={(value: ModelFileSize) =>
               mutate({ ...user, filePreferences: { ...user.filePreferences, size: value } })
             }
@@ -81,7 +64,7 @@ export function SettingsCard() {
             label="Preferred Floating Point"
             name="fp"
             data={constants.modelFileFp}
-            defaultValue={user.filePreferences?.fp ?? 'fp16'}
+            value={user.filePreferences?.fp ?? 'fp16'}
             onChange={(value: ModelFileSize) =>
               mutate({ ...user, filePreferences: { ...user.filePreferences, size: value } })
             }

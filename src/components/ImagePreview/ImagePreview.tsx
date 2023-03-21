@@ -91,7 +91,7 @@ export function ImagePreview({
       <HoverCard.Dropdown p={8}>
         <Stack spacing={0}>
           <Text weight="bold" size="xs">
-            Flagged by age detection
+            Flagged for review
           </Text>
           <Text size="xs">
             {`This image won't be visible to other users until it's reviewed by our moderators.`}

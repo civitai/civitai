@@ -24,26 +24,22 @@ You own the Content you create! We will not sell your Content, nor will we use i
 Any Content you download, access or use from us or another User, is at your own risk and subject to these Terms and/or the terms accompanying such Content.
 
 ## Content Rules
-These rules apply to all Content posted on Civitai. Moderators consider context and intent while enforcing the community rules. Moderators may at anytime flag or remove content or users at their discretion.
+These rules apply to all Content posted on Civitai. Moderators consider context and intent while enforcing the community rules. Moderators may flag or remove content or users at their discretion.
 
-- Sexual, provocative, disturbing, or violent content MUST be flagged Not Safe for Work (NSFW)
-  - Not Safe for Work content displaying actual people (for example Tom Cruise or Tom Cruise as Maverick)
-- Content displaying or clearly intented to be used for illegal or violent activity including, but not limited to:
-  - child abuse and exploitation (includes photo, video, print, artwork)
+### Mature Content Definition:
+Content containing nudity, sexual situations, provocative/revealing attire, blood/gore, death, or other mature themes.
+
+### Content Removal Criteria:
+- Content depicting or intended to depict real individuals or minors (under 18) in a mature context.
+- Content promoting illegal or violent activities, including, but not limited to:
+  - child abuse and exploitation
   - rape and domestic abuse
-  - sales of illegal substances or products requiring permits and/or licenses including pharmaceuticals, narcotics, pets, or firearms
-  - fraudulent or deceptive content intended to spread false information or exploit
-  - false impersonation
-  - brutal fights
-  - graphic injuries
-  - depictions of human death
-  - graphic violence
-  - beastiality
-  - "loli", "lolicon", "shota", or "shotacon" content
-- Models intended for the photorealistic depiction of minors
-- Photorealistic images of minors
-
-  Will be removed.
+  - illegal substances or product sales requiring permits/licenses (e.g., pharmaceuticals, narcotics, pets, firearms)
+  - fraud, deception, or false impersonation
+  - brutal fights, graphic injuries, or human death
+  - graphic violence or bestiality
+- "Loli", "lolicon", "shota", "shotacon" content
+- Content depicting or intended to depict photorealistic minors, regardless of context.
 
 ## Intellectual Property
 By uploading a file or other content or by making a review, you represent and warrant to us that (1) doing so does not violate or infringe anyone else's rights; and (2) you created the file or other content you are uploading, or otherwise have sufficient intellectual property rights to upload the material consistent with these terms. With regard to any file or content you upload to the public portions of our site, you grant Civitai a non-exclusive, royalty-free, perpetual, irrevocable worldwide license (with sublicense and assignment rights) to use, to display online and in any present or future media, to create derivative works of, to allow downloads of, and/or distribute any such file or content. To the extent that you delete any such file or content from the public portions of our site, the license you grant to Civitai pursuant to the preceding sentence will automatically terminate, but will not be revoked with respect to any file or content Civitai has already copied and sublicensed or designated for sublicense. Also, of course, anything you post to a public portion of our site may be used by the public pursuant to the following paragraph even after you delete it.

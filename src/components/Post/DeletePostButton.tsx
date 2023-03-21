@@ -21,7 +21,9 @@ export function DeletePostButton({
   const queryUtils = trpc.useContext();
   const { mutate, isLoading } = trpc.post.delete.useMutation({
     async onSuccess(_, { id }) {
-      router.push('/');
+      router.push('/posts');
+      await queryUtils.post.get.invalidate({ id });
+      await queryUtils.post.getInfinite.invalidate();
     },
     onError(error: any) {
       showErrorNotification({ error: new Error(error.message) });

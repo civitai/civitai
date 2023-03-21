@@ -17,6 +17,7 @@ import {
   toggleHideModelHandler,
   toggleMuteHandler,
   getUserCosmeticsHandler,
+  getUsernameAvailableHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -45,6 +46,9 @@ import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 export const userRouter = router({
   getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),
   getAll: publicProcedure.input(getAllUsersInput).query(getAllUsersHandler),
+  usernameAvailable: protectedProcedure
+    .input(getByUsernameSchema)
+    .query(getUsernameAvailableHandler),
   getById: publicProcedure.input(getByIdSchema).query(getUserByIdHandler),
   getEngagedModels: protectedProcedure.query(getUserEngagedModelsHandler),
   getEngagedModelVersions: protectedProcedure.query(getUserEngagedModelVersionsHandler),
