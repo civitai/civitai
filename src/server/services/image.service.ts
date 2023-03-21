@@ -432,7 +432,8 @@ export const getAllImages = async ({
   generation,
 }: GetInfiniteImagesInput & { userId?: number }) => {
   const AND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
-  if (postId) AND.push({ postId });
+  const orderBy: Prisma.Enumerable<Prisma.ImageOrderByWithRelationInput> = [];
+
   if (modelId || modelVersionId)
     AND.push({ resourceHelper: { some: { modelVersionId, modelId } } });
   if (username) AND.push({ user: { username: { equals: username, mode: 'insensitive' } } });
@@ -450,10 +451,10 @@ export const getAllImages = async ({
   }
   if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
   if (!!generation?.length) AND.push({ generationProcess: { in: generation } });
-
-  const orderBy: Prisma.Enumerable<Prisma.ImageOrderByWithRelationInput> = [];
-  if (postId) orderBy.push({ index: 'asc' });
-  else {
+  if (postId) {
+    AND.push({ postId });
+    orderBy.push({ index: 'asc' });
+  } else {
     if (sort === ImageSort.MostComments)
       orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
     else if (sort === ImageSort.MostReactions)
