@@ -1,4 +1,4 @@
-import { Stack, Alert, Text, Center, Loader } from '@mantine/core';
+import { Stack, Alert, Text } from '@mantine/core';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { trpc } from '~/utils/trpc';
@@ -7,12 +7,10 @@ import { useEffect, useMemo } from 'react';
 import { isDefined } from '~/utils/type-guards';
 import uniqWith from 'lodash/uniqWith';
 import isEqual from 'lodash/isEqual';
-import { usePrevious } from '@mantine/hooks';
 
 export function EditPostReviews() {
   const id = useEditPostContext((state) => state.id);
   const items = useEditPostContext((state) => state.images);
-  const ready = items.every((x) => x.type === 'image') && items.length > 0;
 
   const images = useMemo(
     () => items.filter((x) => x.type === 'image').map((x) => x.data) as PostEditImage[],
@@ -27,11 +25,7 @@ export function EditPostReviews() {
   }, [images]);
   const missingResources = images.some((x) => !x.resourceHelper.length);
 
-  const {
-    data = [],
-    isLoading,
-    refetch,
-  } = trpc.post.getResources.useQuery({ id }, { enabled: false });
+  const { data = [], refetch } = trpc.post.getResources.useQuery({ id }, { enabled: false });
 
   useEffect(() => {
     const shouldRefetch = imageResources.length !== data.length;

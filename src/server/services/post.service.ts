@@ -74,9 +74,10 @@ export const getPostsInfinite = async ({
       orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
     else if (sort === PostSort.MostReactions)
       orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
+    orderBy.push({ publishedAt: 'desc' });
+  } else {
+    orderBy.push({ id: 'desc' });
   }
-
-  orderBy.push({ id: 'desc' });
 
   const posts = await dbRead.post.findMany({
     skip,

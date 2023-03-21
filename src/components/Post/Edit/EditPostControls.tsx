@@ -1,24 +1,10 @@
-import {
-  Stack,
-  Text,
-  Tooltip,
-  Button,
-  Checkbox,
-  TooltipProps,
-  Group,
-  Divider,
-  ActionIcon,
-  Loader,
-  createStyles,
-} from '@mantine/core';
+import { Stack, Text, Tooltip, Button, Checkbox, TooltipProps, Group } from '@mantine/core';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { trpc } from '~/utils/trpc';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
-import { ReorderImagesButton } from '~/components/Post/Edit/ReorderImages';
-import { IconArrowsDownUp, IconTrash } from '@tabler/icons';
-import { DeletePostButton } from '~/components/Post/DeletePostButton';
+
 import { PostEditActions } from '~/components/Post/Edit/PostEditActions';
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
