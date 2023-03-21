@@ -172,16 +172,18 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
   const [options, setOptions] = useState(initialOptions);
   const setFreeze = useFreezeStore((state) => state.setFreeze);
 
+  const toResolve = QS.parse(QS.stringify(props));
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const resolve = registry[modal].resolve;
-    const [url, asPath, options] = resolve(props as any) as Parameters<NextRouter['push']>;
+    const [url, asPath, options] = resolve(toResolve as any) as Parameters<NextRouter['push']>;
     setUrl(url as string);
     setAs(asPath as string);
     setOptions((state) => ({ ...state, ...options }));
   }, []);
 
-  const handleClick = () => openRoutedContext(modal, props as any, options);
+  const handleClick = () => openRoutedContext(modal, toResolve as any, options);
 
   if (!url || !options) return React.cloneElement(children, { onClick: handleClick });
   return (

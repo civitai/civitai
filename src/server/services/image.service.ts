@@ -430,6 +430,7 @@ export const getAllImages = async ({
   userId,
   tags,
   generation,
+  reviewId,
 }: GetInfiniteImagesInput & { userId?: number }) => {
   const AND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   const orderBy: Prisma.Enumerable<Prisma.ImageOrderByWithRelationInput> = [];
@@ -445,13 +446,16 @@ export const getAllImages = async ({
     AND.push({
       OR: [
         { userId },
-        { tags: !!excludedTagIds.length ? { none: { tagId: { in: excludedTagIds } } } : undefined },
+        {
+          tags: { none: { tagId: { in: excludedTagIds } } },
+          scannedAt: { not: null },
+        },
       ],
     });
-    AND.push({ OR: [{ userId }, { scannedAt: { not: null } }] });
   }
   if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
   if (!!generation?.length) AND.push({ generationProcess: { in: generation } });
+  if (!!reviewId) AND.push({ resourceHelper: { some: { reviewId } } });
   if (postId) {
     AND.push({ postId });
     orderBy.push({ index: 'asc' });

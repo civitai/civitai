@@ -1,15 +1,14 @@
-import { AspectRatio, LoadingOverlay, createStyles, Text } from '@mantine/core';
-import Link from 'next/link';
+import { AspectRatio, createStyles } from '@mantine/core';
 import { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
-import { useState } from 'react';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { useImagesInfiniteContext } from '~/components/Image/Infinite/ImagesInfinite';
 
 export function ImagesCard({
   data: image,
@@ -19,7 +18,7 @@ export function ImagesCard({
   width: number;
 }) {
   const { classes } = useStyles();
-  const [loading, setLoading] = useState(false);
+  const { modelId, modelVersionId, postId, username } = useImagesInfiniteContext();
 
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
@@ -32,21 +31,17 @@ export function ImagesCard({
   return (
     <InView>
       {({ inView, ref }) => (
-        <RoutedContextLink modal="imageDetailModal" imageId={image.id}>
-          <MasonryCard
-            withBorder
-            shadow="sm"
-            p={0}
-            height={height}
-            ref={ref}
-            component="a"
-            onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
-              if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
-            }}
-          >
+        <RoutedContextLink
+          modal="imageDetailModal"
+          imageId={image.id}
+          modelId={modelId}
+          modelVersionId={modelVersionId}
+          postId={postId}
+          username={username}
+        >
+          <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
             {inView && (
               <>
-                {/* <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} /> */}
                 <ImageGuard
                   images={[image]}
                   render={(image) => (

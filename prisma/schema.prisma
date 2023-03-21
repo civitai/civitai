@@ -122,6 +122,7 @@ model User {
   resourceReviews     ResourceReview[]
   tagImageVotes       TagsOnImageVote[]
   tagModelVotes       TagsOnModelsVote[]
+  tagPostVotes        TagsOnPostVote[]
 }
 
 model CustomerSubscription {
@@ -709,6 +710,9 @@ model Post {
   rank           PostRank?
   metrics        PostMetric[]
   resourceHelper PostResourceHelper[]
+  imageTags      PostImageTag[]
+  tagsComposite  PostTag[]
+  tagVotes       TagsOnPostVote[]
 }
 
 model PostMetric {
@@ -870,6 +874,8 @@ model Tag {
   metrics              TagMetric[]
   stats                TagStat?
   rank                 TagRank?
+  tagsOnPostComposite  PostTag[]
+  tagsOnPostVotes      TagsOnPostVote[]
 
   @@unique([name])
 }
@@ -943,14 +949,32 @@ model TagsOnImageVote {
 }
 
 model TagsOnPost {
+  postId      Int
+  post        Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tagId       Int
+  tag         Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  confidence  Int?
+  disabled    Boolean  @default(false)
+  needsReview Boolean  @default(false)
+
+  @@id([tagId, postId])
+  @@index([postId], type: Hash)
+}
+
+model TagsOnPostVote {
   postId    Int
   post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
   tagId     Int
   tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vote      Int // 1 or -1
   createdAt DateTime @default(now())
 
-  @@id([tagId, postId])
+  @@id([tagId, postId, userId])
   @@index([postId], type: Hash)
+  @@index([userId], type: Hash)
 }
 
 model TagMetric {
@@ -2001,6 +2025,8 @@ model ImageResourceHelper {
   modelCommentCount     Int?
   modelFavoriteCount    Int?
   modelType             ModelType?
+
+  @@unique([imageId, name, modelVersionId])
 }
 
 /// @view
@@ -2024,4 +2050,30 @@ model PostResourceHelper {
   modelCommentCount     Int?
   modelFavoriteCount    Int?
   modelType             ModelType?
+
+  @@unique([postId, name, modelVersionId])
+}
+
+/// @view
+model PostImageTag {
+  postId Int
+  post   Post @relation(fields: [postId], references: [id], onDelete: NoAction)
+  tagId  Int
+
+  @@id([postId, tagId])
+}
+
+/// @view
+model PostTag {
+  postId    Int
+  post      Post    @relation(fields: [postId], references: [id])
+  tagId     Int
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: NoAction)
+  tagName   String
+  tagType   TagType
+  score     Int
+  upVotes   Int
+  downVotes Int
+
+  @@id([postId, tagId])
 }
