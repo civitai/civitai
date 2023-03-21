@@ -350,13 +350,11 @@ export const ingestImage = async ({
   const gamma = anim === false ? 0.99 : undefined;
   const edgeUrl = getEdgeUrl(url, { width, anim, gamma });
 
-  const callbackHost = 'https://7eb2-96-19-177-244.ngrok.io';
   const payload = {
     imageId: id,
     url: edgeUrl,
     wait: true,
     scans: [ImageScanType.Label, ImageScanType.Moderation],
-    callbackUrl: `${callbackHost}/api/webhooks/image-scan-result?token=${env.WEBHOOK_TOKEN}`,
   };
 
   await dbWrite.image.update({
