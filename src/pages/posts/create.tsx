@@ -33,7 +33,7 @@ export default function PostCreate() {
     { enabled: !!modelVersionId }
   );
 
-  const [selected, setSelected] = useState<string>();
+  const [selected, setSelected] = useState<string | undefined>(modelVersionId?.toString());
 
   const handleDrop = (files: File[]) => {
     const versionId = selected ? Number(selected) : modelVersionId;

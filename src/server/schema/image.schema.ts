@@ -182,6 +182,7 @@ export const getInfiniteImagesSchema = z.object({
   cursor: z.number().optional(),
   postId: z.number().optional(),
   modelId: z.number().optional(),
+  modelVersionId: z.number().optional(),
   username: z.string().optional(),
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),

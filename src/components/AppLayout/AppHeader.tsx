@@ -18,6 +18,7 @@ import {
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import {
+  IconAlbum,
   IconCircleDashed,
   IconCrown,
   IconFile,
@@ -195,6 +196,16 @@ export function AppHeader() {
           <Group align="center" spacing="xs">
             <IconFile stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Your models
+          </Group>
+        ),
+      },
+      {
+        href: `/user/${currentUser?.username}/posts`,
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconAlbum stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            Your posts
           </Group>
         ),
       },
