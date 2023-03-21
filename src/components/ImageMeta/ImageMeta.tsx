@@ -16,6 +16,7 @@ import { useMemo } from 'react';
 import { encodeMetadata } from '~/utils/image-metadata';
 import { ImageGenerationProcess } from '@prisma/client';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { cloneElement } from 'react';
 
 type Props = {
   meta: ImageMetaProps;
@@ -140,11 +141,18 @@ export function ImageMetaPopover({
   ...popoverProps
 }: Props & { children: React.ReactElement } & PopoverProps) {
   return (
-    <Popover width={350} shadow="md" position="top-end" withArrow withinPortal {...popoverProps}>
-      <Popover.Target>{children}</Popover.Target>
-      <Popover.Dropdown>
-        <ImageMeta meta={meta} generationProcess={generationProcess} />
-      </Popover.Dropdown>
-    </Popover>
+    <div
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+    >
+      <Popover width={350} shadow="md" position="top-end" withArrow withinPortal {...popoverProps}>
+        <Popover.Target>{children}</Popover.Target>
+        <Popover.Dropdown>
+          <ImageMeta meta={meta} generationProcess={generationProcess} />
+        </Popover.Dropdown>
+      </Popover>
+    </div>
   );
 }

@@ -28,6 +28,7 @@ type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
   metrics?: ReactionMetrics;
   popoverPosition?: PopoverProps['position'];
   readonly?: boolean;
+  withinPortal?: boolean;
 };
 
 export function Reactions({
@@ -37,6 +38,7 @@ export function Reactions({
   entityId,
   popoverPosition = 'top-start',
   readonly,
+  withinPortal,
   ...groupProps
 }: ReactionsProps & Omit<GroupProps, 'children' | 'onClick'>) {
   const currentUser = useCurrentUser();
@@ -53,7 +55,13 @@ export function Reactions({
       }}
       {...groupProps}
     >
-      <Popover shadow="md" position={popoverPosition} withArrow withinPortal disabled={readonly}>
+      <Popover
+        shadow="md"
+        position={popoverPosition}
+        withArrow
+        disabled={readonly}
+        withinPortal={withinPortal}
+      >
         <Popover.Target>
           <Button variant="subtle" size="xs" color="gray" radius="xl" compact>
             <Group spacing={2}>

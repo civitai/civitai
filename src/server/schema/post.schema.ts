@@ -1,5 +1,3 @@
-import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
-import { imageResourceUpsertSchema } from './image.schema';
 import { z } from 'zod';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -17,8 +15,7 @@ export const postsFilterSchema = z.object({
 
 export type PostsQueryInput = z.infer<typeof postsQuerySchema>;
 export const postsQuerySchema = postsFilterSchema.extend({
-  page: z.preprocess((val) => Number(val), z.number().min(1)).default(1),
-  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(DEFAULT_PAGE_SIZE),
+  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(50),
   cursor: z.preprocess((val) => Number(val), z.number()).optional(),
   query: z.string().optional(),
   excludedTagIds: z.array(z.number()).optional(),

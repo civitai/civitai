@@ -462,7 +462,7 @@ export const getAllImages = async ({
   }
 
   const images = await dbRead.image.findMany({
-    take: cursor ? limit + 1 : limit,
+    take: limit + 1,
     cursor: cursor ? { id: cursor } : undefined,
     where: { AND },
     orderBy,
