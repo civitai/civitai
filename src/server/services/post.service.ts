@@ -48,30 +48,34 @@ export const getPostsInfinite = async ({
   const take = limit + 1;
 
   const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
-  if (user && user.username !== username) AND.push({ publishedAt: { not: null } });
-
   const imageAND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
-  if (query) AND.push({ title: { in: query, mode: 'insensitive' } });
-  if (username) AND.push({ user: { username } });
-  if (!!excludedTagIds?.length) {
-    AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
-    imageAND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
-  }
-  if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
-  if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
-  if (!!excludedImageIds?.length) imageAND.push({ id: { notIn: excludedImageIds } });
-
-  if (browsingMode !== BrowsingMode.All) {
-    const query = { nsfw: { equals: browsingMode === BrowsingMode.NSFW } };
-    AND.push(query);
-    imageAND.push(query);
-  }
-
   const orderBy: Prisma.Enumerable<Prisma.PostOrderByWithRelationInput> = [];
-  if (sort === PostSort.MostComments)
-    orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
-  else if (sort === PostSort.MostReactions)
-    orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
+  const isOwnerRequest = user && user.username === username;
+  if (username) AND.push({ user: { username } });
+  if (!isOwnerRequest) {
+    AND.push({ publishedAt: { not: null } });
+    if (query) AND.push({ title: { in: query, mode: 'insensitive' } });
+    if (!!excludedTagIds?.length) {
+      AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
+      imageAND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
+    }
+    if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
+    if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
+    if (!!excludedImageIds?.length) imageAND.push({ id: { notIn: excludedImageIds } });
+
+    if (browsingMode !== BrowsingMode.All) {
+      const query = { nsfw: { equals: browsingMode === BrowsingMode.NSFW } };
+      AND.push(query);
+      imageAND.push(query);
+    }
+
+    // sorting
+    if (sort === PostSort.MostComments)
+      orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
+    else if (sort === PostSort.MostReactions)
+      orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
+  }
+
   orderBy.push({ id: 'desc' });
 
   const posts = await dbRead.post.findMany({
@@ -85,6 +89,7 @@ export const getPostsInfinite = async ({
       nsfw: true,
       title: true,
       user: { select: userWithCosmeticsSelect },
+      publishedAt: true,
       images: {
         orderBy: { index: 'asc' },
         take: 1,

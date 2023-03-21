@@ -20,6 +20,8 @@ import { ReorderImagesButton } from '~/components/Post/Edit/ReorderImages';
 import { IconArrowsDownUp, IconTrash } from '@tabler/icons';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { PostEditActions } from '~/components/Post/Edit/PostEditActions';
+import { useRouter } from 'next/router';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const publishText = 'Publish';
 const hiddenLabel = `When a post is Hidden, you can grab a link and share it outside of the Civitai community.  Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;
@@ -45,6 +47,8 @@ export function EditPostControls() {
 }
 
 function ManagePostStatus() {
+  const router = useRouter();
+  const currentUser = useCurrentUser();
   const id = useEditPostContext((state) => state.id);
   const tags = useEditPostContext((state) => state.tags);
   const title = useEditPostContext((state) => state.title);
@@ -57,15 +61,18 @@ function ManagePostStatus() {
 
   const { mutate, isLoading } = trpc.post.update.useMutation();
 
-  const canPublish = tags.filter((x) => !!x.id).length > 0;
+  const canPublish =
+    tags.filter((x) => !!x.id).length > 0 && images.filter((x) => x.type === 'image').length > 0;
 
   const handlePublish = () => {
+    if (!currentUser) return;
     const publishedAt = new Date();
     mutate(
       { id, publishedAt },
       {
         onSuccess: () => {
           setPublishedAt(publishedAt);
+          router.push(`/user/${currentUser.username}/posts`);
         },
       }
     );

@@ -419,6 +419,7 @@ export const getAllImages = async ({
   cursor,
   postId,
   modelId,
+  modelVersionId,
   username,
   excludedTagIds,
   excludedUserIds,
@@ -432,7 +433,8 @@ export const getAllImages = async ({
 }: GetInfiniteImagesInput & { userId?: number }) => {
   const AND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   if (postId) AND.push({ postId });
-  if (modelId) AND.push({ resources: { some: { modelVersion: { modelId } } } });
+  if (modelId || modelVersionId)
+    AND.push({ resourceHelper: { some: { modelVersionId, modelId } } });
   if (username) AND.push({ user: { username: { equals: username, mode: 'insensitive' } } });
   if (browsingMode !== BrowsingMode.All)
     AND.push({ nsfw: { equals: browsingMode === BrowsingMode.NSFW } });
