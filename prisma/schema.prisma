@@ -916,7 +916,7 @@ model TagsOnImage {
 
   @@id([tagId, imageId])
   @@index([imageId], type: Hash)
-  @@index([automated], type: Hash)
+  @@index([automated])
   @@index([disabled])
 }
 
