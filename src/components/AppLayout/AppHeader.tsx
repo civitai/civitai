@@ -339,7 +339,7 @@ export function AppHeader() {
                 <Button
                   className={classes.links}
                   component={NextLink}
-                  href="/models/new"
+                  href="/models/create"
                   variant="filled"
                   size="xs"
                   pl={5}

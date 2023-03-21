@@ -2,8 +2,6 @@ import Router from 'next/router';
 import { useEffect } from 'react';
 
 type Props = { unsavedChanges?: boolean; message?: string; eval?: () => boolean };
-// TODO.posts - props for hook to know only to catch navigation when leaving the site
-// TODO.posts - eval prop to that takes a method that returns a boolean
 
 export function useCatchNavigation({ unsavedChanges = false }: Props) {
   // Display alert when closing tab/window or navigating out,

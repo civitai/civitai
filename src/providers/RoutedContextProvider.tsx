@@ -185,7 +185,16 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
 
   if (!url || !options) return React.cloneElement(children, { onClick: handleClick });
   return (
-    <NextLink href={url} as={as} {...options} onClick={() => setFreeze(true)}>
+    <NextLink
+      href={url}
+      as={as}
+      {...options}
+      onClick={(e) => {
+        if (!e.ctrlKey) {
+          setFreeze(true);
+        }
+      }}
+    >
       {children}
     </NextLink>
   );
