@@ -31,7 +31,7 @@ export function formatSeconds(seconds: number) {
     { name: 'second', limit: 1, in_seconds: 1 },
   ];
   let output = '';
-  let unit: typeof units[number];
+  let unit: (typeof units)[number];
   let unitCount: number;
   for (let i = 0; i < units.length; i++) {
     unit = units[i];

@@ -9,6 +9,7 @@ import {
 } from 'react-hook-form';
 
 type FormProps<TFieldValues extends FieldValues> = {
+  id?: string;
   className?: string;
   style?: React.CSSProperties;
   form: UseFormReturn<TFieldValues>;
@@ -19,6 +20,7 @@ type FormProps<TFieldValues extends FieldValues> = {
 };
 
 export function Form<TFieldValues extends FieldValues = FieldValues>({
+  id,
   form,
   className,
   style,
@@ -41,6 +43,7 @@ export function Form<TFieldValues extends FieldValues = FieldValues>({
   return (
     <FormProvider {...form}>
       <form
+        id={id}
         onSubmit={handleSubmit}
         className={className}
         style={{ position: 'relative', ...style }}

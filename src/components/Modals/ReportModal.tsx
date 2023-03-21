@@ -16,7 +16,7 @@ import { IconArrowLeft } from '@tabler/icons';
 import { useMemo, useState } from 'react';
 import { AdminAttentionForm } from '~/components/Report/AdminAttentionForm';
 import { ClaimForm } from '~/components/Report/ClaimForm';
-import { NsfwForm } from '~/components/Report/NsfwForm';
+import { ImageNsfwForm, ModelNsfwForm } from '~/components/Report/NsfwForm';
 import { OwnershipForm } from '~/components/Report/OwnershipForm';
 import { TosViolationForm } from '~/components/Report/TosViolationForm';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -25,13 +25,22 @@ import { createContextModal } from '~/components/Modals/utils/createContextModal
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';
 import { useRouter } from 'next/router';
+import { getLoginLink } from '~/utils/login-helpers';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEffect } from 'react';
 
 const reports = [
   {
     reason: ReportReason.NSFW,
-    label: 'NSFW',
-    Element: NsfwForm,
-    availableFor: [ReportEntity.Model, ReportEntity.Review, ReportEntity.Image],
+    label: 'Mature Content',
+    Element: ModelNsfwForm,
+    availableFor: [ReportEntity.Model],
+  },
+  {
+    reason: ReportReason.NSFW,
+    label: 'Mature Content',
+    Element: ImageNsfwForm,
+    availableFor: [ReportEntity.Image],
   },
   {
     reason: ReportReason.TOSViolation,
@@ -88,11 +97,15 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
     const [reason, setReason] = useState<ReportReason>();
     const [uploading, setUploading] = useState(false);
     const ReportForm = useMemo(
-      () => reports.find((x) => x.reason === reason)?.Element ?? null,
+      () =>
+        reports.find((x) => x.reason === reason && x.availableFor.includes(entityType))?.Element ??
+        null,
       [reason]
     );
     const title = useMemo(
-      () => reports.find((x) => x.reason === reason)?.label ?? `Report ${entityType}`,
+      () =>
+        reports.find((x) => x.reason === reason && x.availableFor.includes(entityType))?.label ??
+        `Report ${entityType}`,
       [reason, entityType]
     );
 
@@ -147,10 +160,12 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
             case ReportEntity.CommentV2:
               break;
             case ReportEntity.Image:
-              if (variables.reason === ReportReason.NSFW)
-                await queryUtils.image.getGalleryImageDetail.invalidate();
-              await queryUtils.image.getGalleryImagesInfinite.invalidate();
-              await queryUtils.image.getGalleryImages.invalidate();
+              if (variables.reason === ReportReason.NSFW) {
+                await queryUtils.image.getGalleryImagesInfinite.invalidate();
+                await queryUtils.image.getGalleryImages.invalidate();
+                await queryUtils.tag.getVotableTags.invalidate({ id: variables.id, type: 'image' });
+              }
+
               // review invalidate
               if (reviewId) {
                 await queryUtils.review.getDetail.setData(
@@ -208,7 +223,6 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
     const handleSubmit = (data: Record<string, unknown>) => {
       const details: any = Object.fromEntries(Object.entries(data).filter(([_, v]) => v != null));
       if (!reason) return;
-      console.log({ entityId });
       mutate({
         type: entityType,
         reason,
@@ -216,6 +230,14 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
         details,
       });
     };
+
+    const currentUser = useCurrentUser();
+    useEffect(() => {
+      if (currentUser) return;
+      router.push(getLoginLink({ returnUrl: router.asPath, reason: 'report-content' }));
+      context.close();
+    }, [currentUser]);
+
     return (
       <Stack>
         <Group position="apart" noWrap>

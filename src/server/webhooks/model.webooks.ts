@@ -1,4 +1,4 @@
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getAllModelsWithVersionsSelect } from '~/server/selectors/model.selector';
 import { getPrimaryFile } from '~/server/utils/model-helpers';

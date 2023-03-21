@@ -126,12 +126,16 @@ const automaticSDParser = createMetadataParser(
       weight: parseFloat(weight),
     }));
 
-    if (metadata['Model'] && metadata['Model hash'])
+    if (metadata['Model'] && metadata['Model hash']) {
+      if (!metadata.hashes) metadata.hashes = {};
+      if (!metadata.hashes['model']) metadata.hashes['model'] = metadata['Model hash'] as string;
+
       resources.push({
         type: 'model',
         name: metadata['Model'] as string,
         hash: metadata['Model hash'] as string,
       });
+    }
 
     if (metadata['Hypernet'] && metadata['Hypernet strength'])
       resources.push({

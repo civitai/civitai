@@ -11,5 +11,22 @@ export function toStringList(array: string[]) {
 }
 
 export function removeDuplicates<T extends object>(array: T[], property: keyof T) {
-  return uniqBy(array, property);
+  return uniqBy<T>(array, property);
+}
+
+export function sortAlphabetically<T>(array: T[]) {
+  return array.sort((a, b) => {
+    if (a < b) return -1;
+    if (a > b) return 1;
+    return 0;
+  });
+}
+export function sortAlphabeticallyBy<T>(array: T[], fn: (item: T) => string) {
+  return array.sort((...args) => {
+    const a = fn(args[0]);
+    const b = fn(args[1]);
+    if (a < b) return -1;
+    if (a > b) return 1;
+    return 0;
+  });
 }

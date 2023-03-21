@@ -44,6 +44,12 @@ export enum ImageSort {
   Newest = 'Newest',
 }
 
+export enum PostSort {
+  MostReactions = 'Most Reactions',
+  MostComments = 'Most Comments',
+  Newest = 'Newest',
+}
+
 export enum BrowsingMode {
   All = 'All',
   SFW = 'SFW',
@@ -64,4 +70,11 @@ export enum ImageResource {
 export enum TagSort {
   MostModels = 'Most Models',
   MostImages = 'Most Images',
+  MostPosts = 'Most Posts',
+}
+
+export enum ImageScanType {
+  Moderation,
+  Label,
+  FaceDetection,
 }

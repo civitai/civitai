@@ -9,35 +9,24 @@ import {
   Box,
   Sx,
   ActionIcon,
-  Tooltip,
   Menu,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { Prisma } from '@prisma/client';
-import {
-  IconDotsVertical,
-  IconEye,
-  IconEyeOff,
-  IconFlag,
-  IconLock,
-  IconPlus,
-  IconRating18Plus,
-} from '@tabler/icons';
+import { IconDotsVertical, IconEye, IconEyeOff, IconFlag, IconLock, IconPlus } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import React, { cloneElement, createContext, useContext, useState, useCallback } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { ReportImageNsfwButton } from '~/components/Image/ImageNsfwButton/ImageNsfwButton';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ImageModel } from '~/server/selectors/image.selector';
-import { SimpleTag } from '~/server/selectors/tag.selector';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { ReportEntity } from '~/server/schema/report.schema';
 import { useImageStore } from '~/store/images.store';
 import { isDefined } from '~/utils/type-guards';
 
 export type ImageGuardConnect = {
-  entityType: 'model' | 'modelVersion' | 'review' | 'user';
-  entityId: number;
+  entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post';
+  entityId: string | number;
 };
 // #region [store]
 type SfwStore = {
@@ -76,7 +65,7 @@ const useStore = create<SfwStore>()(
 
 // #region [ImageGuardContext]
 type ImageGuardState = {
-  images: CustomImageModel[];
+  images: ImageProps[];
   connect?: ImageGuardConnect;
 };
 const ImageGuardCtx = createContext<ImageGuardState>({} as any);
@@ -92,21 +81,31 @@ const useImageGuardContext = () => {
   - use case: home page, model card, toggle image - since I don't have all the images yet, I need to be able to still manage nsfw state for all the images without having the knowledge of which images are nsfw
 */
 
-type CustomImageModel = Omit<ImageModel, 'tags'> & {
+// type CustomImageModel = Omit<ImageModel, 'tags'> & {
+//   imageNsfw?: boolean;
+//   tags?: SimpleTag[];
+//   analysis?: Prisma.JsonValue;
+// };
+
+type ImageProps = {
+  id: number;
+  nsfw: boolean;
   imageNsfw?: boolean;
-  tags?: SimpleTag[];
-  analysis?: Prisma.JsonValue;
 };
 
-type ImageGuardProps = {
-  images: CustomImageModel[];
+type ImageGuardProps<T extends ImageProps> = {
+  images: T[];
   connect?: ImageGuardConnect;
-  render: (image: CustomImageModel, index: number) => React.ReactNode;
+  render: (image: T, index: number) => React.ReactNode;
   /** Make all images nsfw by default */
   nsfw?: boolean;
 };
 
-export function ImageGuard({ images: initialImages, connect, render }: ImageGuardProps) {
+export function ImageGuard<T extends ImageProps>({
+  images: initialImages,
+  connect,
+  render,
+}: ImageGuardProps<T>) {
   const images = initialImages.filter(isDefined).filter((x) => x.id);
 
   return (
@@ -121,7 +120,7 @@ export function ImageGuard({ images: initialImages, connect, render }: ImageGuar
 }
 
 const ImageGuardContentCtx = createContext<{
-  image: CustomImageModel;
+  image: ImageProps;
   safe: boolean;
   showToggleImage: boolean;
   showToggleConnect: boolean;
@@ -139,7 +138,7 @@ function ImageGuardContentProvider({
   image,
 }: {
   children: React.ReactNode;
-  image: CustomImageModel;
+  image: ImageProps;
 }) {
   const { connect } = useImageGuardContext();
   const currentUser = useCurrentUser();
@@ -164,8 +163,7 @@ function ImageGuardContentProvider({
   const showToggleConnect = !!connect && nsfw;
   const canToggleNsfw = shouldBlur;
   // Only show the quick nsfw report if the user is logged in and is a member or moderator
-  const showReportNsfw =
-    safe && !nsfw && !!currentUser && (currentUser.isMember || currentUser.isModerator === true);
+  const showReportNsfw = safe && !nsfw && !!currentUser;
 
   return (
     <ImageGuardContentCtx.Provider
@@ -197,54 +195,52 @@ ImageGuard.Safe = function Safe({ children }: { children?: React.ReactNode }) {
   return safe ? <>{children}</> : null;
 };
 
-ImageGuard.ReportNSFW = function ReportNSFW({
+ImageGuard.Report = function ReportImage({
   position = 'top-right',
-  sx,
-  className,
 }: {
   position?: 'static' | 'top-left' | 'top-right';
-  sx?: Sx;
-  className?: string;
 }) {
   const { image, showReportNsfw } = useImageGuardContentContext();
   if (!showReportNsfw) return null;
+
+  const handleClick = (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openContext('report', { entityType: ReportEntity.Image, entityId: image.id });
+  };
+
   return (
-    <ReportImageNsfwButton imageId={image.id}>
-      {({ onClick, isLoading }) => (
-        <Menu position="left-start" withArrow offset={-5}>
-          <Menu.Target>
-            <ActionIcon
-              variant="transparent"
-              loading={isLoading}
-              p={0}
-              onClick={(e: React.MouseEvent) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-              sx={{
-                width: 30,
-                position: 'absolute',
-                top: 5,
-                left: position === 'top-left' ? 5 : undefined,
-                right: position === 'top-right' ? 5 : undefined,
-                zIndex: 8,
-              }}
-            >
-              <IconDotsVertical
-                size={26}
-                color="#fff"
-                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-              />
-            </ActionIcon>
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={onClick}>
-              Report adult content
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
-      )}
-    </ReportImageNsfwButton>
+    <Menu position="left-start" withArrow offset={-5}>
+      <Menu.Target>
+        <ActionIcon
+          variant="transparent"
+          p={0}
+          onClick={(e: React.MouseEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          sx={{
+            width: 30,
+            position: 'absolute',
+            top: 5,
+            left: position === 'top-left' ? 5 : undefined,
+            right: position === 'top-right' ? 5 : undefined,
+            zIndex: 8,
+          }}
+        >
+          <IconDotsVertical
+            size={26}
+            color="#fff"
+            filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+          />
+        </ActionIcon>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleClick}>
+          Report image
+        </Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
   );
 };
 
@@ -459,3 +455,12 @@ function ImageGuardPopover({ children }: { children: React.ReactElement }) {
     },
   });
 }
+
+ImageGuard.Content = function ImageGuardContent({
+  children,
+}: {
+  children: ({ safe }: { safe: boolean }) => React.ReactElement;
+}) {
+  const { safe } = useImageGuardContentContext();
+  return children({ safe });
+};

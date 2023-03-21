@@ -40,6 +40,8 @@ import { GalleryDetailContextMenu } from '~/components/Gallery/GalleryDetailCont
 import Link from 'next/link';
 import { GalleryResources } from '~/components/Gallery/GalleryResources';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 
 export function GalleryDetail2() {
   const { classes, cx } = useStyles();
@@ -164,30 +166,14 @@ export function GalleryDetail2() {
                   icon={<IconAlertTriangle />}
                   color="yellow"
                   iconColor="yellow"
-                  title="Flagged by age detection"
+                  title="Flagged for review"
                   radius={0}
                   px="md"
                 >
                   {`This image won't be visible to other users until it's reviewed by our moderators.`}
                 </AlertWithIcon>
               )}
-              <Group spacing={4} px="md">
-                {image.tags
-                  .filter((x) => !x.automated)
-                  .map((tag) => (
-                    <Badge key={tag.id}>{tag.name}</Badge>
-                  ))}
-                {/* <Badge
-                  style={{ cursor: 'pointer' }}
-                  leftSection={
-                    <Center>
-                      <IconPlus size={14} />
-                    </Center>
-                  }
-                >
-                  Add Tags
-                </Badge> */}
-              </Group>
+              <VotableTags entityType="image" entityId={image.id} />
               <div>
                 <Divider
                   label="Discussion"

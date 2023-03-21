@@ -1,3 +1,15 @@
+import { applyBrowsingMode } from './../middleware.trpc';
+import {
+  getImageDetailHandler,
+  getImageHandler,
+  getImageResourcesHandler,
+  getInfiniteImagesHandler,
+} from './../controllers/image.controller';
+import {
+  updateImageSchema,
+  getInfiniteImagesSchema,
+  imageModerationSchema,
+} from './../schema/image.schema';
 import {
   deleteImageHandler,
   getGalleryImageDetailHandler,
@@ -7,6 +19,7 @@ import {
   getModelVersionImagesHandler,
   getReviewImagesHandler,
   setTosViolationHandler,
+  moderateImageHandler,
   updateImageHandler,
 } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
@@ -18,8 +31,15 @@ import {
   getReviewImagesSchema,
   imageUpdateSchema,
 } from '~/server/schema/image.schema';
-import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  middleware,
+  moderatorProcedure,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { applyUserPreferences } from '~/server/middleware.trpc';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -52,19 +72,32 @@ export const imageRouter = router({
   getReviewImages: publicProcedure.input(getReviewImagesSchema).query(getReviewImagesHandler),
   getGalleryImagesInfinite: publicProcedure
     .input(getGalleryImageSchema)
+    .use(applyUserPreferences())
     .query(getGalleryImagesInfiniteHandler),
-  getGalleryImages: publicProcedure.input(getGalleryImageSchema).query(getGalleryImagesHandler),
+  getGalleryImages: publicProcedure
+    .input(getGalleryImageSchema)
+    .use(applyUserPreferences())
+    .query(getGalleryImagesHandler),
   getGalleryImageDetail: publicProcedure.input(getByIdSchema).query(getGalleryImageDetailHandler),
   getConnectionData: publicProcedure
     .input(getImageConnectionsSchema)
     .query(getImageConnectionDataHandler),
-  update: protectedProcedure
-    .input(imageUpdateSchema)
-    .use(isOwnerOrModerator)
-    .mutation(updateImageHandler),
+  moderate: moderatorProcedure.input(imageModerationSchema).mutation(moderateImageHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteImageHandler),
   setTosViolation: protectedProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
+  update: protectedProcedure
+    .input(updateImageSchema)
+    .use(isOwnerOrModerator)
+    .mutation(updateImageHandler),
+  getDetail: publicProcedure.input(getByIdSchema).query(getImageDetailHandler),
+  getInfinite: publicProcedure
+    .input(getInfiniteImagesSchema)
+    .use(applyUserPreferences())
+    .use(applyBrowsingMode())
+    .query(getInfiniteImagesHandler),
+  get: publicProcedure.input(getByIdSchema).query(getImageHandler),
+  getResources: publicProcedure.input(getByIdSchema).query(getImageResourcesHandler),
 });

@@ -8,6 +8,8 @@ import {
   GetReportsInput,
   ReportEntity,
 } from '~/server/schema/report.schema';
+import { addTagVotes } from '~/server/services/tag.service';
+import { userCache } from '~/server/services/user-cache.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
@@ -69,8 +71,9 @@ export const createReport = async ({
   userId,
   type,
   id,
+  isModerator,
   ...data
-}: CreateReportInput & { userId: number }) => {
+}: CreateReportInput & { userId: number; isModerator?: boolean }) => {
   let isReportingLocked = false;
   if (type === ReportEntity.Image) {
     const image = await dbRead.imagesOnModels.findFirst({
@@ -107,29 +110,18 @@ export const createReport = async ({
     },
   };
 
-  const toUpdate = data.reason === ReportReason.NSFW ? { nsfw: true } : undefined;
-
   return dbWrite.$transaction(async (tx) => {
     switch (type) {
       case ReportEntity.Model:
+        if (data.reason === ReportReason.NSFW)
+          await addTagVotes({ userId, type, id, tags: data.details.tags, isModerator, vote: 1 });
+
         await tx.modelReport.create({
           data: {
             model: { connect: { id } },
             report,
           },
         });
-
-        if (data.reason === ReportReason.NSFW) {
-          await tx.image.updateMany({
-            where: { imagesOnModels: { modelVersion: { modelId: id } } },
-            data: { nsfw: true },
-          });
-        }
-
-        if (toUpdate) {
-          await tx.model.update({ where: { id }, data: toUpdate });
-        }
-
         break;
       case ReportEntity.Review:
         await dbWrite.reviewReport.create({
@@ -138,26 +130,6 @@ export const createReport = async ({
             report,
           },
         });
-        if (data.reason === ReportReason.NSFW) {
-          await tx.image.updateMany({
-            where: { imagesOnReviews: { reviewId: id } },
-            data: { nsfw: true },
-          });
-
-          const review = await tx.review.findUnique({
-            where: { id },
-            select: { model: { select: { poi: true } } },
-          });
-          if (review?.model?.poi && report.create) {
-            report.create.reason = ReportReason.TOSViolation;
-            await dbWrite.reviewReport.create({
-              data: {
-                review: { connect: { id } },
-                report,
-              },
-            });
-          }
-        }
         break;
       case ReportEntity.Comment:
         await dbWrite.commentReport.create({
@@ -166,9 +138,6 @@ export const createReport = async ({
             report,
           },
         });
-        if (toUpdate) {
-          await tx.comment.update({ where: { id }, data: toUpdate });
-        }
         break;
       case ReportEntity.CommentV2:
         await dbWrite.commentV2Report.create({
@@ -177,20 +146,17 @@ export const createReport = async ({
             report,
           },
         });
-        if (toUpdate) {
-          await tx.commentV2.update({ where: { id }, data: toUpdate });
-        }
         break;
       case ReportEntity.Image:
+        if (data.reason === ReportReason.NSFW)
+          addTagVotes({ userId, type, id, tags: data.details.tags, isModerator, vote: 1 });
+
         await tx.imageReport.create({
           data: {
             image: { connect: { id } },
             report,
           },
         });
-        if (toUpdate) {
-          await tx.image.update({ where: { id }, data: toUpdate });
-        }
         break;
       default:
         throw new Error('unhandled report type');

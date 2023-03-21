@@ -21,23 +21,19 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   meta: true,
   generationProcess: true,
   needsReview: true,
-  tags: { select: { tag: { select: simpleTagSelect }, automated: true } },
+  tags: {
+    select: { tag: { select: simpleTagSelect }, automated: true, needsReview: true },
+    where: { disabled: false },
+  },
 });
 
 const { name, ...imageSelectWithoutName } = imageSelect;
 export { imageSelectWithoutName };
 
 const image = Prisma.validator<Prisma.ImageArgs>()({ select: imageSelect });
-
 export type ImageModel = Prisma.ImageGetPayload<typeof image>;
 
-export const imageGallerySelect = ({
-  user,
-  needsReview,
-}: {
-  user?: SessionUser;
-  needsReview?: boolean;
-}) =>
+export const imageGallerySelect = ({ user }: { user?: SessionUser }) =>
   Prisma.validator<Prisma.ImageSelect>()({
     ...imageSelect,
     createdAt: true,
@@ -65,7 +61,6 @@ export const imageGallerySelect = ({
       take: !user?.id ? 0 : undefined,
       select: getReactionsSelect,
     },
-    analysis: needsReview ? true : false,
   });
 
 export const prepareCreateImage = (image: ImageUploadProps) => {
@@ -92,6 +87,7 @@ export const prepareCreateImage = (image: ImageUploadProps) => {
           })),
         }
       : undefined,
+    resources: undefined, // TODO.posts - this is a temp value to stop typescript from complaining
   };
 
   return payload;
@@ -119,6 +115,7 @@ export const prepareUpdateImage = (image: ImageUploadProps) => {
           // })),
         }
       : undefined,
+    resources: undefined, // TODO.posts - this is a temp value to stop typescript from complaining
   };
   return payload;
 };

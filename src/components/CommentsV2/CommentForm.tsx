@@ -31,7 +31,7 @@ export const CommentForm = ({
   replyTo?: SimpleUser;
 }) => {
   const { classes } = useStyles();
-  const { entityId, entityType, isMuted, data, setCreated } = useCommentsContext();
+  const { entityId, entityType, isMuted, data, setCreated, limit } = useCommentsContext();
   const editorRef = useRef<EditorCommandsRef | null>(null);
   const replySetRef = useRef(false);
   const [focused, setFocused] = useState(autoFocus);
@@ -71,9 +71,10 @@ export const CommentForm = ({
       // if it has an id, just set the data with state
       if (request.id) {
         queryUtils.commentv2.getInfinite.setInfiniteData(
-          { entityId, entityType },
+          { entityId, entityType, limit },
           produce((data) => {
             if (!data) {
+              console.log('no data');
               data = {
                 pages: [],
                 pageParams: [],
@@ -91,6 +92,14 @@ export const CommentForm = ({
               );
               if (pageIndex > -1 && commentIndex > -1)
                 data.pages[pageIndex].comments[commentIndex].content = request.content;
+              else
+                setCreated(
+                  produce((state) => {
+                    const index = state.findIndex((x) => x.id === request.id);
+                    if (index === -1) state.push(response);
+                    state[index].content = response.content;
+                  })
+                );
             }
           })
         );

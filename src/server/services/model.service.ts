@@ -8,13 +8,15 @@ import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
+import { GetAllModelsOutput, ModelInput, ModelUpsertInput } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import {
   imageSelect,
   prepareCreateImage,
   prepareUpdateImage,
 } from '~/server/selectors/image.selector';
+import { modelWithDetailsSelect } from '~/server/selectors/model.selector';
+import { ingestNewImages } from '~/server/services/image.service';
 import { prepareFile } from '~/utils/file-helpers';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
@@ -56,6 +58,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     hidden,
     browsingMode,
     excludedTagIds,
+    excludedUserIds,
     excludedIds,
     checkpointType,
     status,
@@ -112,12 +115,15 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       ],
     });
   }
+  if (excludedUserIds && excludedUserIds.length && !username) {
+    AND.push({ user: { id: { notIn: excludedUserIds } } });
+  }
   if (excludedTagIds && excludedTagIds.length && !username) {
     AND.push({
-      tagsOnModels: { every: { tagId: { notIn: excludedTagIds } } },
+      tagsOnModels: { none: { tagId: { in: excludedTagIds } } },
     });
   }
-  if (excludedIds) {
+  if (excludedIds && !hidden && !username) {
     AND.push({ id: { notIn: excludedIds } });
   }
   if (checkpointType && (!types?.length || types?.includes('Checkpoint'))) {
@@ -151,7 +157,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       ? { some: { userId: sessionUser?.id, type: 'Hide' } }
       : undefined,
     AND: AND.length ? AND : undefined,
-    modelVersions: baseModels?.length ? { some: { baseModel: { in: baseModels } } } : undefined,
+    modelVersions: { some: { baseModel: baseModels?.length ? { in: baseModels } : undefined } },
   };
 
   const items = await dbRead.model.findMany({
@@ -238,29 +244,81 @@ const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
   });
 };
 
+export const upsertModel = ({
+  id,
+  tagsOnModels,
+  ...data
+}: ModelUpsertInput & { userId: number }) => {
+  const select = modelWithDetailsSelect;
+
+  if (!id)
+    return dbWrite.model.create({
+      select,
+      data: {
+        ...data,
+        tagsOnModels: tagsOnModels
+          ? {
+              create: tagsOnModels.map((tag) => {
+                const name = tag.name.toLowerCase().trim();
+                return {
+                  tag: {
+                    connectOrCreate: {
+                      where: { name },
+                      create: { name, target: [TagTarget.Model] },
+                    },
+                  },
+                };
+              }),
+            }
+          : undefined,
+      },
+    });
+  else
+    return dbWrite.model.update({
+      select,
+      where: { id },
+      data: {
+        ...data,
+        tagsOnModels: tagsOnModels
+          ? {
+              deleteMany: {
+                tagId: {
+                  notIn: tagsOnModels.filter(isTag).map((x) => x.id),
+                },
+              },
+              connectOrCreate: tagsOnModels.filter(isTag).map((tag) => ({
+                where: { modelId_tagId: { tagId: tag.id, modelId: id as number } },
+                create: { tagId: tag.id },
+              })),
+              create: tagsOnModels.filter(isNotTag).map((tag) => {
+                const name = tag.name.toLowerCase().trim();
+                return {
+                  tag: {
+                    connectOrCreate: {
+                      where: { name },
+                      create: { name, target: [TagTarget.Model] },
+                    },
+                  },
+                };
+              }),
+            }
+          : undefined,
+      },
+    });
+};
+
 export const createModel = async ({
   modelVersions,
   userId,
   tagsOnModels,
   ...data
 }: ModelInput & { userId: number }) => {
-  // TODO Cleaning: Merge Add & Update + Transaction
-  // Create prisma transaction
-  // Upsert Model: separate function
-  // Upsert ModelVersions: separate function
-  // Upsert Tags: separate function
-  // Upsert Images: separate function
-  // Upsert ImagesOnModels: separate function
-  // Upsert ModelFiles: separate function
-  // 👆 Ideally the whole thing will only be this many lines
-  //    All of the logic would be in the separate functions
-
   const parsedModelVersions = prepareModelVersions(modelVersions);
   const allImagesNSFW = parsedModelVersions
     .flatMap((version) => version.images)
     .every((image) => image.nsfw);
 
-  return dbWrite.$transaction(async (tx) => {
+  const model = await dbWrite.$transaction(async (tx) => {
     if (tagsOnModels)
       await tx.tag.updateMany({
         where: {
@@ -306,7 +364,7 @@ export const createModel = async ({
                         },
                       })),
                     },
-                  },
+                  } as Prisma.ImageUncheckedCreateWithoutImagesOnModelsInput,
                 },
               })),
             },
@@ -328,8 +386,13 @@ export const createModel = async ({
             }
           : undefined,
       },
+      select: { id: true },
     });
   });
+
+  await ingestNewImages({ modelId: model.id });
+
+  return model;
 };
 
 export const updateModel = async ({
@@ -412,7 +475,7 @@ export const updateModel = async ({
       data: { target: { push: TagTarget.Model } },
     });
 
-  return dbWrite.model.update({
+  const model = await dbWrite.model.update({
     where: { id },
     data: {
       ...data,
@@ -548,5 +611,11 @@ export const updateModel = async ({
           }
         : undefined,
     },
+    select: { id: true },
   });
+
+  // Request scan for new images
+  await ingestNewImages({ modelId: model.id });
+
+  return model;
 };

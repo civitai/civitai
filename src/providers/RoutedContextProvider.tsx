@@ -1,10 +1,14 @@
 import React, { ComponentType, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Router, { NextRouter, useRouter } from 'next/router';
-import Link from 'next/link';
 import { QS } from '~/utils/qs';
 import { getHasClientHistory } from '~/store/ClientHistoryStore';
-import { useDidUpdate, useWindowEvent } from '@mantine/hooks';
+import { create } from 'zustand';
+import { Freeze } from 'react-freeze';
+import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
+import { NextLink } from '@mantine/next';
+
+import { Anchor } from '@mantine/core';
 
 const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
 const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLightbox'));
@@ -12,6 +16,7 @@ const ReviewEdit = dynamic(() => import('~/routed-context/modals/ReviewEdit'));
 const ReviewThread = dynamic(() => import('~/routed-context/modals/ReviewThread'));
 const CommentThread = dynamic(() => import('~/routed-context/modals/CommentThread'));
 const GalleryDetailModal = dynamic(() => import('~/routed-context/modals/GalleryDetailModal'));
+const ImageDetailModal = dynamic(() => import('~/routed-context/modals/ImageDetailModal'));
 const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
 const ModelEdit = dynamic(() => import('~/routed-context/modals/ModelEdit'));
 
@@ -94,15 +99,33 @@ const registry = {
       ];
     },
   },
+  imageDetailModal: {
+    Component: ImageDetailModal,
+    resolve: ({ imageId, ...args }: React.ComponentProps<typeof ImageDetailModal>) => {
+      const slug = Router.query.slug ?? 'placeholder';
+      return [
+        {
+          query: { ...Router.query, slug, imageId, ...args, modal: 'imageDetailModal' },
+        },
+        {
+          pathname: `/images/${imageId}`,
+          query: args,
+        },
+        { shallow: true },
+      ];
+    },
+  },
 };
 
 export function openRoutedContext<TName extends keyof typeof registry>(
   modal: TName,
-  props: React.ComponentProps<typeof registry[TName]['Component']>,
+  props: React.ComponentProps<(typeof registry)[TName]['Component']>,
   optionsOverride?: { replace?: boolean }
 ) {
+  useFreezeStore.getState().setFreeze(true);
   const resolve = registry[modal].resolve;
   const [url, as, options] = resolve(props as any) as Parameters<NextRouter['push']>;
+  console.log({ url, as, options });
   Router.push(url, as, { ...options, ...optionsOverride });
 }
 
@@ -121,6 +144,11 @@ export function closeRoutedContext() {
 export function RoutedContextProvider2() {
   const router = useRouter();
   const modal = router.query.modal;
+  const setFreeze = useFreezeStore((state) => state.setFreeze);
+
+  useEffect(() => {
+    if (!modal) setFreeze(false);
+  }, [modal]) //eslint-disable-line
 
   if (!modal) return null;
 
@@ -133,20 +161,67 @@ type OpenRoutedContextProps<TName extends keyof typeof registry> = {
   modal: TName;
   options?: { replace?: boolean };
   children: React.ReactElement;
-} & React.ComponentProps<typeof registry[TName]['Component']>;
+} & React.ComponentProps<(typeof registry)[TName]['Component']>;
 
+// TODO.posts - replace instances of AnchorNoTravel with this
 export function RoutedContextLink<TName extends keyof typeof registry>({
   modal,
-  options: optionsOverride,
+  options: initialOptions,
   children,
   ...props
 }: OpenRoutedContextProps<TName>) {
-  const resolve = registry[modal].resolve;
-  const [url, as, options] = resolve(props as any) as Parameters<NextRouter['push']>;
+  const [url, setUrl] = useState<any>();
+  const [as, setAs] = useState<any>();
+  const [options, setOptions] = useState(initialOptions);
+  const setFreeze = useFreezeStore((state) => state.setFreeze);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const resolve = registry[modal].resolve;
+    const [url, asPath, options] = resolve(props as any) as Parameters<NextRouter['push']>;
+    setUrl(url as string);
+    setAs(asPath as string);
+    setOptions((state) => ({ ...state, ...options }));
+  }, []);
+
+  const handleClick = () => openRoutedContext(modal, props as any, options);
+
+  if (!url || !options) return React.cloneElement(children, { onClick: handleClick });
   return (
-    <Link href={url} as={as} {...options}>
+    <NextLink href={url} as={as} {...options} onClick={() => setFreeze(true)}>
       {children}
-    </Link>
+    </NextLink>
+  );
+}
+
+export const useFreezeStore = create<{
+  freeze: boolean;
+  placeholder?: React.ReactNode;
+  setFreeze: (freeze: boolean) => void;
+}>((set, get) => ({
+  freeze: false,
+  placeholder: undefined,
+  setFreeze: (freeze: boolean) =>
+    set((state) => {
+      if (state.freeze === freeze) return {};
+      let placeholder: React.ReactNode | undefined;
+      if (freeze) {
+        const placeholderContent = document.getElementById('freezeBlock')?.innerHTML;
+        placeholder = placeholderContent ? (
+          <div dangerouslySetInnerHTML={{ __html: placeholderContent }} />
+        ) : undefined;
+      }
+
+      return { freeze, placeholder };
+    }),
+}));
+
+export function FreezeProvider({ children }: { children: React.ReactElement }) {
+  const freeze = useFreezeStore((state) => state.freeze);
+  const placeholder = useFreezeStore((state) => state.placeholder);
+  return (
+    <Freeze freeze={freeze} placeholder={placeholder}>
+      <div id="freezeBlock">{children}</div>
+    </Freeze>
   );
 }

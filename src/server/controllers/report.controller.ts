@@ -25,7 +25,7 @@ export function createReportHandler({
   ctx: DeepNonNullable<Context>;
 }) {
   try {
-    return createReport({ ...input, userId: ctx.user.id });
+    return createReport({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator });
   } catch (e) {
     throw throwDbError(e);
   }

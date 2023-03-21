@@ -11,6 +11,12 @@ declare global {
     ? R
     : any;
 
+  type DeepPartial<T> = T extends object
+    ? {
+        [P in keyof T]?: DeepPartial<T[P]>;
+      }
+    : T;
+
   type MixedObject = Record<string, any>;
   type BaseEntity = { id: number | string } & MixedObject;
 
@@ -39,4 +45,19 @@ declare global {
 
   // eslint-disable-next-line no-var, vars-on-top
   var navigation: { currentEntry: { index: number } };
+
+  type TrackedFile = {
+    file: File;
+    progress: number;
+    uploaded: number;
+    size: number;
+    speed: number;
+    timeRemaining: number;
+    name: string;
+    status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
+    abort: () => void;
+    uuid: string;
+    meta?: Record<string, unknown>;
+    id?: number;
+  };
 }

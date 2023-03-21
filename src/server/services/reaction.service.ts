@@ -41,6 +41,11 @@ const getReaction = async ({
         where: { userId, reaction, imageId: entityId },
         select: { id: true },
       });
+    case 'post':
+      return await dbRead.postReaction.findFirst({
+        where: { userId, reaction, postId: entityId },
+        select: { id: true },
+      });
     default:
       throw throwBadRequestError();
   }
@@ -71,6 +76,10 @@ const deleteReaction = async ({
       await dbWrite.imageReaction.deleteMany({ where: { id } });
       await queueMetricUpdate('Image', entityId);
       return;
+    case 'post':
+      await dbWrite.postReaction.deleteMany({ where: { id } });
+      await queueMetricUpdate('Post', entityId);
+      return;
     default:
       throw throwBadRequestError();
   }
@@ -100,6 +109,11 @@ const createReaction = async ({
     case 'image':
       return await dbWrite.imageReaction.create({
         data: { ...data, imageId: entityId },
+        select: { reaction: true },
+      });
+    case 'post':
+      return await dbWrite.postReaction.create({
+        data: { ...data, postId: entityId },
         select: { reaction: true },
       });
     default:

@@ -30,34 +30,17 @@ export function SettingsCard() {
         <Switch
           name="autoplayGifs"
           label="Autoplay GIFs"
-          defaultChecked={user.autoplayGifs}
+          checked={user.autoplayGifs}
           disabled={isLoading}
           onChange={(e) => mutate({ ...user, autoplayGifs: e.target.checked })}
         />
-        <Switch
-          name="showNsfw"
-          label="Show me adult content"
-          description="If you are not of legal age to view adult content, please do not enable this option"
-          defaultChecked={user.showNsfw}
-          disabled={isLoading}
-          onChange={(e) => mutate({ ...user, showNsfw: e.target.checked })}
-        />
-        {user.showNsfw && (
-          <Switch
-            name="blurNsfw"
-            label="Blur adult content"
-            defaultChecked={user.blurNsfw}
-            disabled={isLoading}
-            onChange={(e) => mutate({ ...user, blurNsfw: e.target.checked })}
-          />
-        )}
         <Divider label="Model File Preferences" mb={-12} />
         <Group noWrap grow>
           <Select
             label="Preferred Format"
             name="fileFormat"
             data={validModelFormats}
-            defaultValue={user.preferredModelFormat ?? ModelFileFormat.SafeTensor}
+            value={user.preferredModelFormat ?? ModelFileFormat.SafeTensor}
             onChange={(value: ModelFileFormat) => mutate({ ...user, preferredModelFormat: value })}
             disabled={isLoading}
           />
@@ -65,7 +48,7 @@ export function SettingsCard() {
             label="Preferred Size"
             name="fileFormat"
             data={['Full', 'Pruned']}
-            defaultValue={user.preferredPrunedModel ? 'Pruned' : 'Full'}
+            value={user.preferredPrunedModel ? 'Pruned' : 'Full'}
             onChange={(value) => mutate({ ...user, preferredPrunedModel: value === 'Pruned' })}
             disabled={isLoading}
           />

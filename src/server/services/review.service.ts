@@ -16,6 +16,7 @@ import {
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 import { getAllReviewsSelect } from '~/server/selectors/review.selector';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import { ingestNewImages } from '~/server/services/image.service';
 
 export const getReviews = <TSelect extends Prisma.ReviewSelect>({
   input: { limit = DEFAULT_PAGE_SIZE, page, cursor, modelId, modelVersionId, userId, sort },
@@ -120,7 +121,7 @@ export const createOrUpdateReview = async ({
   const imagesToUpdate = imagesWithIndex.filter((x) => !!x.id);
   const imagesToCreate = imagesWithIndex.filter((x) => !x.id);
 
-  return dbWrite.review.upsert({
+  const review = await dbWrite.review.upsert({
     where: { id: id ?? -1 },
     create: {
       ...reviewInput,
@@ -171,6 +172,8 @@ export const createOrUpdateReview = async ({
       modelId: true,
     },
   });
+
+  await ingestNewImages({ reviewId: review.id });
 };
 
 export const deleteReviewById = async ({ id }: GetByIdInput) => {
@@ -186,7 +189,7 @@ export const deleteReviewById = async ({ id }: GetByIdInput) => {
 };
 
 export const updateReviewById = ({ id, data }: { id: number; data: Prisma.ReviewUpdateInput }) => {
-  return dbWrite.review.update({ where: { id }, data, select: getAllReviewsSelect() });
+  return dbWrite.review.update({ where: { id }, data, select: getAllReviewsSelect });
 };
 
 export const convertReviewToComment = ({

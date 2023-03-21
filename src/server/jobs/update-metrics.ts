@@ -842,7 +842,7 @@ export const updateMetricsJob = createJob(
 
       -- upsert metrics for all affected
       -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "TagMetric" ("tagId", timeframe, "followerCount", "hiddenCount", "modelCount", "imageCount")
+      INSERT INTO "TagMetric" ("tagId", timeframe, "followerCount", "hiddenCount", "modelCount", "imageCount", "postCount")
       SELECT
         m.id,
         tf.timeframe,
@@ -873,7 +873,14 @@ export const updateMetricsJob = createJob(
           WHEN tf.timeframe = 'Month' THEN month_image_count
           WHEN tf.timeframe = 'Week' THEN week_image_count
           WHEN tf.timeframe = 'Day' THEN day_image_count
-        END AS image_count
+        END AS image_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN post_count
+          WHEN tf.timeframe = 'Year' THEN year_post_count
+          WHEN tf.timeframe = 'Month' THEN month_post_count
+          WHEN tf.timeframe = 'Week' THEN week_post_count
+          WHEN tf.timeframe = 'Day' THEN day_post_count
+        END AS post_count
       FROM
       (
         SELECT
@@ -897,7 +904,12 @@ export const updateMetricsJob = createJob(
           COALESCE(i.year_image_count, 0) AS year_image_count,
           COALESCE(i.month_image_count, 0) AS month_image_count,
           COALESCE(i.week_image_count, 0) AS week_image_count,
-          COALESCE(i.day_image_count, 0) AS day_image_count
+          COALESCE(i.day_image_count, 0) AS day_image_count,
+          COALESCE(p.post_count, 0) AS post_count,
+          COALESCE(p.year_post_count, 0) AS year_post_count,
+          COALESCE(p.month_post_count, 0) AS month_post_count,
+          COALESCE(p.week_post_count, 0) AS week_post_count,
+          COALESCE(p.day_post_count, 0) AS day_post_count
         FROM affected a
         LEFT JOIN (
           SELECT
@@ -925,6 +937,18 @@ export const updateMetricsJob = createJob(
         ) i ON i.id = a.id
         LEFT JOIN (
           SELECT
+            "tagId" id,
+            COUNT("postId") post_count,
+            SUM(IIF(p."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_post_count,
+            SUM(IIF(p."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_post_count,
+            SUM(IIF(p."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_post_count,
+            SUM(IIF(p."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_post_count
+          FROM "TagsOnPost" top
+          JOIN "Post" p ON p.id = top."postId"
+          GROUP BY "tagId"
+        ) p ON p.id = a.id
+        LEFT JOIN (
+          SELECT
             "tagId"                                                                      AS id,
             SUM(IIF(type = 'Follow', 1, 0))                                                     AS follower_count,
             SUM(IIF(type = 'Follow' AND "createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_follower_count,
@@ -944,9 +968,180 @@ export const updateMetricsJob = createJob(
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       ON CONFLICT ("tagId", timeframe) DO UPDATE
-        SET "followerCount" = EXCLUDED."followerCount", "modelCount" = EXCLUDED."modelCount", "hiddenCount" = EXCLUDED."hiddenCount";
+        SET "followerCount" = EXCLUDED."followerCount", "modelCount" = EXCLUDED."modelCount", "hiddenCount" = EXCLUDED."hiddenCount", "postCount" = EXCLUDED."postCount";
     `);
       await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Tag'`);
+    };
+
+    const updatePostMetrics = async () => {
+      await dbWrite.$executeRawUnsafe(`
+        -- Get all post engagements that have happened since then that affect metrics
+        WITH recent_engagements AS
+        (
+          SELECT
+            "postId" AS id
+          FROM "PostReaction"
+          WHERE "createdAt" > '${lastUpdate}'
+
+          UNION
+
+          SELECT t."postId" as id
+          FROM "Thread" t
+          JOIN "CommentV2" c ON c."threadId" = t.id
+          WHERE t."postId" IS NOT NULL AND c."createdAt" > '${lastUpdate}'
+
+          UNION
+
+          SELECT
+            "id"
+          FROM "MetricUpdateQueue"
+          WHERE type = 'Post'
+        ),
+        -- Get all affected users
+        affected AS
+        (
+            SELECT DISTINCT
+                r.id
+            FROM recent_engagements r
+            WHERE r.id IS NOT NULL
+        )
+
+        -- upsert metrics for all affected users
+        -- perform a one-pass table scan producing all metrics for all affected users
+        INSERT INTO "PostMetric" ("postId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount", "commentCount")
+        SELECT
+          m.id,
+          tf.timeframe,
+          CASE
+            WHEN tf.timeframe = 'AllTime' THEN like_count
+            WHEN tf.timeframe = 'Year' THEN year_like_count
+            WHEN tf.timeframe = 'Month' THEN month_like_count
+            WHEN tf.timeframe = 'Week' THEN week_like_count
+            WHEN tf.timeframe = 'Day' THEN day_like_count
+          END AS like_count,
+          CASE
+            WHEN tf.timeframe = 'AllTime' THEN dislike_count
+            WHEN tf.timeframe = 'Year' THEN year_dislike_count
+            WHEN tf.timeframe = 'Month' THEN month_dislike_count
+            WHEN tf.timeframe = 'Week' THEN week_dislike_count
+            WHEN tf.timeframe = 'Day' THEN day_dislike_count
+          END AS dislike_count,
+          CASE
+            WHEN tf.timeframe = 'AllTime' THEN heart_count
+            WHEN tf.timeframe = 'Year' THEN year_heart_count
+            WHEN tf.timeframe = 'Month' THEN month_heart_count
+            WHEN tf.timeframe = 'Week' THEN week_heart_count
+            WHEN tf.timeframe = 'Day' THEN day_heart_count
+          END AS heart_count,
+          CASE
+            WHEN tf.timeframe = 'AllTime' THEN laugh_count
+            WHEN tf.timeframe = 'Year' THEN year_laugh_count
+            WHEN tf.timeframe = 'Month' THEN month_laugh_count
+            WHEN tf.timeframe = 'Week' THEN week_laugh_count
+            WHEN tf.timeframe = 'Day' THEN day_laugh_count
+          END AS laugh_count,
+          CASE
+            WHEN tf.timeframe = 'AllTime' THEN cry_count
+            WHEN tf.timeframe = 'Year' THEN year_cry_count
+            WHEN tf.timeframe = 'Month' THEN month_cry_count
+            WHEN tf.timeframe = 'Week' THEN week_cry_count
+            WHEN tf.timeframe = 'Day' THEN day_cry_count
+          END AS cry_count,
+          CASE
+            WHEN tf.timeframe = 'AllTime' THEN comment_count
+            WHEN tf.timeframe = 'Year' THEN year_comment_count
+            WHEN tf.timeframe = 'Month' THEN month_comment_count
+            WHEN tf.timeframe = 'Week' THEN week_comment_count
+            WHEN tf.timeframe = 'Day' THEN day_comment_count
+          END AS comment_count
+        FROM
+        (
+          SELECT
+            q.id,
+            COALESCE(r.heart_count, 0) AS heart_count,
+            COALESCE(r.year_heart_count, 0) AS year_heart_count,
+            COALESCE(r.month_heart_count, 0) AS month_heart_count,
+            COALESCE(r.week_heart_count, 0) AS week_heart_count,
+            COALESCE(r.day_heart_count, 0) AS day_heart_count,
+            COALESCE(r.laugh_count, 0) AS laugh_count,
+            COALESCE(r.year_laugh_count, 0) AS year_laugh_count,
+            COALESCE(r.month_laugh_count, 0) AS month_laugh_count,
+            COALESCE(r.week_laugh_count, 0) AS week_laugh_count,
+            COALESCE(r.day_laugh_count, 0) AS day_laugh_count,
+            COALESCE(r.cry_count, 0) AS cry_count,
+            COALESCE(r.year_cry_count, 0) AS year_cry_count,
+            COALESCE(r.month_cry_count, 0) AS month_cry_count,
+            COALESCE(r.week_cry_count, 0) AS week_cry_count,
+            COALESCE(r.day_cry_count, 0) AS day_cry_count,
+            COALESCE(r.dislike_count, 0) AS dislike_count,
+            COALESCE(r.year_dislike_count, 0) AS year_dislike_count,
+            COALESCE(r.month_dislike_count, 0) AS month_dislike_count,
+            COALESCE(r.week_dislike_count, 0) AS week_dislike_count,
+            COALESCE(r.day_dislike_count, 0) AS day_dislike_count,
+            COALESCE(r.like_count, 0) AS like_count,
+            COALESCE(r.year_like_count, 0) AS year_like_count,
+            COALESCE(r.month_like_count, 0) AS month_like_count,
+            COALESCE(r.week_like_count, 0) AS week_like_count,
+            COALESCE(r.day_like_count, 0) AS day_like_count,
+            COALESCE(c.comment_count, 0) AS comment_count,
+            COALESCE(c.year_comment_count, 0) AS year_comment_count,
+            COALESCE(c.month_comment_count, 0) AS month_comment_count,
+            COALESCE(c.week_comment_count, 0) AS week_comment_count,
+            COALESCE(c.day_comment_count, 0) AS day_comment_count
+          FROM affected q
+          LEFT JOIN (
+            SELECT
+              ic."postId" AS id,
+              COUNT(*) AS comment_count,
+              SUM(IIF(v."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_comment_count,
+              SUM(IIF(v."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_comment_count,
+              SUM(IIF(v."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_comment_count,
+              SUM(IIF(v."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_comment_count
+            FROM "Thread" ic
+            JOIN "CommentV2" v ON ic."id" = v."threadId"
+            WHERE ic."postId" IS NOT NULL
+            GROUP BY ic."postId"
+          ) c ON q.id = c.id
+          LEFT JOIN (
+            SELECT
+              pr."postId" AS id,
+              SUM(IIF(pr.reaction = 'Heart', 1, 0)) AS heart_count,
+              SUM(IIF(pr.reaction = 'Heart' AND pr."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_heart_count,
+              SUM(IIF(pr.reaction = 'Heart' AND pr."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_heart_count,
+              SUM(IIF(pr.reaction = 'Heart' AND pr."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_heart_count,
+              SUM(IIF(pr.reaction = 'Heart' AND pr."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_heart_count,
+              SUM(IIF(pr.reaction = 'Like', 1, 0)) AS like_count,
+              SUM(IIF(pr.reaction = 'Like' AND pr."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_like_count,
+              SUM(IIF(pr.reaction = 'Like' AND pr."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_like_count,
+              SUM(IIF(pr.reaction = 'Like' AND pr."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_like_count,
+              SUM(IIF(pr.reaction = 'Like' AND pr."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_like_count,
+              SUM(IIF(pr.reaction = 'Dislike', 1, 0)) AS dislike_count,
+              SUM(IIF(pr.reaction = 'Dislike' AND pr."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_dislike_count,
+              SUM(IIF(pr.reaction = 'Dislike' AND pr."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_dislike_count,
+              SUM(IIF(pr.reaction = 'Dislike' AND pr."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_dislike_count,
+              SUM(IIF(pr.reaction = 'Dislike' AND pr."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_dislike_count,
+              SUM(IIF(pr.reaction = 'Cry', 1, 0)) AS cry_count,
+              SUM(IIF(pr.reaction = 'Cry' AND pr."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_cry_count,
+              SUM(IIF(pr.reaction = 'Cry' AND pr."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_cry_count,
+              SUM(IIF(pr.reaction = 'Cry' AND pr."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_cry_count,
+              SUM(IIF(pr.reaction = 'Cry' AND pr."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_cry_count,
+              SUM(IIF(pr.reaction = 'Laugh', 1, 0)) AS laugh_count,
+              SUM(IIF(pr.reaction = 'Laugh' AND pr."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_laugh_count,
+              SUM(IIF(pr.reaction = 'Laugh' AND pr."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_laugh_count,
+              SUM(IIF(pr.reaction = 'Laugh' AND pr."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_laugh_count,
+              SUM(IIF(pr.reaction = 'Laugh' AND pr."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_laugh_count
+            FROM "PostReaction" pr
+            GROUP BY pr."postId"
+          ) r ON q.id = r.id
+        ) m
+        CROSS JOIN (
+          SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+        ) tf
+        ON CONFLICT ("postId", timeframe) DO UPDATE
+          SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount";
+      `);
+
+      await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Post';`);
     };
 
     const updateImageMetrics = async () => {
@@ -1134,6 +1329,9 @@ export const updateMetricsJob = createJob(
     const refreshImageRank = async () =>
       await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ImageRank"');
 
+    const refreshPostRank = async () =>
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "PostRank"');
+
     const clearDayMetrics = async () =>
       await Promise.all(
         [
@@ -1161,6 +1359,7 @@ export const updateMetricsJob = createJob(
     await updateUserMetrics();
     await updateTagMetrics();
     await updateImageMetrics();
+    await updatePostMetrics();
     await refreshModelRank();
     await refreshVersionModelRank();
     await refreshTagRank();
@@ -1179,6 +1378,7 @@ export const updateMetricsJob = createJob(
     const shouldUpdateRanks = lastRankDate.getTime() + RANK_UPDATE_DELAY <= new Date().getTime();
     if (shouldUpdateRanks) {
       await refreshImageRank();
+      await refreshPostRank();
       await refreshUserRank();
       log('Updated ranks');
       await dbWrite?.keyValue.upsert({
@@ -1193,7 +1393,15 @@ export const updateMetricsJob = createJob(
   }
 );
 
-type MetricUpdateType = 'Model' | 'ModelVersion' | 'Answer' | 'Question' | 'User' | 'Tag' | 'Image';
+type MetricUpdateType =
+  | 'Model'
+  | 'ModelVersion'
+  | 'Answer'
+  | 'Question'
+  | 'User'
+  | 'Tag'
+  | 'Image'
+  | 'Post';
 export const queueMetricUpdate = async (type: MetricUpdateType, id: number) => {
   try {
     await dbWrite.metricUpdateQueue.createMany({ data: { type, id } });

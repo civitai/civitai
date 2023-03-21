@@ -4,8 +4,8 @@ import { z } from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server.mjs';
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
 import { chunk } from 'lodash';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 const stringToNumberArraySchema = z
   .string()
@@ -38,7 +38,7 @@ export default ModEndpoint(
     const images = await dbWrite.image.findMany({
       where,
       take: imageCount,
-      select: { url: true, id: true, width: true, name: true },
+      select: { url: true, id: true, width: true, name: true, mimeType: true },
     });
 
     if (!wait) res.status(200).json({ images: images.length });
@@ -54,7 +54,8 @@ export default ModEndpoint(
       await Promise.all(
         batch.map(async (image) => {
           const width = Math.min(450, image.width ?? 450);
-          const anim = image.name?.endsWith('.gif') ? false : undefined;
+          const anim =
+            image.name?.endsWith('.gif') || image.mimeType == 'image/gif' ? false : undefined;
           const gamma = anim === false ? 0.99 : undefined;
           const url = getEdgeUrl(image.url, { width, anim, gamma });
 

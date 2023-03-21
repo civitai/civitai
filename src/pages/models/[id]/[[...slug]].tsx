@@ -19,7 +19,6 @@ import {
   Rating,
   AspectRatio,
   Paper,
-  Anchor,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { ModelStatus } from '@prisma/client';
@@ -52,7 +51,7 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
@@ -980,7 +979,7 @@ function ModelCarousel({
             <Center style={{ height: '100%', width: '100%' }}>
               <div style={{ width: '100%', position: 'relative' }}>
                 <ImageGuard.ToggleConnect />
-                <ImageGuard.ReportNSFW />
+                <ImageGuard.Report />
                 <ImageGuard.Unsafe>
                   <AspectRatio
                     ratio={(image.width ?? 1) / (image.height ?? 1)}

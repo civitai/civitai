@@ -10,11 +10,11 @@ import { NotificationsCard } from '~/components/Account/NotificationsCard';
 import { ProfileCard } from '~/components/Account/ProfileCard';
 import { SettingsCard } from '~/components/Account/SettingsCard';
 import { SubscriptionCard } from '~/components/Account/SubscriptionCard';
-import { TagsCard } from '~/components/Account/TagsCard';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { ModerationCard } from '~/components/Account/ModerationCard';
 
 export default function Account({ providers }: Props) {
   const { apiKeys } = useFeatureFlags();
@@ -36,7 +36,7 @@ export default function Account({ providers }: Props) {
           <ProfileCard />
           <SocialProfileCard />
           <SettingsCard />
-          <TagsCard />
+          <ModerationCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}
           <NotificationsCard />
           <AccountsCard providers={providers} />
