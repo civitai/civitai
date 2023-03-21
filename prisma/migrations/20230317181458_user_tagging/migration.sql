@@ -103,7 +103,6 @@ WITH image_tags AS (
 		0 "upVotes",
 		0 "downVotes"
 	FROM "TagsOnImage" toi
-	WHERE NOT toi.disabled
 
 	UNION
 
