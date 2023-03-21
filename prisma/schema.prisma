@@ -930,21 +930,6 @@ model TagsOnImageVote {
   @@index([userId], type: Hash)
 }
 
-model TagsOnImageVote {
-  imageId   Int
-  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  tagId     Int
-  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  vote      Int // 1 or -1
-  createdAt DateTime @default(now())
-
-  @@id([tagId, imageId, userId])
-  @@index([imageId], type: Hash)
-  @@index([userId], type: Hash)
-}
-
 model TagsOnPost {
   postId    Int
   post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)

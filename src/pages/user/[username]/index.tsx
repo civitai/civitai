@@ -357,7 +357,7 @@ export default function UserPage({
                   <InfiniteModelsFilter />
                 </Group>
               </Group>
-              <InfiniteModels showHidden />
+              <InfiniteModels />
             </Stack>
           </Tabs.Panel>
           <Tabs.Panel value="draft">
