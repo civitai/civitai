@@ -2,6 +2,7 @@ import { applyBrowsingMode } from './../middleware.trpc';
 import {
   getImageDetailHandler,
   getImageHandler,
+  getImageResourcesHandler,
   getInfiniteImagesHandler,
 } from './../controllers/image.controller';
 import {
@@ -98,4 +99,5 @@ export const imageRouter = router({
     .use(applyBrowsingMode())
     .query(getInfiniteImagesHandler),
   get: publicProcedure.input(getByIdSchema).query(getImageHandler),
+  getResources: publicProcedure.input(getByIdSchema).query(getImageResourcesHandler),
 });

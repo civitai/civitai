@@ -24,6 +24,11 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
 import { simpleTagSelect, imageTagSelect, ImageTag } from '~/server/selectors/tag.selector';
 import { getImageV2Select } from '~/server/selectors/imagev2.selector';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -474,16 +479,36 @@ export const getAllImages = async ({
   };
 };
 
-export const getImage = async ({
-  id,
-  excludedTagIds,
-  excludedUserIds,
-  browsingMode,
-  userId,
-}: GetImageInput & { userId?: number }) => {
+export const getImage = async ({ id, userId }: GetImageInput & { userId?: number }) => {
   const image = await dbRead.image.findUnique({
     where: { id },
     select: getImageV2Select({ userId }),
+  });
+  if (!image) throw throwAuthorizationError();
+  return image;
+};
+
+export const getImageResources = async ({ id }: GetByIdInput) => {
+  return await dbRead.imageResourceHelper.findMany({
+    where: { imageId: id },
+    select: {
+      reviewId: true,
+      reviewRating: true,
+      reviewDetails: true,
+      reviewCreatedAt: true,
+      name: true,
+      modelVersionId: true,
+      modelVersionName: true,
+      modelVersionCreatedAt: true,
+      modelId: true,
+      modelName: true,
+      modelRating: true,
+      modelRatingCount: true,
+      modelDownloadCount: true,
+      modelCommentCount: true,
+      modelFavoriteCount: true,
+      modelType: true,
+    },
   });
 };
 // #endregion

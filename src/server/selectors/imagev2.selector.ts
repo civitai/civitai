@@ -1,6 +1,6 @@
 import { imageTagSelect } from './tag.selector';
 import { Prisma } from '@prisma/client';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { userWithCosmeticsSelect, simpleUserSelect } from '~/server/selectors/user.selector';
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 
 export const imageResourceSelect = Prisma.validator<Prisma.ImageResourceSelect>()({
@@ -55,6 +55,8 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
       take: !userId ? 0 : undefined,
       select: getReactionsSelect,
     },
+    user: { select: simpleUserSelect },
+    needsReview: true,
   });
 
 type ImageV2NavigationProps = { previewUrl?: string };

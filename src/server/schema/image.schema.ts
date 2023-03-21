@@ -195,8 +195,8 @@ export const getInfiniteImagesSchema = z.object({
 export type GetImageInput = z.infer<typeof getImageSchema>;
 export const getImageSchema = z.object({
   id: z.number(),
-  excludedTagIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
-  browsingMode: z.nativeEnum(BrowsingMode).optional(),
+  // excludedTagIds: z.array(z.number()).optional(),
+  // excludedUserIds: z.array(z.number()).optional(),
+  // browsingMode: z.nativeEnum(BrowsingMode).optional(),
 });
 // #endregion

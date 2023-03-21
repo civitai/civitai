@@ -7,6 +7,7 @@ import {
   getAllImages,
   getImage,
   getImageDetail,
+  getImageResources,
   moderateImages,
 } from './../services/image.service';
 import { ReportReason, ReportStatus } from '@prisma/client';
@@ -304,6 +305,22 @@ export const getInfiniteImagesHandler = async ({
 export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ctx: Context }) => {
   try {
     return await getImage({ ...input, userId: ctx.user?.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export type ImageResourceModel = AsyncReturnType<typeof getImageResourcesHandler>[0];
+export const getImageResourcesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  try {
+    return await getImageResources({ ...input });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
