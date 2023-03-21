@@ -168,6 +168,7 @@ export default function Images() {
                         id: isTagIds ? (x as number) : 0,
                         name: !isTagIds ? (x as string) : '',
                         automated: false,
+                        needsReview: false,
                         isCategory: false,
                       })),
                     ],

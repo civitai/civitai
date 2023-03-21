@@ -159,7 +159,6 @@ type TagVotingInput = {
   type: TagVotableEntityType;
   id: number;
   tags: number[] | string[];
-  vote: number;
   isModerator?: boolean;
 };
 const clearCache = async (userId: number, entityType: TagVotableEntityType) => {
@@ -193,7 +192,7 @@ export const addTagVotes = async ({
   tags,
   isModerator,
   vote,
-}: TagVotingInput) => {
+}: TagVotingInput & { vote: number }) => {
   vote *= isModerator ? MODERATOR_VOTE_WEIGHT : 1;
   const isTagIds = typeof tags[0] === 'number';
   const tagSelector = isTagIds ? 'id' : 'name';
