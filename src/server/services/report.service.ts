@@ -73,7 +73,7 @@ export const createReport = async ({
   id,
   isModerator,
   ...data
-}: CreateReportInput & { userId: number; isModerator: boolean }) => {
+}: CreateReportInput & { userId: number; isModerator?: boolean }) => {
   let isReportingLocked = false;
   if (type === ReportEntity.Image) {
     const image = await dbRead.imagesOnModels.findFirst({

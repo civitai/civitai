@@ -11,7 +11,6 @@ const RunStrategy = dynamic(() => import('~/routed-context/modals/RunStrategy'))
 const ReviewThread = dynamic(() => import('~/routed-context/modals/ReviewThread'));
 const CommentThread = dynamic(() => import('~/routed-context/modals/CommentThread'));
 const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
-const Report = dynamic(() => import('~/routed-context/modals/Report'));
 const BlockModelTags = dynamic(() => import('~/routed-context/modals/BlockModelTags'));
 
 const dictionary = {
@@ -22,7 +21,6 @@ const dictionary = {
   reviewThread: ReviewThread,
   commentThread: CommentThread,
   commentEdit: CommentEdit,
-  report: Report,
   blockTags: BlockModelTags,
 };
 
@@ -33,7 +31,7 @@ const dictionary = {
 type RoutedContext = {
   openContext: <TName extends keyof typeof dictionary>(
     name: TName,
-    props: React.ComponentProps<typeof dictionary[TName]>,
+    props: React.ComponentProps<(typeof dictionary)[TName]>,
     options?: { replace?: boolean }
   ) => void;
   closeContext: () => Promise<void>;

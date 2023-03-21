@@ -113,7 +113,7 @@ export const removeTagVotesHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    await removeTagVotes({ ...input, userId: ctx.user.id });
+    await removeTagVotes({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator });
   } catch (error) {
     throw throwDbError(error);
   }

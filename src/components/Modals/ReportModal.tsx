@@ -16,7 +16,7 @@ import { IconArrowLeft } from '@tabler/icons';
 import { useMemo, useState } from 'react';
 import { AdminAttentionForm } from '~/components/Report/AdminAttentionForm';
 import { ClaimForm } from '~/components/Report/ClaimForm';
-import { ImageNsfwForm, ModelNsfwForm, NsfwForm } from '~/components/Report/NsfwForm';
+import { ImageNsfwForm, ModelNsfwForm } from '~/components/Report/NsfwForm';
 import { OwnershipForm } from '~/components/Report/OwnershipForm';
 import { TosViolationForm } from '~/components/Report/TosViolationForm';
 import { ReportEntity } from '~/server/schema/report.schema';
