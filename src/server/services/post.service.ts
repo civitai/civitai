@@ -42,11 +42,13 @@ export const getPostsInfinite = async ({
   sort,
   browsingMode,
   user,
+  tags,
 }: PostsQueryInput & { user?: SessionUser }) => {
   const skip = (page - 1) * limit;
   const take = limit + 1;
 
   const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
+  if (user && user.username !== username) AND.push({ publishedAt: { not: null } });
 
   const imageAND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   if (query) AND.push({ title: { in: query, mode: 'insensitive' } });
@@ -55,6 +57,7 @@ export const getPostsInfinite = async ({
     AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
     imageAND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
   }
+  if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
   if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
   if (!!excludedImageIds?.length) imageAND.push({ id: { notIn: excludedImageIds } });
 

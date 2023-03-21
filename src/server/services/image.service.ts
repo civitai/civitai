@@ -369,7 +369,6 @@ export const ingestImage = async ({
     body: JSON.stringify(payload),
   }).then((res) => res.json())) as ImageScanResultResponse;
 
-  console.log('made it this far', deleted, blockedFor, tags, error);
   if (deleted)
     return {
       type: 'blocked',

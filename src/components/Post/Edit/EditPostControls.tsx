@@ -53,6 +53,8 @@ function ManagePostStatus() {
   const publishedAt = useEditPostContext((state) => state.publishedAt);
   const setPublishedAt = useEditPostContext((state) => state.setPublishedAt);
 
+  //TODO.posts - on publish, redirect to user posts
+
   const { mutate, isLoading } = trpc.post.update.useMutation();
 
   const canPublish = tags.filter((x) => !!x.id).length > 0;

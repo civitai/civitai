@@ -5,10 +5,17 @@ import { useMemo, useEffect } from 'react';
 import { usePostFilters } from '~/providers/FiltersProvider';
 import { useRouter } from 'next/router';
 
-export default function PostsInfinite({ columnWidth = 300 }: { columnWidth?: number }) {
+export default function PostsInfinite({
+  columnWidth = 300,
+  username,
+}: {
+  columnWidth?: number;
+  username?: string;
+}) {
   const router = useRouter();
   const postId = router.query.post ? Number(router.query.post) : undefined;
-  const filters = usePostFilters();
+  const globalFilters = usePostFilters();
+  const filters = { ...globalFilters, username };
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.post.getInfinite.useInfiniteQuery(
       { ...filters },

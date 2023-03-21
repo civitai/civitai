@@ -5,10 +5,7 @@ import { QS } from '~/utils/qs';
 import { getHasClientHistory } from '~/store/ClientHistoryStore';
 import { create } from 'zustand';
 import { Freeze } from 'react-freeze';
-import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
 import { NextLink } from '@mantine/next';
-
-import { Anchor } from '@mantine/core';
 
 const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
 const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLightbox'));
