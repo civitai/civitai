@@ -60,6 +60,7 @@ export const getPostsInfinite = async ({
       imageAND.push({
         OR: [{ userId: user?.id }, { tags: { none: { tagId: { in: excludedTagIds } } } }],
       });
+      imageAND.push({ OR: [{ userId: user?.id }, { scannedAt: { not: null } }] });
     }
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
     if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });

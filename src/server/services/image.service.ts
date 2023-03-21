@@ -447,6 +447,7 @@ export const getAllImages = async ({
         { tags: !!excludedTagIds.length ? { none: { tagId: { in: excludedTagIds } } } : undefined },
       ],
     });
+    AND.push({ OR: [{ userId }, { scannedAt: { not: null } }] });
   }
   if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
   if (!!generation?.length) AND.push({ generationProcess: { in: generation } });
