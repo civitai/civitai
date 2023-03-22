@@ -20,7 +20,7 @@ export const upsertResourceReview = async (
 ) => {
   if (!data.id)
     return await dbWrite.resourceReview.create({
-      data: { ...data, thread: {} },
+      data: { ...data, thread: { create: {} } },
       select: { id: true },
     });
   else
