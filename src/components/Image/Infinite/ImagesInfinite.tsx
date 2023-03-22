@@ -1,11 +1,40 @@
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { trpc } from '~/utils/trpc';
-import { useMemo } from 'react';
+import { createContext, useContext, useMemo } from 'react';
 import { useImageFilters } from '~/providers/FiltersProvider';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
+import { QS } from '~/utils/qs';
+import { removeEmpty } from '~/utils/object-helpers';
 
-export default function ImagesInfinite({ columnWidth = 300 }: { columnWidth?: number }) {
-  const filters = useImageFilters();
+type ImagesInfiniteState = {
+  modelId?: number;
+  modelVersionId?: number;
+  postId?: number;
+  username?: string;
+  reviewId?: number;
+};
+const ImagesInfiniteContext = createContext<ImagesInfiniteState | null>(null);
+export const useImagesInfiniteContext = () => {
+  const context = useContext(ImagesInfiniteContext);
+  if (!context) throw new Error('ImagesInfiniteContext not in tree');
+  return context;
+};
+
+type ImagesInfiniteProps = ImagesInfiniteState & { columnWidth?: number };
+
+export default function ImagesInfinite({
+  columnWidth = 300,
+  modelId,
+  modelVersionId,
+  postId,
+  username,
+  reviewId,
+}: ImagesInfiniteProps) {
+  const globalFilters = useImageFilters();
+  const filters = useMemo(
+    () => removeEmpty({ ...globalFilters, modelId, modelVersionId, postId, username, reviewId }),
+    [globalFilters, modelId, modelVersionId, postId, username, reviewId]
+  );
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.image.getInfinite.useInfiniteQuery(
       { ...filters },
@@ -20,7 +49,7 @@ export default function ImagesInfinite({ columnWidth = 300 }: { columnWidth?: nu
   const images = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
 
   return (
-    <>
+    <ImagesInfiniteContext.Provider value={{ modelId, modelVersionId, postId, username }}>
       <MasonryGrid2
         data={images}
         hasNextPage={hasNextPage}
@@ -31,6 +60,6 @@ export default function ImagesInfinite({ columnWidth = 300 }: { columnWidth?: nu
         render={ImagesCard}
         filters={filters}
       />
-    </>
+    </ImagesInfiniteContext.Provider>
   );
 }

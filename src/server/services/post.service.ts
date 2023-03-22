@@ -55,12 +55,25 @@ export const getPostsInfinite = async ({
     if (query) AND.push({ title: { in: query, mode: 'insensitive' } });
     if (!!excludedTagIds?.length) {
       AND.push({
-        OR: [{ userId: user?.id }, { tags: { none: { tagId: { in: excludedTagIds } } } }],
+        OR: [
+          { userId: user?.id },
+          {
+            tags: { none: { tagId: { in: excludedTagIds } } },
+            imageTags: { none: { tagId: { in: excludedTagIds } } },
+            helper: { scanned: true },
+          },
+        ],
       });
-      imageAND.push({
-        OR: [{ userId: user?.id }, { tags: { none: { tagId: { in: excludedTagIds } } } }],
-      });
-      imageAND.push({ OR: [{ userId: user?.id }, { scannedAt: { not: null } }] });
+
+      // imageAND.push({
+      //   OR: [
+      //     { userId: user?.id },
+      //     {
+      //       tags: { none: { tagId: { in: excludedTagIds } } },
+      //       scannedAt: { not: null },
+      //     },
+      //   ],
+      // });
     }
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
     if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
@@ -182,9 +195,13 @@ export const deletePost = async ({ id }: GetByIdInput) => {
   await dbWrite.post.delete({ where: { id } });
 };
 
-export const getPostTags = async ({ query, limit }: GetPostTagsInput) => {
+export const getPostTags = async ({
+  query,
+  limit,
+  excludedTagIds,
+}: GetPostTagsInput & { excludedTagIds?: number[] }) => {
   const showTrending = query === undefined || query.length < 2;
-  return await dbRead.$queryRawUnsafe<
+  const tags = await dbRead.$queryRawUnsafe<
     Array<{
       id: number;
       name: string;
@@ -207,6 +224,10 @@ export const getPostTags = async ({ query, limit }: GetPostTagsInput) => {
     }
     LIMIT ${limit}
   `);
+
+  return (
+    !!excludedTagIds?.length ? tags.filter((x) => !excludedTagIds.includes(x.id)) : tags
+  ).sort((a, b) => b.postCount - a.postCount);
 };
 
 export const addPostTag = async ({ postId, id, name: initialName }: AddPostTagInput) => {

@@ -108,19 +108,21 @@ model User {
   answerVotes          AnswerVote[]
   tagsEngaged          TagEngagement[]
 
-  imageReactions      ImageReaction[]
-  sessionInvalidation SessionInvalidation[]
-  stats               UserStat?
-  rank                UserRank?
-  downloads           DownloadHistory[]
-  imageConnections    ImageConnection[]
-  purchases           Purchase[]
-  cosmetics           UserCosmetic[]
-  postReactions       PostReaction[]
-  posts               Post[]
-  resourceReviews     ResourceReview[]
-  tagImageVotes       TagsOnImageVote[]
-  tagModelVotes       TagsOnModelsVote[]
+  imageReactions          ImageReaction[]
+  sessionInvalidation     SessionInvalidation[]
+  stats                   UserStat?
+  rank                    UserRank?
+  downloads               DownloadHistory[]
+  imageConnections        ImageConnection[]
+  purchases               Purchase[]
+  cosmetics               UserCosmetic[]
+  postReactions           PostReaction[]
+  posts                   Post[]
+  resourceReviews         ResourceReview[]
+  tagImageVotes           TagsOnImageVote[]
+  tagModelVotes           TagsOnModelsVote[]
+  tagPostVotes            TagsOnPostVote[]
+  resourceReviewReactions ResourceReviewReaction[]
 }
 
 model CustomerSubscription {
@@ -344,6 +346,8 @@ model Model {
   downloads         DownloadHistory[]
   imageConnections  ImageConnection[]
   hashes            ModelHash[]
+  threads           Thread[]
+  resourceReviews   ResourceReview[]
 
   @@index([name])
   @@index([status, nsfw])
@@ -643,20 +647,41 @@ model Review {
 }
 
 model ResourceReview {
-  id             Int          @id @default(autoincrement())
+  id             Int                      @id @default(autoincrement())
+  modelId        Int
+  model          Model                    @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelVersionId Int
-  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  modelVersion   ModelVersion             @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   rating         Int
   details        String?
   userId         Int
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   thread         Thread?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+  exclude        Boolean                  @default(false)
+  nsfw           Boolean                  @default(false)
+  tosViolation   Boolean                  @default(false)
+  metadata       Json?
+  reactions      ResourceReviewReaction[]
+  helper         ResourceReviewHelper?
 
   @@unique([modelVersionId, userId])
   @@index([modelVersionId], type: Hash)
   @@index([userId], type: Hash)
+}
+
+model ResourceReviewReaction {
+  id        Int             @id @default(autoincrement())
+  review    ResourceReview  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  reviewId  Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([reviewId, userId, reaction])
 }
 
 enum ReviewReactions {
@@ -692,6 +717,7 @@ model Post {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   publishedAt    DateTime?
+  metadata       Json?
 
   images         Image[]
   tags           TagsOnPost[]
@@ -702,6 +728,9 @@ model Post {
   rank           PostRank?
   metrics        PostMetric[]
   resourceHelper PostResourceHelper[]
+  imageTags      PostImageTag[]
+  tagsComposite  PostTag[]
+  tagVotes       TagsOnPostVote[]
 }
 
 model PostMetric {
@@ -777,6 +806,7 @@ model ImageResource {
   modelVersionId Int?
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   name           String?
+  hash           String?
   imageId        Int
   image          Image         @relation(fields: [imageId], references: [id], onDelete: Cascade)
   detected       Boolean       @default(false)
@@ -863,6 +893,8 @@ model Tag {
   metrics              TagMetric[]
   stats                TagStat?
   rank                 TagRank?
+  tagsOnPostComposite  PostTag[]
+  tagsOnPostVotes      TagsOnPostVote[]
 
   @@unique([name])
 }
@@ -936,14 +968,32 @@ model TagsOnImageVote {
 }
 
 model TagsOnPost {
+  postId      Int
+  post        Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tagId       Int
+  tag         Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  confidence  Int?
+  disabled    Boolean  @default(false)
+  needsReview Boolean  @default(false)
+
+  @@id([tagId, postId])
+  @@index([postId], type: Hash)
+}
+
+model TagsOnPostVote {
   postId    Int
   post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
   tagId     Int
   tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vote      Int // 1 or -1
   createdAt DateTime @default(now())
 
-  @@id([tagId, postId])
+  @@id([tagId, postId, userId])
   @@index([postId], type: Hash)
+  @@index([userId], type: Hash)
 }
 
 model TagMetric {
@@ -1198,6 +1248,7 @@ model CommentV2 {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   threadId     Int
   thread       Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  metadata     Json?
 
   reactions CommentV2Reaction[]
   reports   CommentV2Report[]
@@ -1219,6 +1270,9 @@ model Thread {
   post       Post?           @relation(fields: [postId], references: [id], onDelete: SetNull)
   reviewId   Int?            @unique
   review     ResourceReview? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
+  modelId    Int?
+  model      Model?          @relation(fields: [modelId], references: [id], onDelete: SetNull)
+  metadata   Json            @default("{}")
 
   comments CommentV2[]
 
@@ -1994,6 +2048,8 @@ model ImageResourceHelper {
   modelCommentCount     Int?
   modelFavoriteCount    Int?
   modelType             ModelType?
+
+  @@unique([imageId, name, modelVersionId])
 }
 
 /// @view
@@ -2017,4 +2073,37 @@ model PostResourceHelper {
   modelCommentCount     Int?
   modelFavoriteCount    Int?
   modelType             ModelType?
+
+  @@unique([postId, name, modelVersionId])
+}
+
+/// @view
+model PostImageTag {
+  postId Int
+  post   Post @relation(fields: [postId], references: [id], onDelete: NoAction)
+  tagId  Int
+
+  @@id([postId, tagId])
+}
+
+/// @view
+model PostTag {
+  postId    Int
+  post      Post    @relation(fields: [postId], references: [id])
+  tagId     Int
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: NoAction)
+  tagName   String
+  tagType   TagType
+  score     Int
+  upVotes   Int
+  downVotes Int
+
+  @@id([postId, tagId])
+}
+
+/// @view
+model ResourceReviewHelper {
+  resourceReviewId Int            @id
+  resourceReview   ResourceReview @relation(fields: [resourceReviewId], references: [id])
+  imageCount       Int
 }

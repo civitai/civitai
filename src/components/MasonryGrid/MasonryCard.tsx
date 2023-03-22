@@ -4,13 +4,12 @@ import {
   DefaultMantineColor,
   createPolymorphicComponent,
   useMantineTheme,
-  createStyles,
 } from '@mantine/core';
 import { getRandom } from '~/utils/array-helpers';
 import { forwardRef, useMemo } from 'react';
 
 type MasonryCardProps = CardProps & { height?: number };
-
+// TODO - when children not in view, replace child react nodes with static html
 const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
   ({ height, children, style, ...props }, ref) => {
     const theme = useMantineTheme();

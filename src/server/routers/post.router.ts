@@ -85,7 +85,10 @@ export const postRouter = router({
     .input(reorderPostImagesSchema)
     .use(isOwnerOrModerator)
     .mutation(reorderPostImagesHandler),
-  getTags: publicProcedure.input(getPostTagsSchema).query(getPostTagsHandler),
+  getTags: publicProcedure
+    .input(getPostTagsSchema)
+    .use(applyUserPreferences())
+    .query(getPostTagsHandler),
   addTag: protectedProcedure
     .input(addPostTagSchema)
     .use(isOwnerOrModerator)

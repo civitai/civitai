@@ -81,7 +81,7 @@ export default function PostCreate() {
         onDrop={handleDrop}
         loading={isLoading}
         count={images.length}
-        max={50}
+        max={10}
       />
     </Container>
   );
