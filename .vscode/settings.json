@@ -11,5 +11,8 @@
   "[typescript]": {
     "editor.defaultFormatter": "dbaeumer.vscode-eslint"
   },
+  "[sql]": {
+    "editor.formatOnSave": false,
+  },
   "typescript.tsdk": "node_modules\\typescript\\lib",
 }

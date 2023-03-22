@@ -109,20 +109,21 @@ model User {
   answerVotes          AnswerVote[]
   tagsEngaged          TagEngagement[]
 
-  imageReactions      ImageReaction[]
-  sessionInvalidation SessionInvalidation[]
-  stats               UserStat?
-  rank                UserRank?
-  downloads           DownloadHistory[]
-  imageConnections    ImageConnection[]
-  purchases           Purchase[]
-  cosmetics           UserCosmetic[]
-  postReactions       PostReaction[]
-  posts               Post[]
-  resourceReviews     ResourceReview[]
-  tagImageVotes       TagsOnImageVote[]
-  tagModelVotes       TagsOnModelsVote[]
-  tagPostVotes        TagsOnPostVote[]
+  imageReactions          ImageReaction[]
+  sessionInvalidation     SessionInvalidation[]
+  stats                   UserStat?
+  rank                    UserRank?
+  downloads               DownloadHistory[]
+  imageConnections        ImageConnection[]
+  purchases               Purchase[]
+  cosmetics               UserCosmetic[]
+  postReactions           PostReaction[]
+  posts                   Post[]
+  resourceReviews         ResourceReview[]
+  tagImageVotes           TagsOnImageVote[]
+  tagModelVotes           TagsOnModelsVote[]
+  tagPostVotes            TagsOnPostVote[]
+  resourceReviewReactions ResourceReviewReaction[]
 }
 
 model CustomerSubscription {
@@ -347,7 +348,7 @@ model Model {
   imageConnections  ImageConnection[]
   hashes            ModelHash[]
   threads           Thread[]
-  discussionItems   DiscussionItem[]
+  resourceReviews   ResourceReview[]
 
   @@index([name])
   @@index([status, nsfw])
@@ -653,20 +654,41 @@ model Review {
 }
 
 model ResourceReview {
-  id             Int          @id @default(autoincrement())
+  id             Int                      @id @default(autoincrement())
+  modelId        Int
+  model          Model                    @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelVersionId Int
-  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  modelVersion   ModelVersion             @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   rating         Int
   details        String?
   userId         Int
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   thread         Thread?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+  exclude        Boolean                  @default(false)
+  nsfw           Boolean                  @default(false)
+  tosViolation   Boolean                  @default(false)
+  metadata       Json?
+  reactions      ResourceReviewReaction[]
+  helper         ResourceReviewHelper?
 
   @@unique([modelVersionId, userId])
   @@index([modelVersionId], type: Hash)
   @@index([userId], type: Hash)
+}
+
+model ResourceReviewReaction {
+  id        Int             @id @default(autoincrement())
+  review    ResourceReview  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  reviewId  Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([reviewId, userId, reaction])
 }
 
 enum ReviewReactions {
@@ -702,6 +724,7 @@ model Post {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   publishedAt    DateTime?
+  metadata       Json?
 
   images         Image[]
   tags           TagsOnPost[]
@@ -790,6 +813,7 @@ model ImageResource {
   modelVersionId Int?
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   name           String?
+  hash           String?
   imageId        Int
   image          Image         @relation(fields: [imageId], references: [id], onDelete: Cascade)
   detected       Boolean       @default(false)
@@ -1231,6 +1255,7 @@ model CommentV2 {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   threadId     Int
   thread       Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  metadata     Json?
 
   reactions CommentV2Reaction[]
   reports   CommentV2Report[]
@@ -1254,9 +1279,9 @@ model Thread {
   review     ResourceReview? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
   modelId    Int?
   model      Model?          @relation(fields: [modelId], references: [id], onDelete: SetNull)
+  metadata   Json            @default("{}")
 
-  comments        CommentV2[]
-  discussionItems DiscussionItem[]
+  comments CommentV2[]
 
   @@index([reviewId], type: Hash)
   @@index([postId], type: Hash)
@@ -2083,24 +2108,9 @@ model PostTag {
   @@id([postId, tagId])
 }
 
-// Brings together ResourceReview and Threads on Models
-// ?modal=reviewThread&threadId=1123
-// Req 1: {thread: {select: {review: {select: {content, userId: true modelVersionId: true }}}}}
-// Req 2: get all comments and reactions to comments in thread (Component)
-// Req 2 inside of ImageCarousel: images where userId, modelVersionId, hiddenStuff...
-// ?modal=commentThread&threadId=1123
-// Req 1: get all comments and reactions to comments in thread (Component)
 /// @view
-model DiscussionItem {
-  threadId         Int      @id
-  thread           Thread   @relation(fields: [threadId], references: [id])
-  type             String // 'comment' or 'review'
-  modelId          Int?
-  model            Model?   @relation(fields: [modelId], references: [id])
-  modelVersionId   Int?
-  modelVersionName String?
-  content          String
-  createdAt        DateTime
-  rating           Int?
-  imageCount       Int?
+model ResourceReviewHelper {
+  resourceReviewId Int            @id
+  resourceReview   ResourceReview @relation(fields: [resourceReviewId], references: [id])
+  imageCount       Int
 }
