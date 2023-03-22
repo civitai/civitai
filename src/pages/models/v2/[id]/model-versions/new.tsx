@@ -1,25 +1,6 @@
-import {
-  Anchor,
-  Button,
-  Center,
-  Container,
-  Group,
-  Loader,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core';
-import { IconArrowLeft } from '@tabler/icons';
-
-import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import Link from 'next/link';
-import { ModelById } from '~/types/router';
-import { useRouter } from 'next/router';
-import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
 import { ModelVersionWizard } from '~/components/Resource/Wizard/ModelVersionWizard';
 
 export const getServerSideProps = createServerSideProps({
@@ -60,17 +41,6 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default function NewModelVersion({ modelId }: Props) {
-  // const router = useRouter();
-  // const { data, isLoading } = trpc.model.getById.useQuery({ id: modelId });
-  // // Take out tagsOnModels to avoid type errors since we don't need it anyway
-  // const { tagsOnModels, ...model } = data as ModelById;
-
-  // const handleSubmit = (data?: ModelVersionUpsertInput) => {
-  //   if (data) router.replace(`/models/v2/${modelId}/model-versions/${data.id}/edit`);
-  // };
-
+export default function NewModelVersion() {
   return <ModelVersionWizard />;
 }
-
-type Props = { modelId: number };

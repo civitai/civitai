@@ -2,11 +2,15 @@ import {
   deleteModelVersionHandler,
   getModelVersionHandler,
   getModelVersionRunStrategiesHandler,
+  publishModelVersionHandler,
   toggleNotifyEarlyAccessHandler,
   upsertModelVersionHandler,
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
-import { modelVersionUpsertSchema2 } from '~/server/schema/model-version.schema';
+import {
+  getModelVersionSchema,
+  modelVersionUpsertSchema2,
+} from '~/server/schema/model-version.schema';
 import { getVersionById } from '~/server/services/model-version.service';
 import { getModel } from '~/server/services/model.service';
 import {
@@ -40,7 +44,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, input, next }) => {
 });
 
 export const modelVersionRouter = router({
-  getById: publicProcedure.input(getByIdSchema).query(getModelVersionHandler),
+  getById: publicProcedure.input(getModelVersionSchema).query(getModelVersionHandler),
   getRunStrategies: publicProcedure.input(getByIdSchema).query(getModelVersionRunStrategiesHandler),
   toggleNotifyEarlyAccess: protectedProcedure
     .input(getByIdSchema)
@@ -51,4 +55,8 @@ export const modelVersionRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteModelVersionHandler),
+  publish: protectedProcedure
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .mutation(publishModelVersionHandler),
 });

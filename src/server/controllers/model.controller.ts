@@ -365,6 +365,18 @@ export const updateModelHandler = async ({
   }
 };
 
+export const publishModelHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const model = await updateModelById({ ...input, data: { status: ModelStatus.Published } });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    return model;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+};
+
 export const unpublishModelHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     const model = await updateModelById({ ...input, data: { status: ModelStatus.Unpublished } });

@@ -129,7 +129,6 @@ function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
       <Card
         ref={ref}
         className={classes.card}
-        component="a"
         shadow="sm"
         p={0}
         sx={{ height: `${height}px` }}

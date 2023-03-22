@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { ModelStatus } from '@prisma/client';
 
 export type RecipeModelInput = z.infer<typeof recipeModelSchema>;
 export const recipeModelSchema = z.object({
@@ -58,4 +59,11 @@ export const modelVersionUpsertSchema2 = z.object({
     (value) => (value ? Number(value) : 0),
     z.number().min(0).max(5).optional()
   ),
+  status: z.nativeEnum(ModelStatus).optional(),
+});
+
+export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;
+export const getModelVersionSchema = z.object({
+  id: z.number(),
+  withFiles: z.boolean().optional(),
 });

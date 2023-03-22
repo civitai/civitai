@@ -10,19 +10,21 @@ import {
 } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { IconX } from '@tabler/icons';
-import { isEqual } from 'lodash';
+import isEqual from 'lodash/isEqual';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 
-import { PostEditComposite } from '~/components/Post/Edit/PostEditComposite';
 import { PostEditWrapper } from '~/components/Post/Edit/PostEditLayout';
 import { Files } from '~/components/Resource/Files';
 import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
+import { BaseModel } from '~/server/common/constants';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
+
+import { PostUpsertForm } from '../Forms/PostUpsertForm';
 
 type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
   tagsOnModels: Array<{ id: number; name: string }>;
@@ -147,8 +149,11 @@ export function ModelWizard() {
               <Title order={3}>{hasVersions ? 'Edit version' : 'Add version'}</Title>
               <ModelVersionUpsertForm
                 model={state.model}
-                version={state.modelVersion}
-                onSubmit={() => goNext()}
+                version={{
+                  ...state.modelVersion,
+                  baseModel: state.modelVersion?.baseModel as BaseModel,
+                }}
+                onSubmit={goNext}
               >
                 {({ loading }) => (
                   <Group mt="xl" position="right">
@@ -186,9 +191,11 @@ export function ModelWizard() {
           <Stepper.Step label="Create a post">
             <Stack>
               <Title order={3}>Create your post</Title>
-              <PostEditWrapper postId={state.modelVersion?.posts[0]?.id}>
-                <PostEditComposite />
-              </PostEditWrapper>
+              {state.model && state.modelVersion && (
+                <PostEditWrapper postId={state.modelVersion.posts[0]?.id}>
+                  <PostUpsertForm modelVersionId={state.modelVersion.id} modelId={state.model.id} />
+                </PostEditWrapper>
+              )}
 
               <Group mt="xl" position="right">
                 <Button variant="default" onClick={goBack}>

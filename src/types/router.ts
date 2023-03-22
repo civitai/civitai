@@ -10,6 +10,9 @@ export type ModelGetAll = ModelRouter['getAll'];
 export type ModelGetVersions = ModelRouter['getVersions'];
 export type MyDraftModelGetAll = ModelRouter['getMyDraftModels'];
 
+type ModelVersionRouter = RouterOutput['modelVersion'];
+export type ModelVersionById = ModelVersionRouter['getById'];
+
 type ReviewRouter = RouterOutput['review'];
 export type ReviewGetAll = ReviewRouter['getAll'];
 export type ReviewGetAllItem = ReviewGetAll['reviews'][number];

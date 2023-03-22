@@ -398,9 +398,8 @@ export default function ModelDetailsV2({
                           Delete Model
                         </Menu.Item>
                         <Menu.Item
-                          component={NextLink}
-                          href={`/models/v2/${id}/edit`}
                           icon={<IconEdit size={14} stroke={1.5} />}
+                          onClick={() => openRoutedContext('modelEdit', { modelId: model.id })}
                         >
                           Edit Model
                         </Menu.Item>
@@ -503,7 +502,7 @@ export default function ModelDetailsV2({
               selected={selectedVersion?.id}
               onVersionClick={setSelectedVersion}
               onDeleteClick={handleDeleteVersion}
-              showMenu={isOwner || isModerator}
+              showExtraIcons={isOwner || isModerator}
             />
           </Group>
           {!!selectedVersion && (

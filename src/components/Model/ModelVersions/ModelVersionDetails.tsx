@@ -43,6 +43,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
+import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { ModelFileType } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
@@ -335,15 +336,11 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                 <Group position="apart">
                   {filesCount ? `${filesCount === 1 ? '1 File' : `${filesCount} Files`}` : 'Files'}
                   {isOwnerOrMod && (
-                    <Text
-                      component={NextLink}
-                      variant="link"
-                      size="sm"
-                      href={`/models/v2/${model.id}/model-versions/${version.id}/edit`}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      Manage Files
-                    </Text>
+                    <RoutedContextLink modal="filesEdit" modelVersionId={version.id}>
+                      <Text variant="link" size="sm" onClick={(e) => e.stopPropagation()}>
+                        Manage Files
+                      </Text>
+                    </RoutedContextLink>
                   )}
                 </Group>
               </Accordion.Control>

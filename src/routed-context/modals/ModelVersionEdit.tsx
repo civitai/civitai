@@ -1,64 +1,67 @@
 import {
   Anchor,
   Button,
-  Modal,
   Center,
   Container,
   Group,
   Loader,
+  Modal,
   Stack,
   Text,
+  Title,
 } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons';
 import Link from 'next/link';
-import { useMemo } from 'react';
 import { z } from 'zod';
 
-import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
+import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { closeRoutedContext } from '~/providers/RoutedContextProvider';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
+import { BaseModel } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
 
 export default createRoutedContext({
   schema: z.object({
-    modelId: z.number(),
+    modelVersionId: z.number(),
   }),
   authGuard: true,
-  Element: ({ context, props: { modelId } }) => {
+  Element: ({ context, props: { modelVersionId } }) => {
     const currentUser = useCurrentUser();
-    const { data, isLoading: loadingModel } = trpc.model.getById.useQuery({ id: modelId });
-    const model = useMemo(
-      () => ({
-        ...data,
-        tagsOnModels: data?.tagsOnModels.map((tom) => tom.tag),
-      }),
-      [data]
-    );
+    const { data: modelVersion, isLoading } = trpc.modelVersion.getById.useQuery({
+      id: modelVersionId,
+    });
 
     const isModerator = currentUser?.isModerator ?? false;
-    const isOwner = model?.user?.id === currentUser?.id || isModerator;
-    const deleted = !!model?.deletedAt && model?.status === 'Deleted';
-    if (!isOwner || deleted) closeRoutedContext();
+    const isOwner = modelVersion?.model?.user.id === currentUser?.id || isModerator;
+    if (!isOwner) closeRoutedContext();
 
     return (
-      <Modal opened={context.opened} onClose={context.close} fullScreen withCloseButton={false}>
+      <Modal opened={context.opened} onClose={context.close} fullScreen>
         <Container size="sm">
-          {loadingModel ? (
+          {isLoading ? (
             <Center>
               <Loader size="lg" />
             </Center>
-          ) : model ? (
+          ) : (
             <Stack spacing="xl">
-              <Link href={`/models/v2/${modelId}`} passHref shallow>
+              <Link href={`/models/v2/${modelVersion?.model.id}`} passHref shallow>
                 <Anchor size="xs">
                   <Group spacing={4}>
                     <IconArrowLeft size={12} />
-                    <Text inherit>Back to {model.name} page</Text>
+                    <Text inherit>Back to {modelVersion?.model?.name} page</Text>
                   </Group>
                 </Anchor>
               </Link>
-              <ModelUpsertForm model={model} onSubmit={context.close}>
+              <Title order={1}>Edit Version</Title>
+              <ModelVersionUpsertForm
+                model={modelVersion?.model}
+                version={{
+                  ...modelVersion,
+                  baseModel: (modelVersion?.baseModel as BaseModel) ?? 'SD 1.5',
+                }}
+                onSubmit={() => context.close()}
+              >
                 {({ loading }) => (
                   <Group mt="xl" position="right">
                     <Button variant="default" onClick={context.close}>
@@ -69,9 +72,9 @@ export default createRoutedContext({
                     </Button>
                   </Group>
                 )}
-              </ModelUpsertForm>
+              </ModelVersionUpsertForm>
             </Stack>
-          ) : null}
+          )}
         </Container>
       </Modal>
     );

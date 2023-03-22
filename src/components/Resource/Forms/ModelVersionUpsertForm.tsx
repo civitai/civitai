@@ -22,7 +22,6 @@ import {
   modelVersionUpsertSchema2,
 } from '~/server/schema/model-version.schema';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
-import { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -236,6 +235,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
 type Props = {
   onSubmit: (version?: ModelVersionUpsertInput) => void;
   children: (data: { loading: boolean }) => React.ReactNode;
-  model?: ModelUpsertInput;
-  version?: ModelById['modelVersions'][number];
+  model?: Partial<ModelUpsertInput>;
+  version?: Partial<ModelVersionUpsertInput>;
 };

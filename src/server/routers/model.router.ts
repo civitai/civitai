@@ -13,6 +13,7 @@ import {
   getModelsWithVersionsHandler,
   getModelVersionsHandler,
   getMyDraftModelsHandler,
+  publishModelHandler,
   reorderModelVersionsHandler,
   restoreModelHandler,
   unpublishModelHandler,
@@ -128,6 +129,10 @@ export const modelRouter = router({
     .input(deleteModelSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteModelHandler),
+  publish: protectedProcedure
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .mutation(publishModelHandler),
   unpublish: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)

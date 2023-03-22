@@ -20,6 +20,7 @@ import {
 } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
+import { openRoutedContext } from '~/providers/RoutedContextProvider';
 
 import { ModelById } from '~/types/router';
 
@@ -77,7 +78,7 @@ const useStyles = createStyles((theme) => ({
 export function ModelVersionList({
   versions,
   selected,
-  showMenu,
+  showExtraIcons,
   onVersionClick,
   onDeleteClick,
 }: Props) {
@@ -126,19 +127,21 @@ export function ModelVersionList({
               variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
               color={active ? 'blue' : 'gray'}
               onClick={() => {
-                if (missingFiles)
-                  return router.push(
-                    `/models/v2/${version.modelId}/model-versions/${version.id}/wizard?step=2`
-                  );
-                if (missingPosts)
-                  return router.push(
-                    `/models/v2/${version.modelId}/model-versions/${version.id}/wizard?step=3`
-                  );
+                if (showExtraIcons) {
+                  if (missingFiles)
+                    return router.push(
+                      `/models/v2/${version.modelId}/model-versions/${version.id}/wizard?step=2`
+                    );
+                  if (missingPosts)
+                    return router.push(
+                      `/models/v2/${version.modelId}/model-versions/${version.id}/wizard?step=3`
+                    );
+                }
 
                 return onVersionClick(version);
               }}
               leftIcon={
-                missingFiles || missingPosts ? (
+                showExtraIcons && (missingFiles || missingPosts) ? (
                   <ThemeIcon
                     color="yellow"
                     variant="light"
@@ -151,7 +154,7 @@ export function ModelVersionList({
                 ) : undefined
               }
               rightIcon={
-                showMenu ? (
+                showExtraIcons ? (
                   <Menu withinPortal>
                     <Menu.Target>
                       <Box
@@ -179,20 +182,40 @@ export function ModelVersionList({
                         </Menu.Item>
                       )}
                       <Menu.Item
-                        component={NextLink}
+                        // component={NextLink}
                         icon={<IconEdit size={14} stroke={1.5} />}
-                        onClick={(e) => e.stopPropagation()}
-                        href={`/models/v2/${version.modelId}/model-versions/${version.id}/edit`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openRoutedContext('modelVersionEdit', {
+                            modelVersionId: version.id,
+                          });
+                        }}
+                        // href={`/models/v2/${version.modelId}/model-versions/${version.id}/edit`}
                       >
-                        Edit version
+                        Edit details
                       </Menu.Item>
                       <Menu.Item
                         icon={<IconPhotoEdit size={14} stroke={1.5} />}
-                        // TODO.manuel: add carousel edit
-                        onClick={(e) => e.stopPropagation()}
+                        // TODO.manuel: link to files edit
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openRoutedContext('filesEdit', {
+                            modelVersionId: version.id,
+                          });
+                        }}
                       >
-                        Edit carousel
+                        Manage files
                       </Menu.Item>
+                      {version.posts.length > 0 && (
+                        <Menu.Item
+                          component={NextLink}
+                          icon={<IconPhotoEdit size={14} stroke={1.5} />}
+                          onClick={(e) => e.stopPropagation()}
+                          href={`/posts/${version.posts[0].id}/edit`}
+                        >
+                          Manage images
+                        </Menu.Item>
+                      )}
                     </Menu.Dropdown>
                   </Menu>
                 ) : undefined
@@ -223,5 +246,5 @@ type Props = {
   onVersionClick: (version: ModelById['modelVersions'][number]) => void;
   onDeleteClick: (versionId: number) => void;
   selected?: number;
-  showMenu?: boolean;
+  showExtraIcons?: boolean;
 };

@@ -1,4 +1,4 @@
-import { Anchor, Button, Container, Group, Stack, Stepper, Text } from '@mantine/core';
+import { Anchor, Button, Container, Group, Stack, Stepper, Text, Title } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { IconArrowLeft } from '@tabler/icons';
 import Link from 'next/link';
@@ -6,11 +6,12 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
-import { PostEditComposite } from '~/components/Post/Edit/PostEditComposite';
 import { PostEditWrapper } from '~/components/Post/Edit/PostEditLayout';
 import { Files } from '~/components/Resource/Files';
+import { BaseModel } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
 import { ModelById } from '~/types/router';
+import { PostUpsertForm } from '../Forms/PostUpsertForm';
 
 export function ModelVersionWizard({ data }: Props) {
   const router = useRouter();
@@ -67,48 +68,59 @@ export function ModelVersionWizard({ data }: Props) {
           allowNextStepsSelect={false}
           size="sm"
         >
-          <Stepper.Step label="Add version">
-            <ModelVersionUpsertForm
-              model={modelWithoutTags}
-              version={modelVersion}
-              onSubmit={(result) => {
-                if (editing) return goNext();
-                router.replace(
-                  `/models/v2/${id}/model-versions/${result?.id}/wizard?step=2`,
-                  undefined,
-                  {
-                    shallow: true,
-                  }
-                );
-              }}
-            >
-              {({ loading }) => (
-                <Group mt="xl" position="right">
-                  <Button type="submit" loading={loading}>
-                    Next
-                  </Button>
-                </Group>
-              )}
-            </ModelVersionUpsertForm>
+          <Stepper.Step label={editing ? 'Edit version' : 'Add version'}>
+            <Stack>
+              <Title order={3}>{editing ? 'Edit version' : 'Add version'}</Title>
+              <ModelVersionUpsertForm
+                model={modelWithoutTags}
+                version={{ ...modelVersion, baseModel: modelVersion?.baseModel as BaseModel }}
+                onSubmit={(result) => {
+                  if (editing) return goNext();
+                  router.replace(
+                    `/models/v2/${id}/model-versions/${result?.id}/wizard?step=2`,
+                    undefined,
+                    {
+                      shallow: true,
+                    }
+                  );
+                }}
+              >
+                {({ loading }) => (
+                  <Group mt="xl" position="right">
+                    <Button type="submit" loading={loading}>
+                      Next
+                    </Button>
+                  </Group>
+                )}
+              </ModelVersionUpsertForm>
+            </Stack>
           </Stepper.Step>
           <Stepper.Step label="Upload files">
-            <Files model={modelWithoutTags} version={modelVersion} onStartUploadClick={goNext} />
-            <Group mt="xl" position="right">
-              <Button variant="default" onClick={goBack}>
-                Back
-              </Button>
-              <Button onClick={goNext}>Next</Button>
-            </Group>
+            <Stack spacing="xl">
+              <Title order={3}>Upload files</Title>
+              <Files model={modelWithoutTags} version={modelVersion} />
+              <Group position="right">
+                <Button variant="default" onClick={goBack}>
+                  Back
+                </Button>
+                <Button onClick={goNext}>Next</Button>
+              </Group>
+            </Stack>
           </Stepper.Step>
           <Stepper.Step label="Create a post">
-            <PostEditWrapper postId={modelVersion?.posts[0]?.id}>
-              <PostEditComposite />
-            </PostEditWrapper>
-            <Group mt="xl" position="right">
-              <Button variant="default" onClick={goBack}>
-                Back
-              </Button>
-            </Group>
+            <Stack spacing="xl">
+              <Title order={3}>Create your post</Title>
+              {model && modelVersion && (
+                <PostEditWrapper postId={modelVersion.posts[0]?.id}>
+                  <PostUpsertForm modelVersionId={modelVersion.id} modelId={model.id} />
+                </PostEditWrapper>
+              )}
+              <Group position="right">
+                <Button variant="default" onClick={goBack}>
+                  Back
+                </Button>
+              </Group>
+            </Stack>
           </Stepper.Step>
         </Stepper>
       </Stack>

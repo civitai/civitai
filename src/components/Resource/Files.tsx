@@ -36,7 +36,7 @@ import { UploadType } from '~/server/common/enums';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { useS3UploadStore } from '~/store/s3-upload.store';
-import { ModelById } from '~/types/router';
+import { ModelVersionById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { getFileExtension } from '~/utils/string-helpers';
@@ -238,7 +238,7 @@ export function Files({ model, version, onStartUploadClick }: Props) {
     if (version?.files && version.files.length > 0)
       setItems(
         () =>
-          version?.files.map(({ id, sizeKB, name, type, metadata }) => ({
+          version?.files?.map(({ id, sizeKB, name, type, metadata }) => ({
             id,
             name,
             size: sizeKB,
@@ -258,6 +258,7 @@ export function Files({ model, version, onStartUploadClick }: Props) {
 
   const { acceptedModelFiles, acceptedFileTypes, maxFiles } =
     dropzoneOptionsByModelType[model?.type ?? 'Checkpoint'];
+  const hasPendingFiles = versionFiles.some((item) => item.status === 'pending');
 
   return (
     <Stack>
@@ -303,6 +304,7 @@ export function Files({ model, version, onStartUploadClick }: Props) {
             handleStartUpload(versionFiles.filter((item) => item.status === 'pending'))
           }
           size="lg"
+          disabled={!hasPendingFiles}
           fullWidth
         >
           Start Upload
@@ -331,8 +333,8 @@ export function Files({ model, version, onStartUploadClick }: Props) {
 }
 
 type Props = {
-  model?: ModelUpsertInput;
-  version?: ModelById['modelVersions'][number];
+  model?: Partial<ModelUpsertInput>;
+  version?: Partial<ModelVersionById>;
   onStartUploadClick?: VoidFunction;
 };
 
@@ -359,7 +361,7 @@ const mapStatusLabel: Record<FileStatus, React.ReactNode> = {
   success: (
     <>
       <IconCircleCheck color="green" />
-      <Text size="sm">Success</Text>
+      <Text size="sm">Upload completed</Text>
     </>
   ),
 };

@@ -16,6 +16,8 @@ const GalleryDetailModal = dynamic(() => import('~/routed-context/modals/Gallery
 const ImageDetailModal = dynamic(() => import('~/routed-context/modals/ImageDetailModal'));
 const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
 const ModelEdit = dynamic(() => import('~/routed-context/modals/ModelEdit'));
+const ModelVersionEdit = dynamic(() => import('~/routed-context/modals/ModelVersionEdit'));
+const FilesEdit = dynamic(() => import('~/routed-context/modals/FilesEdit'));
 
 // this is they type I want to hook up at some point
 type ModalRegistry<P> = {
@@ -28,6 +30,22 @@ const registry = {
     Component: ModelEdit,
     resolve: (args: React.ComponentProps<typeof ModelEdit>) => [
       { query: { ...Router.query, ...args, modal: 'modelEdit' } },
+      undefined, // could be a page url for reviews here (/reviews/:reviewId)
+      { shallow: true },
+    ],
+  },
+  modelVersionEdit: {
+    Component: ModelVersionEdit,
+    resolve: (args: React.ComponentProps<typeof ModelVersionEdit>) => [
+      { query: { ...Router.query, ...args, modal: 'modelVersionEdit' } },
+      undefined, // could be a page url for reviews here (/reviews/:reviewId)
+      { shallow: true },
+    ],
+  },
+  filesEdit: {
+    Component: FilesEdit,
+    resolve: (args: React.ComponentProps<typeof FilesEdit>) => [
+      { query: { ...Router.query, ...args, modal: 'filesEdit' } },
       undefined, // could be a page url for reviews here (/reviews/:reviewId)
       { shallow: true },
     ],
@@ -190,6 +208,7 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
       as={as}
       {...options}
       onClick={(e) => {
+        e.stopPropagation();
         if (!e.ctrlKey) {
           setFreeze(true);
         }

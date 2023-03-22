@@ -62,12 +62,7 @@ export const toggleNotifyModelVersion = ({ id, userId }: GetByIdInput & { userId
   return toggleModelVersionEngagement({ userId, versionId: id, type: 'Notify' });
 };
 
-export const upsertModelVersion = async ({
-  id,
-  modelId,
-  userId,
-  ...data
-}: ModelVersionUpsertInput & { userId: number }) => {
+export const upsertModelVersion = async ({ id, modelId, ...data }: ModelVersionUpsertInput) => {
   if (!id) {
     // if it's a new version, we set it at the top of the list
     // and increment the index of all other versions
@@ -95,7 +90,6 @@ export const upsertModelVersion = async ({
           ...data,
           index: 0,
           modelId,
-          posts: { create: { userId } },
         },
       }),
       // update the index of all other versions
@@ -119,4 +113,11 @@ export const upsertModelVersion = async ({
 
 export const deleteVersionById = async ({ id }: GetByIdInput) => {
   return dbWrite.modelVersion.delete({ where: { id } });
+};
+
+export const updateModelVersionById = ({
+  id,
+  data,
+}: GetByIdInput & { data: Prisma.ModelVersionUpdateInput }) => {
+  return dbWrite.modelVersion.update({ where: { id }, data });
 };

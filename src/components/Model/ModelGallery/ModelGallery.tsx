@@ -21,7 +21,7 @@ export function ModelGallery({ modelId, limit = DEFAULT_PAGE_SIZE }: Props) {
   const { data, isLoading, fetchNextPage, hasNextPage } =
     trpc.image.getGalleryImagesInfinite.useInfiniteQuery(
       { ...filters, limit, modelId },
-      { getNextPageParam: (lastPage) => lastPage.nextCursor }
+      { getNextPageParam: (lastPage) => lastPage.nextCursor, keepPreviousData: true }
     );
 
   const images = useMemo(
