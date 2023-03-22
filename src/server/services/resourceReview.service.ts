@@ -18,7 +18,11 @@ export const getResourceReviews = async ({ resourceIds }: GetResourceReviewsInpu
 export const upsertResourceReview = async (
   data: UpsertResourceReviewInput & { userId: number }
 ) => {
-  if (!data.id) return await dbWrite.resourceReview.create({ data, select: { id: true } });
+  if (!data.id)
+    return await dbWrite.resourceReview.create({
+      data: { ...data, thread: {} },
+      select: { id: true },
+    });
   else
     return await dbWrite.resourceReview.update({
       where: { id: data.id },

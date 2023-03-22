@@ -346,6 +346,8 @@ model Model {
   downloads         DownloadHistory[]
   imageConnections  ImageConnection[]
   hashes            ModelHash[]
+  threads           Thread[]
+  discussionItems   DiscussionItem[]
 
   @@index([name])
   @@index([status, nsfw])
@@ -1250,8 +1252,11 @@ model Thread {
   post       Post?           @relation(fields: [postId], references: [id], onDelete: SetNull)
   reviewId   Int?            @unique
   review     ResourceReview? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
+  modelId    Int?
+  model      Model?          @relation(fields: [modelId], references: [id], onDelete: SetNull)
 
-  comments CommentV2[]
+  comments        CommentV2[]
+  discussionItems DiscussionItem[]
 
   @@index([reviewId], type: Hash)
   @@index([postId], type: Hash)
@@ -2076,4 +2081,26 @@ model PostTag {
   downVotes Int
 
   @@id([postId, tagId])
+}
+
+// Brings together ResourceReview and Threads on Models
+// ?modal=reviewThread&threadId=1123
+// Req 1: {thread: {select: {review: {select: {content, userId: true modelVersionId: true }}}}}
+// Req 2: get all comments and reactions to comments in thread (Component)
+// Req 2 inside of ImageCarousel: images where userId, modelVersionId, hiddenStuff...
+// ?modal=commentThread&threadId=1123
+// Req 1: get all comments and reactions to comments in thread (Component)
+/// @view
+model DiscussionItem {
+  threadId         Int      @id
+  thread           Thread   @relation(fields: [threadId], references: [id])
+  type             String // 'comment' or 'review'
+  modelId          Int?
+  model            Model?   @relation(fields: [modelId], references: [id])
+  modelVersionId   Int?
+  modelVersionName String?
+  content          String
+  createdAt        DateTime
+  rating           Int?
+  imageCount       Int?
 }

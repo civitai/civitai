@@ -437,7 +437,7 @@ export const getAllImages = async ({
 
   if (modelId || modelVersionId)
     AND.push({ resourceHelper: { some: { modelVersionId, modelId } } });
-  if (username) AND.push({ user: { username: { equals: username, mode: 'insensitive' } } });
+  if (username) AND.push({ user: { username } });
   if (browsingMode !== BrowsingMode.All)
     AND.push({ nsfw: { equals: browsingMode === BrowsingMode.NSFW } });
   if (!!excludedUserIds?.length) AND.push({ userId: { notIn: excludedUserIds } });
