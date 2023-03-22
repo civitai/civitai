@@ -34,7 +34,7 @@ SELECT DISTINCT
   i."postId" post_id,
   toi."tagId" tag_id
 FROM "TagsOnImage" toi
-JOIN "Image" i ON i.id = toi."imageId"
+JOIN "Image" i ON i.id = toi."imageId";
 
 CREATE OR REPLACE VIEW "PostTag" AS
 WITH post_tags AS (

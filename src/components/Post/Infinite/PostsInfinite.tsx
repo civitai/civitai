@@ -30,10 +30,11 @@ export default function PostsInfinite({
   const router = useRouter();
   const postId = router.query.post ? Number(router.query.post) : undefined;
   const globalFilters = usePostFilters();
-  const filters = useMemo(
-    () => QS.parse(QS.stringify({ ...globalFilters, username, modelId, modelVersionId })),
-    [globalFilters, username, modelId, modelVersionId]
-  );
+  // const filters = useMemo(
+  //   () => QS.parse(QS.stringify({ ...globalFilters, username, modelId, modelVersionId })),
+  //   [globalFilters, username, modelId, modelVersionId]
+  // );
+  const filters = { ...globalFilters, username, modelId, modelVersionId };
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.post.getInfinite.useInfiniteQuery(
       { ...filters },
