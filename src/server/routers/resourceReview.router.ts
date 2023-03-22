@@ -1,9 +1,15 @@
+import {
+  getRatingTotalsSchema,
+  getResourceReviewsInfinite,
+} from './../schema/resourceReview.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteResourceReviewHandler,
+  getRatingTotalsHandler,
+  getResourceReviewsInfiniteHandler,
   upsertResourceReviewHandler,
 } from './../controllers/resourceReview.controller';
-import { getResourceReviewHandler } from '~/server/controllers/resourceReview.controller';
+import { getResourceReviewsHandler } from '~/server/controllers/resourceReview.controller';
 import { dbRead } from '~/server/db/client';
 import {
   getResourceReviewsSchema,
@@ -39,7 +45,11 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 });
 
 export const resourceReviewRouter = router({
-  get: publicProcedure.input(getResourceReviewsSchema).query(getResourceReviewHandler),
+  // getResources: publicProcedure.input(getResourceReviewsSchema).query(getResourceReviewsHandler),
+  getInfinite: publicProcedure
+    .input(getResourceReviewsInfinite)
+    .query(getResourceReviewsInfiniteHandler),
+  getRatingTotals: publicProcedure.input(getRatingTotalsSchema).query(getRatingTotalsHandler),
   upsert: protectedProcedure
     .input(upsertResourceReviewSchema)
     .use(isOwnerOrModerator)

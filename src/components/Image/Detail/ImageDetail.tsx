@@ -126,8 +126,6 @@ export function ImageDetail() {
             style={{ flex: 1, position: 'relative' }}
             classNames={{ viewport: classes.scrollViewport }}
           >
-            {/* TODO.gallery - do I need this? */}
-            {/* <LoadingOverlay visible={deleteMutation.isLoading} /> */}
             <Stack spacing="md" pt={image.needsReview ? 0 : 'md'} pb="md" style={{ flex: 1 }}>
               {image.needsReview && (
                 <AlertWithIcon
