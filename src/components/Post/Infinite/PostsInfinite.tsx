@@ -6,6 +6,7 @@ import { usePostFilters } from '~/providers/FiltersProvider';
 import { useRouter } from 'next/router';
 import { Alert, Center, Loader } from '@mantine/core';
 import { QS } from '~/utils/qs';
+import { removeEmpty } from '~/utils/object-helpers';
 
 type PostsInfiniteState = {
   modelId?: number; // not hooked up to service/schema yet
@@ -30,11 +31,10 @@ export default function PostsInfinite({
   const router = useRouter();
   const postId = router.query.post ? Number(router.query.post) : undefined;
   const globalFilters = usePostFilters();
-  // const filters = useMemo(
-  //   () => QS.parse(QS.stringify({ ...globalFilters, username, modelId, modelVersionId })),
-  //   [globalFilters, username, modelId, modelVersionId]
-  // );
-  const filters = { ...globalFilters, username, modelId, modelVersionId };
+  const filters = useMemo(
+    () => removeEmpty({ ...globalFilters, username, modelId, modelVersionId }),
+    [globalFilters, username, modelId, modelVersionId]
+  );
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.post.getInfinite.useInfiniteQuery(
       { ...filters },

@@ -4,6 +4,7 @@ import { createContext, useContext, useMemo } from 'react';
 import { useImageFilters } from '~/providers/FiltersProvider';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { QS } from '~/utils/qs';
+import { removeEmpty } from '~/utils/object-helpers';
 
 type ImagesInfiniteState = {
   modelId?: number;
@@ -31,10 +32,7 @@ export default function ImagesInfinite({
 }: ImagesInfiniteProps) {
   const globalFilters = useImageFilters();
   const filters = useMemo(
-    () =>
-      QS.parse(
-        QS.stringify({ ...globalFilters, modelId, modelVersionId, postId, username, reviewId })
-      ),
+    () => removeEmpty({ ...globalFilters, modelId, modelVersionId, postId, username, reviewId }),
     [globalFilters, modelId, modelVersionId, postId, username, reviewId]
   );
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =

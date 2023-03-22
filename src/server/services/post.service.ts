@@ -59,20 +59,21 @@ export const getPostsInfinite = async ({
           { userId: user?.id },
           {
             tags: { none: { tagId: { in: excludedTagIds } } },
-            imageTags: { some: { tagId: { notIn: excludedTagIds } } },
+            imageTags: { none: { tagId: { in: excludedTagIds } } },
+            helper: { scanned: true },
           },
         ],
       });
 
-      imageAND.push({
-        OR: [
-          { userId: user?.id },
-          {
-            tags: { none: { tagId: { in: excludedTagIds } } },
-            scannedAt: { not: null },
-          },
-        ],
-      });
+      // imageAND.push({
+      //   OR: [
+      //     { userId: user?.id },
+      //     {
+      //       tags: { none: { tagId: { in: excludedTagIds } } },
+      //       scannedAt: { not: null },
+      //     },
+      //   ],
+      // });
     }
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
     if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });

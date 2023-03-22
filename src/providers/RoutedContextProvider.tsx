@@ -6,6 +6,8 @@ import { getHasClientHistory } from '~/store/ClientHistoryStore';
 import { create } from 'zustand';
 import { Freeze } from 'react-freeze';
 import { NextLink } from '@mantine/next';
+import { removeEmpty } from '~/utils/object-helpers';
+import useIsClient from '~/hooks/useIsClient';
 
 const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
 const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLightbox'));
@@ -167,25 +169,15 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
   children,
   ...props
 }: OpenRoutedContextProps<TName>) {
-  const [url, setUrl] = useState<any>();
-  const [as, setAs] = useState<any>();
-  const [options, setOptions] = useState(initialOptions);
   const setFreeze = useFreezeStore((state) => state.setFreeze);
+  const toResolve = removeEmpty(props);
+  const isClient = useIsClient();
+  const handleClick = () => openRoutedContext(modal, toResolve as any, initialOptions);
 
-  const toResolve = QS.parse(QS.stringify(props));
+  if (!isClient) return React.cloneElement(children, { onClick: handleClick });
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const resolve = registry[modal].resolve;
-    const [url, asPath, options] = resolve(toResolve as any) as Parameters<NextRouter['push']>;
-    setUrl(url as string);
-    setAs(asPath as string);
-    setOptions((state) => ({ ...state, ...options }));
-  }, []);
-
-  const handleClick = () => openRoutedContext(modal, toResolve as any, options);
-
-  if (!url || !options) return React.cloneElement(children, { onClick: handleClick });
+  const resolve = registry[modal].resolve;
+  const [url, as, options] = resolve(toResolve as any) as Parameters<NextRouter['push']>;
   return (
     <NextLink
       href={url}
