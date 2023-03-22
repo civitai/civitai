@@ -286,7 +286,7 @@ SELECT
   r."modelId",
   r."modelVersionId",
   MAX(r.rating) "rating",
-  STRING_AGG(r.text, '\n<br/>\n') "details",
+  STRING_AGG(r.text, '<br/>') "details",
   r."userId",
   MAX(r."createdAt"),
   MAX(r."updatedAt"),
