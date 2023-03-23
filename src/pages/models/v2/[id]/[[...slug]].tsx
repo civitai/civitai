@@ -44,9 +44,13 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Collection } from '~/components/Collection/Collection';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
+import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
+import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
@@ -56,6 +60,7 @@ import { ModelGallery } from '~/components/Model/ModelGallery/ModelGallery';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { ResourceReviewTotals } from '~/components/ResourceReview/ResourceReviewTotals';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -550,12 +555,14 @@ export default function ModelDetailsV2({
                   )}
                 </Group>
               </Group>
+              {/* <ResourceReviewGrid modelId={model.id} /> */}
               <ModelDiscussionV2 modelId={model.id} />
             </Stack>
           ) : null}
+
           <Stack spacing="md">
             <Group spacing="xs">
-              <Title order={2}>Gallery</Title>
+              <Title order={2}>Images</Title>
               <LoginRedirect reason="create-review">
                 <Button
                   component={NextLink}
@@ -571,7 +578,16 @@ export default function ModelDetailsV2({
                 </Button>
               </LoginRedirect>
             </Group>
-            <ModelGallery modelId={model.id} />
+            {/* IMAGES */}
+            <Group position="apart" spacing={0}>
+              <SortFilter type="image" />
+              <Group spacing={4}>
+                <PeriodFilter />
+                <ImageFiltersDropdown />
+              </Group>
+            </Group>
+            <ImageCategories />
+            <ImagesInfinite />
           </Stack>
         </Stack>
         {versionCount > 1 ? (

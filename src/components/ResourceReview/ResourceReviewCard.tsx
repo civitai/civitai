@@ -1,7 +1,6 @@
 import { Card, Stack, Group, Rating, Badge, Center, Text, Button, ScrollArea } from '@mantine/core';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { IconPhoto, IconMessageCircle2 } from '@tabler/icons';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ResourceReviewInfiniteModel } from '~/server/controllers/resourceReview.controller';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -10,7 +9,7 @@ export function ResourceReviewCard({ data }: { data: ResourceReviewInfiniteModel
   return (
     <Card p="xs">
       <Stack>
-        <UserAvatar />
+        <UserAvatar user={data.user} withUsername withLink />
         {data.rating && (
           <Group position="apart">
             <Rating value={data.rating ?? undefined} readOnly />
@@ -28,9 +27,9 @@ export function ResourceReviewCard({ data }: { data: ResourceReviewInfiniteModel
           </Group>
         )}
         {data.details && (
-          <ScrollArea.Autosize style={{ maxHeight: 200 }}>
+          <div style={{ maxHeight: 200, overflow: 'hidden' }}>
             <RenderHtml html={data.details} sx={(theme) => ({ fontSize: theme.fontSizes.sm })} />
-          </ScrollArea.Autosize>
+          </div>
         )}
       </Stack>
       <Card.Section>

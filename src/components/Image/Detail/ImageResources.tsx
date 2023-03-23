@@ -130,9 +130,14 @@ const Wrapper = ({
   resource: ImageResourceModel;
   children: React.ReactElement;
 }) => {
-  if (resource.name) return children;
+  if (!resource.modelId) return children;
   return (
-    <Link href={`/models/${resource.modelId}/${slugit(resource.modelName ?? '')}`} passHref>
+    <Link
+      href={`/models/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
+        resource.modelVersionId
+      }`}
+      passHref
+    >
       {cloneElement(children, { component: 'a' })}
     </Link>
   );

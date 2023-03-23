@@ -9,7 +9,7 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
   if (!features.gallery && !features.posts) return null;
 
   const data: SegmentedControlItem[] = [{ label: 'Models', value: 'models' }];
-  if (features.posts) data.push({ label: 'Posts', value: 'posts' });
+  // if (features.posts) data.push({ label: 'Posts', value: 'posts' });
   if (features.gallery) data.push({ label: 'Images', value: 'images' });
 
   return (
@@ -32,8 +32,8 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
       onChange={(value) => {
         if (value === 'images') {
           router.push('/images');
-        } else if (value === 'posts') {
-          router.push('/posts');
+          // } else if (value === 'posts') {
+          //   router.push('/posts');
         } else {
           router.push('/');
         }
