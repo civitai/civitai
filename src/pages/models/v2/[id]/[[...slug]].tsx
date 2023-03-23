@@ -82,18 +82,19 @@ import { isNumber } from '~/utils/type-guards';
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ssg, ctx }) => {
-    const params = (ctx.params ?? {}) as { id: string; slug: string[]; modelVersionId: string };
+    const params = (ctx.params ?? {}) as { id: string; slug: string[] };
+    const query = ctx.query as { modelVersionId: string };
     const id = Number(params.id);
-    const modelVersionId = params.modelVersionId ? Number(params.modelVersionId) : undefined;
+    const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
     if (!isNumber(id)) return { notFound: true };
 
     const version = await getDefaultModelVersion({ modelId: id, modelVersionId });
     await Promise.all([
       ssg?.model.getById.prefetch({ id }),
-      ssg?.image.getInfinite.prefetchInfinite({
+      ssg?.image.getInfinite.prefetch({
         modelVersionId: version.id,
-        limit: 10,
         userId: version.model.userId,
+        limit: 10,
       }),
     ]);
 
@@ -134,13 +135,26 @@ export default function ModelDetailsV2({
 
   const rawVersionId = router.query.modelVersionId;
   const modelVersionId = Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId;
-  const publishedVersions =
-    model?.modelVersions.filter((v) => v.status === ModelStatus.Published) ?? [];
+
+  const isModerator = currentUser?.isModerator ?? false;
+  const isOwner = model?.user.id === currentUser?.id || isModerator;
+  const publishedVersions = !isOwner
+    ? model?.modelVersions.filter((v) => v.status === ModelStatus.Published) ?? []
+    : model?.modelVersions ?? [];
   const latestVersion =
     publishedVersions.find((version) => version.id === Number(modelVersionId)) ??
     publishedVersions[0] ??
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
+
+  const { data: { items: versionImages } = { items: [] } } = trpc.image.getInfinite.useQuery(
+    {
+      modelVersionId: latestVersion?.id,
+      userId: model?.user.id,
+      limit: 10,
+    },
+    { enabled: !!latestVersion }
+  );
 
   const deleteMutation = trpc.model.delete.useMutation({
     async onSuccess(_, { permanently }) {
@@ -297,8 +311,6 @@ export default function ModelDetailsV2({
   if (loadingModel) return <PageLoader />;
   if (!model) return <NotFound />;
 
-  const isModerator = currentUser?.isModerator ?? false;
-  const isOwner = model.user.id === currentUser?.id || isModerator;
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
   const nsfw = userNotBlurringNsfw && model.nsfw === true;
 
@@ -307,9 +319,9 @@ export default function ModelDetailsV2({
       title={`${model.name} | Stable Diffusion ${model.type} | Civitai`}
       description={truncate(removeTags(model.description ?? ''), { length: 150 })}
       image={
-        nsfw || latestVersion?.images[0]?.url == null
+        nsfw || versionImages[0]?.url == null
           ? undefined
-          : getEdgeUrl(latestVersion.images[0].url, { width: 1200 })
+          : getEdgeUrl(versionImages[0].url, { width: 1200 })
       }
     />
   );

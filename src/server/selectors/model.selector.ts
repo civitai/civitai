@@ -1,5 +1,4 @@
 import { Prisma } from '@prisma/client';
-import { SessionUser } from 'next-auth';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
 import { editPostSelect } from '~/server/selectors/post.selector';
@@ -170,15 +169,15 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       baseModel: true,
       earlyAccessTimeFrame: true,
       status: true,
-      images: {
-        orderBy: { index: 'asc' },
-        select: {
-          index: true,
-          image: {
-            select: imageSelect,
-          },
-        },
-      },
+      // images: {
+      //   orderBy: { index: 'asc' },
+      //   select: {
+      //     index: true,
+      //     image: {
+      //       select: imageSelect,
+      //     },
+      //   },
+      // },
       rank: {
         select: {
           downloadCountAllTime: true,

@@ -20,7 +20,7 @@ export function ResourceReviewTotals({
     count ?? (data ? Object.values(data).reduce<number>((acc, value) => acc + value, 0) : 0);
   const average =
     rating ??
-    (data && total !== undefined
+    (data && !!total
       ? Object.entries(data).reduce<number>((acc, [key, value]) => {
           return acc + Number(key) * value;
         }, 0) / total

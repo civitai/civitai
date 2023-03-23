@@ -1,10 +1,12 @@
 import { Carousel } from '@mantine/carousel';
 import {
   AspectRatio,
+  Box,
   Button,
   Center,
   createStyles,
   Group,
+  Loader,
   Paper,
   Stack,
   Text,
@@ -44,12 +46,36 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function ModelCarousel({ modelId, modelVersionId, images, nsfw, mobile = false }: Props) {
+export function ModelCarousel({
+  modelId,
+  modelVersionId,
+  images,
+  nsfw,
+  mobile = false,
+  loading = false,
+}: Props) {
   const router = useRouter();
   const { classes, cx } = useStyles();
   const { filters, clearFilters } = useGalleryFilters();
 
-  if (!images.length) {
+  if (loading)
+    return (
+      <Box
+        className={cx(!mobile && classes.carousel, mobile && classes.mobileBlock)}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: mobile ? 300 : 600,
+        }}
+      >
+        <Center>
+          <Loader size="md" />
+        </Center>
+      </Box>
+    );
+
+  if (!loading && !images.length) {
     const hasTagFilters = filters.tags && filters.tags.length > 0;
 
     return (
@@ -168,4 +194,5 @@ type Props = {
   modelId: number;
   nsfw: boolean;
   mobile?: boolean;
+  loading?: boolean;
 };
