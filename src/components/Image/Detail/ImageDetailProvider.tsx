@@ -42,6 +42,7 @@ export function ImageDetailProvider({
   modelVersionId,
   username,
   userId,
+  limit,
 }: {
   children: React.ReactElement;
   imageId: number;
@@ -50,6 +51,7 @@ export function ImageDetailProvider({
   modelVersionId?: number;
   username?: string;
   userId?: number;
+  limit?: number;
 }) {
   const router = useRouter();
   const active = router.query.active === 'true';
@@ -64,13 +66,13 @@ export function ImageDetailProvider({
   // the globally set filter values should only be applied when accessing the image detail from the image gallery
   const globalImageFilters = useImageFilters();
   const filters = useMemo(() => {
-    const baseFilters = { postId, modelVersionId, username, userId };
+    const baseFilters = { postId, modelVersionId, username, userId, limit };
     return removeEmpty(
       !postId && !modelVersionId && !username && !userId
         ? { ...baseFilters, ...globalImageFilters }
         : baseFilters
     );
-  }, [globalImageFilters, postId, modelVersionId, username, userId]);
+  }, [globalImageFilters, postId, modelVersionId, username, userId, limit]);
   // const filters = !postId && !modelId && !username ? globalImageFilters : {};
 
   const { data, isLoading } = trpc.image.getInfinite.useInfiniteQuery(filters, {
