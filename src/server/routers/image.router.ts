@@ -29,7 +29,6 @@ import {
   getImageConnectionsSchema,
   getModelVersionImageSchema,
   getReviewImagesSchema,
-  imageUpdateSchema,
 } from '~/server/schema/image.schema';
 import {
   middleware,

@@ -1,4 +1,4 @@
-import { useMantineTheme, Center, Loader } from '@mantine/core';
+import { useMantineTheme, Center, Loader, Button } from '@mantine/core';
 import {
   useContainerPosition,
   useMasonry,
@@ -33,6 +33,7 @@ type Props<TData, TFilters extends Record<string, unknown>> = Omit<
   columnGutter?: number;
   maxColumnCount?: number;
   filters: TFilters;
+  autoFetch?: boolean;
   fetchNextPage?: () => void;
   /** using the data in the grid, determine the index to scroll to */
   scrollToIndex?: (data: TData[]) => number;
@@ -50,6 +51,7 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
   scrollToIndex,
   fetchNextPage,
   filters,
+  autoFetch = true,
   ...masonicProps
 }: Props<T, TFilters>) {
   const theme = useMantineTheme();
@@ -116,11 +118,18 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
         // render: MasonryCard,
         ...masonicProps,
       })}
-      {hasNextPage && (
-        <Center ref={ref}>
-          <Loader />
-        </Center>
-      )}
+      {hasNextPage &&
+        (autoFetch ? (
+          <Center ref={ref}>
+            <Loader />
+          </Center>
+        ) : (
+          <Center>
+            <Button onClick={fetchNextPage} loading={isFetchingNextPage}>
+              Load More
+            </Button>
+          </Center>
+        ))}
     </>
   );
 }

@@ -42,6 +42,7 @@ export function EditPostReviews() {
             rating={resource.reviewRating}
             details={resource.reviewDetails}
             createdAt={resource.reviewCreatedAt}
+            modelId={resource.modelId}
             modelName={resource.modelName}
             modelVersionId={resource.modelVersionId}
             modelVersionName={resource.modelVersionName}

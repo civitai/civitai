@@ -8,6 +8,7 @@ import { z } from 'zod';
 
 type EditResourceReviewProps = {
   id?: number | null;
+  modelId?: number | null;
   modelName?: string | null;
   modelVersionId?: number | null;
   modelVersionName?: string | null;
@@ -23,6 +24,7 @@ const schema = z.object({
 
 export function EditResourceReview({
   id: initialId,
+  modelId,
   modelName,
   modelVersionId,
   modelVersionName,
@@ -37,14 +39,13 @@ export function EditResourceReview({
   const { mutate, isLoading } = trpc.resourceReview.upsert.useMutation();
 
   const [editDetail, setEditDetail] = useState(false);
-
   const toggleEditDetail = () => setEditDetail((state) => !state);
 
   const handleRatingChange = (rating: number) => {
-    if (!modelVersionId) return;
+    if (!modelVersionId || !modelId) return;
     // stupid prisma
     mutate(
-      { id: id ?? undefined, rating, modelVersionId },
+      { id: id ?? undefined, rating, modelVersionId, modelId },
       {
         onSuccess: async (response, request) => {
           setRating(rating);
@@ -56,9 +57,9 @@ export function EditResourceReview({
 
   const form = useForm({ schema, defaultValues: { details: details ?? undefined } });
   const handleSubmit = ({ details }: z.infer<typeof schema>) => {
-    if (!modelVersionId || !id || !rating) return;
+    if (!modelId || !modelVersionId || !id || !rating) return;
     mutate(
-      { id, modelVersionId, rating, details },
+      { id, modelVersionId, modelId, rating, details },
       {
         onSuccess: async (response, request) => {
           setDetails(details);
