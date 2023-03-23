@@ -83,6 +83,11 @@ export const adjustTagsSchema = z.object({
 });
 export type AdjustTagsSchema = z.infer<typeof adjustTagsSchema>;
 
+export const deleteTagsSchema = z.object({
+  tags: tagIdsOrNamesSchema,
+});
+export type DeleteTagsSchema = z.infer<typeof deleteTagsSchema>;
+
 export const moderateTagsSchema = z.object({
   entityIds: z.number().array(),
   entityType: taggableEntitySchema,

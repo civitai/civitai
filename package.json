@@ -91,6 +91,7 @@
     "immer": "^9.0.15",
     "lodash": "^4.17.21",
     "lodash-es": "^4.17.21",
+    "mantine-react-table": "^0.9.5",
     "masonic": "^3.7.0",
     "micro": "^10.0.1",
     "next": "12.3.1",

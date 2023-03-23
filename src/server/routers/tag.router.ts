@@ -8,10 +8,13 @@ import {
   removeTagVotesHandler,
   disableTagsHandler,
   moderateTagsHandler,
+  getManagableTagsHandler,
+  deleteTagsHandler,
 } from '~/server/controllers/tag.controller';
 import {
   addTagVotesSchema,
   adjustTagsSchema,
+  deleteTagsSchema,
   getTagByNameSchema,
   getTagsInput,
   getTrendingTagsSchema,
@@ -51,10 +54,12 @@ export const tagRouter = router({
     .input(getTrendingTagsSchema)
     .use(applyUserPreferences)
     .query(getTrendingTagsHandler),
+  getManagableTags: moderatorProcedure.query(getManagableTagsHandler),
   getVotableTags: publicProcedure.input(getVotableTagsSchema).query(getVotableTagsHandler),
   addTagVotes: protectedProcedure.input(addTagVotesSchema).mutation(addTagVotesHandler),
   removeTagVotes: protectedProcedure.input(removeTagVotesSchema).mutation(removeTagVotesHandler),
   addTags: moderatorProcedure.input(adjustTagsSchema).mutation(addTagsHandler),
   disableTags: moderatorProcedure.input(adjustTagsSchema).mutation(disableTagsHandler),
   moderateTags: moderatorProcedure.input(moderateTagsSchema).mutation(moderateTagsHandler),
+  deleteTags: moderatorProcedure.input(deleteTagsSchema).mutation(deleteTagsHandler),
 });
