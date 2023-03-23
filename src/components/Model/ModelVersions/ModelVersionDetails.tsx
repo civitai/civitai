@@ -14,12 +14,11 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
 import { IconDownload, IconHeart, IconLicense, IconMessageCircle2 } from '@tabler/icons';
 import { startCase } from 'lodash';
 import { SessionUser } from 'next-auth';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -40,6 +39,7 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { ResourceReviewTotals } from '~/components/ResourceReview/ResourceReviewTotals';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
@@ -51,7 +51,7 @@ import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { removeTags, splitUppercase } from '~/utils/string-helpers';
-import { ResourceReviewTotals } from '~/components/ResourceReview/ResourceReviewTotals';
+import { trpc } from '~/utils/trpc';
 
 export function ModelVersionDetails({ model, version, user, isFavorite, onFavoriteClick }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
@@ -67,6 +67,12 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
 
   const displayCivitaiLink = civitaiLinked && version.hashes.length > 0;
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
+
+  const { data: { items } = { items: [] }, isLoading } = trpc.image.getInfinite.useQuery({
+    modelVersionId: version.id,
+    userId: model.user.id,
+    limit: 10,
+  });
 
   const modelDetails: DescriptionTableProps['items'] = [
     {
@@ -85,17 +91,6 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
           )}
         </Group>
       ),
-    },
-
-    {
-      label: 'Rating',
-      value: (
-        <Group spacing={4}>
-          <Rating value={version.rank?.ratingAllTime ?? 0} fractions={4} readOnly />
-          <Text size="sm">({version.rank?.ratingCountAllTime.toLocaleString() ?? 0})</Text>
-        </Group>
-      ),
-      visible: !model.locked,
     },
     {
       label: 'Downloads',
@@ -216,7 +211,8 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
             modelId={model.id}
             nsfw={model.nsfw}
             modelVersionId={version.id}
-            images={version.images}
+            images={items}
+            loading={isLoading}
             mobile
           />
           <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
@@ -459,7 +455,8 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
             modelId={model.id}
             nsfw={model.nsfw}
             modelVersionId={version.id}
-            images={version.images}
+            images={items}
+            loading={isLoading}
           />
           {model.description ? (
             <ContentClamp maxHeight={300}>

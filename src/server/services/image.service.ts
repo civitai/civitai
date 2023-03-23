@@ -462,6 +462,7 @@ export const getAllImages = async ({
     AND.push({ postId });
     orderBy.push({ index: 'asc' });
   } else {
+    AND.push({ postId: { not: null } });
     if (sort === ImageSort.MostComments)
       orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
     else if (sort === ImageSort.MostReactions)

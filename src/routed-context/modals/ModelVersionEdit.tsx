@@ -36,7 +36,7 @@ export default createRoutedContext({
     if (!isOwner) closeRoutedContext();
 
     return (
-      <Modal opened={context.opened} onClose={context.close} fullScreen>
+      <Modal opened={context.opened} onClose={context.close} withCloseButton={false} fullScreen>
         <Container size="sm">
           {isLoading ? (
             <Center>

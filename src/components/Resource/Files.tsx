@@ -38,7 +38,7 @@ import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelVersionById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
-import { formatBytes, formatSeconds } from '~/utils/number-helpers';
+import { bytesToKB, formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { getFileExtension } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -307,7 +307,7 @@ export function Files({ model, version, onStartUploadClick }: Props) {
           if (versionId)
             upsertFileMutation.mutate({
               ...result,
-              sizeKB: size,
+              sizeKB: bytesToKB(size),
               modelVersionId: versionId,
               type,
               metadata,

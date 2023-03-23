@@ -37,7 +37,7 @@ export default createRoutedContext({
     if (!isOwner) closeRoutedContext();
 
     return (
-      <Modal opened={context.opened} onClose={context.close} fullScreen>
+      <Modal opened={context.opened} onClose={context.close} withCloseButton={false} fullScreen>
         <Container size="sm">
           {isLoading ? (
             <Center>
@@ -55,11 +55,6 @@ export default createRoutedContext({
               </Link>
               <Title order={1}>Manage Files</Title>
               <Files model={modelVersion?.model} version={modelVersion} />
-              <Group position="right">
-                <Button variant="default" onClick={context.close}>
-                  Cancel
-                </Button>
-              </Group>
             </Stack>
           )}
         </Container>
