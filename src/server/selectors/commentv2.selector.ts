@@ -23,6 +23,8 @@ export const commentV2Select = Prisma.validator<Prisma.CommentV2Select>()({
   },
   childThread: {
     select: {
+      id: true,
+      locked: true,
       _count: {
         select: {
           comments: true,

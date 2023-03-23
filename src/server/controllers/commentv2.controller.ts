@@ -6,6 +6,7 @@ import {
   getCommentCount,
   getCommentsThreadDetails,
   toggleLockCommentsThread,
+  getComment,
 } from './../services/commentsv2.service';
 import {
   UpsertCommentV2Input,
@@ -44,6 +45,14 @@ export const getInfiniteCommentsV2Handler = async ({
       nextCursor,
       comments,
     };
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: GetByIdInput }) => {
+  try {
+    return await getComment({ ...input });
   } catch (error) {
     throw throwDbError(error);
   }

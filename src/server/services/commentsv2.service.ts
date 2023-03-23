@@ -43,6 +43,12 @@ export const upsertComment = async ({
   return await dbWrite.commentV2.update({ where: { id: data.id }, data, select: commentV2Select });
 };
 
+export const getComment = async ({ id }: GetByIdInput) => {
+  const comment = await dbRead.commentV2.findFirst({ where: { id }, select: commentV2Select });
+  if (!comment) throw throwNotFoundError();
+  return comment;
+};
+
 export const getComments = async <TSelect extends Prisma.CommentV2Select>({
   entityType,
   entityId,
