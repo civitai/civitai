@@ -3,6 +3,7 @@ import { ModelVersionEngagementType, Prisma } from '@prisma/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -22,6 +23,28 @@ export const getVersionById = <TSelect extends Prisma.ModelVersionSelect>({
   select,
 }: GetByIdInput & { select: TSelect }) => {
   return dbRead.modelVersion.findUnique({ where: { id }, select });
+};
+
+export const getDefaultModelVersion = async ({
+  modelId,
+  modelVersionId,
+}: {
+  modelId: number;
+  modelVersionId?: number;
+}) => {
+  const result = await dbRead.model.findUnique({
+    where: { id: modelId },
+    select: {
+      modelVersions: {
+        take: 1,
+        where: modelVersionId ? { id: modelVersionId } : undefined,
+        orderBy: { index: 'asc' },
+        select: { id: true, model: { select: { userId: true } } },
+      },
+    },
+  });
+  if (!result) throw throwNotFoundError();
+  return result.modelVersions[0];
 };
 
 export const toggleModelVersionEngagement = async ({

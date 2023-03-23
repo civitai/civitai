@@ -19,7 +19,7 @@ export function ImagesAsPostsCard({
   width: number;
 }) {
   const { classes } = useStyles();
-  const { modelId, modelVersionId, username } = useImagesAsPostsInfiniteContext();
+  const { modelId, username } = useImagesAsPostsInfiniteContext();
   const queryUtils = trpc.useContext();
   const postId = data.postId ?? undefined;
 
@@ -44,7 +44,6 @@ export function ImagesAsPostsCard({
           modal="imageDetailModal"
           imageId={cover.id}
           modelId={modelId}
-          modelVersionId={modelVersionId}
           postId={postId}
           username={username}
           onClick={handleClick}

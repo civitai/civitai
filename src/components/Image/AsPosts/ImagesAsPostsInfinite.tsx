@@ -7,7 +7,6 @@ import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard'
 
 type ImagesAsPostsInfiniteState = {
   modelId?: number;
-  modelVersionId?: number;
   username?: string;
 };
 const ImagesAsPostsInfiniteContext = createContext<ImagesAsPostsInfiniteState | null>(null);
@@ -22,13 +21,12 @@ type ImagesAsPostsInfiniteProps = ImagesAsPostsInfiniteState & { columnWidth?: n
 export default function ImagesAsPostsInfinite({
   columnWidth = 300,
   modelId,
-  modelVersionId,
   username,
 }: ImagesAsPostsInfiniteProps) {
   const globalFilters = useImageFilters();
   const filters = useMemo(
-    () => removeEmpty({ ...globalFilters, modelId, modelVersionId, username, limit: 50 }),
-    [globalFilters, modelId, modelVersionId, username]
+    () => removeEmpty({ ...globalFilters, modelId, username, limit: 50 }),
+    [globalFilters, modelId, username]
   );
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
@@ -44,7 +42,7 @@ export default function ImagesAsPostsInfinite({
   const items = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
 
   return (
-    <ImagesAsPostsInfiniteContext.Provider value={{ modelId, modelVersionId, username }}>
+    <ImagesAsPostsInfiniteContext.Provider value={{ modelId, username }}>
       <MasonryGrid2
         data={items}
         hasNextPage={hasNextPage}

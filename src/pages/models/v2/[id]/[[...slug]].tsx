@@ -67,6 +67,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { getDefaultModelVersion, getVersionById } from '~/server/services/model-version.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -80,11 +81,20 @@ import { isNumber } from '~/utils/type-guards';
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ssg, ctx }) => {
-    const params = (ctx.params ?? {}) as { id: string; slug: string[] };
+    const params = (ctx.params ?? {}) as { id: string; slug: string[]; modelVersionId: string };
     const id = Number(params.id);
+    const modelVersionId = params.modelVersionId ? Number(params.modelVersionId) : undefined;
     if (!isNumber(id)) return { notFound: true };
 
-    await ssg?.model.getById.prefetch({ id });
+    const version = await getDefaultModelVersion({ modelId: id, modelVersionId });
+    await Promise.all([
+      ssg?.model.getById.prefetch({ id }),
+      ssg?.image.getInfinite.prefetchInfinite({
+        modelVersionId: version.id,
+        limit: 10,
+        userId: version.model.userId,
+      }),
+    ]);
 
     return {
       props: { id },

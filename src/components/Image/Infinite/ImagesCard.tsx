@@ -18,7 +18,7 @@ export function ImagesCard({
   width: number;
 }) {
   const { classes } = useStyles();
-  const { modelId, modelVersionId, postId, username } = useImagesInfiniteContext();
+  const { modelId, postId, username } = useImagesInfiniteContext();
 
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
@@ -35,7 +35,6 @@ export function ImagesCard({
           modal="imageDetailModal"
           imageId={image.id}
           modelId={modelId}
-          modelVersionId={modelVersionId}
           postId={postId}
           username={username}
         >

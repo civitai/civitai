@@ -431,7 +431,8 @@ export const getAllImages = async ({
   tags,
   generation,
   reviewId,
-}: GetInfiniteImagesInput & { userId?: number }) => {
+  user,
+}: GetInfiniteImagesInput & { user?: SessionUser }) => {
   const AND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   const orderBy: Prisma.Enumerable<Prisma.ImageOrderByWithRelationInput> = [];
 
@@ -445,7 +446,7 @@ export const getAllImages = async ({
   if (!!excludedTagIds?.length) {
     AND.push({
       OR: [
-        { userId },
+        { userId: user?.id },
         {
           tags: { none: { tagId: { in: excludedTagIds } } },
           scannedAt: { not: null },
@@ -453,6 +454,7 @@ export const getAllImages = async ({
       ],
     });
   }
+  if (!!userId) AND.push({ userId });
   if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
   if (!!generation?.length) AND.push({ generationProcess: { in: generation } });
   if (!!reviewId) AND.push({ resourceHelper: { some: { reviewId } } });
@@ -472,7 +474,7 @@ export const getAllImages = async ({
     cursor: cursor ? { id: cursor } : undefined,
     where: { AND },
     orderBy,
-    select: getImageV2Select({ userId }),
+    select: getImageV2Select({ userId: user?.id }),
   });
 
   let nextCursor: number | undefined;

@@ -8,7 +8,6 @@ import { removeEmpty } from '~/utils/object-helpers';
 
 type ImagesInfiniteState = {
   modelId?: number;
-  modelVersionId?: number;
   postId?: number;
   username?: string;
   reviewId?: number;
@@ -25,16 +24,16 @@ type ImagesInfiniteProps = ImagesInfiniteState & { columnWidth?: number };
 export default function ImagesInfinite({
   columnWidth = 300,
   modelId,
-  modelVersionId,
   postId,
   username,
   reviewId,
 }: ImagesInfiniteProps) {
   const globalFilters = useImageFilters();
   const filters = useMemo(
-    () => removeEmpty({ ...globalFilters, modelId, modelVersionId, postId, username, reviewId }),
-    [globalFilters, modelId, modelVersionId, postId, username, reviewId]
+    () => removeEmpty({ ...globalFilters, modelId, postId, username, reviewId }),
+    [globalFilters, modelId, postId, username, reviewId]
   );
+
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.image.getInfinite.useInfiniteQuery(
       { ...filters },
@@ -49,7 +48,7 @@ export default function ImagesInfinite({
   const images = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
 
   return (
-    <ImagesInfiniteContext.Provider value={{ modelId, modelVersionId, postId, username }}>
+    <ImagesInfiniteContext.Provider value={{ modelId, postId, username }}>
       <MasonryGrid2
         data={images}
         hasNextPage={hasNextPage}
