@@ -30,6 +30,7 @@ import {
   ModelInput,
   modelSchema,
   modelUpsertSchema,
+  publishModelSchema,
   reorderModelVersionsSchema,
 } from '~/server/schema/model.schema';
 import {
@@ -130,7 +131,7 @@ export const modelRouter = router({
     .use(isOwnerOrModerator)
     .mutation(deleteModelHandler),
   publish: protectedProcedure
-    .input(getByIdSchema)
+    .input(publishModelSchema)
     .use(isOwnerOrModerator)
     .mutation(publishModelHandler),
   unpublish: protectedProcedure

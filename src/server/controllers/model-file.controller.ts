@@ -14,7 +14,20 @@ export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInpu
 
 export const upsertFileHandler = async ({ input }: { input: ModelFileUpsertInput }) => {
   try {
-    const file = await upsertFile(input);
+    const file = await upsertFile({
+      ...input,
+      select: {
+        id: true,
+        name: true,
+        modelVersion: {
+          select: {
+            id: true,
+            status: true,
+            _count: { select: { posts: { where: { publishedAt: { not: null } } } } },
+          },
+        },
+      },
+    });
     if (!file) throw throwNotFoundError(`No file with id ${input.id}`);
 
     return file;

@@ -32,7 +32,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    await ssg?.model.getById.prefetch({ id });
+    await ssg?.modelVersion.getById.prefetch({ id: versionId });
 
     return { props: { modelId: id, versionId } };
   },

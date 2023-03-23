@@ -13,8 +13,8 @@ import {
 } from '@mantine/core';
 import { Dropzone, FileWithPath } from '@mantine/dropzone';
 import { randomId, useViewportSize } from '@mantine/hooks';
-import { showNotification } from '@mantine/notifications';
-import { ModelType } from '@prisma/client';
+import { hideNotification, showNotification } from '@mantine/notifications';
+import { ModelStatus, ModelType } from '@prisma/client';
 import {
   IconBan,
   IconCircleCheck,
@@ -128,6 +128,7 @@ const checkConflictingFiles = (files: TrackedFile[]) => {
 export function Files({ model, version, onStartUploadClick }: Props) {
   const theme = useMantineTheme();
   const { items, upload, setItems } = useS3UploadStore();
+  const queryUtils = trpc.useContext();
 
   const versionFiles = items.filter((item) => item.meta?.versionId === version?.id);
 
@@ -146,22 +147,124 @@ export function Files({ model, version, onStartUploadClick }: Props) {
 
   const [error, setError] = useState<SchemaError[] | null>(null);
 
+  const publishModelMutation = trpc.model.publish.useMutation();
   const upsertFileMutation = trpc.modelFile.upsert.useMutation({
-    onSuccess(result) {
-      setItems((items) =>
-        items.map((item) => (item.id === result.id ? { ...item, id: result.id } : item))
-      );
+    async onSuccess(result) {
+      useS3UploadStore
+        .getState()
+        .setItems((items) =>
+          items.map((item) => (item.id === result.id ? { ...item, id: result.id } : item))
+        );
+
+      const hasPublishedPosts = result.modelVersion._count.posts > 0;
+      const isVersionPublished = result.modelVersion.status === ModelStatus.Published;
+      const { uploading } = useS3UploadStore
+        .getState()
+        .getStatus((item) => item.meta?.versionId === result.modelVersion.id);
+      const stillUploading = uploading > 0;
+
+      const notificationId = `upload-finished-${result.id}`;
       showNotification({
-        autoClose: false,
+        id: notificationId,
+        autoClose: stillUploading,
         color: 'green',
         title: `Finished uploading ${result.name}`,
         styles: { root: { alignItems: 'flex-start' } },
-        message: (
-          <Link href={`/models/v2/${model?.id}?modelVersionId=${result.modelVersionId}`} passHref>
-            <Anchor size="sm">Go to model</Anchor>
-          </Link>
-        ),
+        message: !stillUploading ? (
+          <Stack spacing={4}>
+            {isVersionPublished ? (
+              <>
+                <Text size="sm" color="dimmed">
+                  All files finished uploading.
+                </Text>
+                <Link
+                  href={`/models/v2/${model?.id}?modelVersionId=${result.modelVersion.id}`}
+                  passHref
+                >
+                  <Anchor size="sm" onClick={() => hideNotification(notificationId)}>
+                    Go to model
+                  </Anchor>
+                </Link>
+              </>
+            ) : hasPublishedPosts ? (
+              <>
+                <Text size="sm" color="dimmed">
+                  {`Your files have finished uploading, let's publish this version.`}
+                </Text>
+                <Text
+                  variant="link"
+                  size="sm"
+                  sx={{ cursor: 'pointer' }}
+                  onClick={() => {
+                    hideNotification(notificationId);
+
+                    showNotification({
+                      id: 'publishing-version',
+                      message: 'Publishing...',
+                      loading: true,
+                    });
+
+                    publishModelMutation.mutate(
+                      { id: model?.id as number, versionIds: [result.modelVersion.id] },
+                      {
+                        async onSuccess() {
+                          hideNotification('publishing-version');
+
+                          const pubNotificationId = `version-published-${result.modelVersion.id}`;
+                          showNotification({
+                            id: pubNotificationId,
+                            title: 'Version published',
+                            color: 'green',
+                            styles: { root: { alignItems: 'flex-start' } },
+                            message: (
+                              <Stack spacing={4}>
+                                <Text size="sm" color="dimmed">
+                                  Your version has been published and is now available to the
+                                  public.
+                                </Text>
+                                <Link
+                                  href={`/models/v2/${model?.id}?modelVersionId=${result.modelVersion.id}`}
+                                  passHref
+                                >
+                                  <Anchor
+                                    size="sm"
+                                    onClick={() => hideNotification(pubNotificationId)}
+                                  >
+                                    Go to model
+                                  </Anchor>
+                                </Link>
+                              </Stack>
+                            ),
+                          });
+                        },
+                      }
+                    );
+                  }}
+                >
+                  Publish it
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text size="sm" color="dimmed">
+                  Your files have finished uploading, but you still need to add a post.
+                </Text>
+                <Link
+                  href={`/models/v2/${model?.id}/model-versions/${result.modelVersion.id}/wizard?step=3`}
+                  passHref
+                >
+                  <Anchor size="sm" onClick={() => hideNotification(notificationId)}>
+                    Finish setup
+                  </Anchor>
+                </Link>
+              </>
+            )}
+          </Stack>
+        ) : undefined,
       });
+
+      if (model) await queryUtils.model.getById.invalidate({ id: model.id });
+      if (version) await queryUtils.modelVersion.getById.invalidate({ id: version.id });
     },
     onError(error) {
       showErrorNotification({

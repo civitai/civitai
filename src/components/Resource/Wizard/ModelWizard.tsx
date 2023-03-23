@@ -18,7 +18,6 @@ import { PostEditWrapper } from '~/components/Post/Edit/PostEditLayout';
 import { Files } from '~/components/Resource/Files';
 import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
-import { BaseModel } from '~/server/common/constants';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
@@ -149,10 +148,7 @@ export function ModelWizard() {
               <Title order={3}>{hasVersions ? 'Edit version' : 'Add version'}</Title>
               <ModelVersionUpsertForm
                 model={state.model}
-                version={{
-                  ...state.modelVersion,
-                  baseModel: state.modelVersion?.baseModel as BaseModel,
-                }}
+                version={state.modelVersion}
                 onSubmit={goNext}
               >
                 {({ loading }) => (

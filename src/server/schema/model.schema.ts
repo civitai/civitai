@@ -132,3 +132,9 @@ export const reorderModelVersionsSchema = z.object({
     z.object({ id: z.number(), name: z.string(), index: z.number().nullable() })
   ),
 });
+
+export type PublishModelSchema = z.infer<typeof publishModelSchema>;
+export const publishModelSchema = z.object({
+  id: z.number(),
+  versionIds: z.array(z.number()).optional(),
+});
