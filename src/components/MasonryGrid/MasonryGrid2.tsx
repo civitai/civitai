@@ -1,4 +1,4 @@
-import { useMantineTheme, Center, Loader, Button } from '@mantine/core';
+import { useMantineTheme, Center, Loader, Button, LoadingOverlay } from '@mantine/core';
 import {
   useContainerPosition,
   useMasonry,
@@ -70,6 +70,8 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
     (filtersChanged && !currentFetching && prevData.length !== data.length);
   // #endregion
 
+  console.log({ positionerDep });
+
   // #region [base masonic settings]
   const containerRef = useRef(null);
   const [width, height] = useWindowSize();
@@ -105,7 +107,8 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
   // #endregion
 
   return (
-    <>
+    <div style={{ position: 'relative' }}>
+      <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
       {useMasonry({
         resizeObserver,
         positioner,
@@ -130,6 +133,6 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
             </Button>
           </Center>
         ))}
-    </>
+    </div>
   );
 }

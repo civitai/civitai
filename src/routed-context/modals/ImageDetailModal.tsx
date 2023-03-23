@@ -11,6 +11,7 @@ export default createRoutedContext({
     modelVersionId: z.number().optional(),
     postId: z.number().optional(),
     username: z.string().optional(),
+    userId: z.number().optional(),
   }),
   Element: ({ context, props }) => {
     return (
