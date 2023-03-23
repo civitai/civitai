@@ -1247,7 +1247,8 @@ model CommentV2 {
   userId       Int
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   threadId     Int
-  thread       Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  thread       Thread   @relation("thread", fields: [threadId], references: [id], onDelete: Cascade)
+  childThread  Thread?  @relation("childThread")
   metadata     Json?
 
   reactions CommentV2Reaction[]
@@ -1270,11 +1271,13 @@ model Thread {
   post       Post?           @relation(fields: [postId], references: [id], onDelete: SetNull)
   reviewId   Int?            @unique
   review     ResourceReview? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
-  modelId    Int?
+  commentId  Int?            @unique
+  comment    CommentV2?      @relation("childThread", fields: [commentId], references: [id], onDelete: SetNull)
+  modelId    Int?            @unique
   model      Model?          @relation(fields: [modelId], references: [id], onDelete: SetNull)
   metadata   Json            @default("{}")
 
-  comments CommentV2[]
+  comments CommentV2[] @relation("thread")
 
   @@index([reviewId], type: Hash)
   @@index([postId], type: Hash)

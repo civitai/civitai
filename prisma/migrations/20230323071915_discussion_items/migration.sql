@@ -24,7 +24,8 @@ WHERE mv.id = r."modelVersionId";
 ALTER TABLE "ResourceReview" ALTER COLUMN "modelId" SET NOT NULL;
 
 -- AlterTable
-ALTER TABLE "Thread" ADD COLUMN     "metadata" JSONB NOT NULL DEFAULT '{}',
+ALTER TABLE "Thread" ADD COLUMN     "commentId" INTEGER,
+ADD COLUMN     "metadata" JSONB NOT NULL DEFAULT '{}',
 ADD COLUMN     "modelId" INTEGER;
 
 -- CreateTable
@@ -42,6 +43,12 @@ CREATE TABLE "ResourceReviewReaction" (
 -- CreateIndex
 CREATE UNIQUE INDEX "ResourceReviewReaction_reviewId_userId_reaction_key" ON "ResourceReviewReaction"("reviewId", "userId", "reaction");
 
+-- CreateIndex
+CREATE UNIQUE INDEX "Thread_commentId_key" ON "Thread"("commentId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Thread_modelId_key" ON "Thread"("modelId");
+
 -- AddForeignKey
 ALTER TABLE "ResourceReview" ADD CONSTRAINT "ResourceReview_modelId_fkey" FOREIGN KEY ("modelId") REFERENCES "Model"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -50,6 +57,9 @@ ALTER TABLE "ResourceReviewReaction" ADD CONSTRAINT "ResourceReviewReaction_revi
 
 -- AddForeignKey
 ALTER TABLE "ResourceReviewReaction" ADD CONSTRAINT "ResourceReviewReaction_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Thread" ADD CONSTRAINT "Thread_commentId_fkey" FOREIGN KEY ("commentId") REFERENCES "CommentV2"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Thread" ADD CONSTRAINT "Thread_modelId_fkey" FOREIGN KEY ("modelId") REFERENCES "Model"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -238,15 +248,12 @@ ON CONFLICT ("postId", "tagId") DO NOTHING;
 ------------------------------------------
 -- Comment Migration
 ------------------------------------------
--- Create Thread (model) for each top level comment
-INSERT INTO "Thread"("modelId", "metadata")
-SELECT c."modelId", JSONB_BUILD_OBJECT(
-  'commentId', c.id
-)
-FROM "Comment" c
-WHERE c."parentId" IS NULL AND c."reviewId" IS NULL;
+-- Create Thread for each model
+INSERT INTO "Thread"("modelId")
+SELECT m.id
+FROM "Model" m;
 
--- Insert top level comments into threads
+-- Insert top level comments into model threads
 INSERT INTO "CommentV2"("threadId", content, "userId", nsfw, "tosViolation", "createdAt", "updatedAt", metadata)
 SELECT
   t.id,
@@ -258,8 +265,15 @@ SELECT
   c."updatedAt",
   JSONB_BUILD_OBJECT('oldId', c.id)
 FROM "Comment" c
-JOIN "Thread" t ON t.metadata != '{}' AND CAST(t.metadata->>'commentId' AS int) = c.id
+JOIN "Thread" t ON t."modelId" = c."modelId"
 WHERE c."parentId" IS NULL AND c."reviewId" IS NULL;
+
+-- Create child thread for each top level comment
+INSERT INTO "Thread"("commentId", "metadata")
+SELECT c."id", JSONB_BUILD_OBJECT('commentId', c.metadata->'oldId')
+FROM "CommentV2" c
+JOIN "Thread" t ON t.id = c."threadId"
+WHERE t."modelId" IS NOT NULL;
 
 -- Insert child comments into threads
 INSERT INTO "CommentV2"("threadId", content, "userId", nsfw, "tosViolation", "createdAt", "updatedAt", metadata)

@@ -63,6 +63,7 @@ export function PostDetail({ postId }: { postId: number }) {
             </Group>
           )}
           {post.detail && <RenderHtml html={post.detail} withMentions />}
+          <a id="comments" />
           <PostComments postId={postId} userId={post.user.id} />
         </Stack>
       </Stack>
