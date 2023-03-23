@@ -17,6 +17,7 @@ import { throwDbError } from '~/server/utils/errorHandling';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 
 export type InfiniteCommentResults = AsyncReturnType<typeof getInfiniteCommentsV2Handler>;
+export type InfiniteCommentV2Model = InfiniteCommentResults['comments'][0];
 export const getInfiniteCommentsV2Handler = async ({
   ctx,
   input,
@@ -25,7 +26,6 @@ export const getInfiniteCommentsV2Handler = async ({
   input: GetCommentsV2Input;
 }) => {
   try {
-    input.limit = input.limit ?? 20;
     const limit = input.limit + 1;
 
     const comments = await getComments({

@@ -3,12 +3,12 @@ import { z } from 'zod';
 export type CommentConnectorInput = z.infer<typeof commentConnectorSchema>;
 export const commentConnectorSchema = z.object({
   entityId: z.number(),
-  entityType: z.enum(['question', 'answer', 'image', 'post', 'model', 'thread']),
+  entityType: z.enum(['question', 'answer', 'image', 'post', 'model', 'comment']),
 });
 
 export type GetCommentsV2Input = z.infer<typeof getCommentsV2Schema>;
 export const getCommentsV2Schema = commentConnectorSchema.extend({
-  limit: z.number().min(0).max(100).optional(),
+  limit: z.number().min(0).max(100).default(20),
   cursor: z.number().nullish(),
 });
 

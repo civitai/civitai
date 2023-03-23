@@ -50,11 +50,8 @@ export const getComments = async <TSelect extends Prisma.CommentV2Select>({
 }: GetCommentsV2Input & {
   select: TSelect;
 }) => {
-  const take = limit ?? 20;
-  const AND: Prisma.Enumerable<Prisma.CommentV2WhereInput> = [];
-
   return await dbRead.commentV2.findMany({
-    take,
+    take: limit,
     cursor: cursor ? { id: cursor } : undefined,
     where: {
       thread: { [`${entityType}Id`]: entityId },

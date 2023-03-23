@@ -10,7 +10,7 @@ import {
   Badge,
 } from '@mantine/core';
 import { useMemo, useState } from 'react';
-import { useCommentsContext } from './CommentsProvider';
+import { useCommentsContext } from '../CommentsProvider';
 import { CreateComment } from './CreateComment';
 import { CommentForm } from './CommentForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -30,6 +30,7 @@ import React from 'react';
 import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { CommentReactions } from './CommentReactions';
 
 type Store = {
   id?: number;
@@ -42,9 +43,11 @@ const useStore = create<Store>((set) => ({
 
 type CommentProps = Omit<GroupProps, 'children'> & {
   comment: InfiniteCommentResults['comments'][0];
+  withAvatar?: boolean;
+  lineClamp?: number;
 };
 
-export function Comment({ comment, ...groupProps }: CommentProps) {
+export function Comment({ comment, withAvatar = false, lineClamp, ...groupProps }: CommentProps) {
   const { entityId, entityType, isLocked, isMuted, badges } = useCommentsContext();
   const currentUser = useCurrentUser();
   const id = useStore((state) => state.id);
@@ -65,25 +68,29 @@ export function Comment({ comment, ...groupProps }: CommentProps) {
       <Stack spacing={0} style={{ flex: 1 }}>
         <Group position="apart">
           {/* AVATAR */}
-          <Group spacing={8} align="center">
-            <UserAvatar
-              user={comment.user}
-              size="md"
-              linkToProfile
-              includeAvatar={false}
-              withUsername
-              badge={
-                badge ? (
-                  <Badge size="xs" color={badge.color}>
-                    {badge.label}
-                  </Badge>
-                ) : null
-              }
-            />
-            <Text color="dimmed" size="xs" mt={2}>
-              <DaysFromNow date={comment.createdAt} />
-            </Text>
-          </Group>
+          {withAvatar ? (
+            <Group spacing={8} align="center">
+              <UserAvatar
+                user={comment.user}
+                size="md"
+                linkToProfile
+                includeAvatar={false}
+                withUsername
+                badge={
+                  badge ? (
+                    <Badge size="xs" color={badge.color}>
+                      {badge.label}
+                    </Badge>
+                  ) : null
+                }
+              />
+              <Text color="dimmed" size="xs" mt={2}>
+                <DaysFromNow date={comment.createdAt} />
+              </Text>
+            </Group>
+          ) : (
+            <span />
+          )}
           {/* CONTROLS */}
           <Menu position="bottom-end">
             <Menu.Target>
@@ -131,10 +138,12 @@ export function Comment({ comment, ...groupProps }: CommentProps) {
         <Stack style={{ flex: 1 }} spacing={4}>
           {!editing ? (
             <>
-              <RenderHtml
-                html={comment.content}
-                sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
-              />
+              <Text lineClamp={lineClamp}>
+                <RenderHtml
+                  html={comment.content}
+                  sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+                />
+              </Text>
               {/* COMMENT INTERACTION */}
               <Group spacing={4}>
                 <CommentReactions comment={comment} />
@@ -165,30 +174,6 @@ export function Comment({ comment, ...groupProps }: CommentProps) {
         )}
       </Stack>
     </Group>
-  );
-}
-
-function CommentReactions({ comment }: { comment: InfiniteCommentResults['comments'][0] }) {
-  const currentUser = useCurrentUser();
-  const userReactions = comment.reactions.filter((x) => x.user.id === currentUser?.id);
-  const metrics = useMemo(
-    (): ReactionMetrics => ({
-      likeCount: comment.reactions.filter((x) => x.reaction === ReviewReactions.Like).length,
-      dislikeCount: comment.reactions.filter((x) => x.reaction === ReviewReactions.Dislike).length,
-      heartCount: comment.reactions.filter((x) => x.reaction === ReviewReactions.Heart).length,
-      laughCount: comment.reactions.filter((x) => x.reaction === ReviewReactions.Laugh).length,
-      cryCount: comment.reactions.filter((x) => x.reaction === ReviewReactions.Cry).length,
-    }),
-    [comment.reactions]
-  );
-
-  return (
-    <Reactions
-      reactions={userReactions}
-      entityId={comment.id}
-      entityType="comment"
-      metrics={metrics}
-    />
   );
 }
 

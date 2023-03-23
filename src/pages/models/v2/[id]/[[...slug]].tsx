@@ -56,6 +56,7 @@ import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
+import { ModelDiscussionsInfinite } from '~/components/Model/Discussion/ModelDiscussionsInfinite';
 import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
 import { ModelGallery } from '~/components/Model/ModelGallery/ModelGallery';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
@@ -567,7 +568,8 @@ export default function ModelDetailsV2({
                 </Group>
               </Group>
               {/* <ResourceReviewGrid modelId={model.id} /> */}
-              <ModelDiscussionV2 modelId={model.id} />
+              {/* <ModelDiscussionV2 modelId={model.id} /> */}
+              <ModelDiscussionsInfinite modelId={model.id} modelUserId={model.user.id} />
             </Stack>
           ) : null}
 
