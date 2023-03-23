@@ -7,7 +7,7 @@ export const getResourceReviewsSchema = z.object({
 
 export type GetRatingTotalsInput = z.infer<typeof getRatingTotalsSchema>;
 export const getRatingTotalsSchema = z.object({
-  modelId: z.number(),
+  modelVersionId: z.number(),
 });
 
 export type GetResourceReviewsInfiniteInput = z.infer<typeof getResourceReviewsInfinite>;

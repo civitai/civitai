@@ -302,6 +302,7 @@ export const getInfiniteImagesHandler = async ({
   }
 };
 
+export type ImagesAsPostModel = AsyncReturnType<typeof getImagesAsPostsInfiniteHandler>['items'][0];
 export const getImagesAsPostsInfiniteHandler = async ({
   input: { limit, cursor, ...input },
   ctx,
@@ -310,15 +311,17 @@ export const getImagesAsPostsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
+    console.log('__HIT ME___');
     const posts: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
     let remaining = limit;
+    console.log('__BABY___');
 
     while (true) {
       // TODO Optimize: override the select statement to exclude repeated elements like creator data
       const { nextCursor, items } = await getAllImages({
         ...input,
         cursor,
-        limit: remaining * 1.25, // Overscan so that I can merge by postId
+        limit: Math.ceil(limit * 3), // Overscan so that I can merge by postId
         userId: ctx.user?.id,
       });
 
@@ -336,6 +339,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       // If there are enough posts, stop
       if (Object.keys(posts).length >= limit) break;
       remaining = limit - Object.keys(posts).length;
+      console.log(`__REMAINING: ${remaining}__`);
     }
 
     // Get reviews from the users who created the posts
@@ -368,6 +372,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       items: results,
     };
   } catch (error) {
+    console.log('___ONE MORE TIME___');
+    console.log({ error });
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }

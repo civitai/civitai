@@ -51,6 +51,7 @@ import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { removeTags, splitUppercase } from '~/utils/string-helpers';
+import { ResourceReviewTotals } from '~/components/ResourceReview/ResourceReviewTotals';
 
 export function ModelVersionDetails({ model, version, user, isFavorite, onFavoriteClick }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
@@ -349,6 +350,11 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
               </Accordion.Panel>
             </Accordion.Item>
           </Accordion>
+          <ResourceReviewTotals
+            modelVersionId={version.id}
+            rating={version.rank?.ratingAllTime}
+            count={version.rank?.ratingCountAllTime}
+          />
           <CreatorCard user={model.user} />
 
           <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>

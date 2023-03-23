@@ -125,7 +125,7 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
           </Center>
         ) : (
           <Center>
-            <Button onClick={fetchNextPage} loading={isFetchingNextPage}>
+            <Button onClick={fetchNextPage} loading={isFetchingNextPage} variant="subtle" fullWidth>
               Load More
             </Button>
           </Center>

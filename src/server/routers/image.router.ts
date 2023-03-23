@@ -74,10 +74,7 @@ export const imageRouter = router({
     .input(getGalleryImageSchema)
     .use(applyUserPreferences())
     .query(getGalleryImagesInfiniteHandler),
-  getImagesAsPostsInfinite: publicProcedure
-    .input(getInfiniteImagesSchema)
-    .use(applyUserPreferences())
-    .query(getImagesAsPostsInfiniteHandler),
+
   getGalleryImages: publicProcedure
     .input(getGalleryImageSchema)
     .use(applyUserPreferences())
@@ -102,6 +99,11 @@ export const imageRouter = router({
     .use(applyUserPreferences())
     .use(applyBrowsingMode())
     .query(getInfiniteImagesHandler),
+  getImagesAsPostsInfinite: publicProcedure
+    .input(getInfiniteImagesSchema)
+    .use(applyUserPreferences())
+    .use(applyBrowsingMode())
+    .query(getImagesAsPostsInfiniteHandler),
   get: publicProcedure.input(getByIdSchema).query(getImageHandler),
   getResources: publicProcedure.input(getByIdSchema).query(getImageResourcesHandler),
 });

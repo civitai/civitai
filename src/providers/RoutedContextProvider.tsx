@@ -185,8 +185,9 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
   modal,
   options: initialOptions,
   children,
+  onClick,
   ...props
-}: OpenRoutedContextProps<TName>) {
+}: OpenRoutedContextProps<TName> & { onClick?: () => void }) {
   const setFreeze = useFreezeStore((state) => state.setFreeze);
   const toResolve = removeEmpty(props);
   const isClient = useIsClient();
@@ -204,6 +205,7 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
       onClick={(e) => {
         e.stopPropagation();
         if (!e.ctrlKey) {
+          onClick?.();
           setFreeze(true);
         }
       }}
