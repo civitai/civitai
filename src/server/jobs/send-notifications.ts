@@ -7,6 +7,7 @@ const log = createLogger('send-notifications', 'blue');
 
 const NOTIFICATIONS_LAST_SENT_KEY = 'last-sent-notifications';
 export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *', async () => {
+  return log('disabled');
   try {
     // Get the last run time from keyValue
     const lastSent = new Date(
