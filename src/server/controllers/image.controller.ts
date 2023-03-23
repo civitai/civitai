@@ -302,6 +302,77 @@ export const getInfiniteImagesHandler = async ({
   }
 };
 
+export const getImagesAsPostsInfiniteHandler = async ({
+  input: { limit, cursor, ...input },
+  ctx,
+}: {
+  input: GetInfiniteImagesInput;
+  ctx: Context;
+}) => {
+  try {
+    const posts: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
+    let remaining = limit;
+
+    while (true) {
+      // TODO Optimize: override the select statement to exclude repeated elements like creator data
+      const { nextCursor, items } = await getAllImages({
+        ...input,
+        cursor,
+        limit: remaining * 1.25, // Overscan so that I can merge by postId
+        userId: ctx.user?.id,
+      });
+
+      // Merge images by postId
+      for (const image of items) {
+        if (!image?.postId) continue; // Skip images that aren't part of a post
+        if (!posts[image.postId]) posts[image.postId] = [];
+        posts[image.postId].push(image);
+      }
+
+      // If there are no more images, stop
+      cursor = nextCursor;
+      if (!cursor) break;
+
+      // If there are enough posts, stop
+      if (Object.keys(posts).length >= limit) break;
+      remaining = limit - Object.keys(posts).length;
+    }
+
+    // Get reviews from the users who created the posts
+    const userIds = [...new Set(Object.values(posts).map(([post]) => post.user.id))];
+    const reviews = await dbRead.resourceReview.findMany({
+      where: { userId: { in: userIds } },
+      select: { userId: true, rating: true, details: true },
+    });
+
+    // Prepare the results
+    const results = Object.values(posts).map((images) => {
+      const user = images[0].user;
+      const review = reviews.find((review) => review.userId === user.id);
+      return {
+        postId: images[0].postId,
+        createdAt: images[0].createdAt,
+        user,
+        images,
+        review: review
+          ? {
+              rating: review?.rating,
+              details: review?.details,
+            }
+          : undefined,
+      };
+    });
+
+    return {
+      nextCursor: cursor,
+      items: results,
+    };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
 export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ctx: Context }) => {
   try {
     return await getImage({ ...input, userId: ctx.user?.id });

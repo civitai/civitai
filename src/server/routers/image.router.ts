@@ -3,6 +3,7 @@ import {
   getImageDetailHandler,
   getImageHandler,
   getImageResourcesHandler,
+  getImagesAsPostsInfiniteHandler,
   getInfiniteImagesHandler,
 } from './../controllers/image.controller';
 import {
@@ -73,6 +74,10 @@ export const imageRouter = router({
     .input(getGalleryImageSchema)
     .use(applyUserPreferences())
     .query(getGalleryImagesInfiniteHandler),
+  getImagesAsPostsInfinite: publicProcedure
+    .input(getInfiniteImagesSchema)
+    .use(applyUserPreferences())
+    .query(getImagesAsPostsInfiniteHandler),
   getGalleryImages: publicProcedure
     .input(getGalleryImageSchema)
     .use(applyUserPreferences())
