@@ -24,7 +24,7 @@ const availableReactions: ReactionToEmoji = {
 };
 
 type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
-  reactions: ReactionDetails[];
+  reactions: { user: { id: number }; reaction: ReviewReactions }[];
   metrics?: ReactionMetrics;
   popoverPosition?: PopoverProps['position'];
   readonly?: boolean;

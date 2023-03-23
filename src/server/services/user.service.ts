@@ -13,8 +13,8 @@ import {
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { env } from '~/env/server.mjs';
 import {
+  refreshAllHiddenForUser,
   refreshHiddenModelsForUser,
-  refreshHiddenTagsForUser,
   refreshHiddenUsersForUser,
 } from '~/server/services/user-cache.service';
 
@@ -347,7 +347,7 @@ export const toggleBlockedTag = async ({
   }
 
   await dbWrite.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
-  await refreshHiddenTagsForUser({ userId });
+  await refreshAllHiddenForUser({ userId });
 };
 
 export const updateAccountScope = async ({

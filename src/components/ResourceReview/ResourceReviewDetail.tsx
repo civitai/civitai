@@ -1,3 +1,3 @@
-export function ResourceReviewDetail({ resourceReviewId }: { resourceReviewId }) {
+export function ResourceReviewDetail({ resourceReviewId }: { resourceReviewId: number }) {
   return <></>;
 }

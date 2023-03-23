@@ -5,7 +5,14 @@ import {
   GetInfiniteImagesInput,
   GetImageInput,
 } from './../schema/image.schema';
-import { ModelStatus, Prisma, ReportReason, ReportStatus, TagType } from '@prisma/client';
+import {
+  ModelStatus,
+  Prisma,
+  ReportReason,
+  ReportStatus,
+  ReviewReactions,
+  TagType,
+} from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
 
@@ -518,5 +525,164 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
       modelType: true,
     },
   });
+};
+
+export const getImagesForModelVersion = async ({
+  modelVersionIds,
+  excludedTagIds,
+  excludedIds,
+  excludedUserIds,
+}: {
+  modelVersionIds: number | number[];
+  excludedTagIds?: number[];
+  excludedIds?: number[];
+  excludedUserIds?: number[];
+}) => {
+  if (!Array.isArray(modelVersionIds)) modelVersionIds = [modelVersionIds];
+  const imageWhere = [`iom."modelVersionId" IN (${modelVersionIds.join(',')})`];
+  if (!!excludedTagIds?.length) {
+    console.log(excludedTagIds);
+    imageWhere.push(`i."scannedAt" IS NOT NULL`);
+    const excludedTags = excludedTagIds.join(',');
+    imageWhere.push(
+      `NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = iom."imageId" AND toi.disabled = false AND toi."tagId" IN (${excludedTags}) )`
+    );
+  }
+  if (!!excludedIds?.length) {
+    imageWhere.push(`iom."imageId" NOT IN (${excludedIds.join(',')})`);
+  }
+  if (!!excludedUserIds?.length) {
+    imageWhere.push(`i."userId" NOT IN (${excludedUserIds.join(',')})`);
+  }
+  const images = await dbRead.$queryRawUnsafe<
+    {
+      id: number;
+      name: string;
+      url: string;
+      nsfw: boolean;
+      width: number;
+      height: number;
+      hash: string;
+      modelVersionId: number;
+    }[]
+  >(`
+    WITH targets AS (
+      SELECT
+        iom."modelVersionId",
+        MIN(iom.index) "index"
+      FROM "ImagesOnModels" iom
+      JOIN "Image" i ON i.id = iom."imageId"
+      WHERE ${imageWhere.join(' AND ')}
+      GROUP BY iom."modelVersionId"
+    )
+    SELECT
+      i.id,
+      i.name,
+      i.url,
+      i.nsfw,
+      i.width,
+      i.height,
+      i.hash,
+      t."modelVersionId"
+    FROM targets t
+    JOIN "ImagesOnModels" iom ON iom.index = t.index AND iom."modelVersionId" = t."modelVersionId"
+    JOIN "Image" i ON i.id = iom."imageId";
+  `);
+
+  return images;
+};
+
+export const getImagesForPosts = async ({
+  postIds,
+  excludedTagIds,
+  excludedIds,
+  excludedUserIds,
+  userId,
+}: {
+  postIds: number | number[];
+  excludedTagIds?: number[];
+  excludedIds?: number[];
+  excludedUserIds?: number[];
+  userId?: number;
+}) => {
+  if (!Array.isArray(postIds)) postIds = [postIds];
+  const imageWhere = [`i."postId" IN (${postIds.join(',')})`];
+  if (!!excludedTagIds?.length) {
+    imageWhere.push(`i."scannedAt" IS NOT NULL`);
+    const excludedTags = excludedTagIds.join(',');
+    imageWhere.push(
+      `NOT EXISTS ( SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i."id" AND toi.disabled = false AND toi."tagId" IN (${excludedTags}) )`
+    );
+  }
+  if (!!excludedIds?.length) {
+    imageWhere.push(`i."id" NOT IN (${excludedIds.join(',')})`);
+  }
+  if (!!excludedUserIds?.length) {
+    imageWhere.push(`i."userId" NOT IN (${excludedUserIds.join(',')})`);
+  }
+  const images = await dbRead.$queryRawUnsafe<
+    {
+      id: number;
+      name: string;
+      url: string;
+      nsfw: boolean;
+      width: number;
+      height: number;
+      hash: string;
+      postId: number;
+      cryCount: number;
+      laughCount: number;
+      likeCount: number;
+      dislikeCount: number;
+      heartCount: number;
+      commentCount: number;
+      reactions?: ReviewReactions[];
+    }[]
+  >(`
+    WITH targets AS (
+      SELECT
+        i."postId",
+        MIN(i.index) "index"
+      FROM "Image" i
+      WHERE ${imageWhere.join(' AND ')}
+      GROUP BY i."postId"
+    )
+    SELECT
+      i.id,
+      i.name,
+      i.url,
+      i.nsfw,
+      i.width,
+      i.height,
+      i.hash,
+      t."postId",
+      COALESCE(im."cryCount", 0) "cryCount",
+      COALESCE(im."laughCount", 0) "laughCount",
+      COALESCE(im."likeCount", 0) "likeCount",
+      COALESCE(im."dislikeCount", 0) "dislikeCount",
+      COALESCE(im."heartCount", 0) "heartCount",
+      COALESCE(im."commentCount", 0) "commentCount",
+      ${!userId ? 'null' : 'ir.reactions'} "reactions"
+    FROM targets t
+    JOIN "Image" i ON i."postId" = t."postId" AND i.index = t.index
+    LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'
+    ${
+      !userId
+        ? ''
+        : `
+    LEFT JOIN (
+      SELECT "imageId", jsonb_agg(reaction) "reactions"
+      FROM "ImageReaction"
+      WHERE "userId" = ${userId}
+      GROUP BY "imageId"
+    ) ir ON ir."imageId" = i.id
+    `
+    }
+  `);
+
+  return images.map(({ reactions, ...i }) => ({
+    ...i,
+    reactions: reactions?.map((r) => ({ user: { id: userId }, reaction: r })) ?? [],
+  }));
 };
 // #endregion

@@ -1,5 +1,12 @@
 import { modelHashSelect } from './../selectors/modelHash.selector';
-import { ModelStatus, ModelHashType, Prisma, UserActivityType } from '@prisma/client';
+import {
+  ModelStatus,
+  ModelHashType,
+  Prisma,
+  UserActivityType,
+  ModelType,
+  ModelEngagementType,
+} from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { dbWrite, dbRead } from '~/server/db/client';
@@ -41,7 +48,7 @@ import { env } from '~/env/server.mjs';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { constants, ModelFileType } from '~/server/common/constants';
-import { BrowsingMode } from '~/server/common/enums';
+import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { getGetUrl } from '~/utils/s3-utils';
 import {
@@ -52,6 +59,7 @@ import {
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getHiddenImagesForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
+import { getImagesForModelVersion } from '~/server/services/image.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -81,8 +89,10 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         }));
         if (!isOwnerOrModerator) {
           images = images.filter(
-            ({ id, tags }) =>
-              !hiddenImages.includes(id) && !tags.some((tag) => hiddenTags.includes(tag.id))
+            ({ id, tags, scannedAt }) =>
+              scannedAt &&
+              !hiddenImages.includes(id) &&
+              !tags.some((tag) => hiddenTags.includes(tag.id))
           );
 
           if (prioritizeSafeImages)
@@ -143,14 +153,8 @@ export const getModelsInfiniteHandler = async ({
   input: GetAllModelsOutput;
   ctx: Context;
 }) => {
-  const prioritizeSafeImages =
-    input.browsingMode === BrowsingMode.SFW ||
-    (ctx.user?.showNsfw ?? false) === false ||
-    ctx.user?.blurNsfw;
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
-
-  const userId = ctx.user?.id;
 
   const { items } = await getModels({
     input: { ...input, take },
@@ -165,43 +169,6 @@ export const getModelsInfiniteHandler = async ({
       lastVersionAt: true,
       publishedAt: true,
       locked: true,
-      modelVersions: {
-        orderBy: { index: 'asc' },
-        take: 1,
-        select: {
-          earlyAccessTimeFrame: true,
-          createdAt: true,
-          images: {
-            where: {
-              image: {
-                OR: [
-                  { userId: ctx.user?.id },
-                  {
-                    AND: [
-                      { tags: { none: { tagId: { in: input.excludedTagIds } } } },
-                      { id: { notIn: input.excludedImageIds } },
-                    ],
-                  },
-                ],
-              },
-            },
-            orderBy: prioritizeSafeImages
-              ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
-              : [{ index: 'asc' }],
-            take: 1,
-            select: {
-              image: {
-                select: imageSelect,
-              },
-            },
-          },
-        },
-      },
-      reportStats: {
-        select: {
-          ownershipPending: true,
-        },
-      },
       rank: {
         select: {
           [`downloadCount${input.period}`]: true,
@@ -209,6 +176,15 @@ export const getModelsInfiniteHandler = async ({
           [`commentCount${input.period}`]: true,
           [`ratingCount${input.period}`]: true,
           [`rating${input.period}`]: true,
+        },
+      },
+      modelVersions: {
+        orderBy: { index: 'asc' },
+        take: 1,
+        select: {
+          id: true,
+          earlyAccessTimeFrame: true,
+          createdAt: true,
         },
       },
       user: { select: simpleUserSelect },
@@ -222,26 +198,36 @@ export const getModelsInfiniteHandler = async ({
     },
   });
 
+  const modelVersionIds = items.flatMap((m) => m.modelVersions).map((m) => m.id);
+  const images = await getImagesForModelVersion({
+    modelVersionIds,
+    excludedTagIds: input.excludedTagIds,
+    excludedIds: await getHiddenImagesForUser({ userId: ctx.user?.id }),
+    excludedUserIds: input.excludedUserIds,
+  });
+
   let nextCursor: number | undefined;
   if (items.length > input.limit) {
     const nextItem = items.pop();
     nextCursor = nextItem?.id;
   }
 
-  return {
+  const result = {
     nextCursor,
     items: items
-      .filter((x) => !!x.modelVersions[0].images.length)
-      .map(({ modelVersions, reportStats, publishedAt, hashes, ...model }) => {
+      .map(({ publishedAt, hashes, modelVersions, ...model }) => {
+        const [version] = modelVersions;
+        if (!version) return null;
+        const [image] = images.filter((i) => i.modelVersionId === version.id);
+        if (!image) return null;
+
         const rank = model.rank; // NOTE: null before metrics kick in
-        const latestVersion = modelVersions[0];
-        const { tags, ...image } = latestVersion?.images[0]?.image ?? {};
         const earlyAccess =
-          !latestVersion ||
+          !version ||
           isEarlyAccess({
-            versionCreatedAt: latestVersion.createdAt,
+            versionCreatedAt: version.createdAt,
             publishedAt,
-            earlyAccessTimeframe: latestVersion.earlyAccessTimeFrame,
+            earlyAccessTimeframe: version.earlyAccessTimeFrame,
           });
         if (model.nsfw && !env.SHOW_SFW_IN_NSFW) image.nsfw = true;
         return {
@@ -257,8 +243,10 @@ export const getModelsInfiniteHandler = async ({
           image,
           earlyAccess,
         };
-      }),
+      })
+      .filter((m) => m),
   };
+  return result;
 };
 
 export const getModelsPagedSimpleHandler = async ({
