@@ -110,7 +110,7 @@ function ManagePostStatus() {
   );
 }
 
-function ManagePostMaturity() {
+export function ManagePostMaturity() {
   const id = useEditPostContext((state) => state.id);
   const nsfw = useEditPostContext((state) => state.nsfw);
   const toggleNsfw = useEditPostContext((state) => state.toggleNsfw);

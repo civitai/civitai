@@ -34,7 +34,7 @@ import { EditImageDrawer } from '~/components/Post/Edit/EditImageDrawer';
 import { TagType } from '@prisma/client';
 import { PostEditImage } from '~/server/controllers/post.controller';
 
-export function EditPostImages() {
+export function EditPostImages({ max = 50 }: { max?: number }) {
   const postId = useEditPostContext((state) => state.id);
   const modelVersionId = useEditPostContext((state) => state.modelVersionId);
   const upload = useEditPostContext((state) => state.upload);
@@ -44,7 +44,7 @@ export function EditPostImages() {
 
   return (
     <Stack>
-      <ImageDropzone onDrop={handleDrop} count={images.length} max={50} />
+      <ImageDropzone onDrop={handleDrop} count={images.length} max={max} />
       <Stack>
         {images.map(({ type, data }, index) => (
           <Fragment key={index}>

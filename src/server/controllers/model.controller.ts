@@ -11,6 +11,8 @@ import {
   GetDownloadSchema,
   ModelInput,
   ModelUpsertInput,
+  PublishModelSchema,
+  ReorderModelVersionsSchema,
 } from '~/server/schema/model.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
@@ -41,15 +43,11 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import { env } from '~/env/server.mjs';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
-import { constants, ModelFileType } from '~/server/common/constants';
+import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
 import { BrowsingMode } from '~/server/common/enums';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { getGetUrl } from '~/utils/s3-utils';
-import {
-  CommandResourcesAdd,
-  ResourceType,
-  ResponseResourcesAdd,
-} from '~/components/CivitaiLink/shared-types';
+import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getHiddenImagesForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
@@ -129,6 +127,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           files: files as Array<
             Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
           >,
+          baseModel: version.baseModel as BaseModel,
         };
       }),
     };
@@ -152,8 +151,6 @@ export const getModelsInfiniteHandler = async ({
     ctx.user?.blurNsfw;
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
-
-  const userId = ctx.user?.id;
 
   const { items } = await getModels({
     input: { ...input, take },
@@ -235,7 +232,7 @@ export const getModelsInfiniteHandler = async ({
   return {
     nextCursor,
     items: items
-      .filter((x) => !!x.modelVersions[0].images.length)
+      .filter((x) => !!x.modelVersions[0]?.images.length)
       .map(({ modelVersions, reportStats, publishedAt, hashes, ...model }) => {
         const rank = model.rank; // NOTE: null before metrics kick in
         const latestVersion = modelVersions[0];
@@ -365,9 +362,25 @@ export const updateModelHandler = async ({
   }
 };
 
-export const publishModelHandler = async ({ input }: { input: GetByIdInput }) => {
+export const publishModelHandler = async ({ input }: { input: PublishModelSchema }) => {
   try {
-    const model = await updateModelById({ ...input, data: { status: ModelStatus.Published } });
+    const { id, versionIds } = input;
+    const model = await updateModelById({
+      id,
+      data: {
+        status: ModelStatus.Published,
+        publishedAt: new Date(),
+        modelVersions:
+          versionIds && versionIds.length
+            ? {
+                updateMany: {
+                  where: { id: { in: versionIds } },
+                  data: { status: ModelStatus.Published },
+                },
+              }
+            : undefined,
+      },
+    });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     return model;
@@ -608,7 +621,8 @@ export const getModelDetailsForReviewHandler = async ({
     if (!model) throw throwNotFoundError();
     return model;
   } catch (error) {
-    throw throwDbError(error);
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };
 
@@ -668,7 +682,7 @@ export const getMyDraftModelsHandler = async ({
 export const reorderModelVersionsHandler = async ({
   input,
 }: {
-  input: { id: number; modelVersions: any[] };
+  input: ReorderModelVersionsSchema;
 }) => {
   try {
     const model = await updateModelById({

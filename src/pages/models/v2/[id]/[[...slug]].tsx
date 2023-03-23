@@ -38,7 +38,7 @@ import truncate from 'lodash/truncate';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Announcements } from '~/components/Announcements/Announcements';
@@ -67,7 +67,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { getDefaultModelVersion, getVersionById } from '~/server/services/model-version.service';
+import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -241,17 +241,33 @@ export default function ModelDetailsV2({
   };
 
   const deleteVersionMutation = trpc.modelVersion.delete.useMutation({
+    async onMutate(payload) {
+      await queryUtils.model.getById.cancel({ id });
+
+      const previousData = queryUtils.model.getById.getData({ id });
+      if (previousData) {
+        const filteredVersions = previousData.modelVersions.filter((v) => v.id !== payload.id);
+
+        queryUtils.model.getById.setData(
+          { id },
+          { ...previousData, modelVersions: filteredVersions }
+        );
+      }
+
+      return { previousData };
+    },
     async onSuccess() {
       if (latestVersion) setSelectedVersion(latestVersion);
-      await queryUtils.model.getById.invalidate({ id });
       closeAllModals();
     },
-    onError(error) {
+    onError(error, _variables, context) {
       showErrorNotification({
         error: new Error(error.message),
         title: 'Unable to delete version',
         reason: 'An unexpected error occurred, please try again',
       });
+      if (context?.previousData?.id)
+        queryUtils.model.getById.setData({ id: context?.previousData?.id }, context?.previousData);
     },
   });
   const handleDeleteVersion = (versionId: number) => {
@@ -266,6 +282,16 @@ export default function ModelDetailsV2({
       onConfirm: () => deleteVersionMutation.mutate({ id: versionId }),
     });
   };
+
+  useEffect(() => {
+    // Change the selected modelVersion based on querystring param
+    const rawVersionId = router.query.modelVersionId;
+    const versionId = Number(rawVersionId);
+    if (rawVersionId && isNumber(versionId)) {
+      const version = model?.modelVersions.find((v) => v.id === versionId);
+      if (version) setSelectedVersion(version);
+    }
+  }, [model?.modelVersions, router.query.modelVersionId]);
 
   if (loadingModel) return <PageLoader />;
   if (!model) return <NotFound />;
@@ -516,7 +542,12 @@ export default function ModelDetailsV2({
             <ModelVersionList
               versions={model.modelVersions}
               selected={selectedVersion?.id}
-              onVersionClick={setSelectedVersion}
+              onVersionClick={(version) => {
+                if (version.id !== selectedVersion?.id)
+                  router.replace(`/models/v2/${model.id}?modelVersionId=${version.id}`, undefined, {
+                    shallow: true,
+                  });
+              }}
               onDeleteClick={handleDeleteVersion}
               showExtraIcons={isOwner || isModerator}
             />

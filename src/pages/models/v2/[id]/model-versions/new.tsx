@@ -2,10 +2,10 @@ import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isNumber } from '~/utils/type-guards';
 import { ModelVersionWizard } from '~/components/Resource/Wizard/ModelVersionWizard';
+import { InferGetServerSidePropsType } from 'next';
 
 export const getServerSideProps = createServerSideProps({
-  useSSG: true,
-  resolver: async ({ session, ssg, ctx }) => {
+  resolver: async ({ session, ctx }) => {
     const { id } = ctx.params as { id: string };
     if (!session)
       return {
@@ -20,7 +20,7 @@ export const getServerSideProps = createServerSideProps({
 
     const model = await dbRead.model.findUnique({
       where: { id: modelId },
-      select: { userId: true },
+      select: { id: true, name: true, type: true, userId: true },
     });
     if (!model) return { notFound: true };
 
@@ -35,12 +35,12 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    await ssg?.model.getById.prefetch({ id: modelId });
-
-    return { props: { modelId } };
+    return { props: { modelId, model } };
   },
 });
 
-export default function NewModelVersion() {
-  return <ModelVersionWizard />;
+export default function NewModelVersion({
+  model,
+}: InferGetServerSidePropsType<typeof getServerSideProps>) {
+  return <ModelVersionWizard data={model} />;
 }

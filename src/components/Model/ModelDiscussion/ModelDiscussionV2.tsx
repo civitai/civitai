@@ -37,9 +37,9 @@ export function ModelDiscussionV2({ modelId, limit }: Props) {
             sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 300 }}
           >
             <Stack>
-              <Text size="xl">There are no reviews for this model yet.</Text>
+              <Text size="xl">There are no comments for this model yet.</Text>
               <Text color="dimmed">
-                Be the first to let the people know about this model by leaving your review.
+                Be the first to let the people know about this model by leaving your comment.
               </Text>
             </Stack>
           </Paper>

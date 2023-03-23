@@ -8,10 +8,9 @@ import { useState } from 'react';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { PostEditWrapper } from '~/components/Post/Edit/PostEditLayout';
 import { Files } from '~/components/Resource/Files';
-import { BaseModel } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
-import { ModelById } from '~/types/router';
 import { PostUpsertForm } from '../Forms/PostUpsertForm';
+import { ModelById } from '~/types/router';
 
 export function ModelVersionWizard({ data }: Props) {
   const router = useRouter();
@@ -21,12 +20,15 @@ export function ModelVersionWizard({ data }: Props) {
 
   const [activeStep, setActiveStep] = useState<number>(parsedStep);
 
-  const { data: model } = trpc.model.getById.useQuery(
-    { id: Number(id) },
-    { enabled: !!id, initialData: data }
+  const { data: modelVersion } = trpc.modelVersion.getById.useQuery(
+    { id: Number(versionId), withFiles: true },
+    {
+      enabled: !!versionId,
+      placeholderData: {
+        model: { ...data },
+      },
+    }
   );
-  const { tagsOnModels, ...modelWithoutTags } = model as ModelById;
-  const modelVersion = modelWithoutTags?.modelVersions?.find((v) => v.id === Number(versionId));
 
   const goNext = () => {
     if (activeStep < 3) {
@@ -41,7 +43,7 @@ export function ModelVersionWizard({ data }: Props) {
   };
 
   useDidUpdate(() => {
-    if (modelVersion)
+    if (modelVersion?.id)
       router.push(
         `/models/v2/${id}/model-versions/${modelVersion.id}/wizard?step=${activeStep}`,
         undefined,
@@ -49,7 +51,7 @@ export function ModelVersionWizard({ data }: Props) {
       );
   }, [id, activeStep, modelVersion]);
 
-  const editing = !!modelVersion;
+  const editing = !!modelVersion?.id;
 
   return (
     <Container size="sm">
@@ -58,7 +60,7 @@ export function ModelVersionWizard({ data }: Props) {
           <Anchor size="xs">
             <Group spacing={4}>
               <IconArrowLeft size={12} />
-              <Text inherit>Back to {model?.name} page</Text>
+              <Text inherit>Back to {modelVersion?.model.name} page</Text>
             </Group>
           </Anchor>
         </Link>
@@ -72,8 +74,8 @@ export function ModelVersionWizard({ data }: Props) {
             <Stack>
               <Title order={3}>{editing ? 'Edit version' : 'Add version'}</Title>
               <ModelVersionUpsertForm
-                model={modelWithoutTags}
-                version={{ ...modelVersion, baseModel: modelVersion?.baseModel as BaseModel }}
+                model={modelVersion?.model}
+                version={modelVersion}
                 onSubmit={(result) => {
                   if (editing) return goNext();
                   router.replace(
@@ -98,7 +100,7 @@ export function ModelVersionWizard({ data }: Props) {
           <Stepper.Step label="Upload files">
             <Stack spacing="xl">
               <Title order={3}>Upload files</Title>
-              <Files model={modelWithoutTags} version={modelVersion} />
+              <Files model={modelVersion?.model} version={modelVersion} />
               <Group position="right">
                 <Button variant="default" onClick={goBack}>
                   Back
@@ -110,16 +112,14 @@ export function ModelVersionWizard({ data }: Props) {
           <Stepper.Step label="Create a post">
             <Stack spacing="xl">
               <Title order={3}>Create your post</Title>
-              {model && modelVersion && (
-                <PostEditWrapper postId={modelVersion.posts[0]?.id}>
-                  <PostUpsertForm modelVersionId={modelVersion.id} modelId={model.id} />
+              {modelVersion && (
+                <PostEditWrapper postId={modelVersion.posts?.[0]?.id}>
+                  <PostUpsertForm
+                    modelVersionId={modelVersion.id}
+                    modelId={modelVersion.model.id}
+                  />
                 </PostEditWrapper>
               )}
-              <Group position="right">
-                <Button variant="default" onClick={goBack}>
-                  Back
-                </Button>
-              </Group>
             </Stack>
           </Stepper.Step>
         </Stepper>

@@ -16,7 +16,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { BaseModel, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import {
   ModelVersionUpsertInput,
   modelVersionUpsertSchema2,
@@ -52,7 +52,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const defaultValues: Schema = {
     ...version,
     name: version?.name ?? '',
-    baseModel: (version?.baseModel as BaseModel) ?? 'SD 1.5',
+    baseModel: version?.baseModel ?? 'SD 1.5',
     trainedWords: version?.trainedWords ?? [],
     skipTrainedWords: version?.trainedWords ? !version.trainedWords.length : !acceptsTrainedWords,
     earlyAccessTimeFrame:
@@ -98,7 +98,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
       form.reset({
         ...version,
         modelId: version?.modelId ?? model?.id ?? -1,
-        baseModel: version.baseModel as BaseModel,
+        baseModel: version.baseModel,
         skipTrainedWords: version.trainedWords
           ? !version.trainedWords.length
           : !acceptsTrainedWords,

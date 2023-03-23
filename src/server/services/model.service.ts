@@ -642,6 +642,7 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
     skip,
     take,
     where,
+    orderBy: { updatedAt: 'desc' },
   });
   const count = await dbRead.model.count({ where });
 

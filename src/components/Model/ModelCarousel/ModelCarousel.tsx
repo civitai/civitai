@@ -77,7 +77,11 @@ export function ModelCarousel({ modelId, modelVersionId, images, nsfw, mobile = 
           <Group position="center">
             <Button
               variant="outline"
-              onClick={() => (hasTagFilters ? clearFilters() : router.push('/posts/create'))}
+              onClick={() =>
+                hasTagFilters
+                  ? clearFilters()
+                  : router.push(`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`)
+              }
             >
               {hasTagFilters ? 'Clear Filters' : 'Share Images'}
             </Button>

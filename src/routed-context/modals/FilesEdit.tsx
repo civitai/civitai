@@ -18,7 +18,6 @@ import { Files } from '~/components/Resource/Files';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { closeRoutedContext } from '~/providers/RoutedContextProvider';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
-import { BaseModel } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
 
 export default createRoutedContext({
@@ -55,13 +54,7 @@ export default createRoutedContext({
                 </Anchor>
               </Link>
               <Title order={1}>Manage Files</Title>
-              <Files
-                model={modelVersion?.model}
-                version={{
-                  ...modelVersion,
-                  baseModel: (modelVersion?.baseModel as BaseModel) ?? 'SD 1.5',
-                }}
-              />
+              <Files model={modelVersion?.model} version={modelVersion} />
               <Group position="right">
                 <Button variant="default" onClick={context.close}>
                   Cancel

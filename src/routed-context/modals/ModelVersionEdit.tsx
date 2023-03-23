@@ -18,7 +18,6 @@ import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersion
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { closeRoutedContext } from '~/providers/RoutedContextProvider';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
-import { BaseModel } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
 
 export default createRoutedContext({
@@ -56,10 +55,7 @@ export default createRoutedContext({
               <Title order={1}>Edit Version</Title>
               <ModelVersionUpsertForm
                 model={modelVersion?.model}
-                version={{
-                  ...modelVersion,
-                  baseModel: (modelVersion?.baseModel as BaseModel) ?? 'SD 1.5',
-                }}
+                version={modelVersion}
                 onSubmit={() => context.close()}
               >
                 {({ loading }) => (

@@ -1,5 +1,6 @@
 import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { BaseModel } from '~/server/common/constants';
 
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -69,12 +70,14 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
               },
             }
           : false,
+        posts: withFiles ? { select: { id: true } } : false,
       },
     });
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
 
     return {
       ...version,
+      baseModel: version.baseModel as BaseModel,
       files: version.files as Array<
         Omit<(typeof version.files)[number], 'metadata'> & { metadata: FileMetadata }
       >,
