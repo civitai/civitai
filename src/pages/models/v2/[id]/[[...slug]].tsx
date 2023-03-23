@@ -48,6 +48,7 @@ import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import ImagesAsPostsInfinite from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
 import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
 import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
@@ -587,7 +588,7 @@ export default function ModelDetailsV2({
               </Group>
             </Group>
             <ImageCategories />
-            <ImagesInfinite />
+            <ImagesAsPostsInfinite modelId={model.id} />
           </Stack>
         </Stack>
         {versionCount > 1 ? (
