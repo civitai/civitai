@@ -55,7 +55,7 @@ export const updateMetricsJob = createJob(
           SELECT
             r."modelId" AS model_id,
             r."modelVersionId" AS model_version_id
-          FROM "Review" r
+          FROM "ResourceReview" r
           WHERE (r."createdAt" > '${lastUpdate}' OR r."updatedAt" > '${lastUpdate}')
         ),
         -- Get all favorites that have been created since then
@@ -70,9 +70,20 @@ export const updateMetricsJob = createJob(
         recent_comments AS
         (
           SELECT
-            "modelId" AS model_id
-          FROM "Comment"
-          WHERE ("createdAt" > '${lastUpdate}')
+            t."modelId" AS model_id
+          FROM "CommentV2" c
+          JOIN "Thread" ct ON ct.id = c."threadId" AND ct."commentId" IS NOT NULL
+          JOIN "CommentV2" p ON p.id = ct."commentId"
+          JOIN "Thread" t ON t.id = p."threadId"
+          WHERE (c."createdAt" > '${lastUpdate}')
+
+          UNION ALL
+
+          SELECT
+            t."modelId" AS model_id
+          FROM "CommentV2" c
+          JOIN "Thread" t ON t.id = c."threadId" AND t."modelId" IS NOT NULL
+          WHERE (c."createdAt" > '${lastUpdate}')
         ),
         -- Get all affected models
         affected_models AS
@@ -91,7 +102,7 @@ export const updateMetricsJob = createJob(
             UNION
 
             SELECT DISTINCT
-                c.model_id
+                model_id
             FROM recent_comments c
 
             UNION
@@ -240,7 +251,7 @@ export const updateMetricsJob = createJob(
                 r."${tableId}" AS ${viewId},
                 MAX(r.rating) rating,
                 MAX(r."createdAt") AS created_at
-              FROM "Review" r
+              FROM "ResourceReview" r
               JOIN "Model" m ON m.id = r."modelId" AND m."userId" != r."userId"
               WHERE r.exclude = FALSE AND r."tosViolation" = FALSE
               GROUP BY r."userId", r."${tableId}"
@@ -261,15 +272,32 @@ export const updateMetricsJob = createJob(
           ) fs ON m.model_id = fs.model_id
           LEFT JOIN (
             SELECT
-              "modelId" AS model_id,
-              COUNT("modelId") AS comment_count,
-              SUM(CASE WHEN "createdAt" >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_comment_count,
-              SUM(CASE WHEN "createdAt" >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_comment_count,
-              SUM(CASE WHEN "createdAt" >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_comment_count,
-              SUM(CASE WHEN "createdAt" >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_comment_count
-            FROM "Comment"
-            WHERE "tosViolation" = FALSE
-            GROUP BY "modelId"
+              c."modelId" AS model_id,
+              COUNT(c.id) AS comment_count,
+              SUM(CASE WHEN c."createdAt" >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_comment_count,
+              SUM(CASE WHEN c."createdAt" >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_comment_count,
+              SUM(CASE WHEN c."createdAt" >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_comment_count,
+              SUM(CASE WHEN c."createdAt" >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_comment_count
+            FROM (
+              SELECT
+                t."modelId",
+                c.id,
+                c."createdAt"
+              FROM "CommentV2" c
+              JOIN "Thread" t ON t.id = c."threadId" AND t."modelId" IS NOT NULL
+              WHERE c."tosViolation" = FALSE
+              UNION
+              SELECT
+                t."modelId",
+                c.id,
+                c."createdAt"
+              FROM "CommentV2" p
+              JOIN "Thread" t ON t.id = p."threadId" AND t."modelId" IS NOT NULL
+              JOIN "Thread" ct ON ct."commentId" = p.id
+              JOIN "CommentV2" c ON c."threadId" = ct.id
+              WHERE c."tosViolation" = FALSE
+            ) c
+            GROUP BY c."modelId"
           ) cs ON m.model_id = cs.model_id
         ) m
         CROSS JOIN (
@@ -311,7 +339,7 @@ export const updateMetricsJob = createJob(
 
         SELECT
           "userId"
-        FROM "Review" r
+        FROM "ResourceReview" r
         WHERE (r."createdAt" > '${lastUpdate}')
 
         UNION
@@ -489,18 +517,18 @@ export const updateMetricsJob = createJob(
             SUM(IIF("createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_review_count,
             SUM(IIF("createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_review_count,
             SUM(IIF("createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_review_count
-          FROM "Review"
+          FROM "ResourceReview"
           GROUP BY "userId"
         ) r ON r.user_id = a.user_id
         LEFT JOIN (
           SELECT
-            ue."targetUserId"                                                                      AS user_id,
-            SUM(IIF(ue.type = 'Follow', 1, 0))                                                     AS follower_count,
+            ue."targetUserId" AS user_id,
+            SUM(IIF(ue.type = 'Follow', 1, 0)) AS follower_count,
             SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_follower_count,
             SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '30 days'), 1, 0))  AS month_follower_count,
             SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '7 days'), 1, 0))   AS week_follower_count,
             SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '1 days'), 1, 0))   AS day_follower_count,
-            SUM(IIF(ue.type = 'Hide', 1, 0))                                                       AS hidden_count,
+            SUM(IIF(ue.type = 'Hide', 1, 0)) AS hidden_count,
             SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '365 days'), 1, 0))   AS year_hidden_count,
             SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '30 days'), 1, 0))    AS month_hidden_count,
             SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '7 days'), 1, 0))     AS week_hidden_count,
