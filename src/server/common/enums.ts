@@ -78,3 +78,8 @@ export enum ImageScanType {
   Label,
   FaceDetection,
 }
+
+export enum CommentV2Sort {
+  Newest = 'Newest',
+  Oldest = 'Oldest',
+}

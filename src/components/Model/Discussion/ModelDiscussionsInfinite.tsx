@@ -1,11 +1,11 @@
-import { Button, Center, Grid, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
+import { Button, Center, Grid, LoadingOverlay, Paper, Stack, Text, Loader } from '@mantine/core';
 import React, { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
 
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/CommentDiscussionItem';
 import { ReviewDiscussionItem } from '~/components/Model/ModelDiscussion/ReviewDiscussionItem';
-import { ReviewSort } from '~/server/common/enums';
+import { CommentV2Sort, ReviewSort } from '~/server/common/enums';
 import { GetCommentsV2Input } from '~/server/schema/commentv2.schema';
 import { trpc } from '~/utils/trpc';
 import { ModelDiscussionsCard } from './ModelDiscussionsCard';
@@ -37,6 +37,7 @@ export function ModelDiscussionsInfinite({
     entityType: 'model',
     entityId: modelId,
     limit,
+    sort: CommentV2Sort.Newest,
   };
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
@@ -50,18 +51,31 @@ export function ModelDiscussionsInfinite({
   const items = useMemo(() => data?.pages.flatMap((x) => x.comments) ?? [], [data]);
 
   return (
-    <ModelDiscussionInfiniteContext.Provider value={{ modelUserId }}>
-      <MasonryGrid2
-        data={items}
-        hasNextPage={hasNextPage}
-        isRefetching={isRefetching}
-        isFetchingNextPage={isFetchingNextPage}
-        fetchNextPage={fetchNextPage}
-        columnWidth={columnWidth}
-        render={ModelDiscussionsCard}
-        filters={filters}
-        autoFetch={false}
-      />
-    </ModelDiscussionInfiniteContext.Provider>
+    <Paper sx={(theme) => ({ position: 'relative', minHeight: 200 })}>
+      <ModelDiscussionInfiniteContext.Provider value={{ modelUserId }}>
+        {isLoading ? (
+          <LoadingOverlay visible />
+        ) : !data ? (
+          <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Stack>
+              <Text size="xl">There are no comments for this model yet.</Text>
+              <Text color="dimmed">Start the discussion</Text>
+            </Stack>
+          </Paper>
+        ) : (
+          <MasonryGrid2
+            data={items}
+            hasNextPage={hasNextPage}
+            isRefetching={isRefetching}
+            isFetchingNextPage={isFetchingNextPage}
+            fetchNextPage={fetchNextPage}
+            columnWidth={columnWidth}
+            render={ModelDiscussionsCard}
+            filters={filters}
+            autoFetch={false}
+          />
+        )}
+      </ModelDiscussionInfiniteContext.Provider>
+    </Paper>
   );
 }

@@ -1,3 +1,4 @@
+import { GetByIdInput } from './../schema/base.schema';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
@@ -7,6 +8,7 @@ import {
   GetCommentsV2Input,
   CommentConnectorInput,
 } from './../schema/commentv2.schema';
+import { CommentV2Sort } from '~/server/common/enums';
 
 export const upsertComment = async ({
   userId,
@@ -47,18 +49,21 @@ export const getComments = async <TSelect extends Prisma.CommentV2Select>({
   limit,
   cursor,
   select,
+  sort,
 }: GetCommentsV2Input & {
   select: TSelect;
 }) => {
+  const orderBy: Prisma.Enumerable<Prisma.CommentV2OrderByWithRelationInput> = [];
+  if (sort === CommentV2Sort.Newest) orderBy.push({ createdAt: 'desc' });
+  else orderBy.push({ createdAt: 'asc' });
+
   return await dbRead.commentV2.findMany({
     take: limit,
     cursor: cursor ? { id: cursor } : undefined,
     where: {
       thread: { [`${entityType}Id`]: entityId },
     },
-    orderBy: {
-      createdAt: 'asc',
-    },
+    orderBy,
     select,
   });
 };

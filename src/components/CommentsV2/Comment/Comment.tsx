@@ -1,19 +1,8 @@
-import {
-  GroupProps,
-  Group,
-  ActionIcon,
-  Menu,
-  Stack,
-  Text,
-  Button,
-  Box,
-  Badge,
-} from '@mantine/core';
-import { useMemo, useState } from 'react';
+import { GroupProps, Group, ActionIcon, Menu, Stack, Text, Button, Box } from '@mantine/core';
+import { useState } from 'react';
 import { useCommentsContext } from '../CommentsProvider';
 import { CreateComment } from './CreateComment';
 import { CommentForm } from './CommentForm';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { InfiniteCommentResults } from '~/server/controllers/commentv2.controller';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag, IconArrowBackUp } from '@tabler/icons';
@@ -23,14 +12,11 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { create } from 'zustand';
-import { Reactions, ReactionMetrics } from '~/components/Reaction/Reactions';
-import { ReviewReactions } from '@prisma/client';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import React from 'react';
-import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
-import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
 import { CommentReactions } from './CommentReactions';
+import { DeleteComment } from './DeleteComment';
+import { CommentProvider, useCommentV2Context } from './CommentProvider';
+import { CommentBadge } from '~/components/CommentsV2/Comment/CommentBadge';
 
 type Store = {
   id?: number;
@@ -43,24 +29,25 @@ const useStore = create<Store>((set) => ({
 
 type CommentProps = Omit<GroupProps, 'children'> & {
   comment: InfiniteCommentResults['comments'][0];
-  withAvatar?: boolean;
-  lineClamp?: number;
 };
 
-export function Comment({ comment, withAvatar = false, lineClamp, ...groupProps }: CommentProps) {
-  const { entityId, entityType, isLocked, isMuted, badges } = useCommentsContext();
-  const currentUser = useCurrentUser();
+export function Comment({ comment, ...groupProps }: CommentProps) {
+  return (
+    <CommentProvider comment={comment}>
+      <CommentContent comment={comment} {...groupProps} />
+    </CommentProvider>
+  );
+}
+
+export function CommentContent({ comment, ...groupProps }: CommentProps) {
+  const { entityId, entityType } = useCommentsContext();
+  const { canDelete, canEdit, canReply, badge, canReport } = useCommentV2Context();
+
   const id = useStore((state) => state.id);
   const setId = useStore((state) => state.setId);
-  const isOwner = currentUser?.id === comment.user.id;
-  const isMod = currentUser?.isModerator ?? false;
+
   const editing = id === comment.id;
   const [replying, setReplying] = useState(false);
-
-  const canDelete = isOwner || currentUser?.isModerator;
-  const canEdit = (!isLocked && !isMuted) || isMod;
-  const canReply = currentUser && !isOwner && !isLocked && !isMuted;
-  const badge = badges?.find((x) => x.userId === comment.user.id);
 
   return (
     <Group align="flex-start" noWrap {...groupProps} spacing="sm">
@@ -68,29 +55,20 @@ export function Comment({ comment, withAvatar = false, lineClamp, ...groupProps 
       <Stack spacing={0} style={{ flex: 1 }}>
         <Group position="apart">
           {/* AVATAR */}
-          {withAvatar ? (
-            <Group spacing={8} align="center">
-              <UserAvatar
-                user={comment.user}
-                size="md"
-                linkToProfile
-                includeAvatar={false}
-                withUsername
-                badge={
-                  badge ? (
-                    <Badge size="xs" color={badge.color}>
-                      {badge.label}
-                    </Badge>
-                  ) : null
-                }
-              />
-              <Text color="dimmed" size="xs" mt={2}>
-                <DaysFromNow date={comment.createdAt} />
-              </Text>
-            </Group>
-          ) : (
-            <span />
-          )}
+          <Group spacing={8} align="center">
+            <UserAvatar
+              user={comment.user}
+              size="md"
+              linkToProfile
+              includeAvatar={false}
+              withUsername
+              badge={badge ? <CommentBadge {...badge} /> : null}
+            />
+            <Text color="dimmed" size="xs" mt={2}>
+              <DaysFromNow date={comment.createdAt} />
+            </Text>
+          </Group>
+
           {/* CONTROLS */}
           <Menu position="bottom-end">
             <Menu.Target>
@@ -102,9 +80,15 @@ export function Comment({ comment, withAvatar = false, lineClamp, ...groupProps 
               {canDelete && (
                 <>
                   <DeleteComment id={comment.id} entityId={entityId} entityType={entityType}>
-                    <Menu.Item icon={<IconTrash size={14} stroke={1.5} />} color="red">
-                      Delete comment
-                    </Menu.Item>
+                    {({ onClick }) => (
+                      <Menu.Item
+                        icon={<IconTrash size={14} stroke={1.5} />}
+                        color="red"
+                        onClick={onClick}
+                      >
+                        Delete comment
+                      </Menu.Item>
+                    )}
                   </DeleteComment>
                   {canEdit && (
                     <Menu.Item
@@ -116,7 +100,7 @@ export function Comment({ comment, withAvatar = false, lineClamp, ...groupProps 
                   )}
                 </>
               )}
-              {(!currentUser || !isOwner) && (
+              {canReport && (
                 <LoginRedirect reason="report-model">
                   <Menu.Item
                     icon={<IconFlag size={14} stroke={1.5} />}
@@ -138,12 +122,10 @@ export function Comment({ comment, withAvatar = false, lineClamp, ...groupProps 
         <Stack style={{ flex: 1 }} spacing={4}>
           {!editing ? (
             <>
-              <Text lineClamp={lineClamp}>
-                <RenderHtml
-                  html={comment.content}
-                  sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
-                />
-              </Text>
+              <RenderHtml
+                html={comment.content}
+                sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+              />
               {/* COMMENT INTERACTION */}
               <Group spacing={4}>
                 <CommentReactions comment={comment} />
@@ -175,51 +157,4 @@ export function Comment({ comment, withAvatar = false, lineClamp, ...groupProps 
       </Stack>
     </Group>
   );
-}
-
-export function DeleteComment({
-  children,
-  id,
-  entityId,
-  entityType,
-}: { children: React.ReactElement; id: number } & CommentConnectorInput) {
-  const queryUtils = trpc.useContext();
-  const { created, setCreated } = useCommentsContext();
-  const { mutate, isLoading } = trpc.commentv2.delete.useMutation({
-    async onSuccess(response, request) {
-      showSuccessNotification({
-        title: 'Your comment has been deleted',
-        message: 'Successfully deleted the comment',
-      });
-      if (created.some((x) => x.id === request.id)) {
-        setCreated((state) => state.filter((x) => x.id !== request.id));
-      } else {
-        //TODO.comments - possiby add optimistic updates
-        await queryUtils.commentv2.getInfinite.invalidate({ entityId, entityType });
-      }
-      queryUtils.commentv2.getCount.setData({ entityId, entityType }, (old = 1) => old - 1);
-      closeAllModals();
-    },
-    onError(error) {
-      showErrorNotification({
-        error: new Error(error.message),
-        title: 'Could not delete comment',
-        reason: 'An unexpected error occurred, please try again',
-      });
-    },
-  });
-
-  const handleDeleteComment = () => {
-    openConfirmModal({
-      title: 'Delete comment',
-      children: <Text size="sm">Are you sure you want to delete this comment?</Text>,
-      centered: true,
-      labels: { confirm: 'Delete comment', cancel: "No, don't delete it" },
-      confirmProps: { color: 'red', loading: isLoading },
-      closeOnConfirm: false,
-      onConfirm: () => mutate({ id }),
-    });
-  };
-
-  return React.cloneElement(children, { onClick: handleDeleteComment });
 }

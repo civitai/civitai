@@ -600,7 +600,7 @@ export default function ModelDetailsV2({
               </Group>
               {/* <ResourceReviewGrid modelId={model.id} /> */}
               {/* <ModelDiscussionV2 modelId={model.id} /> */}
-              <ModelDiscussionsInfinite modelId={model.id} modelUserId={model.user.id} />
+              <ModelDiscussionsInfinite modelId={model.id} modelUserId={model.user.id} limit={8} />
             </Stack>
           ) : null}
 
