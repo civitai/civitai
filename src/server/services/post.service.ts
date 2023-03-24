@@ -27,6 +27,7 @@ import { BrowsingMode, PostSort } from '~/server/common/enums';
 import { getImageV2Select } from '~/server/selectors/imagev2.selector';
 import uniqWith from 'lodash/uniqWith';
 import isEqual from 'lodash/isEqual';
+import { getImagesForPosts } from '~/server/services/image.service';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -44,7 +45,6 @@ export const getPostsInfinite = async ({
   tags,
 }: PostsQueryInput & { user?: SessionUser }) => {
   const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
-  const imageAND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
   const orderBy: Prisma.Enumerable<Prisma.PostOrderByWithRelationInput> = [];
   const isOwnerRequest = user && user.username === username;
   if (username) AND.push({ user: { username } });
@@ -52,37 +52,24 @@ export const getPostsInfinite = async ({
     orderBy.push({ id: 'desc' });
   } else {
     AND.push({ publishedAt: { not: null } });
-    if (query) AND.push({ title: { in: query, mode: 'insensitive' } });
+    if (query) AND.push({ title: { in: query } });
     if (!!excludedTagIds?.length) {
       AND.push({
         OR: [
           { userId: user?.id },
           {
             tags: { none: { tagId: { in: excludedTagIds } } },
-            imageTags: { none: { tagId: { in: excludedTagIds } } },
             helper: { scanned: true },
           },
         ],
       });
-
-      // imageAND.push({
-      //   OR: [
-      //     { userId: user?.id },
-      //     {
-      //       tags: { none: { tagId: { in: excludedTagIds } } },
-      //       scannedAt: { not: null },
-      //     },
-      //   ],
-      // });
     }
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
     if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
-    if (!!excludedImageIds?.length) imageAND.push({ id: { notIn: excludedImageIds } });
 
     if (browsingMode !== BrowsingMode.All) {
       const query = { nsfw: { equals: browsingMode === BrowsingMode.NSFW } };
       AND.push(query);
-      imageAND.push(query);
     }
 
     // sorting
@@ -93,6 +80,7 @@ export const getPostsInfinite = async ({
     orderBy.push({ publishedAt: 'desc' });
   }
 
+  console.time('posts');
   const posts = await dbRead.post.findMany({
     take: limit + 1,
     cursor: cursor ? { id: cursor } : undefined,
@@ -102,32 +90,36 @@ export const getPostsInfinite = async ({
       id: true,
       nsfw: true,
       title: true,
-      user: { select: userWithCosmeticsSelect },
+      // user: { select: userWithCosmeticsSelect },
       publishedAt: true,
-      images: {
-        orderBy: { index: 'asc' },
-        take: 1,
-        select: getImageV2Select({ userId: user?.id }),
-        where: {
-          AND: imageAND,
-        },
-      },
     },
   });
+  console.timeEnd('posts');
+  console.log('got posts', posts.length);
 
-  const postsWithImage = posts.filter((x) => !!x.images.length);
+  const images = await getImagesForPosts({
+    postIds: posts.map((x) => x.id),
+    excludedTagIds,
+    excludedUserIds,
+    excludedIds: excludedImageIds,
+    userId: user?.id,
+  });
+  console.log('got images', images.length);
+
   let nextCursor: number | undefined;
   if (posts.length > limit) {
-    const nextItem = postsWithImage.pop();
+    const nextItem = posts.pop();
     nextCursor = nextItem?.id;
   }
 
   return {
     nextCursor,
-    items: postsWithImage.map(({ images, ...post }) => ({
-      ...post,
-      image: images[0],
-    })),
+    items: posts
+      .map((post) => ({
+        ...post,
+        image: images.find((x) => x.postId === post.id) as (typeof images)[0],
+      }))
+      .filter((x) => x.image !== undefined),
   };
 };
 

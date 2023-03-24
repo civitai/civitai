@@ -58,6 +58,7 @@ export const getReviewsInfiniteHandler = async ({
 
   const userId = ctx.user?.id;
   const hiddenTags = await getHiddenTagsForUser({ userId });
+  const hasHiddenTags = !!hiddenTags.length;
 
   return {
     nextCursor,
@@ -67,8 +68,10 @@ export const getReviewsInfiniteHandler = async ({
         ...x.image,
         tags: x.image.tags.map(({ tag }) => tag),
       }));
-      if (!isOwnerOrModerator) {
-        images = images.filter(({ tags }) => !tags.some((tag) => hiddenTags.includes(tag.id)));
+      if (!isOwnerOrModerator && hasHiddenTags) {
+        images = images.filter(
+          ({ tags, scannedAt }) => scannedAt && !tags.some((tag) => hiddenTags.includes(tag.id))
+        );
 
         if (prioritizeSafeImages)
           images = images.sort((a, b) => (a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1));

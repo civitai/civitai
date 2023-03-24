@@ -86,11 +86,11 @@ export function PostsCard({
                               entityType="image"
                               reactions={image.reactions}
                               metrics={{
-                                likeCount: image.stats?.likeCountAllTime,
-                                dislikeCount: image.stats?.dislikeCountAllTime,
-                                heartCount: image.stats?.heartCountAllTime,
-                                laughCount: image.stats?.laughCountAllTime,
-                                cryCount: image.stats?.cryCountAllTime,
+                                likeCount: image.likeCount,
+                                dislikeCount: image.dislikeCount,
+                                heartCount: image.heartCount,
+                                laughCount: image.laughCount,
+                                cryCount: image.cryCount,
                               }}
                               readonly={!safe}
                             />

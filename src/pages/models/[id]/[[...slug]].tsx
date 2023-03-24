@@ -98,7 +98,6 @@ import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import truncate from 'lodash/truncate';
-import { ResourceReviewGrid } from '~/components/ResourceReview/ResourceReviewsGrid';
 
 //TODO - Break model query into multiple queries
 /*
@@ -925,8 +924,7 @@ export default function ModelDetail({
                       )}
                     </Group>
                   </Group>
-                  <ResourceReviewGrid modelId={model.id} />
-                  {/* <ModelDiscussion modelId={model.id} /> */}
+                  <ModelDiscussion modelId={model.id} />
                 </Stack>
               ) : (
                 <Paper p="lg">

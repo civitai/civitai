@@ -5,6 +5,7 @@ import { TagSort } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
 import {
   AdjustTagsSchema,
+  DeleteTagsSchema,
   GetTagsInput,
   GetVotableTagsSchema,
   ModerateTagsSchema,
@@ -53,6 +54,7 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
     target: { hasSome: entityType },
     tagsOnModels: modelId ? { some: { modelId } } : undefined,
     id: not ? { notIn: not } : undefined,
+    fromTags: not ? { none: { fromTagId: { in: not } } } : undefined,
     unlisted,
     isCategory: categories,
   };
@@ -236,6 +238,16 @@ export const addTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema)
       WHERE i."id" IN (${entityIds.join(', ')})
       ON CONFLICT ("imageId", "tagId") DO UPDATE SET "disabled" = false, "needsReview" = false, automated = false
     `);
+  } else if (entityType === 'tag') {
+    await dbWrite.$executeRawUnsafe(`
+      INSERT INTO "TagsOnTags" ("fromTagId", "toTagId")
+      SELECT
+        fromTag."id", toTag."id"
+      FROM "Tag" toTag
+      JOIN "Tag" fromTag ON fromTag.${tagSelector} IN (${tagIn})
+      WHERE toTag."id" IN (${entityIds.join(', ')})
+      ON CONFLICT DO NOTHING
+    `);
   }
 };
 
@@ -263,6 +275,16 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
         isTagIds
           ? `AND "tagId" IN (${tagIn})`
           : `AND "tagId" IN (SELECT id FROM "Tag" WHERE name IN (${tagIn}))`
+      }
+    `);
+  } else if (entityType === 'tag') {
+    await dbWrite.$executeRawUnsafe(`
+      DELETE FROM "TagsOnTags"
+      WHERE "toTagId" IN (${entityIds.join(', ')})
+      ${
+        isTagIds
+          ? `AND "fromTagId" IN (${tagIn})`
+          : `AND "fromTagId" IN (SELECT id FROM "Tag" WHERE name IN (${tagIn}))`
       }
     `);
   }
@@ -301,4 +323,15 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
       `);
     }
   }
+};
+
+export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
+  const isTagIds = typeof tags[0] === 'number';
+  const tagSelector = isTagIds ? 'id' : 'name';
+  const tagIn = (isTagIds ? tags : tags.map((tag) => `'${tag}'`)).join(', ');
+
+  await dbWrite.$executeRawUnsafe(`
+    DELETE FROM "Tag"
+    WHERE ${tagSelector} IN (${tagIn})
+  `);
 };

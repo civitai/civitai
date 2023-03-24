@@ -6,11 +6,14 @@ import {
 } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
+import { createLogger } from '~/utils/logging';
 
 const HIDDEN_CACHE_EXPIRY = 60 * 60 * 4;
+const log = createLogger('user-cache', 'green');
 
 // #region [hidden tags]
 async function getModerationTags() {
+  log('getting moderation tags');
   const cachedTags = await redis.get(`system:moderation-tags`);
   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
 
@@ -22,10 +25,12 @@ async function getModerationTags() {
     EX: HIDDEN_CACHE_EXPIRY,
   });
 
+  log('got moderation tags');
   return tags;
 }
 
 async function getHiddenTags(userId: number) {
+  log(`reloading hidden tags for user: ${userId}`);
   const tags = await dbWrite.tagEngagement.findMany({
     where: { userId, type: { in: [TagEngagementType.Hide, TagEngagementType.Allow] } },
     select: { tag: { select: { id: true } }, type: true },
@@ -53,6 +58,7 @@ async function getHiddenTags(userId: number) {
     }
   }
 
+  log(`reloaded hidden tags for user: ${userId}`);
   return hiddenTags;
 }
 
@@ -63,8 +69,12 @@ export async function getHiddenTagsForUser({
   userId?: number;
   refreshCache?: boolean;
 }) {
+  log(`getting hidden tags for user: ${userId}`);
   const cachedTags = await redis.get(`user:${userId}:hidden-tags`);
-  if (cachedTags && !refreshCache) return JSON.parse(cachedTags) as number[];
+  if (cachedTags && !refreshCache) {
+    log(`got hidden tags for user: ${userId} (cached)`);
+    return JSON.parse(cachedTags) as number[];
+  }
   if (refreshCache) await redis.del(`user:${userId}:hidden-tags`);
 
   const hiddenTags = await getHiddenTags(userId);
@@ -72,6 +82,7 @@ export async function getHiddenTagsForUser({
     EX: HIDDEN_CACHE_EXPIRY,
   });
 
+  log(`got hidden tags for user: ${userId}`);
   return hiddenTags;
 }
 
@@ -173,6 +184,7 @@ async function getHiddenImages(userId: number) {
   });
 
   const hiddenImages = [...new Set(votedHideImages?.map((x) => x.imageId) ?? [])];
+  console.log(hiddenImages);
   return hiddenImages;
 }
 
@@ -219,6 +231,7 @@ export async function getAllHiddenForUser({
 }
 
 export async function refreshAllHiddenForUser({ userId }: { userId: number }) {
+  log(`refreshing all hidden for user ${userId}`);
   await Promise.all([
     refreshHiddenTagsForUser({ userId }),
     refreshHiddenUsersForUser({ userId }),

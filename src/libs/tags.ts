@@ -1,7 +1,7 @@
 import { TagType } from '@prisma/client';
 import { z } from 'zod';
 
-export const taggableEntitySchema = z.enum(['model', 'image']);
+export const taggableEntitySchema = z.enum(['model', 'image', 'tag']);
 export type TaggableEntityType = z.infer<typeof taggableEntitySchema>;
 
 export const tagVotableEntitySchema = z.enum(['model', 'image']);

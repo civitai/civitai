@@ -861,12 +861,14 @@ enum TagTarget {
   Question
   Image
   Post
+  Tag
 }
 
 enum TagType {
   UserGenerated
   Label
   Moderation
+  System
 }
 
 model Tag {
@@ -881,6 +883,8 @@ model Tag {
   unfeatured Boolean     @default(false)
   isCategory Boolean     @default(false)
 
+  toTags               TagsOnTags[]       @relation("TagsOnTags_fromTag")
+  fromTags             TagsOnTags[]       @relation("TagsOnTags_toTag")
   tagsOnModels         TagsOnModels[]
   tagsOnModelsVotes    TagsOnModelsVote[]
   tagsOnQuestion       TagsOnQuestions[]
@@ -897,6 +901,17 @@ model Tag {
   tagsOnPostVotes      TagsOnPostVote[]
 
   @@unique([name])
+}
+
+model TagsOnTags {
+  fromTagId Int
+  fromTag   Tag      @relation("TagsOnTags_fromTag", fields: [fromTagId], references: [id], onDelete: Cascade)
+  toTagId   Int
+  toTag     Tag      @relation("TagsOnTags_toTag", fields: [toTagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([fromTagId, toTagId])
+  @@index([toTagId], type: Hash)
 }
 
 model TagsOnModels {

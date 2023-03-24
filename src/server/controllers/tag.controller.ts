@@ -2,6 +2,7 @@ import { constants } from '~/server/common/constants';
 import {
   AddTagVotesSchema,
   AdjustTagsSchema,
+  DeleteTagsSchema,
   GetTagByNameInput,
   GetTagsInput,
   GetTrendingTagsSchema,
@@ -18,10 +19,13 @@ import {
   getTagWithModelCount,
   getVotableTags,
   removeTagVotes,
+  deleteTags,
 } from '~/server/services/tag.service';
 import { throwDbError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { Context } from '~/server/createContext';
+import { simpleTagSelect } from '~/server/selectors/tag.selector';
+import { dbRead } from '~/server/db/client';
 
 export const getTagWithModelCountHandler = async ({
   input: { name },
@@ -56,6 +60,48 @@ export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => 
   } catch (error) {
     throw throwDbError(error);
   }
+};
+
+export const getManagableTagsHandler = async () => {
+  const results = (
+    (await dbRead.tag.findMany({
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        target: true,
+        createdAt: true,
+        fromTags: {
+          select: {
+            fromTag: {
+              select: {
+                id: true,
+                name: true,
+                type: true,
+              },
+            },
+          },
+        },
+        stats: {
+          select: {
+            modelCountAllTime: true,
+            imageCountAllTime: true,
+            postCountAllTime: true,
+          },
+        },
+      },
+    })) ?? []
+  ).map(({ fromTags, stats, ...tag }) => ({
+    ...tag,
+    stats: {
+      modelCount: stats?.modelCountAllTime ?? 0,
+      imageCount: stats?.imageCountAllTime ?? 0,
+      postCount: stats?.postCountAllTime ?? 0,
+    },
+    tags: fromTags.map(({ fromTag }) => fromTag),
+  }));
+
+  return results;
 };
 
 export const getTrendingTagsHandler = async ({ input }: { input: GetTrendingTagsSchema }) => {
@@ -138,6 +184,14 @@ export const disableTagsHandler = async ({ input }: { input: AdjustTagsSchema })
 export const moderateTagsHandler = async ({ input }: { input: ModerateTagsSchema }) => {
   try {
     await moderateTags(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const deleteTagsHandler = async ({ input }: { input: DeleteTagsSchema }) => {
+  try {
+    await deleteTags(input);
   } catch (error) {
     throw throwDbError(error);
   }
