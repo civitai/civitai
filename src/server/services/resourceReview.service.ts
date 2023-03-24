@@ -74,14 +74,14 @@ export const getResourceReviewsInfinite = async ({
 
 export type RatingTotalsModel = { '1': number; '2': number; '3': number; '4': number; '5': number };
 export const getRatingTotals = async ({ modelId }: GetRatingTotalsInput) => {
-  const result = await dbRead.$queryRawUnsafe<{ rating: number; count: number }[]>(`
+  const result = await dbRead.$queryRaw<{ rating: number; count: number }[]>`
     SELECT
       rr.rating,
       COUNT(*) count
     FROM "ResourceReview" rr
     WHERE rr."modelId" = ${modelId}
     GROUP BY rr.rating
-  `);
+  `;
 
   const transformed = result.reduce(
     (acc, { rating, count }) => {
