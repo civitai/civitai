@@ -124,7 +124,6 @@ export function openRoutedContext<TName extends keyof typeof registry>(
   useFreezeStore.getState().setFreeze(true);
   const resolve = registry[modal].resolve;
   const [url, as, options] = resolve(props as any) as Parameters<NextRouter['push']>;
-  console.log({ url, as, options });
   Router.push(url, as, { ...options, ...optionsOverride });
 }
 

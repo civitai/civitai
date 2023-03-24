@@ -80,7 +80,6 @@ export const getPostsInfinite = async ({
     orderBy.push({ publishedAt: 'desc' });
   }
 
-  console.time('posts');
   const posts = await dbRead.post.findMany({
     take: limit + 1,
     cursor: cursor ? { id: cursor } : undefined,
@@ -94,8 +93,6 @@ export const getPostsInfinite = async ({
       publishedAt: true,
     },
   });
-  console.timeEnd('posts');
-  console.log('got posts', posts.length);
 
   const images = await getImagesForPosts({
     postIds: posts.map((x) => x.id),
@@ -104,7 +101,6 @@ export const getPostsInfinite = async ({
     excludedIds: excludedImageIds,
     userId: user?.id,
   });
-  console.log('got images', images.length);
 
   let nextCursor: number | undefined;
   if (posts.length > limit) {

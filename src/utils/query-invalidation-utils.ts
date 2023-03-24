@@ -5,4 +5,5 @@ export async function invalidateModeratedContent(queryUtils: ReturnType<typeof t
   await queryUtils.tag.invalidate();
   await queryUtils.post.invalidate();
   await queryUtils.image.invalidate();
+  await queryUtils.review.invalidate();
 }

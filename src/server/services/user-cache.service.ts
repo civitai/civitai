@@ -13,10 +13,10 @@ const log = createLogger('user-cache', 'green');
 
 // #region [hidden tags]
 async function getModerationTags() {
-  log('getting moderation tags');
   const cachedTags = await redis.get(`system:moderation-tags`);
   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
 
+  log('getting moderation tags');
   const tags = await dbWrite.tag.findMany({
     where: { type: TagType.Moderation },
     select: { id: true, name: true },
@@ -87,7 +87,7 @@ export async function getHiddenTagsForUser({
 }
 
 export async function refreshHiddenTagsForUser({ userId }: { userId: number }) {
-  console.log('refreshing hidden tags for user', userId);
+  log('refreshing hidden tags for user', userId);
   await redis.del(`user:${userId}:hidden-tags`);
 }
 // #endregion
@@ -123,7 +123,7 @@ export async function getHiddenUsersForUser({
 }
 
 export async function refreshHiddenUsersForUser({ userId }: { userId: number }) {
-  console.log('refreshing hidden users for user', userId);
+  log('refreshing hidden users for user', userId);
   await redis.del(`user:${userId}:hidden-users`);
 }
 // #endregion
@@ -170,7 +170,7 @@ export async function getHiddenModelsForUser({
 }
 
 export async function refreshHiddenModelsForUser({ userId }: { userId: number }) {
-  console.log('refreshing hidden models for user', userId);
+  log('refreshing hidden models for user', userId);
   await redis.del(`user:${userId}:hidden-models`);
 }
 // #endregion
@@ -184,7 +184,6 @@ async function getHiddenImages(userId: number) {
   });
 
   const hiddenImages = [...new Set(votedHideImages?.map((x) => x.imageId) ?? [])];
-  console.log(hiddenImages);
   return hiddenImages;
 }
 
@@ -208,7 +207,7 @@ export async function getHiddenImagesForUser({
 }
 
 export async function refreshHiddenImagesForUser({ userId }: { userId: number }) {
-  console.log('refreshing hidden images for user', userId);
+  log('refreshing hidden images for user', userId);
   await redis.del(`user:${userId}:hidden-images`);
 }
 // #endregion

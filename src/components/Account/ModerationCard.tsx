@@ -36,6 +36,7 @@ export function ModerationCard({
   const [preferences, setPreferences] = useState<Record<string, boolean>>({});
   const { isLoading: preferencesLoading } = trpc.moderation.getPreferences.useQuery(undefined, {
     onSuccess: setPreferences,
+    cacheTime: 0, // So that if they navigate away we refetch...
   });
 
   const { mutate } = trpc.moderation.updatePreferences.useMutation({

@@ -50,7 +50,6 @@ function ModerationTagsInput({ value = [], onChange, type, ...props }: Moderatio
     onChange?.(updated);
   };
 
-  console.log(type);
   const moderationCategories = useMemo(() => entityModerationCategories[type], [type]);
 
   const categoryCounts = useMemo(() => {

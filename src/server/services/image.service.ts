@@ -507,7 +507,7 @@ export const getAllImages = async ({
 
   const [cursorProp, cursorDirection] = orderBy?.split(' ');
   if (cursor) {
-    const cursorOperator = cursorDirection === 'DESC' ? '<=' : '>=';
+    const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
     if (cursorProp) AND.push(`${cursorProp} ${cursorOperator} ${cursor}`);
   }
 
@@ -683,7 +683,6 @@ export const getImagesForModelVersion = async ({
   if (!Array.isArray(modelVersionIds)) modelVersionIds = [modelVersionIds];
   const imageWhere = [`iom."modelVersionId" IN (${modelVersionIds.join(',')})`];
   if (!!excludedTagIds?.length) {
-    console.log(excludedTagIds);
     imageWhere.push(`i."scannedAt" IS NOT NULL`);
     const excludedTags = excludedTagIds.join(',');
     imageWhere.push(

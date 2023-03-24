@@ -129,7 +129,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
       nsfw = false;
     for (const { name, type } of tags) {
       if (type === TagType.Moderation) nsfw = true;
-      if (['child', 'teen'].includes(name)) hasMinorTag = true;
+      if (['child', 'teen', 'baby'].includes(name)) hasMinorTag = true;
       else if (['anime', 'cartoon', 'comics', 'manga'].includes(name)) hasAnimatedTag = true;
       else if (['adult'].includes(name)) hasAdultTag = true;
     }
