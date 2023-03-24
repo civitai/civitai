@@ -1,3 +1,4 @@
 *.js
+*.mjs
 /dist
 /node_modules

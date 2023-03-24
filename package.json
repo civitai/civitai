@@ -18,7 +18,8 @@
     "db:pull": "prisma db pull",
     "db:push": "prisma db push",
     "db:migrate": "node scripts/prisma-migrate-with-views-workaround.mjs",
-    "db:deploy": "node scripts/prisma-migrate-with-views-workaround.mjs -p",
+    "db:deploy": "node scripts/prisma-migrate-with-views-workaround.mjs -p && db:program",
+    "db:program": "node scripts/prisma-prepare-programmability.mjs",
     "db:generate": "prisma generate",
     "db:seed": "prisma db seed"
   },
