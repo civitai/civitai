@@ -8,6 +8,7 @@ import { AmbientModelCard } from '~/components/InfiniteModels/AmbientModelCard';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { usernameSchema } from '~/server/schema/user.schema';
 import { trpc } from '~/utils/trpc';
 
 type InfiniteModelsProps = {
@@ -19,7 +20,7 @@ type InfiniteModelsProps = {
 const filterSchema = z.object({
   query: z.string().optional(),
   user: z.string().optional(),
-  username: z.string().optional(),
+  username: usernameSchema.optional(),
   tagname: z.string().optional(),
   tag: z.string().optional(),
   favorites: z.preprocess((val) => val === true || val === 'true', z.boolean().optional()),

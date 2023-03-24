@@ -38,7 +38,7 @@ const useStore = create<ReactionStore>()(
 );
 
 export type ReactionButtonProps = ToggleReactionInput & {
-  userReaction?: { user: { id: number }; reaction: ReviewReactions };
+  userReaction?: { userId: number; reaction: ReviewReactions };
   count?: number;
   noEmpty?: boolean;
   children: ({

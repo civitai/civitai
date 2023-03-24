@@ -6,6 +6,7 @@ import {
   GetImageInput,
 } from './../schema/image.schema';
 import {
+  ImageGenerationProcess,
   ModelStatus,
   Prisma,
   ReportReason,
@@ -30,7 +31,7 @@ import { deleteImage } from '~/utils/cf-images-utils';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
 import { simpleTagSelect, imageTagSelect, ImageTag } from '~/server/selectors/tag.selector';
-import { getImageV2Select } from '~/server/selectors/imagev2.selector';
+import { getImageV2Select, ImageV2Model } from '~/server/selectors/imagev2.selector';
 import {
   throwAuthorizationError,
   throwDbError,
@@ -439,53 +440,194 @@ export const getAllImages = async ({
   generation,
   reviewId,
 }: GetInfiniteImagesInput & { userId?: number }) => {
-  const AND: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
-  const orderBy: Prisma.Enumerable<Prisma.ImageOrderByWithRelationInput> = [];
+  const AND: string[] = [];
+  let orderBy: string;
 
-  if (modelId || modelVersionId)
-    AND.push({ resourceHelper: { some: { modelVersionId, modelId } } });
-  if (username) AND.push({ user: { username } });
-  if (browsingMode !== BrowsingMode.All)
-    AND.push({ nsfw: { equals: browsingMode === BrowsingMode.NSFW } });
-  if (!!excludedUserIds?.length) AND.push({ userId: { notIn: excludedUserIds } });
-  if (!!excludedImageIds?.length) AND.push({ id: { notIn: excludedImageIds } });
-  if (!!excludedTagIds?.length) {
-    AND.push({
-      OR: [
-        { userId },
-        {
-          tags: { none: { tagId: { in: excludedTagIds } } },
-          scannedAt: { not: null },
-        },
-      ],
-    });
+  // Filter to specific model/review content
+  if (modelId || modelVersionId || reviewId) {
+    const irhAnd = ['irh."imageId" = i.id'];
+    if (modelVersionId) irhAnd.push(`irh."modelVersionId" = ${modelVersionId}`);
+    if (modelId) irhAnd.push(`irh."modelId" = ${modelId}`);
+    if (reviewId) irhAnd.push(`irh."reviewId" = ${reviewId}`);
+    AND.push(`EXISTS (
+      SELECT 1 FROM "ImageResourceHelper" irh
+      WHERE ${irhAnd.join(' AND ')}
+    )`);
   }
-  if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
-  if (!!generation?.length) AND.push({ generationProcess: { in: generation } });
-  if (!!reviewId) AND.push({ resourceHelper: { some: { reviewId } } });
+
+  // Filter to specific user content
+  if (username) {
+    AND.push(`u."username" = '${username}'`);
+  }
+
+  // Filter to specific tags
+  if (tags?.length) {
+    AND.push(`EXISTS (
+      SELECT 1 FROM "TagsOnImage" toi
+      WHERE toi."imageId" = i.id AND toi."tagId" IN (${tags.join(', ')})
+    )`);
+  }
+
+  // Filter to specific generation process
+  if (generation?.length) {
+    AND.push(`i."generationProcess" IN (${generation.map((g) => `'${g}'`).join(', ')})`);
+  }
+
+  // Filter to a specific post
   if (postId) {
-    AND.push({ postId });
-    orderBy.push({ index: 'asc' });
+    AND.push(`i."postId" = ${postId}`);
+    orderBy = `i."index"`;
   } else {
-    if (sort === ImageSort.MostComments)
-      orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
-    else if (sort === ImageSort.MostReactions)
-      orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
-    orderBy.push({ id: 'desc' });
+    // Sort by selected sort
+    if (sort === ImageSort.MostComments) orderBy = `r."commentCount${period}Rank"`;
+    else if (sort === ImageSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
+    else orderBy = `i."id" DESC`;
   }
 
-  const images = await dbRead.image.findMany({
-    take: limit + 1,
-    cursor: cursor ? { id: cursor } : undefined,
-    where: { AND },
-    orderBy,
-    select: getImageV2Select({ userId }),
-  });
+  // Exclude specific users
+  if (excludedUserIds?.length) AND.push(`i."userId" NOT IN (${excludedUserIds.join(', ')})`);
 
-  let nextCursor: number | undefined;
+  // Exclude specific images
+  if (excludedImageIds?.length) AND.push(`i."id" NOT IN (${excludedImageIds.join(', ')})`);
+
+  // Exclude specific tags
+  if (excludedTagIds?.length) {
+    const OR: string[] = [
+      [
+        `i."scannedAt" IS NOT NULL`,
+        `NOT EXISTS (
+          SELECT 1 FROM "TagsOnImage" toi
+          WHERE toi."imageId" = i.id AND toi."tagId" IN (${excludedTagIds.join(', ')})
+        )`,
+      ].join(' AND '),
+    ];
+    if (userId) OR.push(`i."userId" = ${userId}`);
+    AND.push(`(${OR.join(' OR ')})`);
+  }
+
+  const [cursorProp, cursorDirection] = orderBy?.split(' ');
+  if (cursor) {
+    const cursorOperator = cursorDirection === 'DESC' ? '<=' : '>=';
+    if (cursorProp) AND.push(`${cursorProp} ${cursorOperator} ${cursor}`);
+  }
+
+  console.log('getAllImages start');
+  console.time('getAllImages');
+  const rawImages = await dbRead.$queryRawUnsafe<
+    {
+      id: number;
+      name: string;
+      url: string;
+      nsfw: boolean;
+      width: number;
+      height: number;
+      hash: string;
+      meta: Prisma.JsonValue;
+      hideMeta: boolean;
+      generationProcess: ImageGenerationProcess;
+      createdAt: Date;
+      mimeType: string;
+      scannedAt: Date;
+      needsReview: boolean;
+      userId: number;
+      username: string | null;
+      userImage: string | null;
+      deletedAt: Date | null;
+      cryCount: number;
+      laughCount: number;
+      likeCount: number;
+      dislikeCount: number;
+      heartCount: number;
+      commentCount: number;
+      reactions?: ReviewReactions[];
+      cursorId?: bigint;
+    }[]
+  >(`
+    SELECT
+      i.id,
+      i.name,
+      i.url,
+      i.nsfw,
+      i.width,
+      i.height,
+      i.hash,
+      i.meta,
+      i."hideMeta",
+      i."generationProcess",
+      i."createdAt",
+      i."mimeType",
+      i."scannedAt",
+      i."needsReview",
+      i."userId",
+      u.username,
+      u.image "userImage",
+      u."deletedAt",
+      COALESCE(im."cryCount", 0) "cryCount",
+      COALESCE(im."laughCount", 0) "laughCount",
+      COALESCE(im."likeCount", 0) "likeCount",
+      COALESCE(im."dislikeCount", 0) "dislikeCount",
+      COALESCE(im."heartCount", 0) "heartCount",
+      COALESCE(im."commentCount", 0) "commentCount",
+      ${!userId ? 'null' : 'ir.reactions'} "reactions",
+      ${cursorProp ? cursorProp : 'null'} "cursorId"
+    FROM "Image" i
+    JOIN "User" u ON u.id = i."userId"
+    LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = '${period}'
+    LEFT JOIN "ImageRank" r ON r."imageId" = i.id
+    ${
+      !userId
+        ? ''
+        : `LEFT JOIN (
+        SELECT "imageId", jsonb_agg(reaction) "reactions"
+        FROM "ImageReaction"
+        WHERE "userId" = ${userId}
+        GROUP BY "imageId"
+      ) ir ON ir."imageId" = i.id
+    `
+    }
+    WHERE ${AND.join(' AND ')}
+    ORDER BY ${orderBy}
+    LIMIT ${limit + 1}
+  `);
+  const images: ImageV2Model[] = rawImages.map(
+    ({
+      reactions,
+      userId: creatorId,
+      username,
+      userImage,
+      deletedAt,
+      cryCount,
+      likeCount,
+      laughCount,
+      dislikeCount,
+      heartCount,
+      commentCount,
+      ...i
+    }) => ({
+      ...i,
+      user: {
+        id: creatorId,
+        username,
+        image: userImage,
+        deletedAt,
+      },
+      stats: {
+        cryCountAllTime: cryCount,
+        laughCountAllTime: laughCount,
+        likeCountAllTime: likeCount,
+        dislikeCountAllTime: dislikeCount,
+        heartCountAllTime: heartCount,
+        commentCountAllTime: commentCount,
+      },
+      reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
+    })
+  );
+  console.timeEnd('getAllImages');
+
+  let nextCursor: bigint | undefined;
   if (images.length > limit) {
-    const nextItem = images.pop();
-    nextCursor = nextItem?.id;
+    const nextItem = rawImages.pop();
+    nextCursor = nextItem?.cursorId;
   }
 
   return {
@@ -682,7 +824,7 @@ export const getImagesForPosts = async ({
 
   return images.map(({ reactions, ...i }) => ({
     ...i,
-    reactions: reactions?.map((r) => ({ user: { id: userId }, reaction: r })) ?? [],
+    reactions: reactions?.map((r) => ({ userId, reaction: r })) ?? [],
   }));
 };
 // #endregion

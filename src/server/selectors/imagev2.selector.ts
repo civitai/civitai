@@ -53,7 +53,10 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
     reactions: {
       where: { userId },
       take: !userId ? 0 : undefined,
-      select: getReactionsSelect,
+      select: {
+        userId: true,
+        reaction: true,
+      },
     },
     user: { select: simpleUserSelect },
     needsReview: true,
