@@ -44,7 +44,10 @@ export const upsertComment = async ({
 };
 
 export const getComment = async ({ id }: GetByIdInput) => {
-  const comment = await dbRead.commentV2.findFirst({ where: { id }, select: commentV2Select });
+  const comment = await dbRead.commentV2.findFirst({
+    where: { id },
+    select: { ...commentV2Select, thread: true },
+  });
   if (!comment) throw throwNotFoundError();
   return comment;
 };
@@ -63,6 +66,7 @@ export const getComments = async <TSelect extends Prisma.CommentV2Select>({
   if (sort === CommentV2Sort.Newest) orderBy.push({ createdAt: 'desc' });
   else orderBy.push({ createdAt: 'asc' });
 
+  console.log('BEGIN GET COMMENTS');
   return await dbRead.commentV2.findMany({
     take: limit,
     cursor: cursor ? { id: cursor } : undefined,
@@ -72,6 +76,7 @@ export const getComments = async <TSelect extends Prisma.CommentV2Select>({
     orderBy,
     select,
   });
+  console.log('END GET COMMENTS');
 };
 
 export const deleteComment = async ({ id }: { id: number }) => {

@@ -11,7 +11,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 
 export default function PostsPage() {
   const features = useFeatureFlags();
-  return <NotFound />;
+  // return <NotFound />;
   if (!features.posts) return <NotFound />;
 
   return (

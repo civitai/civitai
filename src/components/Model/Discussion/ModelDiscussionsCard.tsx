@@ -56,6 +56,8 @@ export function ModelDiscussionsContent() {
   const { modelUserId } = useModelDiscussionInfiniteContext();
   const { comment } = useCommentV2Context();
 
+  // TODO - on card click, optimistically update comment
+
   return (
     <Card radius="md" withBorder shadow="sm" p="md" style={{ overflow: 'visible' }}>
       <Group align="flex-start" position="apart" noWrap>

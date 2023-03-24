@@ -70,8 +70,6 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
     (filtersChanged && !currentFetching && prevData.length !== data.length);
   // #endregion
 
-  console.log({ positionerDep });
-
   // #region [base masonic settings]
   const containerRef = useRef(null);
   const [width, height] = useWindowSize();

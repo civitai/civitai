@@ -1,20 +1,23 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
-import { CommentsProvider, LoadNextPage, CreateComment, Comment } from '~/components/CommentsV2';
+import {
+  CommentsProvider,
+  LoadNextPage,
+  CreateComment,
+  Comment,
+  CommentV2BadgeProps,
+} from '~/components/CommentsV2';
 
 export function ModelDiscussionComments({
   commentId,
   userId,
 }: {
   commentId: number;
-  userId: number;
+  userId?: number;
 }) {
+  const badges: CommentV2BadgeProps[] = [];
+  if (userId) badges.push({ userId, label: 'op', color: 'violet' });
   return (
-    <CommentsProvider
-      entityType="comment"
-      entityId={commentId}
-      limit={5}
-      badges={[{ userId, label: 'op', color: 'violet' }]}
-    >
+    <CommentsProvider entityType="comment" entityId={commentId} limit={5} badges={badges}>
       {({ data, created, isInitialLoading, isFetching }) =>
         isInitialLoading ? (
           <Center>

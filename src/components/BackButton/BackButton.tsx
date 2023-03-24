@@ -2,17 +2,19 @@ import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import { useRef, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { UrlObject } from 'url';
-import { ActionIcon } from '@mantine/core';
+import { ActionIcon, Group } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons';
 
-export function BackButton({
+export function NavigateBack({
   url,
   as,
   options = {},
+  children,
 }: {
   url: UrlObject | string;
   as?: UrlObject | string;
   options?: { replace?: boolean; shallow?: boolean };
+  children: ({ onClick }: { onClick: (e: React.MouseEvent) => void }) => React.ReactElement;
 }) {
   const router = useRouter();
   const closingRef = useRef(false);
@@ -32,9 +34,30 @@ export function BackButton({
     }
   };
 
+  return children({ onClick: handleClick });
+}
+
+export function BackButton({
+  url,
+  as,
+  options = {},
+  children,
+}: {
+  url: UrlObject | string;
+  as?: UrlObject | string;
+  options?: { replace?: boolean; shallow?: boolean };
+  children: React.ReactNode;
+}) {
   return (
-    <ActionIcon onClick={handleClick}>
-      <IconArrowLeft />
-    </ActionIcon>
+    <NavigateBack url={url} as={as} options={options}>
+      {({ onClick }) => (
+        <Group spacing="xs">
+          <ActionIcon onClick={onClick}>
+            <IconArrowLeft />
+          </ActionIcon>
+          {children}
+        </Group>
+      )}
+    </NavigateBack>
   );
 }
