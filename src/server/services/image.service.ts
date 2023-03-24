@@ -445,12 +445,14 @@ export const getAllImages = async ({
 
   // Filter to specific model/review content
   if (modelId || modelVersionId || reviewId) {
-    const irhAnd = ['irh."imageId" = i.id'];
-    if (modelVersionId) irhAnd.push(`irh."modelVersionId" = ${modelVersionId}`);
-    if (modelId) irhAnd.push(`irh."modelId" = ${modelId}`);
-    if (reviewId) irhAnd.push(`irh."reviewId" = ${reviewId}`);
+    const irhAnd = ['irr."imageId" = i.id'];
+    if (modelVersionId) irhAnd.push(`irr."modelVersionId" = ${modelVersionId}`);
+    if (modelId) irhAnd.push(`mv."modelId" = ${modelId}`);
+    if (reviewId) irhAnd.push(`re."id" = ${reviewId}`);
     AND.push(`EXISTS (
-      SELECT 1 FROM "ImageResourceHelper" irh
+      SELECT 1 FROM "ImageResource" irr
+      ${modelId ? 'JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"' : ''}
+      ${reviewId ? 'JOIN "ResourceReview" re ON re."modelVersionId" = irr."modelVersionId"' : ''}
       WHERE ${irhAnd.join(' AND ')}
     )`);
   }
@@ -530,6 +532,7 @@ export const getAllImages = async ({
       scannedAt: Date;
       needsReview: boolean;
       userId: number;
+      postId: number;
       username: string | null;
       userImage: string | null;
       deletedAt: Date | null;
@@ -559,6 +562,7 @@ export const getAllImages = async ({
       i."scannedAt",
       i."needsReview",
       i."userId",
+      i."postId",
       u.username,
       u.image "userImage",
       u."deletedAt",
