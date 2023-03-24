@@ -827,7 +827,7 @@ export const getImagesForPosts = async ({
 
   return images.map(({ reactions, ...i }) => ({
     ...i,
-    reactions: reactions?.map((r) => ({ userId, reaction: r })) ?? [],
+    reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   }));
 };
 // #endregion

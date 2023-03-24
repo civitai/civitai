@@ -6,7 +6,7 @@ import { ImageUploadProps } from '~/server/schema/image.schema';
 import { isTag } from '~/server/schema/tag.schema';
 import { getNeedsReview } from '~/utils/image-metadata';
 
-import { getReactionsSelect } from './reaction.selector';
+import { getReactionsSelectV2 } from './reaction.selector';
 import { simpleTagSelect } from './tag.selector';
 import { userWithCosmeticsSelect } from './user.selector';
 
@@ -60,7 +60,7 @@ export const imageGallerySelect = ({ user }: { user?: SessionUser }) =>
     reactions: {
       where: { userId: user?.id },
       take: !user?.id ? 0 : undefined,
-      select: getReactionsSelect,
+      select: getReactionsSelectV2,
     },
   });
 

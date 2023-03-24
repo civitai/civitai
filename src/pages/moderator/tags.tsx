@@ -160,7 +160,7 @@ export default function Tags() {
     });
   };
 
-  const columns = useMemo<MRT_ColumnDef<(typeof data)[number]>[]>(
+  const columns = useMemo<MRT_ColumnDef<(typeof tags)[number]>[]>(
     () => [
       {
         accessorKey: 'name',

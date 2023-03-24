@@ -1,6 +1,6 @@
 import { SessionUser } from 'next-auth';
 import { Prisma } from '@prisma/client';
-import { getReactionsSelect } from '~/server/selectors/reaction.selector';
+import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 /*
@@ -19,7 +19,7 @@ export const commentV2Select = Prisma.validator<Prisma.CommentV2Select>()({
     select: userWithCosmeticsSelect,
   },
   reactions: {
-    select: getReactionsSelect,
+    select: getReactionsSelectV2,
   },
 });
 
