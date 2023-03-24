@@ -57,9 +57,15 @@ export const updatePreferencesHandler = async ({
       )?.map((x) => x.id);
 
       if (!!tagIds?.length) {
-        await dbWrite.tagEngagement.createMany({
-          data: tagIds.map((tagId) => ({ userId, tagId, type: TagEngagementType.Allow })),
-        });
+        await dbWrite.$executeRawUnsafe(`
+          INSERT INTO "TagEngagement" ("userId", "tagId", "type")
+          VALUES ${tagIds
+            .map((tagId) => `(${userId}, ${tagId}, '${TagEngagementType.Allow}')`)
+            .join(', ')}
+          ON CONFLICT ("userId", "tagId") DO UPDATE SET
+            "type" = '${TagEngagementType.Allow}',
+            "createdAt" = now()
+        `);
       }
     }
 

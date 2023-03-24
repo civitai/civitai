@@ -10,7 +10,7 @@ async function main() {
   for (const file of files) {
     const content = await fs.readFile(`./prisma/programmability/${file}`, 'utf-8');
     const commands = content
-      .split(';')
+      .split('---')
       .map((x) => x.trim())
       .filter((x) => x);
     for (const i in commands) {

@@ -47,6 +47,7 @@ export function ImagesCard({
                     <ImageGuard.Content>
                       {({ safe }) => (
                         <>
+                          <ImageGuard.Report />
                           <ImageGuard.ToggleImage
                             sx={(theme) => ({
                               backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),

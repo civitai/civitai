@@ -14,7 +14,7 @@ export default function ImagesPage() {
   if (!features.gallery) return <NotFound />;
 
   return (
-    <Container fluid style={{ maxWidth: 2500 }}>
+    <Container size="xl">
       <Stack spacing="xs">
         <Announcements
           sx={(theme) => ({

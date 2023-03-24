@@ -307,7 +307,6 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
     `);
 
     // Update nsfw baseline
-    console.log(disable);
     if (disable) {
       await dbWrite.$executeRawUnsafe(`
         -- Update NSFW baseline
