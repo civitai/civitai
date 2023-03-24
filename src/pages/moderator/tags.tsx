@@ -69,7 +69,6 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
   return { props: {} };
 };
 
-const ADDABLE_TAG_TYPES: TagType[] = [TagType.Moderation, TagType.System];
 export default function Tags() {
   const queryUtils = trpc.useContext();
   const [selected, setSelected] = useState({});
@@ -79,7 +78,7 @@ export default function Tags() {
   const tags = useMemo(() => data ?? [], [data]);
   const addableTags = useMemo(() => {
     if (!tags) return [];
-    return tags.filter((x) => ADDABLE_TAG_TYPES.includes(x.type));
+    return tags.filter((x) => x.target.includes(TagTarget.Tag));
   }, [tags]);
 
   const deleteTagsMutation = trpc.tag.deleteTags.useMutation({

@@ -22,6 +22,8 @@ export default defineNextConfig({
   eslint: {
     ignoreDuringBuilds: true,
   },
+  generateEtags: false,
+  compress: false,
   images: {
     domains: [
       's3.us-west-1.wasabisys.com',

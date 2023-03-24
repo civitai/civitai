@@ -10,6 +10,7 @@ import {
   GetVotableTagsSchema,
   ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
+import { getSystemTags } from '~/server/services/system-cache';
 import { userCache } from '~/server/services/user-cache.service';
 
 export const getTagWithModelCount = async ({ name }: { name: string }) => {
@@ -56,8 +57,17 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
     id: not ? { notIn: not } : undefined,
     fromTags: not ? { none: { fromTagId: { in: not } } } : undefined,
     unlisted,
-    isCategory: categories,
   };
+
+  if (categories) {
+    const systemTags = await getSystemTags();
+    const categoryTag = systemTags.find((t) => t.name === `${entityType} category`.toLowerCase());
+    if (categoryTag) {
+      where.fromTags = {
+        some: { fromTagId: categoryTag.id },
+      };
+    }
+  }
 
   const orderBy: Prisma.Enumerable<Prisma.TagOrderByWithRelationInput> = [];
   if (sort === TagSort.MostImages) orderBy.push({ rank: { imageCountAllTimeRank: 'asc' } });

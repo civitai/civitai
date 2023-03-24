@@ -830,6 +830,13 @@ export const updateMetricsJob = createJob(
         FROM "Image" i
         JOIN "TagsOnImage" toi ON toi."imageId" = i.id
         WHERE (i."createdAt" > '${lastUpdate}')
+
+        UNION
+
+        SELECT
+          "id"
+        FROM "MetricUpdateQueue"
+        WHERE type = 'Tag'
       ),
       -- Get all affected
       affected AS
@@ -968,7 +975,7 @@ export const updateMetricsJob = createJob(
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       ON CONFLICT ("tagId", timeframe) DO UPDATE
-        SET "followerCount" = EXCLUDED."followerCount", "modelCount" = EXCLUDED."modelCount", "hiddenCount" = EXCLUDED."hiddenCount", "postCount" = EXCLUDED."postCount";
+        SET "followerCount" = EXCLUDED."followerCount", "modelCount" = EXCLUDED."modelCount", "hiddenCount" = EXCLUDED."hiddenCount", "postCount" = EXCLUDED."postCount", "imageCount" = EXCLUDED."imageCount";
     `);
       await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Tag'`);
     };
