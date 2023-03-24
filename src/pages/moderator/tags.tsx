@@ -49,7 +49,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { ImageGetAllInfinite } from '~/types/router';
+import { ImageGetGalleryInfinite } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';

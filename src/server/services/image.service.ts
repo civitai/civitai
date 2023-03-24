@@ -495,18 +495,21 @@ export const getAllImages = async ({
   }
 
   let orderBy: string;
+  let hasCursor = false;
   // Filter to a specific post
   if (prioritizedUserIds?.length) {
     orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), 0, 1), i."index"`;
   } else if (postId) {
     AND.push(`i."postId" = ${postId}`);
     orderBy = `i."index"`;
+    hasCursor = true;
   } else {
     AND.push(`i."postId" IS NOT NULL`);
     // Sort by selected sort
     if (sort === ImageSort.MostComments) orderBy = `r."commentCount${period}Rank"`;
     else if (sort === ImageSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
     else orderBy = `i."id" DESC`;
+    hasCursor = true;
   }
 
   const [cursorProp, cursorDirection] = orderBy?.split(' ');
@@ -575,7 +578,7 @@ export const getAllImages = async ({
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
       ${!userId ? 'null' : 'ir.reactions'} "reactions",
-      ${cursorProp ? cursorProp : 'null'} "cursorId"
+      ${hasCursor && cursorProp ? cursorProp : 'null'} "cursorId"
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = '${period}'

@@ -1,15 +1,4 @@
-import {
-  Anchor,
-  Button,
-  Center,
-  Container,
-  Group,
-  Loader,
-  Modal,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Anchor, Center, Container, Group, Loader, Modal, Stack, Text, Title } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons';
 import Link from 'next/link';
 import { z } from 'zod';

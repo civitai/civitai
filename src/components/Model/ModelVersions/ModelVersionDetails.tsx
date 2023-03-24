@@ -53,6 +53,8 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { removeTags, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
+const CAROUSEL_LIMIT = 10;
+
 export function ModelVersionDetails({ model, version, user, isFavorite, onFavoriteClick }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
 
@@ -70,8 +72,8 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
 
   const { data: { items } = { items: [] }, isLoading } = trpc.image.getInfinite.useQuery({
     modelVersionId: version.id,
-    userId: model.user.id,
-    limit: 10,
+    // prioritizedUserIds: [model.user.id],
+    limit: CAROUSEL_LIMIT,
   });
 
   const modelDetails: DescriptionTableProps['items'] = [
@@ -211,8 +213,10 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
             modelId={model.id}
             nsfw={model.nsfw}
             modelVersionId={version.id}
+            modelUserId={model.user.id}
             images={items}
             loading={isLoading}
+            limit={CAROUSEL_LIMIT}
             mobile
           />
           <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
@@ -333,8 +337,12 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                 <Group position="apart">
                   {filesCount ? `${filesCount === 1 ? '1 File' : `${filesCount} Files`}` : 'Files'}
                   {isOwnerOrMod && (
-                    <RoutedContextLink modal="filesEdit" modelVersionId={version.id}>
-                      <Text variant="link" size="sm" onClick={(e) => e.stopPropagation()}>
+                    <RoutedContextLink
+                      modal="filesEdit"
+                      modelVersionId={version.id}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Text variant="link" size="sm">
                         Manage Files
                       </Text>
                     </RoutedContextLink>
@@ -455,8 +463,10 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
             modelId={model.id}
             nsfw={model.nsfw}
             modelVersionId={version.id}
+            modelUserId={model.user.id}
             images={items}
             loading={isLoading}
+            limit={CAROUSEL_LIMIT}
           />
           {model.description ? (
             <ContentClamp maxHeight={300}>

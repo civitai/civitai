@@ -41,4 +41,5 @@ export type UsersGetAll = UserRouter['getAll'];
 export type UsersGetCosmetics = UserRouter['getCosmetics'];
 
 type ImageRouter = RouterOutput['image'];
-export type ImageGetAllInfinite = ImageRouter['getGalleryImagesInfinite']['items'];
+export type ImageGetGalleryInfinite = ImageRouter['getGalleryImagesInfinite']['items'];
+export type ImageGetInfinite = ImageRouter['getInfinite']['items'];
