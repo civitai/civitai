@@ -3,6 +3,7 @@ import { ImageGenerationProcess, MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { tagSchema } from '~/server/schema/tag.schema';
+import { usernameSchema } from '~/server/schema/user.schema';
 
 const stringToNumber = z.preprocess(
   (value) => (value ? Number(value) : undefined),
@@ -179,12 +180,12 @@ export const ingestImageSchema = z.object({
 export type GetInfiniteImagesInput = z.infer<typeof getInfiniteImagesSchema>;
 export const getInfiniteImagesSchema = z.object({
   limit: z.number().min(0).max(200).default(100),
-  cursor: z.number().optional(),
+  cursor: z.bigint().optional(),
   postId: z.number().optional(),
   modelId: z.number().optional(),
   modelVersionId: z.number().optional(),
   reviewId: z.number().optional(),
-  username: z.string().optional(),
+  username: usernameSchema.optional(),
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
   excludedImageIds: z.array(z.number()).optional(),

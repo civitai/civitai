@@ -187,35 +187,31 @@ export const deletePost = async ({ id }: GetByIdInput) => {
   await dbWrite.post.delete({ where: { id } });
 };
 
+type PostQueryResult = { id: number; name: string; isCategory: boolean; postCount: number }[];
 export const getPostTags = async ({
   query,
   limit,
   excludedTagIds,
 }: GetPostTagsInput & { excludedTagIds?: number[] }) => {
   const showTrending = query === undefined || query.length < 2;
-  const tags = await dbRead.$queryRawUnsafe<
-    Array<{
-      id: number;
-      name: string;
-      isCategory: boolean;
-      postCount: number;
-    }>
-  >(`
+  const tags = await dbRead.$queryRaw<PostQueryResult>`
     SELECT
       t.id,
       t.name,
       t."isCategory",
-      COALESCE(s.${showTrending ? '"postCountDay"' : '"postCountAllTime"'}, 0)::int AS "postCount"
+      COALESCE(${
+        showTrending ? Prisma.sql`s."postCountDay"` : Prisma.sql`s."postCountAllTime"`
+      }, 0)::int AS "postCount"
     FROM "Tag" t
     LEFT JOIN "TagStat" s ON s."tagId" = t.id
     LEFT JOIN "TagRank" r ON r."tagId" = t.id
     WHERE
-      ${showTrending ? 't."isCategory" = true' : `t.name ILIKE '${query}%'`}
+      ${showTrending ? 't."isCategory" = true' : Prisma.sql`t.name ILIKE '${query}%'`}
     ORDER BY ${
       showTrending ? 'r."postCountDayRank" DESC' : 'LENGTH(t.name), r."postCountAllTimeRank" DESC'
     }
     LIMIT ${limit}
-  `);
+  `;
 
   return (
     !!excludedTagIds?.length ? tags.filter((x) => !excludedTagIds.includes(x.id)) : tags

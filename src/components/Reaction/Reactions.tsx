@@ -24,7 +24,7 @@ const availableReactions: ReactionToEmoji = {
 };
 
 type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
-  reactions: { user: { id: number }; reaction: ReviewReactions }[];
+  reactions: { userId: number; reaction: ReviewReactions }[];
   metrics?: ReactionMetrics;
   popoverPosition?: PopoverProps['position'];
   readonly?: boolean;
@@ -131,7 +131,7 @@ function ReactionsList({
           const reactionMetricType = `${reaction.toLowerCase()}Count` as keyof ReactionMetrics;
           const count = metrics[reactionMetricType] ?? 0;
           const userReaction = reactions.find(
-            (x) => x.user.id === currentUser?.id && x.reaction === reaction
+            (x) => x.userId === currentUser?.id && x.reaction === reaction
           );
           return (
             <ReactionButton

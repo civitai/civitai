@@ -80,18 +80,18 @@ export const getUserCreator = async (where: { username?: string; id?: number }) 
 };
 
 export const getUsers = ({ limit, query, email, ids }: GetAllUsersInput) => {
-  return dbRead.$queryRawUnsafe<{ id: number; username: string }[]>(`
+  return dbRead.$queryRaw<{ id: number; username: string }[]>`
     SELECT id, username
     FROM "User"
     WHERE
-      ${ids && ids.length > 0 ? `id IN (${ids.join(',')})` : 'TRUE'}
-      AND ${query ? `username LIKE '${query}%'` : 'TRUE'}
-      AND ${email ? `email ILIKE '${email}%'` : 'TRUE'}
+      ${ids && ids.length > 0 ? Prisma.sql`id IN ${Prisma.join(ids)}` : Prisma.sql`TRUE`}
+      AND ${query ? Prisma.sql`username LIKE ${query + '%'}` : Prisma.sql`TRUE`}
+      AND ${email ? Prisma.sql`email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
       AND "deletedAt" IS NULL
       AND "id" != -1
     ORDER BY LENGTH(username) ASC
     LIMIT ${limit}
-  `);
+  `;
 };
 
 export const getUserById = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>({
