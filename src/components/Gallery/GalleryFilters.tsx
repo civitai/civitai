@@ -274,7 +274,7 @@ export function GalleryFilters() {
       </Popover.Target>
       <Popover.Dropdown maw={350} w="100%">
         <Stack spacing={4}>
-          {showNSFWToggle && (
+          {/* {showNSFWToggle && (
             <>
               <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} />
               <SegmentedControl
@@ -300,7 +300,7 @@ export function GalleryFilters() {
                 }}
               />
             </>
-          )}
+          )} */}
           <Divider label="Generation process" labelProps={{ weight: 'bold' }} />
           <Chip.Group
             spacing={4}

@@ -216,7 +216,7 @@ export function InfiniteModelsFilter() {
       </Popover.Target>
       <Popover.Dropdown maw={350} w="100%">
         <Stack spacing={0}>
-          {showNSFWToggle && (
+          {/* {showNSFWToggle && (
             <>
               <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} />
               <SegmentedControl
@@ -242,7 +242,7 @@ export function InfiniteModelsFilter() {
                 }}
               />
             </>
-          )}
+          )} */}
           {user?.isModerator && (
             <>
               <Divider label="Model status" labelProps={{ weight: 'bold' }} />
