@@ -321,7 +321,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         ...input,
         cursor,
         limit: Math.ceil(limit * 3), // Overscan so that I can merge by postId
-        user: ctx.user,
+        userId: ctx.user?.id,
       });
 
       // Merge images by postId
