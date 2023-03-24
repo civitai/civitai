@@ -244,7 +244,7 @@ export const getModelsInfiniteHandler = async ({
           earlyAccess,
         };
       })
-      .filter((m) => m),
+      .filter(isDefined),
   };
   return result;
 };

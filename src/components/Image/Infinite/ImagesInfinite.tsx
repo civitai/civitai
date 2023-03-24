@@ -49,7 +49,7 @@ export default function ImagesInfinite({
       }
     );
 
-  const images = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
+  const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
   return (
     <ImagesInfiniteContext.Provider value={{ modelId, postId, username }}>

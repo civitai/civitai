@@ -24,7 +24,7 @@ export function ImagesCard({
     if (!image.width || !image.height) return 300;
     const width = cardWidth > 0 ? cardWidth : 300;
     const aspectRatio = image.width / image.height;
-    const imageHeight = Math.floor(width / aspectRatio) + (aspectRatio >= 1 ? 60 : 0);
+    const imageHeight = Math.floor(width / aspectRatio);
     return Math.min(imageHeight, 600);
   }, [cardWidth, image.width, image.height]);
 

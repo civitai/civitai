@@ -4,6 +4,7 @@ import { createContext, useContext, useMemo } from 'react';
 import { useImageFilters } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
+import { Paper, Stack, Text } from '@mantine/core';
 
 type ImagesAsPostsInfiniteState = {
   modelId?: number;
@@ -39,7 +40,7 @@ export default function ImagesAsPostsInfinite({
       }
     );
 
-  const items = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
+  const items = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
   return (
     <ImagesAsPostsInfiniteContext.Provider value={{ modelId, username }}>
@@ -53,6 +54,16 @@ export default function ImagesAsPostsInfinite({
         render={ImagesAsPostsCard}
         filters={filters}
       />
+      {!isLoading && !items.length && (
+        <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Stack>
+            <Text size="xl">There are no images for this model yet.</Text>
+            <Text color="dimmed">
+              Add a post to showcase your images generated from this model.
+            </Text>
+          </Stack>
+        </Paper>
+      )}
     </ImagesAsPostsInfiniteContext.Provider>
   );
 }
