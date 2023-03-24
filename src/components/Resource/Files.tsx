@@ -147,7 +147,45 @@ export function Files({ model, version, onStartUploadClick }: Props) {
 
   const [error, setError] = useState<SchemaError[] | null>(null);
 
-  const publishModelMutation = trpc.model.publish.useMutation();
+  const publishModelMutation = trpc.model.publish.useMutation({
+    async onSuccess(_, variables) {
+      hideNotification('publishing-version');
+
+      const modelVersionId = variables.versionIds?.[0];
+      const pubNotificationId = `version-published-${modelVersionId}`;
+      showNotification({
+        id: pubNotificationId,
+        title: 'Version published',
+        color: 'green',
+        styles: { root: { alignItems: 'flex-start' } },
+        message: (
+          <Stack spacing={4}>
+            <Text size="sm" color="dimmed">
+              Your version has been published and is now available to the public.
+            </Text>
+            <Link href={`/models/v2/${variables.id}?modelVersionId=${modelVersionId}`} passHref>
+              <Anchor size="sm" onClick={() => hideNotification(pubNotificationId)}>
+                Go to model
+              </Anchor>
+            </Link>
+          </Stack>
+        ),
+      });
+
+      await queryUtils.model.getById.invalidate({ id: variables.id });
+      if (modelVersionId)
+        await queryUtils.modelVersion.getById.invalidate({
+          id: modelVersionId,
+        });
+    },
+    onError(error) {
+      hideNotification('publishing-version');
+      showErrorNotification({
+        title: 'Failed to publish version',
+        error: new Error(error.message),
+      });
+    },
+  });
   const upsertFileMutation = trpc.modelFile.upsert.useMutation({
     async onSuccess(result) {
       useS3UploadStore
@@ -204,41 +242,10 @@ export function Files({ model, version, onStartUploadClick }: Props) {
                       loading: true,
                     });
 
-                    publishModelMutation.mutate(
-                      { id: model?.id as number, versionIds: [result.modelVersion.id] },
-                      {
-                        async onSuccess() {
-                          hideNotification('publishing-version');
-
-                          const pubNotificationId = `version-published-${result.modelVersion.id}`;
-                          showNotification({
-                            id: pubNotificationId,
-                            title: 'Version published',
-                            color: 'green',
-                            styles: { root: { alignItems: 'flex-start' } },
-                            message: (
-                              <Stack spacing={4}>
-                                <Text size="sm" color="dimmed">
-                                  Your version has been published and is now available to the
-                                  public.
-                                </Text>
-                                <Link
-                                  href={`/models/v2/${model?.id}?modelVersionId=${result.modelVersion.id}`}
-                                  passHref
-                                >
-                                  <Anchor
-                                    size="sm"
-                                    onClick={() => hideNotification(pubNotificationId)}
-                                  >
-                                    Go to model
-                                  </Anchor>
-                                </Link>
-                              </Stack>
-                            ),
-                          });
-                        },
-                      }
-                    );
+                    publishModelMutation.mutate({
+                      id: model?.id as number,
+                      versionIds: [result.modelVersion.id],
+                    });
                   }}
                 >
                   Publish it
@@ -263,8 +270,8 @@ export function Files({ model, version, onStartUploadClick }: Props) {
         ) : undefined,
       });
 
+      await queryUtils.modelVersion.getById.invalidate({ id: result.modelVersion.id });
       if (model) await queryUtils.model.getById.invalidate({ id: model.id });
-      if (version) await queryUtils.modelVersion.getById.invalidate({ id: version.id });
     },
     onError(error) {
       showErrorNotification({
@@ -338,10 +345,13 @@ export function Files({ model, version, onStartUploadClick }: Props) {
   };
 
   useEffect(() => {
-    if (version?.files && version.files.length > 0)
-      setItems(
-        () =>
-          version?.files?.map(({ id, sizeKB, name, type, metadata }) => ({
+    if (version && version.files && version.files.length > 0) {
+      setItems((currentItems) => {
+        // merge both currentItems and version.files, but replace the matching files
+        // with the ones from version.files and adding the missing ones
+        const versionFiles = currentItems.filter((item) => item.meta?.versionId === version?.id);
+        const adjustedFiles =
+          version.files?.map(({ id, sizeKB, name, type, metadata }) => ({
             id,
             name,
             size: sizeKB,
@@ -354,8 +364,20 @@ export function Files({ model, version, onStartUploadClick }: Props) {
             abort: () => undefined,
             meta: { ...metadata, versionId: version?.id, type },
             file: new File([], name),
-          })) ?? []
-      );
+          })) ?? [];
+
+        // merge adjustedFiles and versionFiles, but avoid duplicates
+        const mergedFiles = [...versionFiles, ...adjustedFiles].reduce(
+          (acc, file) => ({
+            ...acc,
+            [file.name]: file,
+          }),
+          {} as Record<string, TrackedFile>
+        );
+
+        return Object.values(mergedFiles);
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version?.files]);
 
@@ -477,7 +499,7 @@ function FileCard({ file, fileTypes, error, modelId, onRetry }: FileCardProps) {
   const updateMeta = useS3UploadStore((state) => state.updateMeta);
 
   const { uuid, status, name, progress, timeRemaining, speed, meta } = file;
-  const { type, size, fp } = meta as {
+  const { type, size, fp, versionId } = meta as {
     versionId: number;
     type: ModelFileType;
     size?: 'Full' | 'Pruned';
@@ -487,6 +509,7 @@ function FileCard({ file, fileTypes, error, modelId, onRetry }: FileCardProps) {
 
   const deleteFileMutation = trpc.modelFile.delete.useMutation({
     async onSuccess() {
+      await queryUtils.modelVersion.getById.invalidate({ id: versionId });
       if (modelId) await queryUtils.model.getById.invalidate({ id: modelId });
     },
     onError() {
@@ -524,7 +547,7 @@ function FileCard({ file, fileTypes, error, modelId, onRetry }: FileCardProps) {
   return (
     <Card sx={{ opacity: deleteFileMutation.isLoading ? 0.2 : undefined }} withBorder>
       <Stack spacing={4} pb="xs">
-        <Group position="apart" spacing={0} noWrap>
+        <Group position="apart" spacing={4} noWrap>
           <Text
             lineClamp={1}
             color={failedUpload ? 'red' : undefined}

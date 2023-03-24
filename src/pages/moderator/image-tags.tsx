@@ -43,7 +43,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { ImageGetAllInfinite } from '~/types/router';
+import { ImageGetGalleryInfinite } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -397,7 +397,7 @@ function ImageGridItem({
 }
 
 type ImageGridItemProps = {
-  data: ImageGetAllInfinite[number];
+  data: ImageGetGalleryInfinite[number];
   index: number;
   width: number;
   selected: boolean;

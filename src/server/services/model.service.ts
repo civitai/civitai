@@ -79,7 +79,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (!sessionUser?.isModerator) {
     AND.push({ status: ModelStatus.Published });
   }
-  if (sessionUser?.isModerator && !(username || user)) {
+  if (sessionUser?.isModerator) {
     AND.push({ status: status && status.length > 0 ? { in: status } : ModelStatus.Published });
   }
   if (query) {

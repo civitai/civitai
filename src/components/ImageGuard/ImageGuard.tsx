@@ -84,11 +84,11 @@ const useImageGuardContext = () => {
   - use case: home page, model card, toggle image - since I don't have all the images yet, I need to be able to still manage nsfw state for all the images without having the knowledge of which images are nsfw
 */
 
-export type CustomImageModel = Omit<ImageModel, 'tags'> & {
-  imageNsfw?: boolean;
-  tags?: SimpleTag[];
-  analysis?: Prisma.JsonValue;
-};
+// export type CustomImageModel = Omit<ImageModel, 'tags'> & {
+//   imageNsfw?: boolean;
+//   tags?: SimpleTag[];
+//   analysis?: Prisma.JsonValue;
+// };
 
 type ImageProps = {
   id: number;

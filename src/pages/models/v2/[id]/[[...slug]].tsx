@@ -89,14 +89,14 @@ export const getServerSideProps = createServerSideProps({
     if (!isNumber(id)) return { notFound: true };
 
     const version = await getDefaultModelVersion({ modelId: id, modelVersionId });
-    await Promise.all([
-      ssg?.model.getById.prefetch({ id }),
-      ssg?.image.getInfinite.prefetch({
+    if (version)
+      await ssg?.image.getInfinite.prefetch({
         modelVersionId: version.id,
-        userId: version.model.userId,
+        prioritizedUserIds: [version.model.userId],
         limit: 10,
-      }),
-    ]);
+      });
+
+    await ssg?.model.getById.prefetch({ id });
 
     return {
       props: { id },
@@ -150,7 +150,7 @@ export default function ModelDetailsV2({
   const { data: { items: versionImages } = { items: [] } } = trpc.image.getInfinite.useQuery(
     {
       modelVersionId: latestVersion?.id,
-      userId: model?.user.id,
+      prioritizedUserIds: model ? [model?.user.id] : undefined,
       limit: 10,
     },
     { enabled: !!latestVersion }
@@ -272,7 +272,9 @@ export default function ModelDetailsV2({
       return { previousData };
     },
     async onSuccess() {
-      if (latestVersion) setSelectedVersion(latestVersion);
+      const nextLatestVersion = queryUtils.model.getById.getData({ id })?.modelVersions[0];
+      if (nextLatestVersion)
+        router.replace(`/models/v2/${id}?modelVersionId=${nextLatestVersion.id}`);
       closeAllModals();
     },
     onError(error, _variables, context) {

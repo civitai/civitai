@@ -13,12 +13,12 @@ import {
 } from '@mantine/core';
 import { useRouter } from 'next/router';
 
-import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
 import { useGalleryFilters } from '~/components/Gallery/GalleryFilters';
-import { CustomImageModel, ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { openRoutedContext } from '~/providers/RoutedContextProvider';
+import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { ImageGetInfinite } from '~/types/router';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -49,10 +49,12 @@ const useStyles = createStyles((theme) => ({
 export function ModelCarousel({
   modelId,
   modelVersionId,
+  modelUserId,
   images,
   nsfw,
   mobile = false,
   loading = false,
+  limit = 10,
 }: Props) {
   const router = useRouter();
   const { classes, cx } = useStyles();
@@ -154,30 +156,22 @@ export function ModelCarousel({
                   </AspectRatio>
                 </ImageGuard.Unsafe>
                 <ImageGuard.Safe>
-                  <AnchorNoTravel
-                    href={`/gallery/${
-                      image.id
-                    }?modelId=${modelId}&modelVersionId=${modelVersionId}&infinite=false&returnUrl=${encodeURIComponent(
-                      router.asPath
-                    )}`}
+                  <RoutedContextLink
+                    modal="imageDetailModal"
+                    imageId={image.id}
+                    modelId={modelId}
+                    modelVersionId={modelVersionId}
+                    // prioritizedUserIds={[modelUserId]}
+                    limit={limit}
                   >
                     <ImagePreview
                       image={image}
                       edgeImageProps={{ width: 400 }}
                       radius="md"
-                      onClick={() =>
-                        openRoutedContext('galleryDetailModal', {
-                          modelId,
-                          modelVersionId,
-                          galleryImageId: image.id,
-                          infinite: false,
-                          returnUrl: router.asPath,
-                        })
-                      }
                       style={{ width: '100%' }}
                       withMeta
                     />
-                  </AnchorNoTravel>
+                  </RoutedContextLink>
                 </ImageGuard.Safe>
               </div>
             </Center>
@@ -189,10 +183,12 @@ export function ModelCarousel({
 }
 
 type Props = {
-  images: CustomImageModel[];
+  images: ImageGetInfinite;
   modelVersionId: number;
   modelId: number;
+  modelUserId: number;
   nsfw: boolean;
   mobile?: boolean;
   loading?: boolean;
+  limit?: number;
 };

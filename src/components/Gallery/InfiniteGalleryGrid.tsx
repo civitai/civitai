@@ -22,7 +22,7 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { openRoutedContext, RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { ImageGetAllInfinite } from '~/types/router';
+import { ImageGetGalleryInfinite } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 export function InfiniteGalleryGrid({ columnWidth, data, filters }: Props) {
@@ -68,7 +68,7 @@ export function InfiniteGalleryGrid({ columnWidth, data, filters }: Props) {
 
 type Props = {
   columnWidth: number;
-  data: ImageGetAllInfinite;
+  data: ImageGetGalleryInfinite;
   filters: ReturnType<typeof useGalleryFilters>['filters'];
 };
 

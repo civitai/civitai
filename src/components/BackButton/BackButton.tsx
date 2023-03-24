@@ -46,7 +46,7 @@ export function BackButton({
   url: UrlObject | string;
   as?: UrlObject | string;
   options?: { replace?: boolean; shallow?: boolean };
-  children: React.ReactNode;
+  children?: React.ReactNode;
 }) {
   return (
     <NavigateBack url={url} as={as} options={options}>

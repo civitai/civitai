@@ -171,11 +171,7 @@ export function ModelWizard() {
           >
             <Stack>
               <Title order={3}>Upload files</Title>
-              <Files
-                model={state.model}
-                version={state.modelVersion}
-                onStartUploadClick={() => goNext()}
-              />
+              <Files model={state.model} version={state.modelVersion} />
               <Group mt="xl" position="right">
                 <Button variant="default" onClick={goBack}>
                   Back
@@ -192,12 +188,6 @@ export function ModelWizard() {
                   <PostUpsertForm modelVersionId={state.modelVersion.id} modelId={state.model.id} />
                 </PostEditWrapper>
               )}
-
-              <Group mt="xl" position="right">
-                <Button variant="default" onClick={goBack}>
-                  Back
-                </Button>
-              </Group>
             </Stack>
           </Stepper.Step>
         </Stepper>

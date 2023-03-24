@@ -6,8 +6,10 @@ import { getHasClientHistory } from '~/store/ClientHistoryStore';
 import { create } from 'zustand';
 import { Freeze } from 'react-freeze';
 import { NextLink } from '@mantine/next';
+import Link from 'next/link';
 import { removeEmpty } from '~/utils/object-helpers';
 import useIsClient from '~/hooks/useIsClient';
+import { Anchor } from '@mantine/core';
 
 const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
 const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLightbox'));
@@ -186,7 +188,9 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
   children,
   onClick,
   ...props
-}: OpenRoutedContextProps<TName> & { onClick?: () => void }) {
+}: OpenRoutedContextProps<TName> & {
+  onClick?: (e: React.MouseEvent<HTMLAnchorElement>) => void;
+}) {
   const setFreeze = useFreezeStore((state) => state.setFreeze);
   const toResolve = removeEmpty(props);
   const isClient = useIsClient();
@@ -202,9 +206,8 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
       as={as}
       {...options}
       onClick={(e) => {
-        e.stopPropagation();
         if (!e.ctrlKey) {
-          onClick?.();
+          onClick?.(e);
           setFreeze(true);
         }
       }}
