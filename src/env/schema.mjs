@@ -67,6 +67,8 @@ export const serverSchema = z.object({
     return str.split(',');
   }, z.array(z.string())),
   IMAGE_SCANNING_ENDPOINT: z.string().optional(),
+  DELIVERY_WORKER_ENDPOINT: z.string().optional(),
+  DELIVERY_WORKER_TOKEN: z.string().optional()
 });
 
 /**

@@ -147,7 +147,7 @@ type GetObjectOptions = {
 
 const buckets = [env.S3_UPLOAD_BUCKET, env.S3_SETTLED_BUCKET];
 const keyParser = new RegExp(`https:\\/\\/([\\w\\-]*)\\.?${env.CF_ACCOUNT_ID}.*?\\/(.+)`, 'i');
-function parseKey(key: string) {
+export function parseKey(key: string) {
   if (env.S3_FORCE_PATH_STYLE) {
     // e.g. key: https://s3.region.s3originsite.com/bucket/key
     const url = new URL(key);
