@@ -5,12 +5,14 @@ import { useImageFilters } from '~/providers/FiltersProvider';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
+import { Paper, Stack, Text } from '@mantine/core';
 
 type ImagesInfiniteState = {
   modelId?: number;
   postId?: number;
   username?: string;
   reviewId?: number;
+  prioritizedUserIds?: number[];
 };
 const ImagesInfiniteContext = createContext<ImagesInfiniteState | null>(null);
 export const useImagesInfiniteContext = () => {
@@ -27,11 +29,13 @@ export default function ImagesInfinite({
   postId,
   username,
   reviewId,
+  prioritizedUserIds,
 }: ImagesInfiniteProps) {
   const globalFilters = useImageFilters();
   const filters = useMemo(
-    () => removeEmpty({ ...globalFilters, modelId, postId, username, reviewId }),
-    [globalFilters, modelId, postId, username, reviewId]
+    () =>
+      removeEmpty({ ...globalFilters, modelId, postId, username, reviewId, prioritizedUserIds }),
+    [globalFilters, modelId, postId, username, reviewId, prioritizedUserIds]
   );
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
@@ -45,7 +49,7 @@ export default function ImagesInfinite({
       }
     );
 
-  const images = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
+  const images = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
 
   return (
     <ImagesInfiniteContext.Provider value={{ modelId, postId, username }}>
@@ -59,6 +63,16 @@ export default function ImagesInfinite({
         render={ImagesCard}
         filters={filters}
       />
+      {!isLoading && !images.length && (
+        <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Stack>
+            <Text size="xl">There are no images for this model yet.</Text>
+            <Text color="dimmed">
+              Add a post to showcase your images generated from this model.
+            </Text>
+          </Stack>
+        </Paper>
+      )}
     </ImagesInfiniteContext.Provider>
   );
 }

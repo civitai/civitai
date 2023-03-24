@@ -73,7 +73,7 @@ export const getResourceReviewsInfinite = async ({
 };
 
 export type RatingTotalsModel = { '1': number; '2': number; '3': number; '4': number; '5': number };
-export const getRatingTotals = async ({ modelId }: GetRatingTotalsInput) => {
+export const getRatingTotals = async ({ modelVersionId }: GetRatingTotalsInput) => {
   const result = await dbRead.$queryRaw<{ rating: number; count: number }[]>`
     SELECT
       rr.rating,

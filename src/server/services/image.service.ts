@@ -432,17 +432,16 @@ export const getAllImages = async ({
   excludedTagIds,
   excludedUserIds,
   excludedImageIds,
-  browsingMode,
+  browsingMode, // TODO.remove
   period,
   sort,
   userId,
   tags,
   generation,
   reviewId,
+  prioritizedUserIds,
 }: GetInfiniteImagesInput & { userId?: number }) => {
   const AND: string[] = [];
-  let orderBy: string;
-
   // Filter to specific model/review content
   if (modelId || modelVersionId || reviewId) {
     const irhAnd = ['irr."imageId" = i.id'];
@@ -456,7 +455,6 @@ export const getAllImages = async ({
       WHERE ${irhAnd.join(' AND ')}
     )`);
   }
-  // TODO  userId
   // Filter to specific user content
   if (username) {
     AND.push(`u."username" = '${username}'`);
@@ -473,18 +471,6 @@ export const getAllImages = async ({
   // Filter to specific generation process
   if (generation?.length) {
     AND.push(`i."generationProcess" IN (${generation.map((g) => `'${g}'`).join(', ')})`);
-  }
-
-  // Filter to a specific post
-  if (postId) {
-    AND.push(`i."postId" = ${postId}`);
-    orderBy = `i."index"`;
-  } else {
-    // TODO - postId not null
-    // Sort by selected sort
-    if (sort === ImageSort.MostComments) orderBy = `r."commentCount${period}Rank"`;
-    else if (sort === ImageSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
-    else orderBy = `i."id" DESC`;
   }
 
   // Exclude specific users
@@ -506,6 +492,21 @@ export const getAllImages = async ({
     ];
     if (userId) OR.push(`i."userId" = ${userId}`);
     AND.push(`(${OR.join(' OR ')})`);
+  }
+
+  let orderBy: string;
+  // Filter to a specific post
+  if (prioritizedUserIds?.length) {
+    orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), 0, 1), i."index"`;
+  } else if (postId) {
+    AND.push(`i."postId" = ${postId}`);
+    orderBy = `i."index"`;
+  } else {
+    AND.push(`i."postId" IS NOT NULL`);
+    // Sort by selected sort
+    if (sort === ImageSort.MostComments) orderBy = `r."commentCount${period}Rank"`;
+    else if (sort === ImageSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
+    else orderBy = `i."id" DESC`;
   }
 
   const [cursorProp, cursorDirection] = orderBy?.split(' ');
