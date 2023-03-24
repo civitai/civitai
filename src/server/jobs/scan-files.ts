@@ -41,7 +41,7 @@ type ScannerRequest = {
 export async function requestScannerTasks({
   file: { modelVersionId, type, format, url: s3Url },
   s3,
-  tasks = ['Import', 'Scan', 'Hash'],
+  tasks = ['Scan', 'Hash'],
   lowPriority = false,
 }: ScannerRequest) {
   if (!Array.isArray(tasks)) tasks = [tasks];
