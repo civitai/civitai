@@ -376,7 +376,7 @@ export function AppHeader() {
                 <CivitaiLinkPopover />
               </>
             )}
-            <BrowsingModeIcon />
+            {currentUser?.showNsfw && <BrowsingModeIcon />}
             {currentUser && <NotificationBell />}
             <Menu
               width={260}
