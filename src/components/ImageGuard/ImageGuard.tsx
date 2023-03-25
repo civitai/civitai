@@ -154,7 +154,7 @@ function ImageGuardContentProvider({
   );
   const userId: number | undefined = (image as any).userId ?? (image as any).user?.id;
   const showing = showConnection ?? showImage;
-  const nsfw = userId !== currentUser?.id ? imageStore.nsfw ?? image.nsfw : false;
+  const nsfw = !!userId && userId === currentUser?.id ? false : imageStore.nsfw ?? image.nsfw;
   const nsfwWithBlur = nsfw && shouldBlur;
   const unsafe = nsfwWithBlur && !showing;
   const safe = !unsafe;

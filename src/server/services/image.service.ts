@@ -752,6 +752,7 @@ export const getImagesForModelVersion = async ({
   const images = await dbRead.$queryRawUnsafe<
     {
       id: number;
+      userId: number;
       name: string;
       url: string;
       nsfw: boolean;
@@ -772,6 +773,7 @@ export const getImagesForModelVersion = async ({
     )
     SELECT
       i.id,
+      i."userId",
       i.name,
       i.url,
       i.nsfw,
@@ -818,6 +820,7 @@ export const getImagesForPosts = async ({
   const images = await dbRead.$queryRawUnsafe<
     {
       id: number;
+      userId: number;
       name: string;
       url: string;
       nsfw: boolean;
@@ -844,6 +847,7 @@ export const getImagesForPosts = async ({
     )
     SELECT
       i.id,
+      i."userId",
       i.name,
       i.url,
       i.nsfw,
