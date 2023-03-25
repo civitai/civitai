@@ -4,14 +4,19 @@ import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { appRouter } from '~/server/routers';
 import superjson from 'superjson';
 import { Session } from 'next-auth';
+import { parseBrowsingMode } from '~/server/createContext';
 
 export const getServerProxySSGHelpers = async (
   ctx: GetServerSidePropsContext,
-  session?: Session | null
+  session: Session | null
 ) => {
   const ssg = createProxySSGHelpers({
     router: appRouter,
-    ctx: { user: session?.user, acceptableOrigin: true },
+    ctx: {
+      user: session?.user,
+      acceptableOrigin: true,
+      browsingMode: parseBrowsingMode(ctx.req.cookies, session),
+    },
     transformer: superjson,
   });
   return ssg;
