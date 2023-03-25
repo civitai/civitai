@@ -8,6 +8,7 @@ import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import { useImageFilters } from '~/providers/FiltersProvider';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
+import { removeEmpty } from '~/utils/object-helpers';
 
 type ImageDetailState = {
   images: ImageV2Model[];
@@ -60,21 +61,20 @@ export function ImageDetailProvider({
    */
   // the globally set filter values should only be applied when accessing the image detail from the image gallery
   const globalImageFilters = useImageFilters();
-  const filters = !postId && !modelId && !username ? globalImageFilters : {};
+  const filters = useMemo(() => {
+    const baseFilters = { postId, modelId, modelVersionId, username };
+    return removeEmpty(
+      !postId && !modelVersionId && !username
+        ? { ...baseFilters, ...globalImageFilters }
+        : baseFilters
+    );
+  }, [globalImageFilters, postId, modelId, modelVersionId, username]);
 
-  const { data, isLoading } = trpc.image.getInfinite.useInfiniteQuery(
-    {
-      postId,
-      modelId,
-      username,
-      ...filters,
-    },
-    {
-      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
-      trpc: { context: { skipBatch: true } },
-    }
-  );
+  const { data, isLoading } = trpc.image.getInfinite.useInfiniteQuery(filters, {
+    getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+    getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+    trpc: { context: { skipBatch: true } },
+  });
 
   const { data: prefetchedImage } = trpc.image.get.useQuery({ id: imageId }, { enabled: false });
 

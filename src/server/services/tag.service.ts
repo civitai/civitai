@@ -1,5 +1,5 @@
 import { ModelStatus, Prisma } from '@prisma/client';
-import { TagVotableEntityType, VotableTag } from '~/libs/tags';
+import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
 
 import { dbWrite, dbRead } from '~/server/db/client';
@@ -87,14 +87,14 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
 };
 
 // #region [tag voting]
-export type VotableTagModel = AsyncReturnType<typeof getVotableTags>[0];
+
 export const getVotableTags = async ({
   userId,
   type,
   id,
   take = 20,
 }: GetVotableTagsSchema & { userId?: number }) => {
-  const results: VotableTag[] = [];
+  const results: VotableTagModel[] = [];
   if (type === 'model') {
     const tags = await dbRead.modelTag.findMany({
       where: { modelId: id, score: { gt: 0 } },
@@ -107,7 +107,7 @@ export const getVotableTags = async ({
         downVotes: true,
       },
       orderBy: { score: 'desc' },
-      take,
+      // take,
     });
     results.push(
       ...tags.map(({ tagId, tagName, tagType, ...tag }) => ({
@@ -141,7 +141,7 @@ export const getVotableTags = async ({
         downVotes: true,
       },
       orderBy: { score: 'desc' },
-      take,
+      // take,
     });
     results.push(
       ...tags.map(({ tagId, tagName, tagType, ...tag }) => ({

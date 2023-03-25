@@ -12,6 +12,7 @@ type ImagesInfiniteState = {
   postId?: number;
   username?: string;
   reviewId?: number;
+  withTags?: boolean;
 };
 const ImagesInfiniteContext = createContext<ImagesInfiniteState | null>(null);
 export const useImagesInfiniteContext = () => {
@@ -29,22 +30,25 @@ export default function ImagesInfinite({
   postId,
   username,
   reviewId,
+  withTags,
 }: ImagesInfiniteProps) {
   const globalFilters = useImageFilters();
-  const filters = useMemo(
-    () => removeEmpty({ ...globalFilters, modelId, modelVersionId, postId, username, reviewId }),
-    [globalFilters, modelId, modelVersionId, postId, username, reviewId]
-  );
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
-    trpc.image.getInfinite.useInfiniteQuery(
-      { ...filters },
-      {
-        getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-        getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
-        trpc: { context: { skipBatch: true } },
-        keepPreviousData: true,
-      }
+  const filters = useMemo(() => {
+    const baseFilters = { postId, modelId, modelVersionId, username, withTags };
+    return removeEmpty(
+      !postId && !modelVersionId && !username && !reviewId
+        ? { ...baseFilters, ...globalFilters }
+        : baseFilters
     );
+  }, [globalFilters, postId, modelId, modelVersionId, username, reviewId, withTags]);
+
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
+    trpc.image.getInfinite.useInfiniteQuery(filters, {
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+      trpc: { context: { skipBatch: true } },
+      keepPreviousData: true,
+    });
 
   const images = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
 

@@ -9,6 +9,7 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { useImagesInfiniteContext } from '~/components/Image/Infinite/ImagesInfinite';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
 
 export function ImagesCard({
   data: image,
@@ -72,19 +73,27 @@ export function ImagesCard({
                             />
                           )}
                           <div className={classes.footer}>
-                            <Reactions
-                              entityId={image.id}
-                              entityType="image"
-                              reactions={image.reactions}
-                              metrics={{
-                                likeCount: image.stats?.likeCountAllTime,
-                                dislikeCount: image.stats?.dislikeCountAllTime,
-                                heartCount: image.stats?.heartCountAllTime,
-                                laughCount: image.stats?.laughCountAllTime,
-                                cryCount: image.stats?.cryCountAllTime,
-                              }}
-                              readonly={!safe}
-                            />
+                            {!image.tags ? (
+                              <Reactions
+                                entityId={image.id}
+                                entityType="image"
+                                reactions={image.reactions}
+                                metrics={{
+                                  likeCount: image.stats?.likeCountAllTime,
+                                  dislikeCount: image.stats?.dislikeCountAllTime,
+                                  heartCount: image.stats?.heartCountAllTime,
+                                  laughCount: image.stats?.laughCountAllTime,
+                                  cryCount: image.stats?.cryCountAllTime,
+                                }}
+                                readonly={!safe}
+                              />
+                            ) : (
+                              <VotableTags
+                                entityType="image"
+                                entityId={image.id}
+                                tags={image.tags}
+                              />
+                            )}
                           </div>
                         </>
                       )}

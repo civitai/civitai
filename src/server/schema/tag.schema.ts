@@ -94,3 +94,9 @@ export const moderateTagsSchema = z.object({
   disable: z.boolean(),
 });
 export type ModerateTagsSchema = z.infer<typeof moderateTagsSchema>;
+
+export type VotableTagConnectorInput = z.infer<typeof votableTagConnectorSchema>;
+export const votableTagConnectorSchema = z.object({
+  entityId: z.number(),
+  entityType: z.enum(['model', 'image']),
+});

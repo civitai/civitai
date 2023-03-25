@@ -152,7 +152,7 @@ function ImageGuardContentProvider({
   const imageStore = useImageStore(
     useCallback((state) => state.images[image.id.toString()] ?? {}, [image.id])
   );
-  const userId: number | undefined = (image as any).userId;
+  const userId: number | undefined = (image as any).userId ?? (image as any).user?.id;
   const showing = showConnection ?? showImage;
   const nsfw = userId !== currentUser?.id ? imageStore.nsfw ?? image.nsfw : false;
   const nsfwWithBlur = nsfw && shouldBlur;
