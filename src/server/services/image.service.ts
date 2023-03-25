@@ -640,9 +640,13 @@ export const getAllImages = async ({
   };
 };
 
-export const getImage = async ({ id, userId }: GetImageInput & { userId?: number }) => {
-  const image = await dbRead.image.findUnique({
-    where: { id },
+export const getImage = async ({
+  id,
+  userId,
+  isModerator,
+}: GetImageInput & { userId?: number; isModerator?: boolean }) => {
+  const image = await dbRead.image.findFirst({
+    where: { id, OR: isModerator ? undefined : [{ needsReview: false }, { userId }] },
     select: getImageV2Select({ userId }),
   });
   if (!image) throw throwAuthorizationError();

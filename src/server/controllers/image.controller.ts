@@ -74,8 +74,9 @@ export const getGalleryImageDetailHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const item = await dbRead.image.findUnique({
-      where: { id },
+    const isMod = ctx.user?.isModerator;
+    const item = await dbRead.image.findFirst({
+      where: { id, OR: isMod ? undefined : [{ needsReview: false }, { userId: ctx.user?.id }] },
       // TODO.gallery - If the gallery is infinite, use the current gallery filters. If the gallery is finite, use MetricTimeFrame.AllTime
       select: imageGallerySelect({ user: ctx.user }),
     });
@@ -304,7 +305,7 @@ export const getInfiniteImagesHandler = async ({
 
 export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ctx: Context }) => {
   try {
-    return await getImage({ ...input, userId: ctx.user?.id });
+    return await getImage({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
