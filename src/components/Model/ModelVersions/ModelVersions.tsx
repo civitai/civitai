@@ -328,6 +328,7 @@ function TabContent({ version, nsfw, type, locked, modelId, modelName }: TabCont
                       : {}),
                   }}
                 >
+                  <ImageGuard.Report />
                   <ImageGuard.ToggleConnect />
                   <ImageGuard.Unsafe>
                     <AspectRatio

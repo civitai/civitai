@@ -99,7 +99,7 @@ export function InfiniteModels({ columnWidth = 300, delayNsfw = false }: Infinit
           }}
         />
       ) : (
-        <Stack align="center">
+        <Stack align="center" py="lg">
           <ThemeIcon size={128} radius={100}>
             <IconCloudOff size={80} />
           </ThemeIcon>

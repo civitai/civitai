@@ -236,7 +236,6 @@ export const getModelsInfiniteHandler = async ({
             publishedAt,
             earlyAccessTimeframe: version.earlyAccessTimeFrame,
           });
-        if (model.nsfw && !env.SHOW_SFW_IN_NSFW) image.nsfw = true;
         return {
           ...model,
           hashes: hashes.map((hash) => hash.hash.toLowerCase()),

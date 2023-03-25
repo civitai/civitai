@@ -101,6 +101,19 @@ export const disabledVotedTags = createJob('disable-voted-tags', '*/10 * * * *',
     );
   `);
 
+  // Update NSFW baseline
+  // --------------------------------------------
+  await dbWrite.$executeRawUnsafe(`
+    -- Remove NSFW if no longer tagged
+    UPDATE "Image" i SET nsfw = false
+    WHERE i.nsfw = true AND NOT EXISTS (
+      SELECT 1 FROM "TagsOnImage" toi
+      JOIN "Tag" t ON t.id = toi."tagId"
+      WHERE
+        toi.disabled = FALSE AND t.type = 'Moderation' AND toi."imageId" = i.id
+    );
+  `);
+
   // Update the last sent time
   // --------------------------------------------
   await dbWrite?.keyValue.upsert({
