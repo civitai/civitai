@@ -121,10 +121,7 @@ export const modelRouter = router({
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
     .use(applyUserPreferences)
     .query(getModelsInfiniteHandler),
-  getAllPagedSimple: publicProcedure
-    .input(getAllModelsSchema)
-    .use(applyUserPreferences)
-    .query(getModelsPagedSimpleHandler),
+  getAllPagedSimple: publicProcedure.input(getAllModelsSchema).query(getModelsPagedSimpleHandler),
   getAllWithVersions: publicProcedure
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
     .query(getModelsWithVersionsHandler),

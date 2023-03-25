@@ -115,7 +115,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     });
   }
   if (excludedUserIds && excludedUserIds.length && !username) {
-    AND.push({ user: { id: { notIn: excludedUserIds } } });
+    AND.push({ userId: { notIn: excludedUserIds } });
   }
   if (excludedTagIds && excludedTagIds.length && !username) {
     AND.push({
@@ -152,24 +152,20 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     modelVersions: { some: { baseModel: baseModels?.length ? { in: baseModels } : undefined } },
   };
 
+  const orderBy: Prisma.ModelOrderByWithRelationInput = { rank: { newRank: 'asc' } };
+  if (sort === ModelSort.HighestRated) orderBy.rank = { [`rating${period}Rank`]: 'asc' };
+  else if (sort === ModelSort.MostLiked) orderBy.rank = { [`favoriteCount${period}Rank`]: 'asc' };
+  else if (sort === ModelSort.MostDownloaded)
+    orderBy.rank = { [`downloadCount${period}Rank`]: 'asc' };
+  else if (sort === ModelSort.MostDiscussed)
+    orderBy.rank = { [`commentCount${period}Rank`]: 'asc' };
+
   const items = await dbRead.model.findMany({
     take,
     skip,
     where,
     cursor: cursor ? { id: cursor } : undefined,
-    orderBy: [
-      ...(sort === ModelSort.HighestRated ? [{ rank: { [`rating${period}Rank`]: 'asc' } }] : []),
-      ...(sort === ModelSort.MostLiked
-        ? [{ rank: { [`favoriteCount${period}Rank`]: 'asc' } }]
-        : []),
-      ...(sort === ModelSort.MostDownloaded
-        ? [{ rank: { [`downloadCount${period}Rank`]: 'asc' } }]
-        : []),
-      ...(sort === ModelSort.MostDiscussed
-        ? [{ rank: { [`commentCount${period}Rank`]: 'asc' } }]
-        : []),
-      { rank: { newRank: 'asc' } },
-    ],
+    orderBy,
     select,
   });
 
