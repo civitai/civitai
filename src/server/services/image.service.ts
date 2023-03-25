@@ -350,6 +350,7 @@ export const ingestImage = async ({
 }: {
   image: IngestImageInput;
 }): Promise<IngestImageReturnType> => {
+  if (!isProd) return { type: 'success', data: { tags: [] } };
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
   const { url, id, width: oWidth, name } = ingestImageSchema.parse(image);
