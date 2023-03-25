@@ -334,9 +334,10 @@ export function ModelForm({ model }: Props) {
           const match = tags.find((x) => x.name === name);
           return match ?? { name };
         }),
-        modelVersions: values.modelVersions.map(({ earlyAccessTimeFrame, ...version }) => ({
+        modelVersions: values.modelVersions.map(({ earlyAccessTimeFrame, images, ...version }) => ({
           ...version,
           earlyAccessTimeFrame: Number(earlyAccessTimeFrame),
+          images: images.map(({ analysis, ...image }) => image),
         })),
       };
 

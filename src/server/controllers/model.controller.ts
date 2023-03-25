@@ -132,7 +132,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         return {
           ...version,
           hashes,
-          images,
+          images: images.map(({ tags, ...image }) => image),
           earlyAccessDeadline,
           canDownload,
           files,
@@ -330,6 +330,8 @@ export const updateModelHandler = async ({
 }) => {
   const { user } = ctx;
   const { id, poi, nsfw } = input;
+
+  console.log('___WHAT IS YOUR NAME?___');
 
   if (poi && nsfw) {
     throw throwBadRequestError(

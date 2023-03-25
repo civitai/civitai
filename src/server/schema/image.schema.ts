@@ -81,7 +81,7 @@ export const imageSchema = z.object({
   width: z.number().nullish(),
   nsfw: z.boolean().optional(),
   analysis: imageAnalysisSchema.optional(),
-  tags: z.array(tagSchema).optional(),
+  // tags: z.array(tagSchema).optional(),
   needsReview: z.boolean().optional(),
   postId: z.number().optional(),
   resources: z.array(imageResourceUpsertSchema).optional(),

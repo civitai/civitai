@@ -41,6 +41,7 @@ import { prepareFile } from '~/utils/file-helpers';
 import { getAllHiddenForUser } from '~/server/services/user-cache.service';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
+  console.log('___MARY HAD A LITTLE LAMB____');
   if (!ctx.user) throw throwAuthorizationError();
 
   const { id } = input as { id: number };

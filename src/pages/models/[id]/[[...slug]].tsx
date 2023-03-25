@@ -550,7 +550,7 @@ export default function ModelDetail({
                   </IconBadge>
                 )}
               </Group>
-              <Menu position="bottom-end" transition="pop-top-right">
+              <Menu position="bottom-end" transition="pop-top-right" zIndex={100}>
                 <Menu.Target>
                   <ActionIcon variant="outline">
                     <IconDotsVertical size={16} />
