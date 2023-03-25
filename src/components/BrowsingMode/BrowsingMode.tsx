@@ -10,6 +10,7 @@ import {
   Indicator,
 } from '@mantine/core';
 import { IconEye, IconEyeOff, TablerIconProps } from '@tabler/icons';
+import { useEffect } from 'react';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -59,13 +60,18 @@ export function BrowsingModeMenu() {
   const queryUtils = trpc.useContext();
   const browsingMode = useFiltersContext((state) => state.browsingMode);
   const setFilters = useFiltersContext((state) => state.setFilters);
-  const isMobile = useIsMobile();
-
-  if (!currentUser) return null;
   const setBrowsingMode = (mode: BrowsingMode) => {
     setFilters({ browsingMode: mode });
     invalidateModeratedContentDebounced(queryUtils);
   };
+  const isMobile = useIsMobile();
+
+  useEffect(() => {
+    if (!browsingMode)
+      setBrowsingMode(currentUser?.showNsfw ? BrowsingMode.NSFW : BrowsingMode.SFW);
+  }, [browsingMode, setBrowsingMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!currentUser || !browsingMode) return null;
 
   const browsingModeColor = {
     [BrowsingMode.SFW]: 'blue',
