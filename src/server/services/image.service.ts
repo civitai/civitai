@@ -75,7 +75,6 @@ export const getGalleryImages = async <
   excludedImageIds,
   isFeatured,
   types,
-  browsingMode,
   tagReview,
   needsReview,
 }: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
@@ -131,16 +130,12 @@ export const getGalleryImages = async <
     id: excludedImageIds?.length ? { notIn: excludedImageIds } : undefined,
   };
 
-  if (canViewNsfw && !browsingMode) browsingMode = BrowsingMode.All;
-  else if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
-
   let where: Prisma.ImageWhereInput = {};
   if (needsReview) where.needsReview = true;
   else if (tagReview) where.tags = { some: { needsReview: true } };
   else {
     where = {
       userId,
-      nsfw: browsingMode === BrowsingMode.All ? undefined : browsingMode === BrowsingMode.NSFW,
       tosViolation: !isMod ? false : undefined,
       OR: [{ needsReview: false }, { userId: user?.id }],
       ...(infinite ? infiniteWhere : finiteWhere),

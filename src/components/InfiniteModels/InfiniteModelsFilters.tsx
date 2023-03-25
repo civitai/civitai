@@ -156,7 +156,7 @@ export function InfiniteModelsFilter() {
   const { classes } = useStyles();
   const cookies = useCookies().models;
   const user = useCurrentUser();
-  const defaultBrowsingMode = user?.showNsfw ? BrowsingMode.All : BrowsingMode.SFW;
+  const defaultBrowsingMode = user?.showNsfw ? BrowsingMode.NSFW : BrowsingMode.SFW;
   const setTypes = useFilters((state) => state.setTypes);
   const types = useFilters((state) => state.filters.types ?? cookies.types ?? []);
   const setStatus = useFilters((state) => state.setStatus);

@@ -51,9 +51,9 @@ export enum PostSort {
 }
 
 export enum BrowsingMode {
-  All = 'All',
-  SFW = 'SFW',
-  NSFW = 'NSFW',
+  All = 'Everything',
+  SFW = 'Safe',
+  NSFW = 'Mine',
 }
 
 export enum ImageType {

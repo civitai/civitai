@@ -40,7 +40,6 @@ export const getPostsInfinite = async ({
   excludedImageIds,
   period,
   sort,
-  browsingMode,
   user,
   tags,
 }: PostsQueryInput & { user?: SessionUser }) => {
@@ -66,11 +65,6 @@ export const getPostsInfinite = async ({
     }
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
     if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
-
-    if (browsingMode !== BrowsingMode.All) {
-      const query = { nsfw: { equals: browsingMode === BrowsingMode.NSFW } };
-      AND.push(query);
-    }
 
     // sorting
     if (sort === PostSort.MostComments)

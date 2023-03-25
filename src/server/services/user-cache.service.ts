@@ -29,7 +29,7 @@ async function getHiddenTags(userId: number) {
   const hiddenTags = moderationTags.map((x) => x.id);
 
   // If NSFW is disabled, also add additional civitai hidden tags
-  if (!showNsfw) {
+  if (!showNsfw && userId !== -1) {
     const civitaiHiddenTags = await getHiddenTagsForUser({ userId: -1 });
     hiddenTags.push(...civitaiHiddenTags);
   }

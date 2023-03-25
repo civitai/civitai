@@ -20,10 +20,18 @@ export function BlurToggle({ children, iconProps = {} }: BlurToggleProps) {
     children = () => (
       <ActionIcon onClick={toggle}>{user.blurNsfw ? <IconEyeOff /> : <IconEye />}</ActionIcon>
     );
-  return children({ icon, toggle });
+  return children({ icon, toggle, blurred: user.blurNsfw });
 }
 
 type BlurToggleProps = {
   iconProps?: TablerIconProps;
-  children?: ({ icon, toggle }: { icon: React.ReactNode; toggle: () => void }) => JSX.Element;
+  children?: ({
+    icon,
+    toggle,
+    blurred,
+  }: {
+    icon: React.ReactNode;
+    blurred: boolean;
+    toggle: () => void;
+  }) => JSX.Element;
 };

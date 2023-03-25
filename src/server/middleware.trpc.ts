@@ -13,15 +13,17 @@ const userPreferencesSchema = z.object({
 
 export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
   middleware(async ({ input, ctx, next }) => {
-    const userId = ctx.user?.id;
-    const _input = input as TInput;
-    const { hidden } = userCache(userId);
-    const hiddenTags = await hidden.tags.get();
-    const hiddenUsers = await hidden.users.get();
-    const hiddenImages = await hidden.images.get();
-    _input.excludedTagIds = [...hiddenTags, ...(_input.excludedTagIds ?? [])];
-    _input.excludedUserIds = [...hiddenUsers, ...(_input.excludedUserIds ?? [])];
-    _input.excludedImageIds = [...hiddenImages, ...(_input.excludedUserIds ?? [])];
+    if (ctx.browsingMode !== BrowsingMode.All) {
+      const userId = ctx.browsingMode === BrowsingMode.SFW ? -1 : ctx.user?.id;
+      const _input = input as TInput;
+      const { hidden } = userCache(userId);
+      const hiddenTags = await hidden.tags.get();
+      const hiddenUsers = await hidden.users.get();
+      const hiddenImages = await hidden.images.get();
+      _input.excludedTagIds = [...hiddenTags, ...(_input.excludedTagIds ?? [])];
+      _input.excludedUserIds = [...hiddenUsers, ...(_input.excludedUserIds ?? [])];
+      _input.excludedImageIds = [...hiddenImages, ...(_input.excludedUserIds ?? [])];
+    }
 
     return next({
       ctx: { user: ctx.user },
