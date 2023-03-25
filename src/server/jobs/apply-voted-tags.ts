@@ -1,9 +1,9 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 
-const TAG_THRESHOLD = 10;
+const TAG_THRESHOLD = 3;
 const LAST_UPDATED_KEY = 'last-tags-applied';
-export const applyVotedTags = createJob('apply-voted-tags', '*/10 * * * *', async () => {
+export const applyVotedTags = createJob('apply-voted-tags', '*/2 * * * *', async () => {
   // Get the last sent time
   // --------------------------------------------
   const lastApplied = new Date(

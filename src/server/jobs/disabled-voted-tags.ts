@@ -3,7 +3,7 @@ import { dbWrite } from '~/server/db/client';
 
 const TAG_THRESHOLD = 0;
 const LAST_UPDATED_KEY = 'last-tags-disabled';
-export const disabledVotedTags = createJob('disable-voted-tags', '*/10 * * * *', async () => {
+export const disabledVotedTags = createJob('disable-voted-tags', '*/2 * * * *', async () => {
   // Get the last sent time
   // --------------------------------------------
   const lastApplied = new Date(
@@ -50,7 +50,7 @@ export const disabledVotedTags = createJob('disable-voted-tags', '*/10 * * * *',
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
       JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
-      WHERE vote."createdAt" > '${lastApplied}' AND applied."disabled" = FALSE AND applied."needsReview" = FALSE AND applied."automated" = TRUE
+      WHERE vote."createdAt" > '${lastApplied}' AND applied."disabled" = FALSE AND applied."automated" = TRUE
     ), under_threshold AS (
       SELECT
         a."imageId",
@@ -62,7 +62,7 @@ export const disabledVotedTags = createJob('disable-voted-tags', '*/10 * * * *',
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) <= 0
     )
-    UPDATE "TagsOnImage" SET "disabled" = true
+    UPDATE "TagsOnImage" SET "disabled" = true, "needsReview" = false
     WHERE ("tagId", "imageId") IN (
       SELECT
         "tagId",
