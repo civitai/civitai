@@ -10,6 +10,7 @@ export const serverSchema = z.object({
   DATABASE_URL: z.string().url(),
   DATABASE_REPLICA_URL: z.string().url(),
   REDIS_URL: z.string().url(),
+  REDIS_TIMEOUT: z.preprocess((x) => x ? parseInt(String(x)) : 5000, z.number().optional()),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(

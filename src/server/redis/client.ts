@@ -17,7 +17,15 @@ function getCache(legacyMode = false) {
   log('Creating Redis client');
   const redisInt: RedisClientType = createClient({
     url: env.REDIS_URL,
+    socket: {
+      reconnectStrategy(retries) {
+        log(`Redis reconnecting, retry ${retries}`);
+        return Math.min(retries * 100, 3000);
+      },
+      connectTimeout: env.REDIS_TIMEOUT,
+    },
     legacyMode,
+    pingInterval: 4 * 60 * 1000,
   });
   redisInt.on('error', (err) => log(`Redis Error: ${err}`));
   redisInt.on('connect', () => log('Redis connected'));
