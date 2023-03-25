@@ -50,10 +50,10 @@ export function ModerationCard({
 
   const changePreference = (name: string, value: boolean, children?: ModerationCategory[]) => {
     const changes = { [name]: value };
-    if (children && !value)
-      children.forEach((child) => {
-        changes[child.value] = value;
-      });
+    if (children) {
+      const isEmpty = !children.some((x) => preferences[x.value]);
+      if (isEmpty) for (const child of children) changes[child.value] = value;
+    }
 
     const values = { ...preferences, ...changes };
     setPreferences(values);
@@ -62,6 +62,19 @@ export function ModerationCard({
 
   const { mutate: updateUser } = trpc.user.update.useMutation({
     async onMutate(changes) {
+      // If all preferences are false, set them all to true
+      if (changes.showNsfw) {
+        const isEmpty = !moderationCategories.some((x) => preferences[x.value] && !x.hidden);
+        if (isEmpty) {
+          const values = { ...preferences };
+          for (const category of moderationCategories) {
+            values[category.value] = true;
+            for (const child of category.children ?? []) values[child.value] = true;
+          }
+          setPreferences(values);
+          mutateDebounced(values);
+        }
+      }
       setShowNsfw(changes.showNsfw ?? false);
     },
     async onSuccess() {
