@@ -17,6 +17,9 @@ export default function UserPosts() {
   const router = useRouter();
   const username = router.query.username as string;
   const currentUser = useCurrentUser();
+  const feature = useFeatureFlags();
+
+  if (!feature.posts) return <NotFound />;
 
   return (
     <Container fluid style={{ maxWidth: 2500 }}>

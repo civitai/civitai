@@ -14,6 +14,7 @@ declare global {
 const log = createLogger('redis', 'green');
 
 function getCache(legacyMode = false) {
+  log('Creating Redis client');
   const redisInt: RedisClientType = createClient({
     url: env.REDIS_URL,
     legacyMode,

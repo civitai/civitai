@@ -44,7 +44,7 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { isUUID } from '~/utils/string-helpers';
-import { refreshHiddenTagsForUser } from '~/server/services/user-cache.service';
+import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -179,10 +179,6 @@ export const updateUserHandler = async ({
     const payloadCosmeticIds: number[] = [];
     if (badgeId) payloadCosmeticIds.push(badgeId);
     if (nameplateId) payloadCosmeticIds.push(nameplateId);
-    if (showNsfw === false) {
-      await refreshHiddenTagsForUser({ userId: id });
-    }
-
     const updatedUser = await updateUserById({
       id,
       data: {
@@ -203,6 +199,7 @@ export const updateUserHandler = async ({
       },
     });
     if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
+    if (showNsfw === false) await refreshAllHiddenForUser({ userId: id });
 
     return updatedUser;
   } catch (error) {

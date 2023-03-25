@@ -94,13 +94,15 @@ export const getPostsInfinite = async ({
     },
   });
 
-  const images = await getImagesForPosts({
-    postIds: posts.map((x) => x.id),
-    excludedTagIds,
-    excludedUserIds,
-    excludedIds: excludedImageIds,
-    userId: user?.id,
-  });
+  const images = posts.length
+    ? await getImagesForPosts({
+        postIds: posts.map((x) => x.id),
+        excludedTagIds,
+        excludedUserIds,
+        excludedIds: excludedImageIds,
+        userId: user?.id,
+      })
+    : [];
 
   let nextCursor: number | undefined;
   if (posts.length > limit) {
