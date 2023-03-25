@@ -37,6 +37,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { VotableTagModel } from '~/libs/tags';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -434,6 +435,7 @@ export const getAllImages = async ({
   tags,
   generation,
   reviewId,
+  withTags, // TODO.justin - return image tags when this is requested
 }: GetInfiniteImagesInput & { userId?: number }) => {
   const AND = [`i."needsReview" = false`];
   let orderBy: string;
@@ -588,7 +590,8 @@ export const getAllImages = async ({
     ORDER BY ${orderBy}
     LIMIT ${limit + 1}
   `);
-  const images: ImageV2Model[] = rawImages.map(
+  const tagsVar: VotableTagModel[] | undefined = undefined;
+  const images: Array<ImageV2Model & { tags: VotableTagModel[] | undefined }> = rawImages.map(
     ({
       reactions,
       userId: creatorId,
@@ -619,6 +622,7 @@ export const getAllImages = async ({
         commentCountAllTime: commentCount,
       },
       reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
+      tags: tagsVar,
     })
   );
   console.timeEnd('getAllImages');

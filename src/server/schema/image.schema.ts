@@ -189,11 +189,11 @@ export const getInfiniteImagesSchema = z.object({
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
   excludedImageIds: z.array(z.number()).optional(),
-  browsingMode: z.nativeEnum(BrowsingMode).optional(),
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
   tags: z.array(z.number()).optional(),
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
+  withTags: z.boolean().optional(),
 });
 
 export type GetImageInput = z.infer<typeof getImageSchema>;
