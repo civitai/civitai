@@ -91,7 +91,7 @@ export function ImagesCard({
                               <VotableTags
                                 entityType="image"
                                 entityId={image.id}
-                                tags={image.tags}
+                                tags={image.tags.filter((x) => x.type === 'Moderation')}
                               />
                             )}
                           </div>
