@@ -14,7 +14,7 @@ const log = createLogger('user-cache', 'green');
 
 // #region [hidden tags]
 async function getHiddenTags(userId: number) {
-  log(`reloading hidden tags for user: ${userId}`);
+  log(`fetching hidden tags for user: ${userId}`);
   const tags = await dbWrite.tagEngagement.findMany({
     where: { userId, type: { in: [TagEngagementType.Hide, TagEngagementType.Allow] } },
     select: { tag: { select: { id: true } }, type: true },
@@ -42,7 +42,7 @@ async function getHiddenTags(userId: number) {
     }
   }
 
-  log(`reloaded hidden tags for user: ${userId}`);
+  log(`fetched hidden tags for user: ${userId}`);
   return hiddenTags;
 }
 

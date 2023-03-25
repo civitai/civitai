@@ -16,7 +16,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons';
 import { useRef, useState } from 'react';
-import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
+import { invalidateModeratedContentDebounced } from '~/utils/query-invalidation-utils';
 
 import { trpc } from '~/utils/trpc';
 
@@ -52,7 +52,7 @@ export function HiddenUsersSection() {
       return { prevHidden };
     },
     async onSuccess() {
-      await invalidateModeratedContent(queryUtils);
+      invalidateModeratedContentDebounced(queryUtils, ['user']);
     },
     onError(_error, _variables, context) {
       queryUtils.user.getHiddenUsers.setData(undefined, context?.prevHidden);

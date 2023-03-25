@@ -58,7 +58,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
   return { props: {} };
 };
 
-const REMOVABLE_TAGS = ['child', 'teen'];
+const REMOVABLE_TAGS = ['child', 'teen', 'baby', 'girl', 'boy'];
 const ADDABLE_TAGS = ['anime', 'cartoon', 'comics', 'manga', 'explicit nudity', 'suggestive'];
 
 export default function Images() {

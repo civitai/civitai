@@ -16,7 +16,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons';
 import { useRef, useState } from 'react';
-import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
+import { invalidateModeratedContentDebounced } from '~/utils/query-invalidation-utils';
 
 import { trpc } from '~/utils/trpc';
 
@@ -58,13 +58,10 @@ export function HiddenTagsSection() {
       return { prevBlockedTags };
     },
     async onSuccess() {
-      await invalidateModeratedContent(queryUtils);
+      invalidateModeratedContentDebounced(queryUtils, ['tag']);
     },
     onError(_error, _variables, context) {
       queryUtils.user.getTags.setData({ type: 'Hide' }, context?.prevBlockedTags);
-    },
-    async onSettled() {
-      await queryUtils.user.getTags.invalidate({ type: 'Hide' });
     },
   });
   const handleToggleBlockedTag = (tagId: number) => {
