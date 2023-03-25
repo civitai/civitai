@@ -50,7 +50,7 @@ const filterEntitySchema = z.object({
 
 export type FiltersInput = z.infer<typeof filtersSchema>;
 const filtersSchema = filterEntitySchema.extend({
-  browsingMode: z.nativeEnum(BrowsingMode).default(BrowsingMode.All),
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
 });
 
