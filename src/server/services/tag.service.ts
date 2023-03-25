@@ -87,6 +87,7 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
 };
 
 // #region [tag voting]
+export type VotableTagModel = AsyncReturnType<typeof getVotableTags>[0];
 export const getVotableTags = async ({
   userId,
   type,
