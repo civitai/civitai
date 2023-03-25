@@ -5,6 +5,7 @@ import { useImageFilters } from '~/providers/FiltersProvider';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
+import { ImageSort } from '~/server/common/enums';
 
 type ImagesInfiniteState = {
   modelId?: number;
@@ -36,9 +37,7 @@ export default function ImagesInfinite({
   const filters = useMemo(() => {
     const baseFilters = { postId, modelId, modelVersionId, username, withTags };
     return removeEmpty(
-      !postId && !modelVersionId && !username && !reviewId
-        ? { ...baseFilters, ...globalFilters }
-        : baseFilters
+      !postId && !modelVersionId && !reviewId ? { ...baseFilters, ...globalFilters } : baseFilters
     );
   }, [globalFilters, postId, modelId, modelVersionId, username, reviewId, withTags]);
 
