@@ -299,7 +299,7 @@ export const updateImage = async (image: UpdateImageInput) => {
 };
 
 export const getImageDetail = async ({ id }: GetByIdInput) => {
-  return await dbWrite.image.findUnique({
+  return await dbWrite.image.findFirst({
     where: { id },
     select: {
       resources: {
@@ -440,7 +440,7 @@ export const getAllImages = async ({
   generation,
   reviewId,
 }: GetInfiniteImagesInput & { userId?: number }) => {
-  const AND: string[] = [];
+  const AND = [`i."needsReview" = false`];
   let orderBy: string;
 
   // Filter to specific model/review content
@@ -685,7 +685,10 @@ export const getImagesForModelVersion = async ({
   excludedUserIds?: number[];
 }) => {
   if (!Array.isArray(modelVersionIds)) modelVersionIds = [modelVersionIds];
-  const imageWhere = [`iom."modelVersionId" IN (${modelVersionIds.join(',')})`];
+  const imageWhere = [
+    `iom."modelVersionId" IN (${modelVersionIds.join(',')})`,
+    `i."needsReview" = false`,
+  ];
   if (!!excludedTagIds?.length) {
     imageWhere.push(`i."scannedAt" IS NOT NULL`);
     const excludedTags = excludedTagIds.join(',');
