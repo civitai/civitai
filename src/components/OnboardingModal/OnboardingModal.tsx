@@ -92,6 +92,9 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
     );
 
   const { mutate, isLoading, error } = trpc.user.update.useMutation();
+  const { mutate: acceptTOS, isLoading: acceptTOSLoading } = trpc.user.acceptTOS.useMutation();
+  const { mutate: completeOnboarding, isLoading: completeOnboardingLoading } =
+    trpc.user.completeOnboarding.useMutation();
 
   if (!user || user.onboarded) {
     context.closeModal(id);
@@ -112,26 +115,20 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
 
   const handleDeclineTOS = () => signOut();
   const handleAcceptTOS = () => {
-    mutate(
-      { ...user, tos: true },
-      {
-        async onSuccess() {
-          setActiveStep((x) => x + 1);
-        },
-      }
-    );
+    acceptTOS(undefined, {
+      async onSuccess() {
+        setActiveStep((x) => x + 1);
+      },
+    });
   };
   const handleCompleteOnboarding = () => {
-    mutate(
-      { ...user, onboarded: true },
-      {
-        async onSuccess() {
-          await reloadSession();
-          await invalidateModeratedContent(utils);
-          context.closeModal(id);
-        },
-      }
-    );
+    completeOnboarding(undefined, {
+      async onSuccess() {
+        await reloadSession();
+        await invalidateModeratedContent(utils);
+        context.closeModal(id);
+      },
+    });
   };
 
   return (
@@ -188,7 +185,7 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
                 rightIcon={<IconCheck />}
                 size="lg"
                 onClick={handleAcceptTOS}
-                loading={isLoading}
+                loading={acceptTOSLoading}
               >
                 Accept
               </Button>
@@ -283,7 +280,11 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
                 iconColor="yellow"
                 size="sm"
               >{`This feature is in beta. There may still be some content visible to you that you've requested to hide.`}</AlertWithIcon>
-              <Button size="lg" onClick={handleCompleteOnboarding} loading={isLoading}>
+              <Button
+                size="lg"
+                onClick={handleCompleteOnboarding}
+                loading={completeOnboardingLoading}
+              >
                 Done
               </Button>
             </Stack>

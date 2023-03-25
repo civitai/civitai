@@ -18,6 +18,8 @@ import {
   toggleMuteHandler,
   getUserCosmeticsHandler,
   getUsernameAvailableHandler,
+  acceptTOSHandler,
+  completeOnboardingHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -71,6 +73,8 @@ export const userRouter = router({
   toggleHideModel: protectedProcedure
     .input(toggleModelEngagementInput)
     .mutation(toggleHideModelHandler),
+  acceptTOS: protectedProcedure.mutation(acceptTOSHandler),
+  completeOnboarding: protectedProcedure.mutation(completeOnboardingHandler),
   toggleFollow: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleFollowUserHandler),
   toggleHide: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleHideUserHandler),
   toggleBlockedTag: protectedProcedure

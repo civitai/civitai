@@ -18,6 +18,7 @@ import {
 } from '@mantine/core';
 import { useListState } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
+import { TagType } from '@prisma/client';
 import {
   IconCheck,
   IconInfoCircle,
@@ -171,6 +172,7 @@ export default function Images() {
                         automated: false,
                         needsReview: false,
                         isCategory: false,
+                        type: TagType.UserGenerated,
                       })),
                     ],
                   }

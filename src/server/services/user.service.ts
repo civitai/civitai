@@ -118,6 +118,20 @@ export const updateUserById = ({ id, data }: { id: number; data: Prisma.UserUpda
   return dbWrite.user.update({ where: { id }, data });
 };
 
+export const acceptTOS = ({ id }: { id: number }) => {
+  return dbWrite.user.update({
+    where: { id },
+    data: { tos: true },
+  });
+};
+
+export const completeOnboarding = ({ id }: { id: number }) => {
+  return dbWrite.user.update({
+    where: { id },
+    data: { onboarded: true },
+  });
+};
+
 export const getUserEngagedModels = ({ id }: { id: number }) => {
   return dbRead.user.findUnique({
     where: { id },

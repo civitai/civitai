@@ -344,7 +344,7 @@ export const createModel = async ({
             status: data.status,
             files: files.length > 0 ? { create: files } : undefined,
             images: {
-              create: images.map(({ tags = [], ...image }, index) => ({
+              create: images.map(({ ...image }, index) => ({
                 index,
                 image: {
                   create: {
@@ -354,16 +354,16 @@ export const createModel = async ({
                     generationProcess: image.meta
                       ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
                       : null,
-                    tags: {
-                      create: tags.map((tag) => ({
-                        tag: {
-                          connectOrCreate: {
-                            where: { id: tag.id },
-                            create: { ...tag, target: [TagTarget.Image] },
-                          },
-                        },
-                      })),
-                    },
+                    // tags: {
+                    //   create: tags.map((tag) => ({
+                    //     tag: {
+                    //       connectOrCreate: {
+                    //         where: { id: tag.id },
+                    //         create: { ...tag, target: [TagTarget.Image] },
+                    //       },
+                    //     },
+                    //   })),
+                    // },
                   } as Prisma.ImageUncheckedCreateWithoutImagesOnModelsInput,
                 },
               })),

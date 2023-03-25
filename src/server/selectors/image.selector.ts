@@ -80,18 +80,18 @@ export const prepareCreateImage = (image: ImageUploadProps) => {
     generationProcess: image.meta
       ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
       : null,
-    tags: image.tags
-      ? {
-          create: image.tags.map((tag) => ({
-            tag: {
-              connectOrCreate: {
-                where: { id: tag.id },
-                create: { ...tag, target: [TagTarget.Image] },
-              },
-            },
-          })),
-        }
-      : undefined,
+    // tags: image.tags
+    //   ? {
+    //       create: image.tags.map((tag) => ({
+    //         tag: {
+    //           connectOrCreate: {
+    //             where: { id: tag.id },
+    //             create: { ...tag, target: [TagTarget.Image] },
+    //           },
+    //         },
+    //       })),
+    //     }
+    //   : undefined,
     resources: undefined, // TODO.posts - this is a temp value to stop typescript from complaining
   };
 
@@ -99,27 +99,27 @@ export const prepareCreateImage = (image: ImageUploadProps) => {
 };
 
 export const prepareUpdateImage = (image: ImageUploadProps) => {
-  const tags = image.tags?.map((tag) => ({ ...tag, name: tag.name.toLowerCase().trim() }));
+  // const tags = image.tags?.map((tag) => ({ ...tag, name: tag.name.toLowerCase().trim() }));
   const payload: Prisma.ImageUpdateInput = {
     ...image,
     meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-    tags: tags
-      ? {
-          deleteMany: {
-            NOT: tags.filter(isTag).map(({ id }) => ({ tagId: id })),
-          },
-          connectOrCreate: tags.filter(isTag).map((tag) => ({
-            where: { tagId_imageId: { tagId: tag.id, imageId: image.id as number } },
-            create: { tagId: tag.id },
-          })),
-          // user's can't create image tags right now
-          // create: tags.filter(isNotTag).map((tag) => ({
-          //   tag: {
-          //     create: { ...tag, target: [TagTarget.Image] },
-          //   },
-          // })),
-        }
-      : undefined,
+    // tags: tags
+    //   ? {
+    //       deleteMany: {
+    //         NOT: tags.filter(isTag).map(({ id }) => ({ tagId: id })),
+    //       },
+    //       connectOrCreate: tags.filter(isTag).map((tag) => ({
+    //         where: { tagId_imageId: { tagId: tag.id, imageId: image.id as number } },
+    //         create: { tagId: tag.id },
+    //       })),
+    //       // user's can't create image tags right now
+    //       // create: tags.filter(isNotTag).map((tag) => ({
+    //       //   tag: {
+    //       //     create: { ...tag, target: [TagTarget.Image] },
+    //       //   },
+    //       // })),
+    //     }
+    //   : undefined,
     resources: undefined, // TODO.posts - this is a temp value to stop typescript from complaining
   };
   return payload;

@@ -24,7 +24,7 @@ import {
   convertReviewToComment,
   updateReviewReportStatusByReason,
 } from '~/server/services/review.service';
-import { getHiddenTagsForUser } from '~/server/services/user-cache.service';
+import { getHiddenImagesForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -58,7 +58,7 @@ export const getReviewsInfiniteHandler = async ({
 
   const userId = ctx.user?.id;
   const hiddenTags = await getHiddenTagsForUser({ userId });
-  const hasHiddenTags = !!hiddenTags.length;
+  const hiddenImages = await getHiddenImagesForUser({ userId });
 
   return {
     nextCursor,
@@ -68,9 +68,13 @@ export const getReviewsInfiniteHandler = async ({
         ...x.image,
         tags: x.image.tags.map(({ tag }) => tag),
       }));
-      if (!isOwnerOrModerator && hasHiddenTags) {
+      if (!isOwnerOrModerator) {
         images = images.filter(
-          ({ tags, scannedAt }) => scannedAt && !tags.some((tag) => hiddenTags.includes(tag.id))
+          ({ id, tags, scannedAt, needsReview }) =>
+            !needsReview &&
+            scannedAt &&
+            !hiddenImages.includes(id) &&
+            !tags.some((tag) => hiddenTags.includes(tag.id))
         );
 
         if (prioritizeSafeImages)

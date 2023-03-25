@@ -89,7 +89,8 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         }));
         if (!isOwnerOrModerator) {
           images = images.filter(
-            ({ id, tags, scannedAt }) =>
+            ({ id, tags, scannedAt, needsReview }) =>
+              !needsReview &&
               scannedAt &&
               !hiddenImages.includes(id) &&
               !tags.some((tag) => hiddenTags.includes(tag.id))

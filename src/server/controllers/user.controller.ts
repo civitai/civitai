@@ -16,6 +16,8 @@ import {
   toggleModelHide,
   toggleModelFavorite,
   getUserCosmetics,
+  acceptTOS,
+  completeOnboarding,
 } from '~/server/services/user.service';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -155,6 +157,24 @@ const verifyAvatar = (avatar: string) => {
     return validAvatarUrlPrefixes.some((prefix) => avatar.startsWith(prefix));
   } else if (isUUID(avatar)) return true; // Is a CF Images UUID
   return false;
+};
+
+export const acceptTOSHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const { id } = ctx.user;
+    await acceptTOS({ id });
+  } catch (e) {
+    throw throwDbError(e);
+  }
+};
+
+export const completeOnboardingHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const { id } = ctx.user;
+    await completeOnboarding({ id });
+  } catch (e) {
+    throw throwDbError(e);
+  }
 };
 
 export const updateUserHandler = async ({
