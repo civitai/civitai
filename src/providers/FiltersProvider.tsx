@@ -57,7 +57,9 @@ const filtersSchema = filterEntitySchema.extend({
 export const parseFiltersCookie = (cookies: Partial<{ [key: string]: string }>) => {
   const cookieValue = cookies['filters'];
   const parsedFilters = cookieValue ? JSON.parse(decodeURIComponent(cookieValue)) : {};
-  return filtersSchema.parse(parsedFilters);
+  const result = filtersSchema.safeParse(parsedFilters);
+  if (result.success) return result.data;
+  else return filtersSchema.parse({});
 };
 
 type FiltersState = FiltersInput & {
