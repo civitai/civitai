@@ -51,6 +51,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { UploadTracker } from '~/components/Resource/UploadTracker';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const HEADER_HEIGHT = 70;
 
@@ -175,6 +176,7 @@ export function AppHeader() {
   const ref = useClickOutside(() => closeBurger());
 
   const isMuted = currentUser?.muted ?? false;
+  const features = useFeatureFlags();
 
   const links: MenuLink[] = useMemo(
     () => [
@@ -201,7 +203,7 @@ export function AppHeader() {
       },
       {
         href: `/user/${currentUser?.username}/posts`,
-        visible: !!currentUser,
+        visible: !!currentUser && features.posts,
         label: (
           <Group align="center" spacing="xs">
             <IconAlbum stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
