@@ -32,7 +32,7 @@ export function HiddenTagsSection() {
   const { data, isLoading } = trpc.tag.getAll.useQuery(
     {
       entityType: ['Model'],
-      query: debouncedSearch.trim(),
+      query: debouncedSearch.toLowerCase().trim(),
     },
     { enabled: !loadingBlockedTags }
   );
