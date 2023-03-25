@@ -50,7 +50,10 @@ export function ImageResources({ imageId }: { imageId: number }) {
         data?.map((resource, index) => {
           const isFavorite = favoriteModels.find((id) => resource.modelId === id);
           return (
-            <Wrapper resource={resource} key={resource.modelId ?? resource.modelName ?? index}>
+            <Wrapper
+              resource={resource}
+              key={resource.modelVersionId ?? resource.modelName ?? index}
+            >
               <Card p={8} sx={{ backgroundColor: theme.colors.dark[7] }} withBorder>
                 <Stack spacing="xs">
                   <Group spacing={4} position="apart" noWrap>
