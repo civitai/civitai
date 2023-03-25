@@ -42,7 +42,6 @@ import { getAllHiddenForUser } from '~/server/services/user-cache.service';
 import { BrowsingMode } from '~/server/common/enums';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
-  console.log('___MARY HAD A LITTLE LAMB____');
   if (!ctx.user) throw throwAuthorizationError();
 
   const { id } = input as { id: number };
