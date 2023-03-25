@@ -130,7 +130,7 @@ export const getVotableTags = async ({
     }
   } else if (type === 'image') {
     const tags = await dbRead.imageTag.findMany({
-      where: { imageId: id, score: { gt: 0 } },
+      where: { imageId: id, OR: [{ score: { gt: 0 } }, { tagType: 'Moderation' }] },
       select: {
         tagId: true,
         tagName: true,

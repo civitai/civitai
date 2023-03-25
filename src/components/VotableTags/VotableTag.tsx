@@ -59,7 +59,7 @@ export function VotableTag({
   const theme = useMantineTheme();
   const isModeration = type === 'Moderation';
   const voteColor = isModeration ? theme.colors.red[7] : theme.colors.blue[5];
-  const opacity = 0.2 + (Math.min(score, 10) / 10) * 0.8;
+  const opacity = 0.2 + (Math.max(Math.min(score, 10), 0) / 10) * 0.8;
 
   const runDebouncer = (fn: () => void) => {
     if (!clickedRef.current) {
