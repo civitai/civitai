@@ -456,7 +456,9 @@ export const getAllImages = async ({
 
   // Filter to specific user content
   if (username) {
-    AND.push(`u."username" = '${username}'`);
+    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
+    if (!targetUser) throw new Error('User not found');
+    AND.push(`u."id" = ${targetUser.id}`);
   }
 
   // Filter to specific tags
@@ -539,7 +541,6 @@ export const getAllImages = async ({
       dislikeCount: number;
       heartCount: number;
       commentCount: number;
-      reactions?: ReviewReactions[];
       cursorId?: bigint;
     }[]
   >(`
@@ -569,27 +570,16 @@ export const getAllImages = async ({
       COALESCE(im."dislikeCount", 0) "dislikeCount",
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
-      ${!userId ? 'null' : 'ir.reactions'} "reactions",
       ${cursorProp ? cursorProp : 'null'} "cursorId"
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = '${period}'
     LEFT JOIN "ImageRank" r ON r."imageId" = i.id
-    ${
-      !userId
-        ? ''
-        : `LEFT JOIN (
-        SELECT "imageId", jsonb_agg(reaction) "reactions"
-        FROM "ImageReaction"
-        WHERE "userId" = ${userId}
-        GROUP BY "imageId"
-      ) ir ON ir."imageId" = i.id
-    `
-    }
     WHERE ${AND.join(' AND ')}
     ORDER BY ${orderBy}
     LIMIT ${limit + 1}
   `);
+  console.timeLog('getAllImages');
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
   if (withTags) {
@@ -607,6 +597,7 @@ export const getAllImages = async ({
         downVotes: true,
       },
     });
+    console.timeLog('getAllImages');
 
     tagsVar = rawTags.map(({ tagId, tagName, tagType, ...tag }) => ({
       ...tag,
@@ -627,6 +618,7 @@ export const getAllImages = async ({
         );
         if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
       }
+      console.timeLog('getAllImages');
     }
   }
 
