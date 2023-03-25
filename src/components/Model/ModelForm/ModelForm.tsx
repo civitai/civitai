@@ -81,7 +81,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { NextLink } from '@mantine/next';
 import { useCatchNavigation } from '~/store/catch-navigation.store';
-import { useS3UploadStore } from '~/store/s3-upload.store';
 
 /**NOTES**
   - If a model depicts an actual person, it cannot have nsfw content
@@ -141,7 +140,6 @@ export function ModelForm({ model }: Props) {
   const mobile = useIsMobile();
   const user = useCurrentUser();
   const editing = !!model;
-  const test = useS3UploadStore((state) => state.upload);
 
   const { data: { items: tags } = { items: [] }, isLoading: loadingTags } =
     trpc.tag.getAll.useQuery(
