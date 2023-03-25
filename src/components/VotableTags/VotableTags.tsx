@@ -26,7 +26,7 @@ export function VotableTags({
     return tags.slice(0, limit);
   }, [tags, showAll, limit]);
 
-  if (isLoading)
+  if (!initialTags && isLoading)
     return (
       <Center p="xl">
         <Loader variant="bars" />

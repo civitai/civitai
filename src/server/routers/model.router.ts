@@ -91,7 +91,12 @@ const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
     const userId = ctx.browsingMode === BrowsingMode.SFW ? -1 : ctx.user?.id;
     const _input = input as GetAllModelsOutput;
     const hidden = await getAllHiddenForUser({ userId });
-    _input.excludedTagIds = [...hidden.tags, ...(_input.excludedTagIds ?? [])];
+    _input.excludedImageTagIds = [
+      ...hidden.tags.moderatedTags,
+      ...hidden.tags.hiddenTags,
+      ...(_input.excludedImageTagIds ?? []),
+    ];
+    _input.excludedTagIds = [...hidden.tags.hiddenTags, ...(_input.excludedTagIds ?? [])];
     _input.excludedIds = [...hidden.models, ...(_input.excludedIds ?? [])];
     _input.excludedUserIds = [...hidden.users, ...(_input.excludedUserIds ?? [])];
     _input.excludedImageIds = [...hidden.images, ...(_input.excludedImageIds ?? [])];

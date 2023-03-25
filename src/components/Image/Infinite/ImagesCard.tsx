@@ -25,9 +25,16 @@ export function ImagesCard({
     if (!image.width || !image.height) return 300;
     const width = cardWidth > 0 ? cardWidth : 300;
     const aspectRatio = image.width / image.height;
-    const imageHeight = Math.floor(width / aspectRatio) + (aspectRatio >= 1 ? 60 : 0);
+    const imageHeight = Math.floor(width / aspectRatio);
     return Math.min(imageHeight, 600);
   }, [cardWidth, image.width, image.height]);
+
+  const tags = useMemo(() => {
+    if (!image.tags) return undefined;
+    return image.tags.filter((x) => x.type === 'Moderation');
+  }, [image.tags]);
+
+  const hideFooter = Array.isArray(tags) && tags.length === 0;
 
   return (
     <InView>
@@ -72,29 +79,27 @@ export function ImagesCard({
                               style={{ width: '100%', zIndex: 2, position: 'relative' }}
                             />
                           )}
-                          <div className={classes.footer}>
-                            {!image.tags ? (
-                              <Reactions
-                                entityId={image.id}
-                                entityType="image"
-                                reactions={image.reactions}
-                                metrics={{
-                                  likeCount: image.stats?.likeCountAllTime,
-                                  dislikeCount: image.stats?.dislikeCountAllTime,
-                                  heartCount: image.stats?.heartCountAllTime,
-                                  laughCount: image.stats?.laughCountAllTime,
-                                  cryCount: image.stats?.cryCountAllTime,
-                                }}
-                                readonly={!safe}
-                              />
-                            ) : (
-                              <VotableTags
-                                entityType="image"
-                                entityId={image.id}
-                                tags={image.tags.filter((x) => x.type === 'Moderation')}
-                              />
-                            )}
-                          </div>
+                          {hideFooter ? null : (
+                            <div className={classes.footer}>
+                              {!image.tags ? (
+                                <Reactions
+                                  entityId={image.id}
+                                  entityType="image"
+                                  reactions={image.reactions}
+                                  metrics={{
+                                    likeCount: image.stats?.likeCountAllTime,
+                                    dislikeCount: image.stats?.dislikeCountAllTime,
+                                    heartCount: image.stats?.heartCountAllTime,
+                                    laughCount: image.stats?.laughCountAllTime,
+                                    cryCount: image.stats?.cryCountAllTime,
+                                  }}
+                                  readonly={!safe}
+                                />
+                              ) : (
+                                <VotableTags entityType="image" entityId={image.id} tags={tags} />
+                              )}
+                            </div>
+                          )}
                         </>
                       )}
                     </ImageGuard.Content>

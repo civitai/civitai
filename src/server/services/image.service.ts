@@ -590,7 +590,46 @@ export const getAllImages = async ({
     ORDER BY ${orderBy}
     LIMIT ${limit + 1}
   `);
-  const tagsVar: VotableTagModel[] | undefined = undefined;
+
+  let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
+  if (withTags) {
+    const imageIds = rawImages.map((i) => i.id);
+    const rawTags = await dbRead.imageTag.findMany({
+      where: { imageId: { in: imageIds } },
+      select: {
+        imageId: true,
+        tagId: true,
+        tagName: true,
+        tagType: true,
+        score: true,
+        automated: true,
+        upVotes: true,
+        downVotes: true,
+      },
+    });
+
+    tagsVar = rawTags.map(({ tagId, tagName, tagType, ...tag }) => ({
+      ...tag,
+      id: tagId,
+      type: tagType,
+      name: tagName,
+    }));
+
+    if (userId) {
+      const userVotes = await dbRead.tagsOnImageVote.findMany({
+        where: { imageId: { in: imageIds }, userId },
+        select: { imageId: true, tagId: true, vote: true },
+      });
+
+      for (const tag of tagsVar) {
+        const userVote = userVotes.find(
+          (vote) => vote.tagId === tag.id && vote.imageId === tag.imageId
+        );
+        if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
+      }
+    }
+  }
+
   const images: Array<ImageV2Model & { tags: VotableTagModel[] | undefined }> = rawImages.map(
     ({
       reactions,
@@ -622,7 +661,7 @@ export const getAllImages = async ({
         commentCountAllTime: commentCount,
       },
       reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
-      tags: tagsVar,
+      tags: tagsVar?.filter((x) => x.imageId === i.id),
     })
   );
   console.timeEnd('getAllImages');

@@ -58,6 +58,7 @@ export const getReviewsInfiniteHandler = async ({
 
   const userId = ctx.user?.id;
   const hiddenTags = await getHiddenTagsForUser({ userId });
+  const allHiddenTags = [...hiddenTags.moderatedTags, ...hiddenTags.hiddenTags];
   const hiddenImages = await getHiddenImagesForUser({ userId });
 
   return {
@@ -74,7 +75,7 @@ export const getReviewsInfiniteHandler = async ({
             !needsReview &&
             scannedAt &&
             !hiddenImages.includes(id) &&
-            !tags.some((tag) => hiddenTags.includes(tag.id))
+            !tags.some((tag) => allHiddenTags.includes(tag.id))
         );
 
         if (prioritizeSafeImages)

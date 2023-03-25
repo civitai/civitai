@@ -13,6 +13,7 @@ const HIDDEN_CACHE_EXPIRY = 60 * 60 * 4;
 const log = createLogger('user-cache', 'green');
 
 // #region [hidden tags]
+type HiddenTags = { moderatedTags: number[]; hiddenTags: number[] };
 async function getHiddenTags(userId: number) {
   log(`fetching hidden tags for user: ${userId}`);
   const tags = await dbWrite.tagEngagement.findMany({
@@ -26,24 +27,28 @@ async function getHiddenTags(userId: number) {
     })) ?? {};
 
   const moderationTags = await getModerationTags();
-  const hiddenTags = moderationTags.map((x) => x.id);
+  const moderatedTags = new Set(moderationTags.map((x) => x.id));
+  const hiddenTags = [];
 
   // If NSFW is disabled, also add additional civitai hidden tags
   if (!showNsfw && userId !== -1) {
-    const civitaiHiddenTags = await getHiddenTagsForUser({ userId: -1 });
-    hiddenTags.push(...civitaiHiddenTags);
+    const civitaiTags = await getHiddenTagsForUser({ userId: -1 });
+    for (const tag of civitaiTags.hiddenTags) {
+      hiddenTags.push(tag);
+      moderatedTags.add(tag);
+    }
   }
 
   for (const { tag, type } of tags) {
-    if (type === TagEngagementType.Hide) hiddenTags.push(tag.id);
-    else if (showNsfw && type === TagEngagementType.Allow) {
-      const i = hiddenTags.findIndex((id) => id === tag.id);
-      hiddenTags.splice(i, 1);
+    if (type === TagEngagementType.Hide) {
+      hiddenTags.push(tag.id);
+    } else if (showNsfw && type === TagEngagementType.Allow) {
+      moderatedTags.delete(tag.id);
     }
   }
 
   log(`fetched hidden tags for user: ${userId}`);
-  return hiddenTags;
+  return { moderatedTags: [...moderatedTags], hiddenTags } as HiddenTags;
 }
 
 export async function getHiddenTagsForUser({
@@ -52,12 +57,12 @@ export async function getHiddenTagsForUser({
 }: {
   userId?: number;
   refreshCache?: boolean;
-}) {
+}): Promise<HiddenTags> {
   log(`getting hidden tags for user: ${userId}`);
   const cachedTags = await redis.get(`user:${userId}:hidden-tags`);
   if (cachedTags && !refreshCache) {
     log(`got hidden tags for user: ${userId} (cached)`);
-    return JSON.parse(cachedTags) as number[];
+    return JSON.parse(cachedTags) as HiddenTags;
   }
   if (refreshCache) await redis.del(`user:${userId}:hidden-tags`);
 
@@ -67,7 +72,7 @@ export async function getHiddenTagsForUser({
   });
 
   log(`got hidden tags for user: ${userId}`);
-  return hiddenTags;
+  return hiddenTags as HiddenTags;
 }
 
 export async function refreshHiddenTagsForUser({ userId }: { userId: number }) {
@@ -120,8 +125,9 @@ async function getHiddenModels(userId: number) {
   });
 
   const hiddenTags = await getHiddenTagsForUser({ userId });
+  const allHiddenTags = [...hiddenTags.hiddenTags, ...hiddenTags.moderatedTags];
   const votedHideModels = await dbWrite.tagsOnModelsVote.findMany({
-    where: { userId, tagId: { in: hiddenTags }, vote: { gt: 0 } },
+    where: { userId, tagId: { in: allHiddenTags }, vote: { gt: 0 } },
     select: { modelId: true },
   });
 
@@ -162,8 +168,9 @@ export async function refreshHiddenModelsForUser({ userId }: { userId: number })
 // #region [hidden images]
 async function getHiddenImages(userId: number) {
   const hiddenTags = await getHiddenTagsForUser({ userId });
+  const allHiddenTags = [...hiddenTags.hiddenTags, ...hiddenTags.moderatedTags];
   const votedHideImages = await dbWrite.tagsOnImageVote.findMany({
-    where: { userId, tagId: { in: hiddenTags }, vote: { gt: 0 } },
+    where: { userId, tagId: { in: allHiddenTags }, vote: { gt: 0 } },
     select: { imageId: true },
   });
 

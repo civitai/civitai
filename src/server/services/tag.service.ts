@@ -220,7 +220,16 @@ export const addTagVotes = async ({
     ON CONFLICT ("userId", "tagId", "${type}Id") DO UPDATE SET "vote" = ${vote}, "createdAt" = NOW()
   `);
 
-  await clearCache(userId, type);
+  // If voting up a tag
+  if (vote > 0) {
+    // Check if it's a moderation tag
+    const [{ count }] = await dbRead.$queryRawUnsafe<{ count: number }[]>(`
+      SELECT COUNT(*)::int "count" FROM "Tag"
+      WHERE ${tagSelector} IN (${tagIn}) AND "type" = 'Moderation'
+    `);
+    console.log('moderationTags', count);
+    if (count > 0) await clearCache(userId, type); // Clear cache if it is
+  }
 };
 // #endregion
 

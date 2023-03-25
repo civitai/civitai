@@ -93,7 +93,11 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
               !needsReview &&
               scannedAt &&
               !hiddenImages.includes(id) &&
-              !tags.some((tag) => hiddenTags.includes(tag.id))
+              !tags.some(
+                (tag) =>
+                  hiddenTags.moderatedTags.includes(tag.id) ||
+                  hiddenTags.hiddenTags.includes(tag.id)
+              )
           );
 
           if (prioritizeSafeImages)
@@ -203,7 +207,7 @@ export const getModelsInfiniteHandler = async ({
   const images = !!modelVersionIds.length
     ? await getImagesForModelVersion({
         modelVersionIds,
-        excludedTagIds: input.excludedTagIds,
+        excludedTagIds: input.excludedImageIds,
         excludedIds: await getHiddenImagesForUser({ userId: ctx.user?.id }),
         excludedUserIds: input.excludedUserIds,
       })

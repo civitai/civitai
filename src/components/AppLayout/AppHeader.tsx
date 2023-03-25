@@ -28,6 +28,7 @@ import {
   IconLogout,
   IconMoonStars,
   IconPalette,
+  IconPhoto,
   IconPlus,
   IconQuestionCircle,
   IconSettings,
@@ -210,6 +211,16 @@ export function AppHeader() {
           <Group align="center" spacing="xs">
             <IconAlbum stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Your posts
+          </Group>
+        ),
+      },
+      {
+        href: `/user/${currentUser?.username}/images`,
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconPhoto stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            Your images
           </Group>
         ),
       },

@@ -162,8 +162,8 @@ function ImageGuardContentProvider({
   const showToggleImage = !connect && nsfw;
   const showToggleConnect = !!connect && nsfw;
   const canToggleNsfw = shouldBlur;
-  // Only show the quick nsfw report if the user is logged in and is a member or moderator
-  const showReportNsfw = safe && !nsfw && !!currentUser;
+  // Only show the quick nsfw report if the user is logged in
+  const showReportNsfw = !!currentUser;
 
   return (
     <ImageGuardContentCtx.Provider

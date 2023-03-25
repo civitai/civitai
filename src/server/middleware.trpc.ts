@@ -20,7 +20,11 @@ export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
       const hiddenTags = await hidden.tags.get();
       const hiddenUsers = await hidden.users.get();
       const hiddenImages = await hidden.images.get();
-      _input.excludedTagIds = [...hiddenTags, ...(_input.excludedTagIds ?? [])];
+      _input.excludedTagIds = [
+        ...hiddenTags.hiddenTags,
+        ...hiddenTags.moderatedTags,
+        ...(_input.excludedTagIds ?? []),
+      ];
       _input.excludedUserIds = [...hiddenUsers, ...(_input.excludedUserIds ?? [])];
       _input.excludedImageIds = [...hiddenImages, ...(_input.excludedUserIds ?? [])];
     }
