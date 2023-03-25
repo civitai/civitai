@@ -34,10 +34,18 @@ import {
 
 const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
   if (ctx.browsingMode !== BrowsingMode.All) {
-    const userId = ctx.browsingMode === BrowsingMode.SFW ? -1 : ctx.user?.id;
     const _input = input as { not?: number[] };
-    const hidden = await getHiddenTagsForUser({ userId });
+    const hidden = await getHiddenTagsForUser({ userId: ctx.user?.id });
     _input.not = [...hidden.hiddenTags, ...hidden.moderatedTags, ...(_input.not ?? [])];
+
+    if (ctx.browsingMode === BrowsingMode.SFW) {
+      const systemHidden = await getHiddenTagsForUser({ userId: -1 });
+      _input.not = [
+        ...systemHidden.hiddenTags,
+        ...systemHidden.moderatedTags,
+        ...(_input.not ?? []),
+      ];
+    }
   }
 
   return next({

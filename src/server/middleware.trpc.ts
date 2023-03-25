@@ -1,4 +1,4 @@
-import { userCache } from '~/server/services/user-cache.service';
+import { getHiddenTagsForUser, userCache } from '~/server/services/user-cache.service';
 import { middleware } from '~/server/trpc';
 import { z } from 'zod';
 import { BrowsingMode } from '~/server/common/enums';
@@ -14,9 +14,8 @@ const userPreferencesSchema = z.object({
 export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
   middleware(async ({ input, ctx, next }) => {
     if (ctx.browsingMode !== BrowsingMode.All) {
-      const userId = ctx.browsingMode === BrowsingMode.SFW ? -1 : ctx.user?.id;
       const _input = input as TInput;
-      const { hidden } = userCache(userId);
+      const { hidden } = userCache(ctx.user?.id);
       const hiddenTags = await hidden.tags.get();
       const hiddenUsers = await hidden.users.get();
       const hiddenImages = await hidden.images.get();
@@ -27,6 +26,15 @@ export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
       ];
       _input.excludedUserIds = [...hiddenUsers, ...(_input.excludedUserIds ?? [])];
       _input.excludedImageIds = [...hiddenImages, ...(_input.excludedUserIds ?? [])];
+
+      if (ctx.browsingMode === BrowsingMode.SFW) {
+        const systemHidden = await getHiddenTagsForUser({ userId: -1 });
+        _input.excludedTagIds = [
+          ...systemHidden.hiddenTags,
+          ...systemHidden.moderatedTags,
+          ...(_input.excludedTagIds ?? []),
+        ];
+      }
     }
 
     return next({
