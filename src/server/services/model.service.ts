@@ -118,11 +118,11 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (excludedUserIds && excludedUserIds.length && !username) {
     AND.push({ user: { id: { notIn: excludedUserIds } } });
   }
-  if (excludedTagIds && excludedTagIds.length && !username) {
-    AND.push({
-      tagsOnModels: { none: { tagId: { in: excludedTagIds } } },
-    });
-  }
+  // if (excludedTagIds && excludedTagIds.length && !username) {
+  //   AND.push({
+  //     tagsOnModels: { none: { tagId: { in: excludedTagIds } } },
+  //   });
+  // }
   if (excludedIds && !hidden && !username) {
     AND.push({ id: { notIn: excludedIds } });
   }

@@ -23,7 +23,11 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   needsReview: true,
   scannedAt: true,
   tags: {
-    select: { tag: { select: simpleTagSelect }, automated: true, needsReview: true },
+    select: {
+      tag: { select: { ...simpleTagSelect, type: true } },
+      automated: true,
+      needsReview: true,
+    },
     where: { disabled: false },
   },
 });
