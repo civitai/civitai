@@ -1,4 +1,4 @@
-import { useRef, createContext, useContext } from 'react';
+import { useRef, createContext, useContext, useEffect } from 'react';
 import { ImageGenerationProcess, MetricTimeframe } from '@prisma/client';
 import { BrowsingMode, ImageSort, ModelSort, PostSort, QuestionSort } from '~/server/common/enums';
 import { setCookie } from '~/utils/cookies-helpers';
@@ -103,6 +103,7 @@ export const FiltersProvider = ({
   const storeRef = useRef<FilterStore>();
   if (!storeRef.current) {
     if (!currentUser?.showNsfw) value.browsingMode = BrowsingMode.SFW;
+    else value.browsingMode = BrowsingMode.NSFW;
     storeRef.current = createFilterStore({ initialValues: value });
   }
 

@@ -8,7 +8,12 @@ import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 export const parseBrowsingMode = (
   cookies: Partial<{ [key: string]: string }>,
   session: Session | null
-) => parseFiltersCookie(cookies)?.browsingMode ?? (session ? BrowsingMode.NSFW : BrowsingMode.SFW);
+) => {
+  const defaultValue = session ? BrowsingMode.NSFW : BrowsingMode.SFW;
+  if (!session) return defaultValue;
+  const browsingMode = parseFiltersCookie(cookies)?.browsingMode;
+  return browsingMode ?? defaultValue;
+};
 
 export const createContext = async ({
   req,

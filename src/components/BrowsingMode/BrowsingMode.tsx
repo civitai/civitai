@@ -28,7 +28,7 @@ const options = [
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   const currentUser = useCurrentUser();
   const browsingMode = useFiltersContext((state) => state.browsingMode);
-  if (!currentUser) return null;
+  if (!currentUser || !browsingMode) return null;
 
   const indicatorColor = {
     [BrowsingMode.SFW]: 'blue',
