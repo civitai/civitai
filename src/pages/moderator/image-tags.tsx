@@ -300,16 +300,24 @@ function ImageGridItem({
   );
   const needsReview = tags.toReview.length > 0;
 
-  const renderTag = (tag: (typeof tags.toReview)[number]) => (
-    <Badge key={tag.id} variant="filled" color="gray" pr={0}>
-      <Group spacing={0}>
-        {tag.name}
-        <ActionIcon size="sm" variant="transparent" onClick={() => disableTag(image.id, tag.id)}>
-          <IconX strokeWidth={3} size=".75rem" />
-        </ActionIcon>
-      </Group>
-    </Badge>
-  );
+  const renderTag = (tag: (typeof tags.toReview)[number]) => {
+    const isModeration = tag.type === 'Moderation';
+    return (
+      <Badge
+        key={tag.id}
+        variant={isModeration ? 'light' : 'filled'}
+        color={isModeration ? 'red' : 'gray'}
+        pr={0}
+      >
+        <Group spacing={0}>
+          {tag.name}
+          <ActionIcon size="sm" variant="transparent" onClick={() => disableTag(image.id, tag.id)}>
+            <IconX strokeWidth={3} size=".75rem" />
+          </ActionIcon>
+        </Group>
+      </Badge>
+    );
+  };
 
   return (
     <Card shadow="sm" p="xs" sx={{ opacity: !needsReview ? 0.2 : undefined }} withBorder>
