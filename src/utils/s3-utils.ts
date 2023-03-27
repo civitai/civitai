@@ -12,6 +12,7 @@ import {
   AbortMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { getDeliveryWorkerStatus } from './delivery-worker';
 
 const missingEnvs = (): string[] => {
   const keys = [];
@@ -67,7 +68,8 @@ export function getS3Client() {
 export async function getPutUrl(key: string, s3: S3Client | null = null) {
   if (!s3) s3 = getS3Client();
 
-  const bucket = env.S3_UPLOAD_BUCKET;
+  const deliveryWorkerStatus = await getDeliveryWorkerStatus();
+  const bucket = deliveryWorkerStatus.current?.name ?? env.S3_UPLOAD_BUCKET;
   const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket: bucket, Key: key }), {
     expiresIn: UPLOAD_EXPIRATION,
   });
@@ -80,7 +82,8 @@ const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
 export async function getMultipartPutUrl(key: string, size: number, s3: S3Client | null = null) {
   if (!s3) s3 = getS3Client();
 
-  const bucket = env.S3_UPLOAD_BUCKET;
+  const deliveryWorkerStatus = await getDeliveryWorkerStatus();
+  const bucket = deliveryWorkerStatus.current?.name ?? env.S3_UPLOAD_BUCKET;
   const { UploadId } = await s3.send(
     new CreateMultipartUploadCommand({ Bucket: bucket, Key: key })
   );
@@ -105,13 +108,13 @@ interface MultipartUploadPart {
   PartNumber: number;
 }
 export async function completeMultipartUpload(
+  bucket: string,
   key: string,
   uploadId: string,
   parts: MultipartUploadPart[],
   s3: S3Client | null = null
 ) {
   if (!s3) s3 = getS3Client();
-  const bucket = env.S3_UPLOAD_BUCKET;
   await s3.send(
     new CompleteMultipartUploadCommand({
       Bucket: bucket,
@@ -123,12 +126,12 @@ export async function completeMultipartUpload(
 }
 
 export async function abortMultipartUpload(
+  bucket: string,
   key: string,
   uploadId: string,
   s3: S3Client | null = null
 ) {
   if (!s3) s3 = getS3Client();
-  const bucket = env.S3_UPLOAD_BUCKET;
   await s3.send(
     new AbortMultipartUploadCommand({
       Bucket: bucket,

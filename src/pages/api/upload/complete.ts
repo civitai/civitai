@@ -11,8 +11,8 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     return;
   }
 
-  const { key, type, uploadId, parts } = req.body;
-  const result = await completeMultipartUpload(key, uploadId, parts);
+  const { bucket, key, type, uploadId, parts } = req.body;
+  const result = await completeMultipartUpload(bucket, key, uploadId, parts);
   await logToDb('s3-upload-complete', { userId, type, key, uploadId });
 
   res.status(200).json(result);
