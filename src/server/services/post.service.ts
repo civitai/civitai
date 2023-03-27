@@ -198,10 +198,10 @@ export const getPostTags = async ({
     LEFT JOIN "TagStat" s ON s."tagId" = t.id
     LEFT JOIN "TagRank" r ON r."tagId" = t.id
     WHERE
-      ${showTrending ? 't."isCategory" = true' : Prisma.sql`t.name ILIKE '${query}%'`}
-    ORDER BY ${
-      showTrending ? 'r."postCountDayRank" DESC' : 'LENGTH(t.name), r."postCountAllTimeRank" DESC'
-    }
+      ${showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`}
+    ORDER BY ${Prisma.raw(
+      showTrending ? `r."postCountDayRank" DESC` : `LENGTH(t.name), r."postCountAllTimeRank" DESC`
+    )}
     LIMIT ${limit}
   `;
 

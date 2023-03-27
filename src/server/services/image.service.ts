@@ -466,7 +466,7 @@ export const getAllImages = async ({
   reviewId,
   withTags, // TODO.justin - return image tags when this is requested
   prioritizedUserIds,
-}: GetInfiniteImagesInput & { userId?: number }) => {
+}: GetInfiniteImagesInput & { userId?: number; user?: SessionUser }) => {
   const AND = [Prisma.sql`i."needsReview" = false`];
   let orderBy: string;
 
@@ -553,8 +553,7 @@ export const getAllImages = async ({
 
   if (!!prioritizedUserIds?.length) {
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
-    orderBy = `IIF(i."userId" IN (${Prisma.join(prioritizedUserIds)}),0,1), ${orderBy}`;
-    // console.log({ orderBy, prioritizedUserIds, prismaJoin: Prisma.join(prioritizedUserIds) });
+    orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}),0,1), ${orderBy}`;
   }
 
   console.log('getAllImages start');
@@ -591,7 +590,7 @@ export const getAllImages = async ({
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
     ${Prisma.raw(cursorProp?.startsWith('r.') ? 'JOIN "ImageRank" r ON r."imageId" = i.id' : '')}
-    LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = ${period}::"MetricTimeframe"
+    LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     ${Prisma.raw(
       !userId
         ? ''

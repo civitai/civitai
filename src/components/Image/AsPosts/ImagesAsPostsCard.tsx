@@ -1,3 +1,4 @@
+import { Carousel } from '@mantine/carousel';
 import { AspectRatio, Badge, Card, createStyles, Group, Paper, Rating } from '@mantine/core';
 import { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
@@ -25,21 +26,26 @@ export function ImagesAsPostsCard({
   const queryUtils = trpc.useContext();
   const postId = data.postId ?? undefined;
 
-  const cover = data.images[0];
+  const cover = data.images.sort((a, b) => {
+    const aHeight = a.height ?? 0;
+    const bHeight = b.height ?? 0;
+    return aHeight > bHeight ? aHeight : bHeight;
+  })[0];
 
-  const height = useMemo(() => {
+  const imageHeight = useMemo(() => {
     if (!cover.width || !cover.height) return 300;
     const width = cardWidth > 0 ? cardWidth : 300;
     const aspectRatio = cover.width / cover.height;
-    const imageHeight = Math.floor(width / aspectRatio) + 60;
-    // if (cover.id === 224642) console.log({ cover, cardWidth, imageHeight });
+    const imageHeight = Math.floor(width / aspectRatio);
     return Math.min(imageHeight, 600);
   }, [cardWidth, cover.width, cover.height]);
 
+  const cardHeight = imageHeight + 60;
+
   const handleClick = () => {
-    queryUtils.image.getInfinite.setInfiniteData({ postId, modelId }, (old) => {
+    queryUtils.image.getInfinite.setInfiniteData({ postId, modelId }, () => {
       return {
-        pages: [{ items: data.images, nextCursor: null }],
+        pages: [{ items: data.images, nextCursor: undefined }],
         pageParams: [],
       };
     });
@@ -48,89 +54,180 @@ export function ImagesAsPostsCard({
   return (
     <InView>
       {({ inView, ref }) => (
-        <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
+        <MasonryCard
+          withBorder
+          shadow="sm"
+          p={0}
+          height={cardHeight}
+          ref={ref}
+          className={classes.card}
+        >
           {inView && (
             <>
-              <ImageGuard
-                images={[cover]}
-                render={(image) => (
-                  <ImageGuard.Content>
-                    {({ safe }) => (
-                      <>
-                        <Paper radius={0}>
-                          <Group position="apart" p="xs" noWrap>
-                            <UserAvatar
-                              user={data.user}
-                              subText={<DaysFromNow date={data.createdAt} />}
-                              subTextForce
-                              size="md"
-                              spacing="xs"
-                              withUsername
-                              linkToProfile
+              <Paper radius={0}>
+                <Group position="apart" p="xs" noWrap>
+                  <UserAvatar
+                    user={data.user}
+                    subText={<DaysFromNow date={data.createdAt} />}
+                    subTextForce
+                    size="md"
+                    spacing="xs"
+                    withUsername
+                    linkToProfile
+                  />
+                  {data.review && <Rating value={data.review?.rating} readOnly />}
+                </Group>
+              </Paper>
+              {data.images.length === 1 ? (
+                <ImageGuard
+                  images={[cover]}
+                  render={(image) => (
+                    <ImageGuard.Content>
+                      {({ safe }) => (
+                        <>
+                          <div className={classes.imageContainer}>
+                            <ImageGuard.ToggleImage
+                              sx={(theme) => ({
+                                backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
+                                color: 'white',
+                                backdropFilter: 'blur(7px)',
+                                boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
+                              })}
                             />
-                            {data.review && <Rating value={data.review?.rating} readOnly />}
-                          </Group>
-                        </Paper>
-                        <div style={{ position: 'relative' }}>
-                          <ImageGuard.ToggleImage
-                            sx={(theme) => ({
-                              backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
-                              color: 'white',
-                              backdropFilter: 'blur(7px)',
-                              boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
-                            })}
-                          />
-                          <RoutedContextLink
-                            modal="imageDetailModal"
-                            imageId={cover.id}
-                            modelId={modelId}
-                            postId={postId}
-                            username={username}
-                            onClick={handleClick}
-                          >
-                            <>
-                              {!safe ? (
-                                <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
-                                  <MediaHash {...image} />
-                                </AspectRatio>
-                              ) : (
-                                <EdgeImage
-                                  src={image.url}
-                                  name={image.name ?? image.id.toString()}
-                                  alt={image.name ?? undefined}
-                                  width={450}
-                                  placeholder="empty"
-                                  style={{ width: '100%', zIndex: 2, position: 'relative' }}
-                                />
-                              )}
-                              {data && data.images.length > 1 && (
-                                <div className={classes.basicIndicator} py={4} px="xs">
-                                  {data.images.length}
+                            <RoutedContextLink
+                              modal="imageDetailModal"
+                              imageId={cover.id}
+                              modelId={modelId}
+                              postId={postId}
+                              username={username}
+                              onClick={handleClick}
+                            >
+                              <>
+                                {!safe ? (
+                                  <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                                    <MediaHash {...image} />
+                                  </AspectRatio>
+                                ) : (
+                                  <EdgeImage
+                                    src={image.url}
+                                    name={image.name ?? image.id.toString()}
+                                    alt={image.name ?? undefined}
+                                    width={450}
+                                    placeholder="empty"
+                                    style={{ width: '100%', zIndex: 2, position: 'relative' }}
+                                  />
+                                )}
+                                <div className={classes.footer}>
+                                  <Reactions
+                                    entityId={image.id}
+                                    entityType="image"
+                                    reactions={image.reactions}
+                                    metrics={{
+                                      likeCount: image.stats?.likeCountAllTime,
+                                      dislikeCount: image.stats?.dislikeCountAllTime,
+                                      heartCount: image.stats?.heartCountAllTime,
+                                      laughCount: image.stats?.laughCountAllTime,
+                                      cryCount: image.stats?.cryCountAllTime,
+                                    }}
+                                    readonly={!safe}
+                                  />
                                 </div>
-                              )}
-                              <div className={classes.footer}>
-                                <Reactions
-                                  entityId={image.id}
-                                  entityType="image"
-                                  reactions={image.reactions}
-                                  metrics={{
-                                    likeCount: image.stats?.likeCountAllTime,
-                                    dislikeCount: image.stats?.dislikeCountAllTime,
-                                    heartCount: image.stats?.heartCountAllTime,
-                                    laughCount: image.stats?.laughCountAllTime,
-                                    cryCount: image.stats?.cryCountAllTime,
-                                  }}
-                                  readonly={!safe}
+                              </>
+                            </RoutedContextLink>
+                          </div>
+                        </>
+                      )}
+                    </ImageGuard.Content>
+                  )}
+                />
+              ) : (
+                <Carousel
+                  withControls
+                  draggable
+                  loop
+                  style={{ height: imageHeight }}
+                  withIndicators
+                  controlSize={32}
+                  styles={{
+                    indicators: {
+                      bottom: 50,
+                      zIndex: 15,
+                    },
+                    indicator: {
+                      width: 8,
+                      height: 8,
+                      transition: 'width 250ms ease',
+                    },
+                  }}
+                >
+                  <ImageGuard
+                    images={data.images}
+                    connect={postId ? { entityType: 'post', entityId: postId } : undefined}
+                    render={(image) => (
+                      <Carousel.Slide style={{ height: imageHeight }} className={classes.slide}>
+                        <ImageGuard.Content>
+                          {({ safe }) => (
+                            <>
+                              <div className={classes.imageContainer}>
+                                <ImageGuard.ToggleConnect
+                                  sx={(theme) => ({
+                                    backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
+                                    color: 'white',
+                                    backdropFilter: 'blur(7px)',
+                                    boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
+                                  })}
                                 />
+                                <RoutedContextLink
+                                  modal="imageDetailModal"
+                                  imageId={image.id}
+                                  modelId={modelId}
+                                  postId={postId}
+                                  username={username}
+                                  onClick={handleClick}
+                                >
+                                  <>
+                                    {!safe ? (
+                                      <AspectRatio
+                                        ratio={(image?.width ?? 1) / (image?.height ?? 1)}
+                                      >
+                                        <MediaHash {...image} />
+                                      </AspectRatio>
+                                    ) : (
+                                      <EdgeImage
+                                        src={image.url}
+                                        name={image.name ?? image.id.toString()}
+                                        alt={image.name ?? undefined}
+                                        width={450}
+                                        placeholder="empty"
+                                        style={{ width: '100%', zIndex: 2, position: 'relative' }}
+                                      />
+                                    )}
+                                    <div className={classes.footer}>
+                                      <Reactions
+                                        entityId={image.id}
+                                        entityType="image"
+                                        reactions={image.reactions}
+                                        metrics={{
+                                          likeCount: image.stats?.likeCountAllTime,
+                                          dislikeCount: image.stats?.dislikeCountAllTime,
+                                          heartCount: image.stats?.heartCountAllTime,
+                                          laughCount: image.stats?.laughCountAllTime,
+                                          cryCount: image.stats?.cryCountAllTime,
+                                        }}
+                                        readonly={!safe}
+                                      />
+                                    </div>
+                                  </>
+                                </RoutedContextLink>
                               </div>
                             </>
-                          </RoutedContextLink>
-                        </div>
-                      </>
+                          )}
+                        </ImageGuard.Content>
+                      </Carousel.Slide>
                     )}
-                  </ImageGuard.Content>
-                )}
-              />
+                  />
+                </Carousel>
+              )}
             </>
           )}
         </MasonryCard>
@@ -145,6 +242,25 @@ const useStyles = createStyles((theme) => ({
     fontSize: 14,
     color: 'white',
     fontWeight: 500,
+  },
+  card: {
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  slide: {
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  imageContainer: {
+    position: 'relative',
+    overflow: 'hidden',
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: 42,
+    background: theme.colors.dark[9],
+    flexDirection: 'column',
   },
   footer: {
     display: 'flex',

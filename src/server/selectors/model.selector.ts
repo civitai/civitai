@@ -207,7 +207,11 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           },
         },
       },
-      posts: { select: editPostSelect },
+      posts: {
+        select: {
+          id: true,
+        },
+      },
     },
   },
   rank: {

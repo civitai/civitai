@@ -6,6 +6,7 @@ import { env } from '~/env/server.mjs';
 
 type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
 const userPreferencesSchema = z.object({
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
   excludedImageIds: z.array(z.number()).optional(),
@@ -13,8 +14,11 @@ const userPreferencesSchema = z.object({
 
 export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
   middleware(async ({ input, ctx, next }) => {
-    if (ctx.browsingMode !== BrowsingMode.All) {
-      const _input = input as TInput;
+    const _input = input as TInput;
+    let browsingMode = ctx.user ? _input.browsingMode : undefined;
+    if (!browsingMode) browsingMode = ctx.browsingMode;
+
+    if (browsingMode !== BrowsingMode.All) {
       const { hidden } = userCache(ctx.user?.id);
       const hiddenTags = await hidden.tags.get();
       const hiddenUsers = await hidden.users.get();
@@ -27,7 +31,7 @@ export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
       _input.excludedUserIds = [...hiddenUsers, ...(_input.excludedUserIds ?? [])];
       _input.excludedImageIds = [...hiddenImages, ...(_input.excludedUserIds ?? [])];
 
-      if (ctx.browsingMode === BrowsingMode.SFW) {
+      if (browsingMode === BrowsingMode.SFW) {
         const systemHidden = await getHiddenTagsForUser({ userId: -1 });
         _input.excludedTagIds = [
           ...systemHidden.hiddenTags,

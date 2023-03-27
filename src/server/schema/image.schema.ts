@@ -196,6 +196,7 @@ export const getInfiniteImagesSchema = z.object({
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
   withTags: z.boolean().optional(),
   prioritizedUserIds: z.number().array().optional(),
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
 });
 
 export type GetImageInput = z.infer<typeof getImageSchema>;

@@ -17,6 +17,7 @@ type ImagesInfiniteState = {
   reviewId?: number;
   withTags?: boolean;
   prioritizedUserIds?: number[];
+  browsingMode?: BrowsingMode;
 };
 const ImagesInfiniteContext = createContext<ImagesInfiniteState | null>(null);
 export const useImagesInfiniteContext = () => {
@@ -36,10 +37,19 @@ export default function ImagesInfinite({
   reviewId,
   withTags,
   prioritizedUserIds,
+  browsingMode,
 }: ImagesInfiniteProps) {
   const globalFilters = useImageFilters();
   const filters = useMemo(() => {
-    const baseFilters = { postId, modelId, modelVersionId, username, withTags, prioritizedUserIds };
+    const baseFilters = {
+      postId,
+      modelId,
+      modelVersionId,
+      username,
+      withTags,
+      prioritizedUserIds,
+      browsingMode,
+    };
     return removeEmpty(
       !postId && !modelVersionId && !reviewId ? { ...baseFilters, ...globalFilters } : baseFilters
     );
@@ -52,6 +62,7 @@ export default function ImagesInfinite({
     reviewId,
     withTags,
     prioritizedUserIds,
+    browsingMode,
   ]);
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
