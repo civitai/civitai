@@ -43,7 +43,16 @@ export default function ImagesInfinite({
     return removeEmpty(
       !postId && !modelVersionId && !reviewId ? { ...baseFilters, ...globalFilters } : baseFilters
     );
-  }, [globalFilters, postId, modelId, modelVersionId, username, reviewId, withTags, prioritizedUserIds]);
+  }, [
+    globalFilters,
+    postId,
+    modelId,
+    modelVersionId,
+    username,
+    reviewId,
+    withTags,
+    prioritizedUserIds,
+  ]);
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.image.getInfinite.useInfiniteQuery(filters, {

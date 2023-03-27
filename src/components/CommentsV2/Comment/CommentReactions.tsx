@@ -7,7 +7,7 @@ import React from 'react';
 
 export function CommentReactions({ comment }: { comment: InfiniteCommentV2Model }) {
   const currentUser = useCurrentUser();
-  const userReactions = comment.reactions.filter((x) => x.user.id === currentUser?.id);
+  const userReactions = comment.reactions.filter((x) => x.userId === currentUser?.id);
   const metrics = useMemo(
     (): ReactionMetrics => ({
       likeCount: comment.reactions.filter((x) => x.reaction === ReviewReactions.Like).length,
