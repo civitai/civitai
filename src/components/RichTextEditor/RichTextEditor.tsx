@@ -1,5 +1,17 @@
-import { createStyles, CSSObject, Input, InputWrapperProps, MantineSize } from '@mantine/core';
+import {
+  Button,
+  createStyles,
+  CSSObject,
+  Group,
+  Input,
+  InputWrapperProps,
+  MantineSize,
+  Stack,
+  Text,
+} from '@mantine/core';
+import { closeModal, openModal } from '@mantine/modals';
 import { Link, RichTextEditor as RTE, RichTextEditorProps } from '@mantine/tiptap';
+import { IconAlertTriangle } from '@tabler/icons';
 import Image from '@tiptap/extension-image';
 import Mention from '@tiptap/extension-mention';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -8,17 +20,18 @@ import Youtube from '@tiptap/extension-youtube';
 import { BubbleMenu, Editor, Extension, Extensions, nodePasteRule, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useEffect, useImperativeHandle, useRef } from 'react';
+import { validateThirdPartyUrl } from '~/utils/string-helpers';
 
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
 
-const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
-  sm: '30px',
-  md: '50px',
-  lg: '70px',
-  xl: '90px',
-};
+// const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
+//   sm: '30px',
+//   md: '50px',
+//   lg: '70px',
+//   xl: '90px',
+// };
 
 const mapEditorSize: Omit<Record<MantineSize, CSSObject>, 'xs'> = {
   sm: {
@@ -41,6 +54,33 @@ const useStyles = createStyles((theme) => ({
     color: theme.colors.blue[4],
   },
 }));
+
+function openLinkWhitelistRequestModal() {
+  return openModal({
+    title: (
+      <Group spacing="xs">
+        <IconAlertTriangle color="gold" />
+        <Text size="lg">Blocked URL</Text>
+      </Group>
+    ),
+    children: (
+      <Text>
+        The URL you entered is not allowed. You can submit a request to add it to the whitelist.
+        Please follow{' '}
+        <Text
+          component="a"
+          variant="link"
+          href="https://forms.gle/MzMCVA4mq3r4osv6A"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          this link
+        </Text>{' '}
+        to do so.
+      </Text>
+    ),
+  });
+}
 
 export function RichTextEditor({
   id,
@@ -97,15 +137,38 @@ export function RichTextEditor({
         ]
       : []),
     ...(addFormatting ? [Underline] : []),
-    ...(addLink ? [Link] : []),
-    // Casting width as any to be able to use `100%`
-    // since the tiptap extension API doesn't allow
-    // strings for its value
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ...(addLink
+      ? [
+          Link.extend({
+            onUpdate() {
+              const url = this.editor.getAttributes('link')?.href;
+
+              if (url) {
+                const valid = validateThirdPartyUrl(url);
+                if (!valid) {
+                  this.editor.chain().focus().extendMarkRange('link').unsetLink().run();
+                  openLinkWhitelistRequestModal();
+                }
+              }
+            },
+          }).configure({
+            validate: (url) => {
+              const valid = validateThirdPartyUrl(url);
+              if (!valid) openLinkWhitelistRequestModal();
+
+              return valid;
+            },
+          }),
+        ]
+      : []),
     ...(addMedia
       ? [
           Image,
           Youtube.configure({
+            // Casting width as any to be able to use `100%`
+            // since the tiptap extension API doesn't allow
+            // strings for its value
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             width: '100%' as any,
             addPasteHandler: false,
             modestBranding: false,

@@ -1,6 +1,8 @@
 import truncate from 'lodash/truncate';
 import slugify from 'slugify';
 
+import allowedUrls from '~/utils/allowed-third-party-urls.json';
+
 export function splitUppercase(value: string) {
   return value
     .trim()
@@ -101,3 +103,8 @@ export function titleCase(val: string) {
 export function isUUID(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
+
+export const validateThirdPartyUrl = (url: string) => {
+  const toValidate = new URL(url).origin;
+  return allowedUrls.includes(toValidate);
+};
