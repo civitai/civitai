@@ -1,4 +1,4 @@
-import { AspectRatio, createStyles, Group, Paper, Rating } from '@mantine/core';
+import { AspectRatio, Badge, Card, createStyles, Group, Paper, Rating } from '@mantine/core';
 import { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -37,7 +37,12 @@ export function ImagesAsPostsCard({
   }, [cardWidth, cover.width, cover.height]);
 
   const handleClick = () => {
-    queryUtils.image.getInfinite.setInfiniteData({ postId, modelId }, (old) => old);
+    queryUtils.image.getInfinite.setInfiniteData({ postId, modelId }, (old) => {
+      return {
+        pages: [{ items: data.images, nextCursor: null }],
+        pageParams: [],
+      };
+    });
   };
 
   return (
@@ -52,7 +57,7 @@ export function ImagesAsPostsCard({
                   <ImageGuard.Content>
                     {({ safe }) => (
                       <>
-                        <Paper>
+                        <Paper radius={0}>
                           <Group position="apart" p="xs" noWrap>
                             <UserAvatar
                               user={data.user}
@@ -66,54 +71,61 @@ export function ImagesAsPostsCard({
                             {data.review && <Rating value={data.review?.rating} readOnly />}
                           </Group>
                         </Paper>
-                        <ImageGuard.ToggleImage
-                          sx={(theme) => ({
-                            backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
-                            color: 'white',
-                            backdropFilter: 'blur(7px)',
-                            boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
-                          })}
-                        />
-                        <RoutedContextLink
-                          modal="imageDetailModal"
-                          imageId={cover.id}
-                          modelId={modelId}
-                          postId={postId}
-                          username={username}
-                          onClick={handleClick}
-                        >
-                          <>
-                            {!safe ? (
-                              <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
-                                <MediaHash {...image} />
-                              </AspectRatio>
-                            ) : (
-                              <EdgeImage
-                                src={image.url}
-                                name={image.name ?? image.id.toString()}
-                                alt={image.name ?? undefined}
-                                width={450}
-                                placeholder="empty"
-                                style={{ width: '100%', zIndex: 2, position: 'relative' }}
-                              />
-                            )}
-                            <div className={classes.footer}>
-                              <Reactions
-                                entityId={image.id}
-                                entityType="image"
-                                reactions={image.reactions}
-                                metrics={{
-                                  likeCount: image.stats?.likeCountAllTime,
-                                  dislikeCount: image.stats?.dislikeCountAllTime,
-                                  heartCount: image.stats?.heartCountAllTime,
-                                  laughCount: image.stats?.laughCountAllTime,
-                                  cryCount: image.stats?.cryCountAllTime,
-                                }}
-                                readonly={!safe}
-                              />
-                            </div>
-                          </>
-                        </RoutedContextLink>
+                        <div style={{ position: 'relative' }}>
+                          <ImageGuard.ToggleImage
+                            sx={(theme) => ({
+                              backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
+                              color: 'white',
+                              backdropFilter: 'blur(7px)',
+                              boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
+                            })}
+                          />
+                          <RoutedContextLink
+                            modal="imageDetailModal"
+                            imageId={cover.id}
+                            modelId={modelId}
+                            postId={postId}
+                            username={username}
+                            onClick={handleClick}
+                          >
+                            <>
+                              {!safe ? (
+                                <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                                  <MediaHash {...image} />
+                                </AspectRatio>
+                              ) : (
+                                <EdgeImage
+                                  src={image.url}
+                                  name={image.name ?? image.id.toString()}
+                                  alt={image.name ?? undefined}
+                                  width={450}
+                                  placeholder="empty"
+                                  style={{ width: '100%', zIndex: 2, position: 'relative' }}
+                                />
+                              )}
+                              {data && data.images.length > 1 && (
+                                <div className={classes.basicIndicator} py={4} px="xs">
+                                  {data.images.length}
+                                </div>
+                              )}
+                              <div className={classes.footer}>
+                                <Reactions
+                                  entityId={image.id}
+                                  entityType="image"
+                                  reactions={image.reactions}
+                                  metrics={{
+                                    likeCount: image.stats?.likeCountAllTime,
+                                    dislikeCount: image.stats?.dislikeCountAllTime,
+                                    heartCount: image.stats?.heartCountAllTime,
+                                    laughCount: image.stats?.laughCountAllTime,
+                                    cryCount: image.stats?.cryCountAllTime,
+                                  }}
+                                  readonly={!safe}
+                                />
+                              </div>
+                            </>
+                          </RoutedContextLink>
+                        </div>
                       </>
                     )}
                   </ImageGuard.Content>
@@ -151,5 +163,14 @@ const useStyles = createStyles((theme) => ({
     zIndex: 10,
     gap: 6,
     padding: theme.spacing.xs,
+  },
+  basicIndicator: {
+    position: 'absolute',
+    top: theme.spacing.xs,
+    right: theme.spacing.xs,
+    zIndex: 10,
+    background: theme.fn.rgba(theme.colorScheme === 'dark' ? '#000' : '#fff', 0.75),
+    padding: `0 ${theme.spacing.xs}px`,
+    borderRadius: theme.radius.sm,
   },
 }));

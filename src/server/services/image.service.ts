@@ -525,6 +525,7 @@ export const getAllImages = async ({
   if (excludedImageIds?.length)
     AND.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedImageIds)})`);
 
+  console.log('_____EXCLUDED TAG IDS______');
   // Exclude specific tags
   if (excludedTagIds?.length) {
     const OR = [
@@ -553,6 +554,7 @@ export const getAllImages = async ({
   if (!!prioritizedUserIds?.length) {
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
     orderBy = `IIF(i."userId" IN (${Prisma.join(prioritizedUserIds)}),0,1), ${orderBy}`;
+    // console.log({ orderBy, prioritizedUserIds, prismaJoin: Prisma.join(prioritizedUserIds) });
   }
 
   console.log('getAllImages start');

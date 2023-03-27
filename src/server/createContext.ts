@@ -9,10 +9,10 @@ export const parseBrowsingMode = (
   cookies: Partial<{ [key: string]: string }>,
   session: Session | null
 ) => {
-  const defaultValue = session ? BrowsingMode.NSFW : BrowsingMode.SFW;
-  if (!session) return defaultValue;
+  if (!session) return BrowsingMode.SFW;
+  if (!session.user?.showNsfw) return BrowsingMode.SFW;
   const browsingMode = parseFiltersCookie(cookies)?.browsingMode;
-  return browsingMode ?? defaultValue;
+  return browsingMode ?? BrowsingMode.SFW;
 };
 
 export const createContext = async ({

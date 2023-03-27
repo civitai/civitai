@@ -72,7 +72,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
 
   const { data: { items } = { items: [] }, isLoading } = trpc.image.getInfinite.useQuery({
     modelVersionId: version.id,
-    // prioritizedUserIds: [model.user.id],
+    prioritizedUserIds: [model.user.id],
     limit: CAROUSEL_LIMIT,
   });
 

@@ -79,10 +79,7 @@ export default function ImagesInfinite({
       {!isLoading && !images.length && (
         <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Stack>
-            <Text size="xl">There are no images for this model yet.</Text>
-            <Text color="dimmed">
-              Add a post to showcase your images generated from this model.
-            </Text>
+            <Text size="xl">There are no images to display</Text>
           </Stack>
         </Paper>
       )}
