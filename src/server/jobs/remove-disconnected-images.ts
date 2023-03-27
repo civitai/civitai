@@ -8,6 +8,7 @@ export const removeDisconnectedImages = createJob(
   'remove-disconnected-images',
   '7 1 * * *',
   async () => {
+    // TODO Justin - Adjust this to only delete images not tied to a post
     const disconnectedImages = await dbRead.image.findMany({
       where: {
         connections: {
