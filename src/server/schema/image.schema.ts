@@ -188,6 +188,7 @@ export const getInfiniteImagesSchema = z.object({
   username: usernameSchema.optional(),
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
+  prioritizedUserIds: z.array(z.number()).optional(),
   excludedImageIds: z.array(z.number()).optional(),
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),

@@ -550,6 +550,11 @@ export const getAllImages = async ({
       AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
   }
 
+  if (!!prioritizedUserIds?.length) {
+    if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
+    orderBy = `IIF(i."userId" IN (${Prisma.join(prioritizedUserIds)}),0,1), ${orderBy}`;
+  }
+
   console.log('getAllImages start');
   console.time('getAllImages');
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
