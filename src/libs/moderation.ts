@@ -63,7 +63,7 @@ export const moderationCategories: ModerationCategory[] = [
       { label: 'Female Swimwear/Underwear', value: 'female swimwear or underwear' },
       { label: 'Male Swimwear/Underwear', value: 'male swimwear or underwear' },
       { label: 'Partial Nudity', value: 'partial nudity' },
-      { label: 'Revealing Attire', value: 'revealing clothes' },
+      { label: 'Sexy Attire', value: 'revealing clothes' },
       { label: 'Sexual Situations', value: 'sexual situations' },
     ],
   },
