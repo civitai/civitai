@@ -296,7 +296,11 @@ export const getInfiniteImagesHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return await getAllImages({ ...input, userId: ctx.user?.id });
+    return await getAllImages({
+      ...input,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

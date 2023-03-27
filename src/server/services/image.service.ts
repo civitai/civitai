@@ -168,8 +168,10 @@ export const getGalleryImages = async ({
 
   // Filter to specific image connections
   if (reviewId) AND.push(Prisma.sql`ic."reviewId" = ${reviewId}`);
-  else if (modelVersionId) AND.push(Prisma.sql`ic."modelVersionId" = ${modelVersionId}`);
-  else if (modelId) AND.push(Prisma.sql`ic."modelId" = ${modelId}`);
+  else if (modelVersionId) {
+    AND.push(Prisma.sql`ic."modelVersionId" = ${modelVersionId}`);
+    if (!infinite) AND.push(Prisma.sql`ic."reviewId" IS NULL`);
+  } else if (modelId) AND.push(Prisma.sql`ic."modelId" = ${modelId}`);
   AND.push(Prisma.sql`(rev.id IS NULL OR rev."tosViolation" = false)`);
 
   let orderBy = 'i.id DESC';
@@ -583,14 +585,18 @@ export const getAllImages = async ({
   period,
   sort,
   userId,
+  isModerator,
   tags,
   generation,
   reviewId,
   withTags, // TODO.justin - return image tags when this is requested
   prioritizedUserIds,
-}: GetInfiniteImagesInput & { userId?: number }) => {
-  const AND = [Prisma.sql`i."needsReview" = false`];
+}: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean }) => {
+  const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
+
+  // If User Is Mod
+  if (!isModerator) AND.push(Prisma.sql`i."needsReview" = false`);
 
   // Filter to specific model/review content
   if (modelId || modelVersionId || reviewId) {
