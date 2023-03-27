@@ -16,6 +16,8 @@ import {
   toggleModelHide,
   toggleModelFavorite,
   getUserCosmetics,
+  acceptTOS,
+  completeOnboarding,
 } from '~/server/services/user.service';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -44,7 +46,7 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { isUUID } from '~/utils/string-helpers';
-import { refreshHiddenTagsForUser } from '~/server/services/user-cache.service';
+import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -157,6 +159,24 @@ const verifyAvatar = (avatar: string) => {
   return false;
 };
 
+export const acceptTOSHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const { id } = ctx.user;
+    await acceptTOS({ id });
+  } catch (e) {
+    throw throwDbError(e);
+  }
+};
+
+export const completeOnboardingHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const { id } = ctx.user;
+    await completeOnboarding({ id });
+  } catch (e) {
+    throw throwDbError(e);
+  }
+};
+
 export const updateUserHandler = async ({
   ctx,
   input,
@@ -179,10 +199,6 @@ export const updateUserHandler = async ({
     const payloadCosmeticIds: number[] = [];
     if (badgeId) payloadCosmeticIds.push(badgeId);
     if (nameplateId) payloadCosmeticIds.push(nameplateId);
-    if (showNsfw === false) {
-      await refreshHiddenTagsForUser({ userId: id });
-    }
-
     const updatedUser = await updateUserById({
       id,
       data: {
@@ -203,6 +219,7 @@ export const updateUserHandler = async ({
       },
     });
     if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
+    if (showNsfw === false) await refreshAllHiddenForUser({ userId: id });
 
     return updatedUser;
   } catch (error) {

@@ -199,12 +199,14 @@ export const getModelsInfiniteHandler = async ({
   });
 
   const modelVersionIds = items.flatMap((m) => m.modelVersions).map((m) => m.id);
-  const images = await getImagesForModelVersion({
-    modelVersionIds,
-    excludedTagIds: input.excludedTagIds,
-    excludedIds: await getHiddenImagesForUser({ userId: ctx.user?.id }),
-    excludedUserIds: input.excludedUserIds,
-  });
+  const images = !!modelVersionIds.length
+    ? await getImagesForModelVersion({
+        modelVersionIds,
+        excludedTagIds: input.excludedImageTagIds,
+        excludedIds: await getHiddenImagesForUser({ userId: ctx.user?.id }),
+        excludedUserIds: input.excludedUserIds,
+      })
+    : [];
 
   let nextCursor: number | undefined;
   if (items.length > input.limit) {
@@ -229,7 +231,6 @@ export const getModelsInfiniteHandler = async ({
             publishedAt,
             earlyAccessTimeframe: version.earlyAccessTimeFrame,
           });
-        if (model.nsfw && !env.SHOW_SFW_IN_NSFW) image.nsfw = true;
         return {
           ...model,
           hashes: hashes.map((hash) => hash.hash.toLowerCase()),

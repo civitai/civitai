@@ -9,6 +9,11 @@ export const getReactionsSelect = Prisma.validator<Prisma.ReviewReactionSelect>(
   },
 });
 
+export const getReactionsSelectV2 = Prisma.validator<Prisma.ReviewReactionSelect>()({
+  userId: true,
+  reaction: true,
+});
+
 export type ReactionDetails = Prisma.ReviewReactionGetPayload<typeof getReactions>;
 const getReactions = Prisma.validator<Prisma.ReviewReactionArgs>()({
   select: getReactionsSelect,

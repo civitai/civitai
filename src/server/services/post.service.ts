@@ -40,7 +40,6 @@ export const getPostsInfinite = async ({
   excludedImageIds,
   period,
   sort,
-  browsingMode,
   user,
   tags,
 }: PostsQueryInput & { user?: SessionUser }) => {
@@ -67,11 +66,6 @@ export const getPostsInfinite = async ({
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
     if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
 
-    if (browsingMode !== BrowsingMode.All) {
-      const query = { nsfw: { equals: browsingMode === BrowsingMode.NSFW } };
-      AND.push(query);
-    }
-
     // sorting
     if (sort === PostSort.MostComments)
       orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
@@ -94,13 +88,15 @@ export const getPostsInfinite = async ({
     },
   });
 
-  const images = await getImagesForPosts({
-    postIds: posts.map((x) => x.id),
-    excludedTagIds,
-    excludedUserIds,
-    excludedIds: excludedImageIds,
-    userId: user?.id,
-  });
+  const images = posts.length
+    ? await getImagesForPosts({
+        postIds: posts.map((x) => x.id),
+        excludedTagIds,
+        excludedUserIds,
+        excludedIds: excludedImageIds,
+        userId: user?.id,
+      })
+    : [];
 
   let nextCursor: number | undefined;
   if (posts.length > limit) {

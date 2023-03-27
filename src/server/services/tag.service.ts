@@ -1,5 +1,5 @@
 import { ModelStatus, Prisma } from '@prisma/client';
-import { TagVotableEntityType, VotableTag } from '~/libs/tags';
+import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
 
 import { dbWrite, dbRead } from '~/server/db/client';
@@ -10,6 +10,7 @@ import {
   GetVotableTagsSchema,
   ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
+import { getSystemTags } from '~/server/services/system-cache';
 import { userCache } from '~/server/services/user-cache.service';
 
 export const getTagWithModelCount = async ({ name }: { name: string }) => {
@@ -56,8 +57,17 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
     id: not ? { notIn: not } : undefined,
     fromTags: not ? { none: { fromTagId: { in: not } } } : undefined,
     unlisted,
-    isCategory: categories,
   };
+
+  if (categories) {
+    const systemTags = await getSystemTags();
+    const categoryTag = systemTags.find((t) => t.name === `${entityType} category`.toLowerCase());
+    if (categoryTag) {
+      where.fromTags = {
+        some: { fromTagId: categoryTag.id },
+      };
+    }
+  }
 
   const orderBy: Prisma.Enumerable<Prisma.TagOrderByWithRelationInput> = [];
   if (sort === TagSort.MostImages) orderBy.push({ rank: { imageCountAllTimeRank: 'asc' } });
@@ -77,13 +87,14 @@ export const getTags = async <TSelect extends Prisma.TagSelect = Prisma.TagSelec
 };
 
 // #region [tag voting]
+
 export const getVotableTags = async ({
   userId,
   type,
   id,
   take = 20,
 }: GetVotableTagsSchema & { userId?: number }) => {
-  const results: VotableTag[] = [];
+  const results: VotableTagModel[] = [];
   if (type === 'model') {
     const tags = await dbRead.modelTag.findMany({
       where: { modelId: id, score: { gt: 0 } },
@@ -96,7 +107,7 @@ export const getVotableTags = async ({
         downVotes: true,
       },
       orderBy: { score: 'desc' },
-      take,
+      // take,
     });
     results.push(
       ...tags.map(({ tagId, tagName, tagType, ...tag }) => ({
@@ -119,7 +130,7 @@ export const getVotableTags = async ({
     }
   } else if (type === 'image') {
     const tags = await dbRead.imageTag.findMany({
-      where: { imageId: id, score: { gt: 0 } },
+      where: { imageId: id, OR: [{ score: { gt: 0 } }, { tagType: 'Moderation' }] },
       select: {
         tagId: true,
         tagName: true,
@@ -130,7 +141,7 @@ export const getVotableTags = async ({
         downVotes: true,
       },
       orderBy: { score: 'desc' },
-      take,
+      // take,
     });
     results.push(
       ...tags.map(({ tagId, tagName, tagType, ...tag }) => ({
@@ -209,7 +220,16 @@ export const addTagVotes = async ({
     ON CONFLICT ("userId", "tagId", "${type}Id") DO UPDATE SET "vote" = ${vote}, "createdAt" = NOW()
   `);
 
-  await clearCache(userId, type);
+  // If voting up a tag
+  if (vote > 0) {
+    // Check if it's a moderation tag
+    const [{ count }] = await dbRead.$queryRawUnsafe<{ count: number }[]>(`
+      SELECT COUNT(*)::int "count" FROM "Tag"
+      WHERE ${tagSelector} IN (${tagIn}) AND "type" = 'Moderation'
+    `);
+    console.log('moderationTags', count);
+    if (count > 0) await clearCache(userId, type); // Clear cache if it is
+  }
 };
 // #endregion
 

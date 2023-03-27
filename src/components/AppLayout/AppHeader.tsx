@@ -14,6 +14,7 @@ import {
   Grid,
   Badge,
   ActionIcon,
+  Box,
 } from '@mantine/core';
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
@@ -27,6 +28,7 @@ import {
   IconLogout,
   IconMoonStars,
   IconPalette,
+  IconPhoto,
   IconPlus,
   IconQuestionCircle,
   IconSettings,
@@ -51,6 +53,8 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { UploadTracker } from '~/components/Resource/UploadTracker';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 
 const HEADER_HEIGHT = 70;
 
@@ -175,6 +179,7 @@ export function AppHeader() {
   const ref = useClickOutside(() => closeBurger());
 
   const isMuted = currentUser?.muted ?? false;
+  const features = useFeatureFlags();
 
   const links: MenuLink[] = useMemo(
     () => [
@@ -201,11 +206,21 @@ export function AppHeader() {
       },
       {
         href: `/user/${currentUser?.username}/posts`,
-        visible: !!currentUser,
+        visible: !!currentUser && features.posts,
         label: (
           <Group align="center" spacing="xs">
             <IconAlbum stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Your posts
+          </Group>
+        ),
+      },
+      {
+        href: `/user/${currentUser?.username}/images`,
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconPhoto stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            Your images
           </Group>
         ),
       },
@@ -372,7 +387,7 @@ export function AppHeader() {
                 <CivitaiLinkPopover />
               </>
             )}
-            {currentUser?.showNsfw && <BlurToggle />}
+            {currentUser?.showNsfw && <BrowsingModeIcon />}
             {currentUser && <NotificationBell />}
             <Menu
               width={260}
@@ -438,8 +453,20 @@ export function AppHeader() {
             />
             <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
               {(styles) => (
-                <Paper className={classes.dropdown} withBorder style={styles}>
+                <Paper
+                  className={classes.dropdown}
+                  withBorder
+                  shadow="md"
+                  style={{ ...styles, borderLeft: 0, borderRight: 0 }}
+                  radius={0}
+                >
                   {burgerMenuItems}
+                  {currentUser && (
+                    <Box px="md">
+                      <BrowsingModeMenu />
+                    </Box>
+                  )}
+
                   <Group p="md" position="apart" grow>
                     <ActionIcon
                       variant="default"

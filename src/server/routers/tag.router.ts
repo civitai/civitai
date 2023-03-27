@@ -1,3 +1,4 @@
+import { BrowsingMode } from '~/server/common/enums';
 import {
   addTagsHandler,
   addTagVotesHandler,
@@ -32,10 +33,20 @@ import {
 } from '~/server/trpc';
 
 const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
-  const userId = ctx.user?.id;
-  const _input = input as { not?: number[] };
-  const hidden = await getHiddenTagsForUser({ userId });
-  _input.not = [...hidden, ...(_input.not ?? [])];
+  if (ctx.browsingMode !== BrowsingMode.All) {
+    const _input = input as { not?: number[] };
+    const hidden = await getHiddenTagsForUser({ userId: ctx.user?.id });
+    _input.not = [...hidden.hiddenTags, ...hidden.moderatedTags, ...(_input.not ?? [])];
+
+    if (ctx.browsingMode === BrowsingMode.SFW) {
+      const systemHidden = await getHiddenTagsForUser({ userId: -1 });
+      _input.not = [
+        ...systemHidden.hiddenTags,
+        ...systemHidden.moderatedTags,
+        ...(_input.not ?? []),
+      ];
+    }
+  }
 
   return next({
     ctx: { user: ctx.user },

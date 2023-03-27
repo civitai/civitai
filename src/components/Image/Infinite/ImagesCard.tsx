@@ -9,6 +9,7 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { useImagesInfiniteContext } from '~/components/Image/Infinite/ImagesInfinite';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
 
 export function ImagesCard({
   data: image,
@@ -27,6 +28,13 @@ export function ImagesCard({
     const imageHeight = Math.floor(width / aspectRatio);
     return Math.min(imageHeight, 600);
   }, [cardWidth, image.width, image.height]);
+
+  const tags = useMemo(() => {
+    if (!image.tags) return undefined;
+    return image.tags.filter((x) => x.type === 'Moderation');
+  }, [image.tags]);
+
+  const hideFooter = Array.isArray(tags) && tags.length === 0;
 
   return (
     <InView>
@@ -70,21 +78,27 @@ export function ImagesCard({
                               style={{ width: '100%', zIndex: 2, position: 'relative' }}
                             />
                           )}
-                          <div className={classes.footer}>
-                            <Reactions
-                              entityId={image.id}
-                              entityType="image"
-                              reactions={image.reactions}
-                              metrics={{
-                                likeCount: image.stats?.likeCountAllTime,
-                                dislikeCount: image.stats?.dislikeCountAllTime,
-                                heartCount: image.stats?.heartCountAllTime,
-                                laughCount: image.stats?.laughCountAllTime,
-                                cryCount: image.stats?.cryCountAllTime,
-                              }}
-                              readonly={!safe}
-                            />
-                          </div>
+                          {hideFooter ? null : (
+                            <div className={classes.footer}>
+                              {!image.tags ? (
+                                <Reactions
+                                  entityId={image.id}
+                                  entityType="image"
+                                  reactions={image.reactions}
+                                  metrics={{
+                                    likeCount: image.stats?.likeCountAllTime,
+                                    dislikeCount: image.stats?.dislikeCountAllTime,
+                                    heartCount: image.stats?.heartCountAllTime,
+                                    laughCount: image.stats?.laughCountAllTime,
+                                    cryCount: image.stats?.cryCountAllTime,
+                                  }}
+                                  readonly={!safe}
+                                />
+                              ) : (
+                                <VotableTags entityType="image" entityId={image.id} tags={tags} />
+                              )}
+                            </div>
+                          )}
                         </>
                       )}
                     </ImageGuard.Content>

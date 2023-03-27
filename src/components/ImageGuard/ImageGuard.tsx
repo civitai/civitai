@@ -155,9 +155,9 @@ function ImageGuardContentProvider({
   const imageStore = useImageStore(
     useCallback((state) => state.images[image.id.toString()] ?? {}, [image.id])
   );
-
+  const userId: number | undefined = (image as any).userId ?? (image as any).user?.id;
   const showing = showConnection ?? showImage;
-  const nsfw = imageStore.nsfw ?? image.nsfw;
+  const nsfw = !!userId && userId === currentUser?.id ? false : imageStore.nsfw ?? image.nsfw;
   const nsfwWithBlur = nsfw && shouldBlur;
   const unsafe = nsfwWithBlur && !showing;
   const safe = !unsafe;
@@ -165,8 +165,8 @@ function ImageGuardContentProvider({
   const showToggleImage = !connect && nsfw;
   const showToggleConnect = !!connect && nsfw;
   const canToggleNsfw = shouldBlur;
-  // Only show the quick nsfw report if the user is logged in and is a member or moderator
-  const showReportNsfw = safe && !nsfw && !!currentUser;
+  // Only show the quick nsfw report if the user is logged in
+  const showReportNsfw = !!currentUser;
 
   return (
     <ImageGuardContentCtx.Provider
@@ -265,7 +265,7 @@ ImageGuard.ToggleImage = function ToggleImage({
   const showImage = useStore((state) => state.showingImages[image.id.toString()]);
   const toggleImage = useStore((state) => state.toggleImage);
 
-  if (!showToggleImage) return null;
+  if (!showToggleImage || !canToggleNsfw) return null;
 
   return (
     <ImageGuardPopover>
@@ -344,7 +344,7 @@ ImageGuard.ToggleConnect = function ToggleConnect({
 
   // const showToModerator = image.imageNsfw && isModerator;
   // if (!connect || (!image.nsfw && !showToModerator)) return null;
-  if (!showToggleConnect) return null;
+  if (!showToggleConnect || !canToggleNsfw) return null;
 
   const showing = showConnect ?? showImage;
   return (

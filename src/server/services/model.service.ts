@@ -57,7 +57,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     rating,
     favorites,
     hidden,
-    browsingMode,
     excludedTagIds,
     excludedUserIds,
     excludedIds,
@@ -110,7 +109,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     });
   }
   if (excludedUserIds && excludedUserIds.length && !username) {
-    AND.push({ user: { id: { notIn: excludedUserIds } } });
+    AND.push({ userId: { notIn: excludedUserIds } });
   }
   if (excludedTagIds && excludedTagIds.length && !username) {
     AND.push({
@@ -129,17 +128,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     AND.push({ OR: TypeOr });
   }
 
-  if (canViewNsfw && !browsingMode) browsingMode = BrowsingMode.All;
-  else if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
-
   const where: Prisma.ModelWhereInput = {
     tagsOnModels: tagname ?? tag ? { some: { tag: { name: tagname ?? tag } } } : undefined,
     user: username || user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
-    nsfw:
-      browsingMode === BrowsingMode.All
-        ? undefined
-        : { equals: browsingMode === BrowsingMode.NSFW },
     rank: rating
       ? {
           AND: [{ ratingAllTime: { gte: rating } }, { ratingAllTime: { lt: rating + 1 } }],
@@ -154,24 +146,20 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     modelVersions: { some: { baseModel: baseModels?.length ? { in: baseModels } : undefined } },
   };
 
+  const orderBy: Prisma.ModelOrderByWithRelationInput = { rank: { newRank: 'asc' } };
+  if (sort === ModelSort.HighestRated) orderBy.rank = { [`rating${period}Rank`]: 'asc' };
+  else if (sort === ModelSort.MostLiked) orderBy.rank = { [`favoriteCount${period}Rank`]: 'asc' };
+  else if (sort === ModelSort.MostDownloaded)
+    orderBy.rank = { [`downloadCount${period}Rank`]: 'asc' };
+  else if (sort === ModelSort.MostDiscussed)
+    orderBy.rank = { [`commentCount${period}Rank`]: 'asc' };
+
   const items = await dbRead.model.findMany({
     take,
     skip,
     where,
     cursor: cursor ? { id: cursor } : undefined,
-    orderBy: [
-      ...(sort === ModelSort.HighestRated ? [{ rank: { [`rating${period}Rank`]: 'asc' } }] : []),
-      ...(sort === ModelSort.MostLiked
-        ? [{ rank: { [`favoriteCount${period}Rank`]: 'asc' } }]
-        : []),
-      ...(sort === ModelSort.MostDownloaded
-        ? [{ rank: { [`downloadCount${period}Rank`]: 'asc' } }]
-        : []),
-      ...(sort === ModelSort.MostDiscussed
-        ? [{ rank: { [`commentCount${period}Rank`]: 'asc' } }]
-        : []),
-      { rank: { newRank: 'asc' } },
-    ],
+    orderBy,
     select,
   });
 
@@ -346,7 +334,7 @@ export const createModel = async ({
             status: data.status,
             files: files.length > 0 ? { create: files } : undefined,
             images: {
-              create: images.map(({ tags = [], ...image }, index) => ({
+              create: images.map(({ ...image }, index) => ({
                 index,
                 image: {
                   create: {
@@ -356,16 +344,16 @@ export const createModel = async ({
                     generationProcess: image.meta
                       ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
                       : null,
-                    tags: {
-                      create: tags.map((tag) => ({
-                        tag: {
-                          connectOrCreate: {
-                            where: { id: tag.id },
-                            create: { ...tag, target: [TagTarget.Image] },
-                          },
-                        },
-                      })),
-                    },
+                    // tags: {
+                    //   create: tags.map((tag) => ({
+                    //     tag: {
+                    //       connectOrCreate: {
+                    //         where: { id: tag.id },
+                    //         create: { ...tag, target: [TagTarget.Image] },
+                    //       },
+                    //     },
+                    //   })),
+                    // },
                   } as Prisma.ImageUncheckedCreateWithoutImagesOnModelsInput,
                 },
               })),

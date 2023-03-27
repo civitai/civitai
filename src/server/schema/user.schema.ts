@@ -6,7 +6,7 @@ import { getAllQuerySchema } from '~/server/schema/base.schema';
 
 export const usernameSchema = z
   .string()
-  .min(3, 'Your username must be at least 3 characters long')
+  // .min(3, 'Your username must be at least 3 characters long')
   .regex(/^[A-Za-z0-9_]*$/, 'The "username" field can only contain letters, numbers, and _.')
   .transform((v) => v.trim());
 

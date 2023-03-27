@@ -4,6 +4,7 @@ import { dbWrite } from '~/server/db/client';
 import { Prisma, TagTarget, TagType } from '@prisma/client';
 import { auditMetaData } from '~/utils/image-metadata';
 import { deleteImageById } from '~/server/services/image.service';
+import { topLevelModerationCategories } from '~/libs/moderation';
 
 const tagSchema = z.object({
   tag: z.string().transform((x) => x.toLowerCase().trim()),
@@ -16,6 +17,10 @@ const bodySchema = z.object({
   tags: z.array(tagSchema).optional(),
 });
 const tagCache: Record<string, number> = {};
+
+function isModerationCategory(tag: string) {
+  return topLevelModerationCategories.includes(tag);
+}
 
 export default WebhookEndpoint(async function imageTags(req, res) {
   if (req.method !== 'POST')
@@ -96,10 +101,10 @@ export default WebhookEndpoint(async function imageTags(req, res) {
   // Add new automated tags to image
   try {
     await dbWrite.$executeRawUnsafe(`
-      INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated")
+      INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated", "disabled")
       VALUES ${tags
         .filter((x) => x.id)
-        .map((x) => `(${imageId}, ${x.id}, ${x.confidence}, true)`)
+        .map((x) => `(${imageId}, ${x.id}, ${x.confidence}, true, ${isModerationCategory(x.tag)})`)
         .join(', ')}
       ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
     `);

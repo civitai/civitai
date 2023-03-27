@@ -48,12 +48,12 @@ export function ImageFiltersDropdown() {
   return (
     <FiltersDropdown count={count}>
       <Stack spacing={4}>
-        {showNSFWToggle && (
+        {/* {showNSFWToggle && (
           <>
             <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} />
             <BrowsingModeFilter />
           </>
-        )}
+        )} */}
         <Divider label="Generation process" labelProps={{ weight: 'bold' }} />
         <Chip.Group
           spacing={4}

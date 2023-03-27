@@ -27,9 +27,9 @@ export function ResourceReviewCard({ data }: { data: ResourceReviewInfiniteModel
           </Group>
         )}
         {data.details && (
-          <div style={{ maxHeight: 200, overflow: 'hidden' }}>
+          <ScrollArea.Autosize maxHeight={200}>
             <RenderHtml html={data.details} sx={(theme) => ({ fontSize: theme.fontSizes.sm })} />
-          </div>
+          </ScrollArea.Autosize>
         )}
       </Stack>
       <Card.Section>

@@ -11,14 +11,15 @@ import {
   Badge,
 } from '@mantine/core';
 import { IconRating18Plus } from '@tabler/icons';
+import { debounce } from 'lodash';
 import React from 'react';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { HiddenTagsSection } from '~/components/Account/HiddenTagsSection';
 import { HiddenUsersSection } from '~/components/Account/HiddenUsersSection';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { moderationCategories, ModerationCategory } from '~/libs/moderation';
 import { reloadSession } from '~/utils/next-auth-helpers';
-import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
+import { invalidateModeratedContentDebounced } from '~/utils/query-invalidation-utils';
 import { trpc } from '~/utils/trpc';
 
 export function ModerationCard({
@@ -40,32 +41,45 @@ export function ModerationCard({
   });
 
   const { mutate } = trpc.moderation.updatePreferences.useMutation({
-    async onMutate(changes) {
-      setPreferences(changes);
-    },
     async onSuccess() {
       if (!instantRefresh) return;
-      await invalidateModeratedContent(utils);
+      invalidateModeratedContentDebounced(utils, ['tag']);
     },
   });
+  const mutateDebounced = useMemo(() => debounce(mutate, 500), [mutate]);
 
   const changePreference = (name: string, value: boolean, children?: ModerationCategory[]) => {
     const changes = { [name]: value };
-    if (children && !value)
-      children.forEach((child) => {
-        changes[child.value] = value;
-      });
+    if (children) {
+      const isEmpty = !children.some((x) => preferences[x.value]);
+      if (isEmpty) for (const child of children) changes[child.value] = value;
+    }
 
-    mutate({ ...preferences, ...changes });
+    const values = { ...preferences, ...changes };
+    setPreferences(values);
+    mutateDebounced(values);
   };
 
   const { mutate: updateUser } = trpc.user.update.useMutation({
     async onMutate(changes) {
+      // If all preferences are false, set them all to true
+      if (changes.showNsfw) {
+        const isEmpty = !moderationCategories.some((x) => preferences[x.value] && !x.hidden);
+        if (isEmpty) {
+          const values = { ...preferences };
+          for (const category of moderationCategories) {
+            values[category.value] = true;
+            for (const child of category.children ?? []) values[child.value] = true;
+          }
+          setPreferences(values);
+          mutateDebounced(values);
+        }
+      }
       setShowNsfw(changes.showNsfw ?? false);
     },
     async onSuccess() {
       if (!instantRefresh) return;
-      await invalidateModeratedContent(utils);
+      invalidateModeratedContentDebounced(utils, ['tag']);
       await reloadSession();
     },
   });

@@ -1,4 +1,4 @@
-import { useRef, createContext, useContext } from 'react';
+import { useRef, createContext, useContext, useEffect } from 'react';
 import { ImageGenerationProcess, MetricTimeframe } from '@prisma/client';
 import { BrowsingMode, ImageSort, ModelSort, PostSort, QuestionSort } from '~/server/common/enums';
 import { setCookie } from '~/utils/cookies-helpers';
@@ -50,14 +50,16 @@ const filterEntitySchema = z.object({
 
 export type FiltersInput = z.infer<typeof filtersSchema>;
 const filtersSchema = filterEntitySchema.extend({
-  browsingMode: z.nativeEnum(BrowsingMode).default(BrowsingMode.All),
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
 });
 
 export const parseFiltersCookie = (cookies: Partial<{ [key: string]: string }>) => {
   const cookieValue = cookies['filters'];
   const parsedFilters = cookieValue ? JSON.parse(decodeURIComponent(cookieValue)) : {};
-  return filtersSchema.parse(parsedFilters);
+  const result = filtersSchema.safeParse(parsedFilters);
+  if (result.success) return result.data;
+  else return filtersSchema.parse({});
 };
 
 type FiltersState = FiltersInput & {
@@ -101,6 +103,7 @@ export const FiltersProvider = ({
   const storeRef = useRef<FilterStore>();
   if (!storeRef.current) {
     if (!currentUser?.showNsfw) value.browsingMode = BrowsingMode.SFW;
+    else value.browsingMode = BrowsingMode.NSFW;
     storeRef.current = createFilterStore({ initialValues: value });
   }
 
@@ -108,9 +111,8 @@ export const FiltersProvider = ({
 };
 
 const useSharedFilters = (type: FilterSubTypes) => {
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
   const period = useFiltersContext((state) => state.period);
-  return { browsingMode, period };
+  return { period };
 };
 
 export const useModelFilters = () => {

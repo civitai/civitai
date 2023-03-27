@@ -43,7 +43,8 @@ import {
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { checkFileExists, getS3Client } from '~/utils/s3-utils';
 import { prepareFile } from '~/utils/file-helpers';
-import { getAllHiddenForUser } from '~/server/services/user-cache.service';
+import { getAllHiddenForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
+import { BrowsingMode } from '~/server/common/enums';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -91,13 +92,28 @@ const checkFilesExistence = middleware(async ({ input, ctx, next }) => {
 });
 
 const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
-  const userId = ctx.user?.id;
-  const _input = input as GetAllModelsOutput;
-  const hidden = await getAllHiddenForUser({ userId });
-  _input.excludedTagIds = [...hidden.tags, ...(_input.excludedTagIds ?? [])];
-  _input.excludedIds = [...hidden.models, ...(_input.excludedIds ?? [])];
-  _input.excludedUserIds = [...hidden.users, ...(_input.excludedUserIds ?? [])];
-  _input.excludedImageIds = [...hidden.images, ...(_input.excludedImageIds ?? [])];
+  if (ctx.browsingMode !== BrowsingMode.All) {
+    const _input = input as GetAllModelsOutput;
+    const hidden = await getAllHiddenForUser({ userId: ctx.user?.id });
+    _input.excludedImageTagIds = [
+      ...hidden.tags.moderatedTags,
+      ...hidden.tags.hiddenTags,
+      ...(_input.excludedImageTagIds ?? []),
+    ];
+    _input.excludedTagIds = [...hidden.tags.hiddenTags, ...(_input.excludedTagIds ?? [])];
+    _input.excludedIds = [...hidden.models, ...(_input.excludedIds ?? [])];
+    _input.excludedUserIds = [...hidden.users, ...(_input.excludedUserIds ?? [])];
+    _input.excludedImageIds = [...hidden.images, ...(_input.excludedImageIds ?? [])];
+    if (ctx.browsingMode === BrowsingMode.SFW) {
+      const systemHidden = await getHiddenTagsForUser({ userId: -1 });
+      _input.excludedImageTagIds = [
+        ...systemHidden.moderatedTags,
+        ...systemHidden.hiddenTags,
+        ...(_input.excludedImageTagIds ?? []),
+      ];
+      _input.excludedTagIds = [...systemHidden.hiddenTags, ...(_input.excludedTagIds ?? [])];
+    }
+  }
 
   return next({
     ctx: { user: ctx.user },
@@ -110,10 +126,7 @@ export const modelRouter = router({
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
     .use(applyUserPreferences)
     .query(getModelsInfiniteHandler),
-  getAllPagedSimple: publicProcedure
-    .input(getAllModelsSchema)
-    .use(applyUserPreferences)
-    .query(getModelsPagedSimpleHandler),
+  getAllPagedSimple: publicProcedure.input(getAllModelsSchema).query(getModelsPagedSimpleHandler),
   getAllWithVersions: publicProcedure
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
     .query(getModelsWithVersionsHandler),

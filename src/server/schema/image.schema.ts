@@ -81,7 +81,7 @@ export const imageSchema = z.object({
   width: z.number().nullish(),
   nsfw: z.boolean().optional(),
   analysis: imageAnalysisSchema.optional(),
-  tags: z.array(tagSchema).optional(),
+  // tags: z.array(tagSchema).optional(),
   needsReview: z.boolean().optional(),
   mimeType: z.string().optional(),
   sizeKB: z.number().optional(),
@@ -189,11 +189,11 @@ export const getInfiniteImagesSchema = z.object({
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
   excludedImageIds: z.array(z.number()).optional(),
-  browsingMode: z.nativeEnum(BrowsingMode).optional(),
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
   tags: z.array(z.number()).optional(),
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
+  withTags: z.boolean().optional(),
   prioritizedUserIds: z.number().array().optional(),
 });
 

@@ -14,9 +14,11 @@ import {
   Stack,
   Text,
   Title,
+  useMantineTheme,
 } from '@mantine/core';
 import { useListState } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
+import { TagType } from '@prisma/client';
 import {
   IconCheck,
   IconInfoCircle,
@@ -58,7 +60,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
   return { props: {} };
 };
 
-const REMOVABLE_TAGS = ['child', 'teen'];
+const REMOVABLE_TAGS = ['child', 'teen', 'baby', 'girl', 'boy'];
 const ADDABLE_TAGS = ['anime', 'cartoon', 'comics', 'manga', 'explicit nudity', 'suggestive'];
 
 export default function Images() {
@@ -170,6 +172,7 @@ export default function Images() {
                         automated: false,
                         needsReview: false,
                         isCategory: false,
+                        type: TagType.UserGenerated,
                       })),
                     ],
                   }
@@ -380,6 +383,7 @@ function ImageGridItem({
     const imageHeight = Math.floor(width / aspectRatio);
     return Math.min(imageHeight, 600);
   }, [itemWidth, image.width, image.height]);
+  const theme = useMantineTheme();
 
   return (
     <Card
@@ -457,7 +461,14 @@ function ImageGridItem({
       </Card.Section>
       <Group pt="xs" spacing={4}>
         {image.tags.map((tag) => (
-          <Badge key={tag.id} variant="filled" color="gray" pr={0}>
+          <Badge
+            key={tag.id}
+            variant={
+              tag.type == 'Moderation' || theme.colorScheme === 'light' ? undefined : 'filled'
+            }
+            color={tag.type == 'Moderation' ? 'red' : 'gray'}
+            pr={0}
+          >
             <Group spacing={0}>
               {tag.name}
               <ActionIcon

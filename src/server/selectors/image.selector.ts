@@ -6,7 +6,7 @@ import { ImageUploadProps } from '~/server/schema/image.schema';
 import { isTag } from '~/server/schema/tag.schema';
 import { getNeedsReview } from '~/utils/image-metadata';
 
-import { getReactionsSelect } from './reaction.selector';
+import { getReactionsSelectV2 } from './reaction.selector';
 import { simpleTagSelect } from './tag.selector';
 import { userWithCosmeticsSelect } from './user.selector';
 
@@ -19,11 +19,16 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   height: true,
   hash: true,
   meta: true,
+  userId: true,
   generationProcess: true,
   needsReview: true,
   scannedAt: true,
   tags: {
-    select: { tag: { select: simpleTagSelect }, automated: true, needsReview: true },
+    select: {
+      tag: { select: { ...simpleTagSelect, type: true } },
+      automated: true,
+      needsReview: true,
+    },
     where: { disabled: false },
   },
 });
@@ -60,7 +65,7 @@ export const imageGallerySelect = ({ user }: { user?: SessionUser }) =>
     reactions: {
       where: { userId: user?.id },
       take: !user?.id ? 0 : undefined,
-      select: getReactionsSelect,
+      select: getReactionsSelectV2,
     },
   });
 
@@ -76,18 +81,18 @@ export const prepareCreateImage = (image: ImageUploadProps) => {
     generationProcess: image.meta
       ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
       : null,
-    tags: image.tags
-      ? {
-          create: image.tags.map((tag) => ({
-            tag: {
-              connectOrCreate: {
-                where: { id: tag.id },
-                create: { ...tag, target: [TagTarget.Image] },
-              },
-            },
-          })),
-        }
-      : undefined,
+    // tags: image.tags
+    //   ? {
+    //       create: image.tags.map((tag) => ({
+    //         tag: {
+    //           connectOrCreate: {
+    //             where: { id: tag.id },
+    //             create: { ...tag, target: [TagTarget.Image] },
+    //           },
+    //         },
+    //       })),
+    //     }
+    //   : undefined,
     resources: undefined, // TODO.posts - this is a temp value to stop typescript from complaining
   };
 
@@ -95,27 +100,27 @@ export const prepareCreateImage = (image: ImageUploadProps) => {
 };
 
 export const prepareUpdateImage = (image: ImageUploadProps) => {
-  const tags = image.tags?.map((tag) => ({ ...tag, name: tag.name.toLowerCase().trim() }));
+  // const tags = image.tags?.map((tag) => ({ ...tag, name: tag.name.toLowerCase().trim() }));
   const payload: Prisma.ImageUpdateInput = {
     ...image,
     meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-    tags: tags
-      ? {
-          deleteMany: {
-            NOT: tags.filter(isTag).map(({ id }) => ({ tagId: id })),
-          },
-          connectOrCreate: tags.filter(isTag).map((tag) => ({
-            where: { tagId_imageId: { tagId: tag.id, imageId: image.id as number } },
-            create: { tagId: tag.id },
-          })),
-          // user's can't create image tags right now
-          // create: tags.filter(isNotTag).map((tag) => ({
-          //   tag: {
-          //     create: { ...tag, target: [TagTarget.Image] },
-          //   },
-          // })),
-        }
-      : undefined,
+    // tags: tags
+    //   ? {
+    //       deleteMany: {
+    //         NOT: tags.filter(isTag).map(({ id }) => ({ tagId: id })),
+    //       },
+    //       connectOrCreate: tags.filter(isTag).map((tag) => ({
+    //         where: { tagId_imageId: { tagId: tag.id, imageId: image.id as number } },
+    //         create: { tagId: tag.id },
+    //       })),
+    //       // user's can't create image tags right now
+    //       // create: tags.filter(isNotTag).map((tag) => ({
+    //       //   tag: {
+    //       //     create: { ...tag, target: [TagTarget.Image] },
+    //       //   },
+    //       // })),
+    //     }
+    //   : undefined,
     resources: undefined, // TODO.posts - this is a temp value to stop typescript from complaining
   };
   return payload;

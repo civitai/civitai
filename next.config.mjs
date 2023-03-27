@@ -22,6 +22,8 @@ export default defineNextConfig({
   eslint: {
     ignoreDuringBuilds: true,
   },
+  generateEtags: false,
+  compress: false,
   images: {
     domains: [
       's3.us-west-1.wasabisys.com',
@@ -33,6 +35,12 @@ export default defineNextConfig({
   experimental: {
     // scrollRestoration: true,
     largePageDataBytes: 512 * 100000,
+    modularizeImports: {
+      'lodash': {
+        transform: 'lodash/{{member}}',
+        preventFullImport: true
+      }
+    }
   },
   poweredByHeader: false,
   redirects: async () => {

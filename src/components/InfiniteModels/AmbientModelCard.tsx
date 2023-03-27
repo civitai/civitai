@@ -163,10 +163,11 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
   const theme = useMantineTheme();
   const { push } = useRouter();
 
-  const { id, image, name, rank, nsfw, user, locked } = data ?? {};
+  const { id, image, name, rank, user, locked } = data ?? {};
 
   const [loading, setLoading] = useState(false);
-  const { ref, inView } = useInView();
+  // const { ref, inView } = useInView();
+  const inView = true;
 
   const {
     data: { Favorite: favoriteModels = [], Hide: hiddenModels = [] } = { Favorite: [], Hide: [] },
@@ -282,7 +283,22 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
           openContext('report', { entityType: ReportEntity.Model, entityId: id });
         }}
       >
-        Report
+        Report Resource
+      </Menu.Item>
+    </LoginRedirect>
+  );
+
+  const reportImageOption = (
+    <LoginRedirect reason="report-content" key="report-image">
+      <Menu.Item
+        icon={<IconFlag size={14} stroke={1.5} />}
+        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openContext('report', { entityType: ReportEntity.Image, entityId: data.image.id });
+        }}
+      >
+        Report Image
       </Menu.Item>
     </LoginRedirect>
   );
@@ -306,6 +322,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
       <HideModelButton key="hide-model" as="menu-item" modelId={id} />,
       <HideUserButton key="hide-button" as="menu-item" userId={user.id} />,
       reportOption,
+      reportImageOption,
     ]);
   if (currentUser) contextMenuItems.splice(2, 0, blockTagsOption);
 
@@ -325,7 +342,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
     >
       <Link href={`/models/v2/${id}/${slugit(name)}`} passHref>
         <MasonryCard
-          ref={ref}
+          // ref={ref}
           withBorder
           component="a"
           shadow="sm"
