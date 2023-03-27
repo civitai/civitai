@@ -465,16 +465,17 @@ export const getAllImages = async ({
   generation,
   reviewId,
   withTags, // TODO.justin - return image tags when this is requested
+  prioritizedUserIds,
 }: GetInfiniteImagesInput & { userId?: number }) => {
   const AND = [Prisma.sql`i."needsReview" = false`];
   let orderBy: string;
 
   // Filter to specific model/review content
   if (modelId || modelVersionId || reviewId) {
-    const irhAnd = ['irr."imageId" = i.id'];
-    if (modelVersionId) irhAnd.push(`irr."modelVersionId" = ${modelVersionId}`);
-    if (modelId) irhAnd.push(`mv."modelId" = ${modelId}`);
-    if (reviewId) irhAnd.push(`re."id" = ${reviewId}`);
+    const irhAnd = [Prisma.sql`irr."imageId" = i.id`];
+    if (modelVersionId) irhAnd.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
+    if (modelId) irhAnd.push(Prisma.sql`mv."modelId" = ${modelId}`);
+    if (reviewId) irhAnd.push(Prisma.sql`re."id" = ${reviewId}`);
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "ImageResource" irr
       ${Prisma.raw(modelId ? 'JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"' : '')}
@@ -547,6 +548,11 @@ export const getAllImages = async ({
     const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
     if (cursorProp)
       AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
+  }
+
+  if (!!prioritizedUserIds?.length) {
+    if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
+    orderBy = `IIF(i."userId" IN (${Prisma.join(prioritizedUserIds)}),0,1), ${orderBy}`;
   }
 
   console.log('getAllImages start');
