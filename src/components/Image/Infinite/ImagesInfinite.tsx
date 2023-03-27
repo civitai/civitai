@@ -7,7 +7,7 @@ import { useImageFilters } from '~/providers/FiltersProvider';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
-import { ImageSort } from '~/server/common/enums';
+import { BrowsingMode, ImageSort } from '~/server/common/enums';
 
 type ImagesInfiniteState = {
   modelId?: number;

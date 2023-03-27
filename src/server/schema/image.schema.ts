@@ -195,7 +195,6 @@ export const getInfiniteImagesSchema = z.object({
   tags: z.array(z.number()).optional(),
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
   withTags: z.boolean().optional(),
-  prioritizedUserIds: z.number().array().optional(),
   browsingMode: z.nativeEnum(BrowsingMode).optional(),
 });
 
