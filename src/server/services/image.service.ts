@@ -469,14 +469,13 @@ export const getAllImages = async ({
 }: GetInfiniteImagesInput & { userId?: number }) => {
   const AND = [Prisma.sql`i."needsReview" = false`];
   let orderBy: string;
-  let hasCursor = false;
 
   // Filter to specific model/review content
   if (modelId || modelVersionId || reviewId) {
-    const irhAnd = ['irr."imageId" = i.id'];
-    if (modelVersionId) irhAnd.push(`irr."modelVersionId" = ${modelVersionId}`);
-    if (modelId) irhAnd.push(`mv."modelId" = ${modelId}`);
-    if (reviewId) irhAnd.push(`re."id" = ${reviewId}`);
+    const irhAnd = [Prisma.sql`irr."imageId" = i.id`];
+    if (modelVersionId) irhAnd.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
+    if (modelId) irhAnd.push(Prisma.sql`mv."modelId" = ${modelId}`);
+    if (reviewId) irhAnd.push(Prisma.sql`re."id" = ${reviewId}`);
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "ImageResource" irr
       ${Prisma.raw(modelId ? 'JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"' : '')}
@@ -508,18 +507,14 @@ export const getAllImages = async ({
   }
 
   // Filter to a specific post
-  if (prioritizedUserIds?.length) {
-    orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), 0, 1), i."index"`;
-  } else if (postId) {
+  if (postId) {
     AND.push(Prisma.sql`i."postId" = ${postId}`);
     orderBy = `i."index"`;
-    hasCursor = true;
   } else {
     // Sort by selected sort
     if (sort === ImageSort.MostComments) orderBy = `r."commentCount${period}Rank"`;
     else if (sort === ImageSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
     else orderBy = `i."id" DESC`;
-    hasCursor = true;
   }
 
   // Exclude specific users
@@ -585,7 +580,7 @@ export const getAllImages = async ({
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
       ${Prisma.raw(!userId ? 'null' : 'ir.reactions')} "reactions",
-      ${Prisma.raw(hasCursor && cursorProp ? cursorProp : 'null')} "cursorId"
+      ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
     ${Prisma.raw(cursorProp?.startsWith('r.') ? 'JOIN "ImageRank" r ON r."imageId" = i.id' : '')}
