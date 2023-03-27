@@ -156,7 +156,7 @@ export function ModerationCard({
                 {preferences && preferences[category.value] && !!category.children?.length && (
                   <Card.Section inheritPadding py="md">
                     <Text size="xs" weight={500} mb="xs" mt={-8} color="dimmed">
-                      Toggle all that your are comfortable seeing
+                      Toggle all that you are comfortable seeing
                     </Text>
                     <Group spacing={5}>
                       {category.children
