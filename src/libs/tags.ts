@@ -1,5 +1,6 @@
 import { TagType } from '@prisma/client';
 import { z } from 'zod';
+import { moderationDisplayNames } from '~/libs/moderation';
 
 export const taggableEntitySchema = z.enum(['model', 'image', 'tag']);
 export type TaggableEntityType = z.infer<typeof taggableEntitySchema>;
@@ -16,3 +17,10 @@ export type VotableTagModel = {
   automated?: boolean;
   vote?: number;
 };
+
+const tagNameOverrides = {
+  ...moderationDisplayNames,
+};
+export function getTagDisplayName(name: string) {
+  return tagNameOverrides[name] || name;
+}

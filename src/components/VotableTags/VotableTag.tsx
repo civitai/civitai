@@ -6,6 +6,7 @@ import { useCallback, useRef } from 'react';
 import { TagType } from '@prisma/client';
 import { IconArrowBigDown, IconArrowBigTop } from '@tabler/icons';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
+import { getTagDisplayName } from '~/libs/tags';
 
 type VotableTagProps = VotableTagConnectorInput & {
   tagId: number;
@@ -107,7 +108,7 @@ export function VotableTag({
             />
           </ActionIcon>
         </LoginPopover>
-        <span>{name}</span>
+        <span>{getTagDisplayName(name)}</span>
         <LoginPopover>
           <ActionIcon variant="transparent" size="sm" onClick={handleDownvote}>
             <IconArrowBigDown
