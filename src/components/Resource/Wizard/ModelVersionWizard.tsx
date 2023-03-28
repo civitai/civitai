@@ -54,6 +54,7 @@ export function ModelVersionWizard({ data }: Props) {
   }, [id, activeStep, modelVersion]);
 
   const editing = !!modelVersion?.id;
+  const postId = modelVersion?.posts?.[0]?.id;
 
   return (
     <Container size="sm">
@@ -109,13 +110,14 @@ export function ModelVersionWizard({ data }: Props) {
                 </Button>
                 <Button
                   onClick={() => {
-                    const isUploadingFiles =
-                      useS3UploadStore
-                        .getState()
-                        .getStatus((item) => item.meta?.versionId === modelVersion?.id).uploading >
-                      0;
+                    const { uploading = 0, success = 0 } = useS3UploadStore
+                      .getState()
+                      .getStatus((item) => item.meta?.versionId === modelVersion?.id);
 
-                    if (!isUploadingFiles) {
+                    const showConfirmModal =
+                      (uploading > 0 && success === 0) || !modelVersion?.files.length;
+
+                    if (showConfirmModal) {
                       return openConfirmModal({
                         title: (
                           <Group spacing="xs">
@@ -138,11 +140,11 @@ export function ModelVersionWizard({ data }: Props) {
               </Group>
             </Stack>
           </Stepper.Step>
-          <Stepper.Step label="Create a post">
+          <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
             <Stack spacing="xl">
-              <Title order={3}>Create your post</Title>
+              <Title order={3}>{postId ? 'Edit post' : 'Create your post'}</Title>
               {modelVersion && (
-                <PostEditWrapper postId={modelVersion.posts?.[0]?.id}>
+                <PostEditWrapper postId={postId}>
                   <PostUpsertForm
                     modelVersionId={modelVersion.id}
                     modelId={modelVersion.model.id}

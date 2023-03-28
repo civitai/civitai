@@ -4,7 +4,7 @@ import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
-import { BrowsingMode, ModelSort } from '~/server/common/enums';
+import { ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
@@ -645,4 +645,30 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
   const count = await dbRead.model.count({ where });
 
   return getPagingData({ items, count }, take, page);
+};
+
+export const unpublishModelById = async ({
+  id,
+  includeVersions = false,
+}: GetByIdInput & { includeVersions?: boolean }) => {
+  const model = await dbWrite.model.update({
+    where: { id },
+    data: {
+      status: ModelStatus.Draft,
+      publishedAt: null,
+      modelVersions: includeVersions
+        ? {
+            updateMany: {
+              where: { status: ModelStatus.Published },
+              data: {
+                status: ModelStatus.Draft,
+              },
+            },
+          }
+        : undefined,
+    },
+    select: { id: true },
+  });
+
+  return model;
 };

@@ -97,14 +97,22 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
   const setPublishedAt = useEditPostContext((state) => state.setPublishedAt);
 
   const getFileUploadStatus = useS3UploadStore((state) => state.getStatus);
-  const { uploading } = getFileUploadStatus((item) => item.meta?.versionId === modelVersionId);
+  const { uploading = 0 } = getFileUploadStatus((item) => item.meta?.versionId === modelVersionId);
   const isUploading = uploading > 0;
+
+  const { data: modelVersion } = trpc.modelVersion.getById.useQuery({
+    id: modelVersionId,
+    withFiles: true,
+  });
 
   const { mutate, isLoading } = trpc.post.update.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
 
-  const canPublish =
+  const canSave =
     tags.filter((x) => !!x.id).length > 0 && images.filter((x) => x.type === 'image').length > 0;
+  const canPublish = !isUploading && !!modelVersion?.files?.length;
+
+  console.log({ canPublish, canSave, isUploading, modelVersion });
 
   const handlePublish = () => {
     if (!currentUser) return;
@@ -117,6 +125,7 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
           setPublishedAt(publishedAt);
           await queryUtils.model.getById.invalidate({ id: modelId });
           await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId });
+          await queryUtils.image.getInfinite.invalidate();
           await router.replace(`/models/v2/${modelId}?modelVersionId=${modelVersionId}`);
         },
       }
@@ -133,7 +142,7 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
         </Group>
       ),
       children:
-        'Files for this version are still uploading. Your version will be saved as draft until all files are uploaded. We will notify you when it is ready to be published.',
+        'Files for this version are missing or still uploading. Your version will be saved as draft until all files are uploaded. We will notify you when it is ready to be published.',
       onConfirm: () => {
         const publishedAt = new Date();
         mutate(
@@ -143,6 +152,7 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
               setPublishedAt(publishedAt);
               await queryUtils.model.getById.invalidate({ id: modelId });
               await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId });
+              await queryUtils.image.getInfinite.invalidate();
               await router.replace(`/models/v2/${modelId}?modelVersionId=${modelVersionId}`);
             },
           }
@@ -155,7 +165,7 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
     <Stack spacing={4}>
       {!publishedAt && (
         <Tooltip
-          disabled={canPublish}
+          disabled={canSave}
           label="At least one tag is required in order to publish this post to the community"
           multiline
           width={260}
@@ -163,12 +173,12 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
         >
           <div style={{ display: 'flex', flex: 2 }}>
             <Button
-              disabled={!canPublish}
+              disabled={!canSave}
               style={{ flex: 1 }}
-              onClick={isUploading ? handleSave : handlePublish}
+              onClick={canPublish ? handlePublish : handleSave}
               loading={isLoading}
             >
-              {isUploading ? 'Save' : 'Publish'}
+              {canPublish ? 'Publish' : 'Save'}
             </Button>
           </div>
         </Tooltip>

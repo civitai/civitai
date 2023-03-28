@@ -161,7 +161,7 @@ export function ModelCarousel({
                     imageId={image.id}
                     modelId={modelId}
                     modelVersionId={modelVersionId}
-                    // prioritizedUserIds={[modelUserId]}
+                    prioritizedUserIds={[modelUserId]}
                     limit={limit}
                   >
                     <ImagePreview

@@ -4,11 +4,11 @@ import {
   Box,
   Button,
   Card,
+  Center,
   Grid,
   Group,
   Menu,
   Modal,
-  Rating,
   Stack,
   Text,
   Title,
@@ -19,7 +19,7 @@ import { ModelStatus } from '@prisma/client';
 import { IconDownload, IconHeart, IconLicense, IconMessageCircle2 } from '@tabler/icons';
 import { startCase } from 'lodash';
 import { SessionUser } from 'next-auth';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRef } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -59,8 +59,8 @@ const CAROUSEL_LIMIT = 10;
 export function ModelVersionDetails({ model, version, user, isFavorite, onFavoriteClick }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
 
+  // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
-  const [hasClampControl, setHasClampControl] = useState(false);
   const [opened, { toggle }] = useDisclosure(false);
 
   const primaryFile = getPrimaryFile(version.files, {
@@ -76,6 +76,18 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
     prioritizedUserIds: [model.user.id],
     limit: CAROUSEL_LIMIT,
   });
+
+  const publishVersionMutation = trpc.modelVersion.publish.useMutation();
+  const publishModelMutation = trpc.model.publish.useMutation();
+  const updatePostMutation = trpc.post.update.useMutation();
+
+  const handlePublishClick = async () => {
+    if (model.status !== ModelStatus.Published) {
+      publishModelMutation.mutate({ id: model.id, versionIds: [version.id] });
+    } else {
+      publishVersionMutation.mutate({ id: version.id });
+    }
+  };
 
   const modelDetails: DescriptionTableProps['items'] = [
     {
@@ -203,15 +215,15 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
     </Card>
   ));
 
-  // TODO.manuel: Figure out why this is not working
-  useEffect(() => {
-    setHasClampControl(!!controlRef.current);
-  }, []);
-
   const cleanDescription = version.description ? removeTags(version.description) : '';
 
   const isOwnerOrMod = model.user?.id === user?.id || user?.isModerator;
   const filesCount = version.files.length;
+  const hasFiles = filesCount > 0;
+  const hasPosts = !!version.posts?.length;
+  const showPublishButton =
+    isOwnerOrMod && version.status !== ModelStatus.Published && hasFiles && hasPosts;
+  const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
 
   return (
     <Grid gutter="xl">
@@ -227,101 +239,107 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
             limit={CAROUSEL_LIMIT}
             mobile
           />
-          <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
-            {version.canDownload ? (
-              displayCivitaiLink ? (
-                <Stack sx={{ flex: 1 }} spacing={4}>
-                  <CivitiaLinkManageButton
-                    modelId={model.id}
-                    modelVersionId={version.id}
-                    modelName={model.name}
-                    modelType={model.type}
-                    hashes={version.hashes}
-                    noTooltip
-                  >
-                    {({ color, onClick, ref, icon, label }) => (
-                      <Button
-                        ref={ref}
-                        color={color}
-                        onClick={onClick}
-                        leftIcon={icon}
-                        disabled={!primaryFile}
-                      >
-                        {label}
-                      </Button>
-                    )}
-                  </CivitiaLinkManageButton>
-                  {primaryFileDetails}
-                </Stack>
+          {showPublishButton ? (
+            <Button color="green" onClick={handlePublishClick} loading={publishing} fullWidth>
+              Publish this version
+            </Button>
+          ) : (
+            <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
+              {version.canDownload ? (
+                displayCivitaiLink ? (
+                  <Stack sx={{ flex: 1 }} spacing={4}>
+                    <CivitiaLinkManageButton
+                      modelId={model.id}
+                      modelVersionId={version.id}
+                      modelName={model.name}
+                      modelType={model.type}
+                      hashes={version.hashes}
+                      noTooltip
+                    >
+                      {({ color, onClick, ref, icon, label }) => (
+                        <Button
+                          ref={ref}
+                          color={color}
+                          onClick={onClick}
+                          leftIcon={icon}
+                          disabled={!primaryFile}
+                        >
+                          {label}
+                        </Button>
+                      )}
+                    </CivitiaLinkManageButton>
+                    {primaryFileDetails}
+                  </Stack>
+                ) : (
+                  <Stack sx={{ flex: 1 }} spacing={4}>
+                    <Button
+                      component="a"
+                      href={createModelFileDownloadUrl({
+                        versionId: version.id,
+                        primary: true,
+                      })}
+                      leftIcon={<IconDownload size={16} />}
+                      disabled={!primaryFile}
+                      download
+                    >
+                      <Text align="center">
+                        {primaryFile ? `Download (${formatKBytes(primaryFile.sizeKB)})` : 'No file'}
+                      </Text>
+                    </Button>
+                    {primaryFileDetails}
+                  </Stack>
+                )
               ) : (
                 <Stack sx={{ flex: 1 }} spacing={4}>
-                  <Button
-                    component="a"
-                    href={createModelFileDownloadUrl({
-                      versionId: version.id,
-                      primary: true,
-                    })}
-                    leftIcon={<IconDownload size={16} />}
-                    disabled={!primaryFile}
-                    download
-                  >
-                    <Text align="center">
-                      {primaryFile ? `Download (${formatKBytes(primaryFile.sizeKB)})` : 'No file'}
-                    </Text>
-                  </Button>
+                  <JoinPopover>
+                    <Button leftIcon={<IconDownload size={16} />}>
+                      <Text align="center">
+                        {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+                      </Text>
+                    </Button>
+                  </JoinPopover>
                   {primaryFileDetails}
                 </Stack>
-              )
-            ) : (
-              <Stack sx={{ flex: 1 }} spacing={4}>
-                <JoinPopover>
-                  <Button leftIcon={<IconDownload size={16} />}>
-                    <Text align="center">
-                      {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
-                    </Text>
-                  </Button>
-                </JoinPopover>
-                {primaryFileDetails}
-              </Stack>
-            )}
-            {displayCivitaiLink ? (
-              version.canDownload ? (
-                <Menu position="bottom-end">
-                  <Menu.Target>
+              )}
+              {displayCivitaiLink ? (
+                version.canDownload ? (
+                  <Menu position="bottom-end">
+                    <Menu.Target>
+                      <Tooltip label="Download options" withArrow>
+                        <Button px={0} w={36} variant="light">
+                          <IconDownload />
+                        </Button>
+                      </Tooltip>
+                    </Menu.Target>
+                    <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
+                  </Menu>
+                ) : (
+                  <JoinPopover>
                     <Tooltip label="Download options" withArrow>
                       <Button px={0} w={36} variant="light">
                         <IconDownload />
                       </Button>
                     </Tooltip>
-                  </Menu.Target>
-                  <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
-                </Menu>
+                  </JoinPopover>
+                )
               ) : (
-                <JoinPopover>
-                  <Tooltip label="Download options" withArrow>
-                    <Button px={0} w={36} variant="light">
-                      <IconDownload />
+                <RunButton modelVersionId={version.id} />
+              )}
+              <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
+                <div>
+                  <LoginRedirect reason="favorite-model">
+                    <Button
+                      onClick={onFavoriteClick}
+                      color={isFavorite ? 'red' : 'gray'}
+                      sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                    >
+                      <IconHeart color="#fff" />
                     </Button>
-                  </Tooltip>
-                </JoinPopover>
-              )
-            ) : (
-              <RunButton modelVersionId={version.id} />
-            )}
-            <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-              <div>
-                <LoginRedirect reason="favorite-model">
-                  <Button
-                    onClick={onFavoriteClick}
-                    color={isFavorite ? 'red' : 'gray'}
-                    sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                  >
-                    <IconHeart color="#fff" />
-                  </Button>
-                </LoginRedirect>
-              </div>
-            </Tooltip>
-          </Group>
+                  </LoginRedirect>
+                </div>
+              </Tooltip>
+            </Group>
+          )}
           <EarlyAccessAlert
             versionId={version.id}
             modelType={model.type}
@@ -343,7 +361,6 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                 padding: theme.spacing.sm,
               },
             })}
-            multiple={false}
           >
             <Accordion.Item value="version-details">
               <Accordion.Control>Details</Accordion.Control>
@@ -351,7 +368,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                 <DescriptionTable
                   items={modelDetails}
                   labelWidth="30%"
-                  withBorder={true}
+                  withBorder
                   paperProps={{
                     sx: {
                       borderLeft: 0,
@@ -363,7 +380,14 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                 />
               </Accordion.Panel>
             </Accordion.Item>
-            <Accordion.Item value="version-files">
+            <Accordion.Item
+              value="version-files"
+              sx={(theme) => ({
+                borderColor: !filesCount ? `${theme.colors.red[4]} !important` : undefined,
+                marginTop: theme.spacing.md,
+                marginBottom: theme.spacing.md,
+              })}
+            >
               <Accordion.Control>
                 <Group position="apart">
                   {filesCount ? `${filesCount === 1 ? '1 File' : `${filesCount} Files`}` : 'Files'}
@@ -381,7 +405,17 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                 </Group>
               </Accordion.Control>
               <Accordion.Panel>
-                <Stack spacing={2}>{downloadFileItems}</Stack>
+                <Stack spacing={2}>
+                  {hasFiles ? (
+                    downloadFileItems
+                  ) : (
+                    <Center p="xl">
+                      <Text size="md" color="dimmed">
+                        This version is missing files
+                      </Text>
+                    </Center>
+                  )}
+                </Stack>
               </Accordion.Panel>
             </Accordion.Item>
             <ResourceReviewTotals
@@ -452,15 +486,17 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                 About this version
               </Title>
               <Stack spacing={4}>
-                <Box sx={{ p: { fontSize: 14, marginBottom: 10 } }}>
-                  <ContentClamp
-                    maxHeight={150}
-                    controlRef={controlRef}
-                    styles={{ control: { display: 'none' } }}
-                  >
-                    <RenderHtml html={version.description} />
-                  </ContentClamp>
-                </Box>
+                {version.description && (
+                  <Box sx={{ p: { fontSize: 14, marginBottom: 10 } }}>
+                    <ContentClamp
+                      maxHeight={150}
+                      controlRef={controlRef}
+                      styles={{ control: { display: 'none' } }}
+                    >
+                      <RenderHtml html={version.description} />
+                    </ContentClamp>
+                  </Box>
+                )}
                 {cleanDescription.length > 150 ? (
                   <Text
                     variant="link"

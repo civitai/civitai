@@ -94,7 +94,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         earlyAccessTimeFrame: Number(data.earlyAccessTimeFrame),
         trainedWords: skipTrainedWords ? [] : trainedWords,
       });
-      await queryUtils.model.getById.invalidate({ id: result.modelId });
+      await queryUtils.modelVersion.getById.invalidate({ id: result.id, withFiles: true });
       onSubmit(result as ModelVersionUpsertInput);
     } else {
       onSubmit(version as ModelVersionUpsertInput);

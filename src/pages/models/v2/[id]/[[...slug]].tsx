@@ -2,7 +2,6 @@ import {
   ActionIcon,
   Alert,
   Badge,
-  Box,
   Button,
   Container,
   createStyles,
@@ -147,7 +146,7 @@ export default function ModelDetailsV2({
   const { data: { items: versionImages } = { items: [] } } = trpc.image.getInfinite.useQuery(
     {
       modelVersionId: latestVersion?.id,
-      prioritizedUserIds: model ? [model?.user.id] : undefined,
+      prioritizedUserIds: model ? [model.user.id] : undefined,
       limit: 10,
     },
     { enabled: !!latestVersion }

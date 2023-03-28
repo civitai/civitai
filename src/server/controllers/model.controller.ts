@@ -1,12 +1,5 @@
 import { modelHashSelect } from './../selectors/modelHash.selector';
-import {
-  ModelStatus,
-  ModelHashType,
-  Prisma,
-  UserActivityType,
-  ModelType,
-  ModelEngagementType,
-} from '@prisma/client';
+import { ModelStatus, ModelHashType, Prisma, UserActivityType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { dbWrite, dbRead } from '~/server/db/client';
@@ -21,7 +14,6 @@ import {
   PublishModelSchema,
   ReorderModelVersionsSchema,
 } from '~/server/schema/model.schema';
-import { imageSelect } from '~/server/selectors/image.selector';
 import {
   getAllModelsWithVersionsSelect,
   modelWithDetailsSelect,
@@ -47,17 +39,15 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { env } from '~/env/server.mjs';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
-import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { getGetUrl } from '~/utils/s3-utils';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { getHiddenImagesForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
+import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
@@ -380,11 +370,19 @@ export const publishModelHandler = async ({ input }: { input: PublishModelSchema
 
 export const unpublishModelHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
-    const model = await updateModelById({ ...input, data: { status: ModelStatus.Unpublished } });
-
-    if (!model) {
-      throw throwNotFoundError(`No model with id ${input.id}`);
-    }
+    const model = await updateModelById({
+      ...input,
+      data: {
+        status: ModelStatus.Unpublished,
+        modelVersions: {
+          updateMany: {
+            where: { status: ModelStatus.Published },
+            data: { status: ModelStatus.Draft },
+          },
+        },
+      },
+    });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     return model;
   } catch (error) {
