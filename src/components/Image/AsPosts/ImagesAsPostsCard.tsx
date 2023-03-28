@@ -143,6 +143,7 @@ export function ImagesAsPostsCard({
                 />
               ) : (
                 <Carousel
+                  key={cardWidth}
                   withControls
                   draggable
                   loop
@@ -251,6 +252,8 @@ const useStyles = createStyles((theme) => ({
   },
   link: {
     width: '100%',
+    display: 'flex',
+    justifyContent: 'center',
   },
   slide: {
     display: 'flex',
