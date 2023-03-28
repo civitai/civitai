@@ -1,4 +1,4 @@
-import { Paper, Stack, Text } from '@mantine/core';
+import { Paper, Stack, Text, Center, Loader, LoadingOverlay } from '@mantine/core';
 import { createContext, useContext, useMemo } from 'react';
 
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
@@ -87,6 +87,11 @@ export default function ImagesInfinite({
         render={ImagesCard}
         filters={filters}
       />
+      {isLoading && (
+        <Paper style={{ minHeight: 200, position: 'relative' }}>
+          <LoadingOverlay visible />
+        </Paper>
+      )}
       {!isLoading && !images.length && (
         <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Stack>

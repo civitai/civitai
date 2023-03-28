@@ -1,6 +1,5 @@
 import {
   ActionIcon,
-  Anchor,
   Button,
   Card,
   Group,
@@ -10,11 +9,11 @@ import {
   Text,
   Tooltip,
   useMantineTheme,
+  Divider,
 } from '@mantine/core';
-import { Dropzone, FileWithPath } from '@mantine/dropzone';
-import { randomId, useViewportSize } from '@mantine/hooks';
-import { hideNotification, showNotification } from '@mantine/notifications';
-import { ModelStatus, ModelType } from '@prisma/client';
+import { Dropzone } from '@mantine/dropzone';
+import { useViewportSize } from '@mantine/hooks';
+import { ModelType } from '@prisma/client';
 import {
   IconBan,
   IconCircleCheck,
@@ -26,28 +25,22 @@ import {
   IconX,
 } from '@tabler/icons';
 import startCase from 'lodash/startCase';
-import Link from 'next/link';
 import { MasonryScroller, useContainerPosition, usePositioner, useResizeObserver } from 'masonic';
-import { useEffect, useRef, useState } from 'react';
-import { z } from 'zod';
+import { useRef } from 'react';
 
 import { constants, ModelFileType } from '~/server/common/constants';
-import { UploadType } from '~/server/common/enums';
-import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelVersionById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
-import { bytesToKB, formatBytes, formatSeconds } from '~/utils/number-helpers';
+import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { getFileExtension } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-
-type ZodErrorSchema = { _errors: string[] };
-type SchemaError = {
-  type?: ZodErrorSchema;
-  size?: ZodErrorSchema;
-  fp?: ZodErrorSchema;
-};
+import {
+  FileFromContextProps,
+  FilesProvider,
+  useFilesContext,
+} from '~/components/Resource/FilesProvider';
 
 type DropzoneOptions = {
   acceptedFileTypes: string[];
@@ -96,41 +89,18 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   Other: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
 };
 
-const metadataSchema = modelFileMetadataSchema
-  .extend({
-    versionId: z.number(),
-    type: z.enum(constants.modelFileTypes),
-  })
-  .refine((data) => (data.type === 'Model' ? !!data.size : true), {
-    message: 'Model size is required for model files',
-    path: ['size'],
-  })
-  .refine((data) => (data.type === 'Model' ? !!data.fp : true), {
-    message: 'Floating point is required for model files',
-    path: ['fp'],
-  })
-  .array();
+export function Files({ model, version }: Props) {
+  return (
+    <FilesProvider model={model} version={version}>
+      <FilesComponent model={model} version={version} />
+    </FilesProvider>
+  );
+}
 
-// TODO.manuel: This is a hacky way to check for duplicates
-const checkConflictingFiles = (files: TrackedFile[]) => {
-  const conflictCount: Record<string, number> = {};
-  const data = files.map((file) => file.meta as { size: string; type: string; fp: string });
-
-  data.forEach((item) => {
-    const key = [item.size, item.type, item.fp].filter(Boolean).join('-');
-    if (conflictCount[key]) conflictCount[key] += 1;
-    else conflictCount[key] = 1;
-  });
-
-  return Object.values(conflictCount).every((count) => count === 1);
-};
-
-export function Files({ model, version, onStartUploadClick }: Props) {
+function FilesComponent({ model }: Props) {
   const theme = useMantineTheme();
-  const { items, upload, setItems } = useS3UploadStore();
-  const queryUtils = trpc.useContext();
 
-  const versionFiles = items.filter((item) => item.meta?.versionId === version?.id);
+  const { files, onDrop, startUpload, hasPending } = useFilesContext();
 
   const masonryRef = useRef(null);
   const { width, height } = useViewportSize();
@@ -141,255 +111,18 @@ export function Files({ model, version, onStartUploadClick }: Props) {
       maxColumnCount: 2,
       columnGutter: theme.spacing.md,
     },
-    [versionFiles.length]
+    [files.length]
   );
   const resizeObserver = useResizeObserver(positioner);
 
-  const [error, setError] = useState<SchemaError[] | null>(null);
-
-  const publishModelMutation = trpc.model.publish.useMutation({
-    async onSuccess(_, variables) {
-      hideNotification('publishing-version');
-
-      const modelVersionId = variables.versionIds?.[0];
-      const pubNotificationId = `version-published-${modelVersionId}`;
-      showNotification({
-        id: pubNotificationId,
-        title: 'Version published',
-        color: 'green',
-        styles: { root: { alignItems: 'flex-start' } },
-        message: (
-          <Stack spacing={4}>
-            <Text size="sm" color="dimmed">
-              Your version has been published and is now available to the public.
-            </Text>
-            <Link href={`/models/v2/${variables.id}?modelVersionId=${modelVersionId}`} passHref>
-              <Anchor size="sm" onClick={() => hideNotification(pubNotificationId)}>
-                Go to model
-              </Anchor>
-            </Link>
-          </Stack>
-        ),
-      });
-
-      await queryUtils.model.getById.invalidate({ id: variables.id });
-      if (modelVersionId)
-        await queryUtils.modelVersion.getById.invalidate({
-          id: modelVersionId,
-        });
-    },
-    onError(error) {
-      hideNotification('publishing-version');
-      showErrorNotification({
-        title: 'Failed to publish version',
-        error: new Error(error.message),
-      });
-    },
-  });
-  const upsertFileMutation = trpc.modelFile.upsert.useMutation({
-    async onSuccess(result) {
-      useS3UploadStore
-        .getState()
-        .setItems((items) =>
-          items.map((item) => (item.id === result.id ? { ...item, id: result.id } : item))
-        );
-
-      const hasPublishedPosts = result.modelVersion._count.posts > 0;
-      const isVersionPublished = result.modelVersion.status === ModelStatus.Published;
-      const { uploading } = useS3UploadStore
-        .getState()
-        .getStatus((item) => item.meta?.versionId === result.modelVersion.id);
-      const stillUploading = uploading > 0;
-
-      const notificationId = `upload-finished-${result.id}`;
-      showNotification({
-        id: notificationId,
-        autoClose: stillUploading,
-        color: 'green',
-        title: `Finished uploading ${result.name}`,
-        styles: { root: { alignItems: 'flex-start' } },
-        message: !stillUploading ? (
-          <Stack spacing={4}>
-            {isVersionPublished ? (
-              <>
-                <Text size="sm" color="dimmed">
-                  All files finished uploading.
-                </Text>
-                <Link
-                  href={`/models/v2/${model?.id}?modelVersionId=${result.modelVersion.id}`}
-                  passHref
-                >
-                  <Anchor size="sm" onClick={() => hideNotification(notificationId)}>
-                    Go to model
-                  </Anchor>
-                </Link>
-              </>
-            ) : hasPublishedPosts ? (
-              <>
-                <Text size="sm" color="dimmed">
-                  {`Your files have finished uploading, let's publish this version.`}
-                </Text>
-                <Text
-                  variant="link"
-                  size="sm"
-                  sx={{ cursor: 'pointer' }}
-                  onClick={() => {
-                    hideNotification(notificationId);
-
-                    showNotification({
-                      id: 'publishing-version',
-                      message: 'Publishing...',
-                      loading: true,
-                    });
-
-                    publishModelMutation.mutate({
-                      id: model?.id as number,
-                      versionIds: [result.modelVersion.id],
-                    });
-                  }}
-                >
-                  Publish it
-                </Text>
-              </>
-            ) : (
-              <>
-                <Text size="sm" color="dimmed">
-                  Your files have finished uploading, but you still need to add a post.
-                </Text>
-                <Link
-                  href={`/models/v2/${model?.id}/model-versions/${result.modelVersion.id}/wizard?step=3`}
-                  passHref
-                >
-                  <Anchor size="sm" onClick={() => hideNotification(notificationId)}>
-                    Finish setup
-                  </Anchor>
-                </Link>
-              </>
-            )}
-          </Stack>
-        ) : undefined,
-      });
-
-      await queryUtils.modelVersion.getById.invalidate({ id: result.modelVersion.id });
-      if (model) await queryUtils.model.getById.invalidate({ id: model.id });
-    },
-    onError(error) {
-      showErrorNotification({
-        title: 'Failed to save file',
-        reason: 'Could not save file, please try again.',
-        error: new Error(error.message),
-      });
-    },
-  });
-  const handleStartUpload = async (files: TrackedFile[]) => {
-    setError(null);
-
-    const validation = metadataSchema.safeParse(versionFiles.map((item) => item.meta));
-    if (!validation.success) {
-      const errors = validation.error.format() as unknown as Array<{ [k: string]: ZodErrorSchema }>;
-      setError(errors);
-      return;
-    }
-
-    if (!checkConflictingFiles(files)) {
-      return showErrorNotification({
-        title: 'Duplicate file types',
-        error: new Error(
-          'There are multiple files with the same type and size, please adjust your files'
-        ),
-      });
-    }
-
-    onStartUploadClick?.();
-
-    await Promise.all(
-      files.map(({ file, meta }) => {
-        const type = meta?.type === 'Model' ? UploadType.Model : UploadType.Default;
-
-        return upload({ file, type, meta }, ({ meta, size, ...result }) => {
-          const { versionId, type, ...metadata } = meta as {
-            versionId: number;
-            type: ModelFileType;
-          };
-          if (versionId)
-            upsertFileMutation.mutate({
-              ...result,
-              sizeKB: bytesToKB(size),
-              modelVersionId: versionId,
-              type,
-              metadata,
-            });
-        });
-      })
-    );
-  };
-
-  const handleDrop = async (droppedFiles: FileWithPath[]) => {
-    setError(null);
-    setItems((current) => [
-      ...current,
-      ...droppedFiles.map((file) => ({
-        file,
-        name: file.name,
-        size: file.size ?? 0,
-        status: 'pending' as const,
-        uploaded: 0,
-        progress: 0,
-        speed: 0,
-        timeRemaining: 0,
-        abort: () => undefined,
-        uuid: randomId(),
-        meta: { versionId: version?.id },
-      })),
-    ]);
-  };
-
-  useEffect(() => {
-    if (version && version.files && version.files.length > 0) {
-      setItems((currentItems) => {
-        // merge both currentItems and version.files, but replace the matching files
-        // with the ones from version.files and adding the missing ones
-        const versionFiles = currentItems.filter((item) => item.meta?.versionId === version?.id);
-        const adjustedFiles =
-          version.files?.map(({ id, sizeKB, name, type, metadata }) => ({
-            id,
-            name,
-            size: sizeKB,
-            uuid: randomId(),
-            progress: 0,
-            uploaded: 0,
-            timeRemaining: 0,
-            speed: 0,
-            status: 'success' as const,
-            abort: () => undefined,
-            meta: { ...metadata, versionId: version?.id, type },
-            file: new File([], name),
-          })) ?? [];
-
-        // merge adjustedFiles and versionFiles, but avoid duplicates
-        const mergedFiles = [...versionFiles, ...adjustedFiles].reduce(
-          (acc, file) => ({
-            ...acc,
-            [file.name]: file,
-          }),
-          {} as Record<string, TrackedFile>
-        );
-
-        return Object.values(mergedFiles);
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version?.files]);
-
   const { acceptedModelFiles, acceptedFileTypes, maxFiles } =
     dropzoneOptionsByModelType[model?.type ?? 'Checkpoint'];
-  const hasPendingFiles = versionFiles.some((item) => item.status === 'pending');
 
   return (
     <Stack>
       <Dropzone
         accept={{ 'application/octet-stream': acceptedFileTypes }}
-        onDrop={handleDrop}
+        onDrop={onDrop}
         maxFiles={maxFiles}
       >
         <Group position="center" spacing="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
@@ -423,15 +156,8 @@ export function Files({ model, version, onStartUploadClick }: Props) {
           </Stack>
         </Group>
       </Dropzone>
-      {versionFiles.length > 0 ? (
-        <Button
-          onClick={() =>
-            handleStartUpload(versionFiles.filter((item) => item.status === 'pending'))
-          }
-          size="lg"
-          disabled={!hasPendingFiles}
-          fullWidth
-        >
+      {files.length > 0 ? (
+        <Button onClick={startUpload} size="lg" disabled={!hasPending} fullWidth>
           Start Upload
         </Button>
       ) : null}
@@ -441,15 +167,14 @@ export function Files({ model, version, onStartUploadClick }: Props) {
         resizeObserver={resizeObserver}
         offset={offset}
         height={height}
-        items={versionFiles}
+        items={files}
         render={({ data, index }) => (
           <FileCard
             key={data.uuid}
             file={data}
             fileTypes={acceptedModelFiles}
             modelId={model?.id}
-            error={error?.[index]}
-            onRetry={handleStartUpload}
+            index={index}
           />
         )}
       />
@@ -463,54 +188,19 @@ type Props = {
   onStartUploadClick?: VoidFunction;
 };
 
-type FileStatus = 'success' | 'pending' | 'error' | 'aborted';
-const mapStatusLabel: Record<FileStatus, React.ReactNode> = {
-  pending: (
-    <>
-      <IconCloudUpload />
-      <Text size="sm">Pending upload</Text>
-    </>
-  ),
-  error: (
-    <>
-      <IconBan color="red" />
-      <Text size="sm">Failed to upload</Text>
-    </>
-  ),
-  aborted: (
-    <>
-      <IconBan color="red" />
-      <Text size="sm">Aborted upload</Text>
-    </>
-  ),
-  success: (
-    <>
-      <IconCircleCheck color="green" />
-      <Text size="sm">Upload completed</Text>
-    </>
-  ),
-};
-
-function FileCard({ file, fileTypes, error, modelId, onRetry }: FileCardProps) {
-  const theme = useMantineTheme();
+function FileCard({ file: versionFile, fileTypes, modelId, index }: FileCardProps) {
+  const { errors, updateFile, removeFile } = useFilesContext();
+  const error = errors?.[index];
   const queryUtils = trpc.useContext();
-  const clear = useS3UploadStore((state) => state.clear);
-  const abort = useS3UploadStore((state) => state.abort);
-  const updateMeta = useS3UploadStore((state) => state.updateMeta);
 
-  const { uuid, status, name, progress, timeRemaining, speed, meta } = file;
-  const { type, size, fp, versionId } = meta as {
-    versionId: number;
-    type: ModelFileType;
-    size?: 'Full' | 'Pruned';
-    fp?: 'fp16' | 'fp32';
-  };
+  const { type, size, fp, versionId } = versionFile;
   const failedUpload = status === 'error' || status === 'aborted';
 
   const deleteFileMutation = trpc.modelFile.delete.useMutation({
-    async onSuccess() {
+    async onSuccess(response, request) {
       await queryUtils.modelVersion.getById.invalidate({ id: versionId });
       if (modelId) await queryUtils.model.getById.invalidate({ id: modelId });
+      removeFile(versionFile.uuid);
     },
     onError() {
       showErrorNotification({
@@ -518,12 +208,13 @@ function FileCard({ file, fileTypes, error, modelId, onRetry }: FileCardProps) {
       });
     },
   });
-  const handleRemoveFile = async (file: TrackedFile) => {
-    if (file.id) await deleteFileMutation.mutateAsync({ id: file.id });
-    clear((item) => item.uuid === file.uuid);
+  const handleRemoveFile = async () => {
+    if (versionFile.id) await deleteFileMutation.mutateAsync({ id: versionFile.id });
   };
 
   const filterByFileExtension = (value: ModelFileType) => {
+    const file = versionFile.file;
+    if (!file) return false;
     const extension = getFileExtension(file.name);
 
     switch (extension) {
@@ -553,45 +244,31 @@ function FileCard({ file, fileTypes, error, modelId, onRetry }: FileCardProps) {
             color={failedUpload ? 'red' : undefined}
             sx={{ display: 'inline-block' }}
           >
-            {name}
+            {versionFile.name}
           </Text>
-          {status === 'uploading' && (
-            <Tooltip label="Cancel upload" position="left">
-              <ActionIcon color="red" onClick={() => abort(uuid)}>
-                <IconX />
-              </ActionIcon>
-            </Tooltip>
-          )}
-          {(status === 'success' || status === 'pending') && (
+          {!!versionFile.id && (
             <Tooltip label="Remove file" position="left">
               <ActionIcon
                 color="red"
-                onClick={() => handleRemoveFile(file)}
+                onClick={handleRemoveFile}
                 loading={deleteFileMutation.isLoading}
               >
                 <IconTrash />
               </ActionIcon>
             </Tooltip>
           )}
-          {failedUpload && (
-            <Tooltip label="Retry upload" position="left">
-              <ActionIcon color="blue" onClick={() => onRetry([file])}>
-                <IconRefresh />
-              </ActionIcon>
-            </Tooltip>
-          )}
         </Group>
-        {['success', 'uploading'].includes(status) ? (
+        {!!versionFile.id ? (
           <>
             <Stack spacing={0}>
               <Text size="sm" weight="bold">
                 File Type
               </Text>
               <Text size="sm" color="dimmed">
-                {type ?? 'undefined'}
+                {versionFile.type ?? 'undefined'}
               </Text>
             </Stack>
-            {type === 'Model' ? (
+            {versionFile.type === 'Model' ? (
               <>
                 <Stack spacing={0}>
                   <Text size="sm" weight="bold">
@@ -619,15 +296,10 @@ function FileCard({ file, fileTypes, error, modelId, onRetry }: FileCardProps) {
               placeholder="Select a type"
               error={error?.type?._errors[0]}
               data={fileTypes.filter(filterByFileExtension)}
-              value={type ?? null}
-              onChange={(value: ModelFileType | null) => {
-                updateMeta(file.uuid, (meta) => ({
-                  ...meta,
-                  type: value,
-                  size: null,
-                  fp: null,
-                }));
-              }}
+              value={versionFile.type ?? null}
+              onChange={(value: ModelFileType | null) =>
+                updateFile(versionFile.uuid, { type: value, size: null, fp: null })
+              }
               withAsterisk
               withinPortal
             />
@@ -641,9 +313,9 @@ function FileCard({ file, fileTypes, error, modelId, onRetry }: FileCardProps) {
                     value: size,
                   }))}
                   error={error?.size?._errors[0]}
-                  value={size ?? null}
+                  value={versionFile.size ?? null}
                   onChange={(value: 'Full' | 'Pruned' | null) => {
-                    updateMeta(file.uuid, (meta) => ({ ...meta, size: value }));
+                    updateFile(versionFile.uuid, { size: value });
                   }}
                   withAsterisk
                   withinPortal
@@ -654,9 +326,9 @@ function FileCard({ file, fileTypes, error, modelId, onRetry }: FileCardProps) {
                   placeholder="fp16 or fp32"
                   data={constants.modelFileFp}
                   error={error?.fp?._errors[0]}
-                  value={fp ?? null}
+                  value={versionFile.fp ?? null}
                   onChange={(value: 'fp16' | 'fp32' | null) => {
-                    updateMeta(file.uuid, (meta) => ({ ...meta, fp: value }));
+                    updateFile(versionFile.uuid, { fp: value });
                   }}
                   withAsterisk
                   withinPortal
@@ -666,42 +338,135 @@ function FileCard({ file, fileTypes, error, modelId, onRetry }: FileCardProps) {
           </>
         )}
       </Stack>
-      <Card.Section inheritPadding withBorder>
-        <Group spacing="xs" py="md" sx={{ width: '100%' }}>
-          {status === 'uploading' ? (
-            <>
-              <IconCloudUpload color={theme.colors.blue[theme.fn.primaryShade()]} />
-              <Stack spacing={4} sx={{ flex: '1 !important' }}>
-                <Progress
-                  size="xl"
-                  radius="xs"
-                  value={progress}
-                  label={`${Math.floor(progress)}%`}
-                  color={progress < 100 ? 'blue' : 'green'}
-                  striped
-                  animate
-                />
-                <Group position="apart" noWrap>
-                  <Text color="dimmed" size="xs">{`${formatBytes(speed)}/s`}</Text>
-                  <Text color="dimmed" size="xs">{`${formatSeconds(
-                    timeRemaining
-                  )} remaining`}</Text>
-                </Group>
-              </Stack>
-            </>
-          ) : (
-            mapStatusLabel[status]
-          )}
-        </Group>
+      <Card.Section>
+        <TrackedFile uuid={versionFile.uuid} />
       </Card.Section>
     </Card>
   );
 }
 
 type FileCardProps = {
-  file: TrackedFile;
+  file: FileFromContextProps;
   fileTypes: ModelFileType[];
-  onRetry: (files: TrackedFile[]) => void;
   modelId?: number;
-  error?: SchemaError;
+  index: number;
 };
+
+function TrackedFile({ uuid: versionFileUuid }: { uuid: string }) {
+  const items = useS3UploadStore((state) => state.items);
+  const trackedFile = items.find((x) => x.meta?.uuid === versionFileUuid);
+
+  if (!trackedFile) return null;
+
+  return (
+    <>
+      <Divider />
+      <Group spacing="xs" py="md" px="sm" sx={{ width: '100%' }}>
+        <TrackedFileStatus trackedFile={trackedFile} versionFileUuid={versionFileUuid} />
+      </Group>
+    </>
+  );
+}
+
+function TrackedFileStatus({
+  trackedFile,
+  versionFileUuid,
+}: {
+  trackedFile: TrackedFile;
+  versionFileUuid: string;
+}) {
+  const theme = useMantineTheme();
+  const clear = useS3UploadStore((state) => state.clear);
+  const abort = useS3UploadStore((state) => state.abort);
+  const { retry, removeFile } = useFilesContext();
+
+  const { uuid, status, progress, timeRemaining, speed } = trackedFile;
+
+  const handleRemoveFile = () => {
+    clear((x) => x.uuid === trackedFile.uuid);
+    removeFile(versionFileUuid);
+  };
+
+  switch (status) {
+    case 'uploading':
+      return (
+        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
+          <IconCloudUpload color={theme.colors.blue[theme.fn.primaryShade()]} />
+          <Stack spacing={4} sx={{ flex: '1 !important' }}>
+            <Group spacing={4}>
+              <Progress
+                size="xl"
+                radius="xs"
+                value={progress}
+                label={`${Math.floor(progress)}%`}
+                color={progress < 100 ? 'blue' : 'green'}
+                striped
+                animate
+                sx={{ flex: 1 }}
+              />
+              <Tooltip label="Cancel upload" position="left">
+                <ActionIcon color="red" onClick={() => abort(uuid)}>
+                  <IconX />
+                </ActionIcon>
+              </Tooltip>
+            </Group>
+            <Group position="apart" noWrap>
+              <Text color="dimmed" size="xs">{`${formatBytes(speed)}/s`}</Text>
+              <Text color="dimmed" size="xs">{`${formatSeconds(timeRemaining)} remaining`}</Text>
+            </Group>
+          </Stack>
+        </Group>
+      );
+    case 'aborted':
+      return (
+        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
+          <Group spacing="xs">
+            <IconBan color="red" />
+            <Text size="sm">Aborted upload</Text>
+          </Group>
+          <Tooltip label="Remove file" position="left">
+            <ActionIcon color="red" onClick={handleRemoveFile}>
+              <IconTrash />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
+      );
+    case 'error':
+      return (
+        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
+          <Group spacing="xs">
+            <IconBan color="red" />
+            <Text size="sm">Failed to upload</Text>
+          </Group>
+          <Tooltip label="Retry upload" position="left">
+            <ActionIcon color="blue" onClick={() => retry(versionFileUuid)}>
+              <IconRefresh />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
+      );
+    case 'success':
+      return (
+        <>
+          <IconCircleCheck color="green" />
+          <Text size="sm">Upload completed</Text>
+        </>
+      );
+    case 'pending':
+      return (
+        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
+          <Group spacing="xs">
+            <IconCloudUpload />
+            <Text size="sm">Pending upload</Text>
+          </Group>
+          <Tooltip label="Remove file" position="left">
+            <ActionIcon color="red" onClick={handleRemoveFile}>
+              <IconTrash />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
+      );
+    default:
+      return null;
+  }
+}

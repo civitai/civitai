@@ -101,6 +101,7 @@ export function ImagesAsPostsCard({
                               postId={postId}
                               username={username}
                               onClick={handleClick}
+                              className={classes.link}
                             >
                               <>
                                 {!safe ? (
@@ -184,6 +185,7 @@ export function ImagesAsPostsCard({
                                   postId={postId}
                                   username={username}
                                   onClick={handleClick}
+                                  className={classes.link}
                                 >
                                   <>
                                     {!safe ? (
@@ -246,6 +248,9 @@ const useStyles = createStyles((theme) => ({
   card: {
     display: 'flex',
     flexDirection: 'column',
+  },
+  link: {
+    width: '100%',
   },
   slide: {
     display: 'flex',

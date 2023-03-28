@@ -152,6 +152,7 @@ export const useS3UploadStore = create<StoreProps>()(
       abort: (uuid) => {
         // TODO.posts - check with justin
         const item = get().items.find((x) => x.uuid === uuid);
+        console.log({ item });
         item?.abort();
       },
       upload: async ({ file, type, options, meta }, cb) => {
@@ -193,10 +194,11 @@ export const useS3UploadStore = create<StoreProps>()(
           const { bucket, key, uploadId, urls } = data;
           const uuid = uuidv4();
 
-          let currentXhr: XMLHttpRequest;
-          const abort = () => {
-            if (currentXhr) currentXhr.abort();
-          };
+          // let currentXhr: XMLHttpRequest;
+          // const abort = () => {
+          //   console.log({ currentXhr });
+          //   if (currentXhr) currentXhr.abort();
+          // };
 
           let index = -1;
           const trackedFile = {
@@ -215,7 +217,7 @@ export const useS3UploadStore = create<StoreProps>()(
 
             return false;
           });
-          const pendingItem = { ...trackedFile, ...existingItem, abort };
+          const pendingItem = { ...trackedFile, ...existingItem };
 
           set((state) => {
             if (index !== -1) state.items[index] = pendingItem;
@@ -295,7 +297,13 @@ export const useS3UploadStore = create<StoreProps>()(
               xhr.open('PUT', url);
               xhr.setRequestHeader('Content-Type', 'application/octet-stream');
               xhr.send(part);
-              currentXhr = xhr;
+              // currentXhr = xhr;
+
+              updateFile(pendingItem.uuid, {
+                abort: () => {
+                  if (xhr) xhr.abort();
+                },
+              });
             });
 
           // Make part requests
@@ -323,9 +331,6 @@ export const useS3UploadStore = create<StoreProps>()(
               });
               await abortUpload();
               return;
-              // const payload = preparePayload(uuid, { url: null, bucket, key });
-              // cb?.(payload);
-              // return payload;
             }
           }
 

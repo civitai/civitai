@@ -187,9 +187,13 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
   options: initialOptions,
   children,
   onClick,
+  style,
+  className,
   ...props
 }: OpenRoutedContextProps<TName> & {
   onClick?: (e: React.MouseEvent<HTMLAnchorElement>) => void;
+  style?: React.CSSProperties;
+  className?: string;
 }) {
   const setFreeze = useFreezeStore((state) => state.setFreeze);
   const toResolve = removeEmpty(props);
@@ -211,6 +215,8 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
           setFreeze(true);
         }
       }}
+      style={style}
+      className={className}
     >
       {children}
     </NextLink>

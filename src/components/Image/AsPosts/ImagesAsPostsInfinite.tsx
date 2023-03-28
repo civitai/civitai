@@ -4,7 +4,7 @@ import { createContext, useContext, useMemo } from 'react';
 import { useImageFilters } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
-import { Paper, Stack, Text } from '@mantine/core';
+import { Paper, Stack, Text, LoadingOverlay, Overlay, Center, Loader } from '@mantine/core';
 
 type ImagesAsPostsInfiniteState = {
   modelId?: number;
@@ -54,6 +54,11 @@ export default function ImagesAsPostsInfinite({
         render={ImagesAsPostsCard}
         filters={filters}
       />
+      {isLoading && (
+        <Paper style={{ minHeight: 200, position: 'relative' }}>
+          <LoadingOverlay visible />
+        </Paper>
+      )}
       {!isLoading && !items.length && (
         <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Stack>
