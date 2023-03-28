@@ -729,7 +729,7 @@ export const getAllImages = async ({
     JOIN "User" u ON u.id = i."userId"
     ${Prisma.raw(cursorProp?.startsWith('r.') ? 'JOIN "ImageRank" r ON r."imageId" = i.id' : '')}
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
-    ${Prisma.raw(
+    ${
       !userId
         ? Prisma.sql``
         : Prisma.sql`LEFT JOIN (
