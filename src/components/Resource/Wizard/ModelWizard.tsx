@@ -6,9 +6,11 @@ import {
   Group,
   Stack,
   Stepper,
+  Text,
   Title,
 } from '@mantine/core';
-import { IconX } from '@tabler/icons';
+import { openConfirmModal } from '@mantine/modals';
+import { IconAlertTriangle, IconX } from '@tabler/icons';
 import isEqual from 'lodash/isEqual';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
@@ -190,7 +192,34 @@ export function ModelWizard() {
                 <Button variant="default" onClick={goBack}>
                   Back
                 </Button>
-                <Button onClick={goNext}>Next</Button>
+                <Button
+                  onClick={() => {
+                    const isUploadingFiles =
+                      useS3UploadStore
+                        .getState()
+                        .getStatus((item) => item.meta?.versionId === state.modelVersion?.id)
+                        .uploading > 0;
+
+                    if (!isUploadingFiles) {
+                      return openConfirmModal({
+                        title: (
+                          <Group spacing="xs">
+                            <IconAlertTriangle color="gold" />
+                            <Text size="lg">Missing files</Text>
+                          </Group>
+                        ),
+                        children:
+                          'You have not uploaded any files. You can continue without files, but you will not be able to publish your model. Are you sure you want to continue?',
+                        labels: { cancel: 'Cancel', confirm: 'Continue' },
+                        onConfirm: goNext,
+                      });
+                    }
+
+                    return goNext();
+                  }}
+                >
+                  Next
+                </Button>
               </Group>
             </Stack>
           </Stepper.Step>

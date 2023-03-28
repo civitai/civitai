@@ -18,7 +18,6 @@ import Link from 'next/link';
 import { useState } from 'react';
 
 import { NoContent } from '~/components/NoContent/NoContent';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getModelWizardUrl } from '~/server/common/model-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { splitUppercase } from '~/utils/string-helpers';

@@ -1,6 +1,6 @@
 import { Anchor, Button, Container, Group, Stack, Stepper, Text, Title } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
-import { IconArrowLeft } from '@tabler/icons';
+import { IconAlertTriangle, IconArrowLeft } from '@tabler/icons';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
@@ -11,6 +11,8 @@ import { Files } from '~/components/Resource/Files';
 import { trpc } from '~/utils/trpc';
 import { PostUpsertForm } from '../Forms/PostUpsertForm';
 import { ModelById } from '~/types/router';
+import { useS3UploadStore } from '~/store/s3-upload.store';
+import { openConfirmModal } from '@mantine/modals';
 
 export function ModelVersionWizard({ data }: Props) {
   const router = useRouter();
@@ -105,7 +107,34 @@ export function ModelVersionWizard({ data }: Props) {
                 <Button variant="default" onClick={goBack}>
                   Back
                 </Button>
-                <Button onClick={goNext}>Next</Button>
+                <Button
+                  onClick={() => {
+                    const isUploadingFiles =
+                      useS3UploadStore
+                        .getState()
+                        .getStatus((item) => item.meta?.versionId === modelVersion?.id).uploading >
+                      0;
+
+                    if (!isUploadingFiles) {
+                      return openConfirmModal({
+                        title: (
+                          <Group spacing="xs">
+                            <IconAlertTriangle color="gold" />
+                            <Text size="lg">Missing files</Text>
+                          </Group>
+                        ),
+                        children:
+                          'You have not uploaded any files. You can continue without files, but you will not be able to publish your model. Are you sure you want to continue?',
+                        labels: { cancel: 'Cancel', confirm: 'Continue' },
+                        onConfirm: goNext,
+                      });
+                    }
+
+                    return goNext();
+                  }}
+                >
+                  Next
+                </Button>
               </Group>
             </Stack>
           </Stepper.Step>
