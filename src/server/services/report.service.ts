@@ -171,6 +171,8 @@ export const getReports = async <TSelect extends Prisma.ReportSelect>({
   type,
   limit = 20,
   select,
+  filters,
+  sort,
 }: GetReportsInput & {
   select: TSelect;
 }) => {
@@ -179,7 +181,16 @@ export const getReports = async <TSelect extends Prisma.ReportSelect>({
   const where: Prisma.ReportWhereInput = {
     [type]: { isNot: null },
   };
-  // if (type) where[type] = {};
+
+  for (const { id, value } of filters ?? []) {
+    if (id === 'status') {
+      const statuses = value as ReportStatus[];
+      if (statuses.length > 0) where.status = { in: statuses };
+    } else if (id === 'reason') {
+      const reasons = value as ReportReason[];
+      if (reasons.length > 0) where.reason = { in: reasons };
+    } else if (id === 'reportedBy') where.user = { username: { startsWith: value as string } };
+  }
 
   const items = await dbRead.report.findMany({
     take,
