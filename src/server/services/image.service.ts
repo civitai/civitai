@@ -510,33 +510,25 @@ export const ingestImage = async ({
         confidence: 100,
       },
     });
-    const imageTags = await dbWrite.tag.findMany({
-      where: { tagsOnImage: { some: { imageId: id } } },
-      select: imageTagSelect,
-    });
-    return {
-      type: 'success',
-      data: { tags: imageTags },
-    };
-  }
+  } else {
+    const { ok, deleted, blockedFor, tags, error } = (await fetch(env.IMAGE_SCANNING_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then((res) => res.json())) as ImageScanResultResponse;
 
-  const { ok, deleted, blockedFor, tags, error } = (await fetch(env.IMAGE_SCANNING_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  }).then((res) => res.json())) as ImageScanResultResponse;
+    if (deleted)
+      return {
+        type: 'blocked',
+        data: { tags, blockedFor },
+      };
 
-  if (deleted)
-    return {
-      type: 'blocked',
-      data: { tags, blockedFor },
-    };
-
-  if (error) {
-    return {
-      type: 'error',
-      data: { error },
-    };
+    if (error) {
+      return {
+        type: 'error',
+        data: { error },
+      };
+    }
   }
 
   const imageTags = await dbWrite.tag.findMany({
