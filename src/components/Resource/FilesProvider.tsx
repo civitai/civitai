@@ -50,7 +50,7 @@ type FilesContextState = {
   retry: (uuid: string) => Promise<void>;
   updateFile: (uuid: string, file: Partial<FileFromContextProps>) => void;
   removeFile: (uuid: string) => void;
-  checkNoConflicts: () => boolean;
+  validationCheck: () => boolean;
 };
 
 type FilesProviderProps = {
@@ -153,7 +153,18 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     },
   });
 
-  const checkNoConflicts = () => {
+  const checkValidation = () => {
+    setErrors(null);
+
+    const validation = metadataSchema.safeParse(files);
+    if (!validation.success) {
+      const errors = validation.error.format() as unknown as Array<{
+        [k: string]: ZodErrorSchema;
+      }>;
+      setErrors(errors);
+      return false;
+    }
+
     const noConflicts = checkConflictingFiles(files);
     if (!noConflicts) {
       showErrorNotification({
@@ -316,18 +327,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
 
     await Promise.all(
       toUpload.map((file) => {
-        setErrors(null);
-
-        const validation = metadataSchema.safeParse(files);
-        if (!validation.success) {
-          const errors = validation.error.format() as unknown as Array<{
-            [k: string]: ZodErrorSchema;
-          }>;
-          setErrors(errors);
-          return;
-        }
-
-        if (!checkNoConflicts()) return;
+        if (!checkValidation()) return;
 
         handleUpload(file);
       })
@@ -358,7 +358,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         fileTypes: acceptedModelFiles,
         modelId: model?.id,
         maxFiles,
-        checkNoConflicts,
+        validationCheck: checkValidation,
       }}
     >
       {children}

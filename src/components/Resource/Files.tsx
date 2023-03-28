@@ -341,7 +341,7 @@ function FileEditForm({
   fileTypes: ModelFileType[];
 }) {
   const [initialFile, setInitialFile] = useState({ ...versionFile });
-  const { errors, updateFile, checkNoConflicts } = useFilesContext();
+  const { errors, updateFile, validationCheck } = useFilesContext();
   const error = errors?.[index];
 
   const { mutate, isLoading } = trpc.modelFile.update.useMutation({
@@ -351,8 +351,8 @@ function FileEditForm({
   });
 
   const handleSave = () => {
-    const noConflicts = checkNoConflicts();
-    if (noConflicts) {
+    const valid = validationCheck();
+    if (valid) {
       mutate({
         id: versionFile.id,
         type: versionFile.type ?? undefined,
