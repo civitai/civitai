@@ -75,8 +75,18 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   const lowerQuery = query?.toLowerCase();
+
+  // If the user is not a moderator, only show published models
   if (!sessionUser?.isModerator) {
-    AND.push({ status: ModelStatus.Published });
+    const statusVisibleOr: Prisma.Enumerable<Prisma.ModelWhereInput> = [
+      { status: ModelStatus.Published },
+    ];
+    if (sessionUser && (username || user))
+      statusVisibleOr.push({
+        AND: [{ user: { id: sessionUser.id } }, { status: ModelStatus.Draft }],
+      });
+
+    AND.push({ OR: statusVisibleOr });
   }
   if (sessionUser?.isModerator) {
     AND.push({ status: status && status.length > 0 ? { in: status } : ModelStatus.Published });

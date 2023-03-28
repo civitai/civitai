@@ -90,6 +90,20 @@ export const setReportStatusSchema = z.object({
 export type GetReportsInput = z.infer<typeof getReportsSchema>;
 export const getReportsSchema = getAllQuerySchema.extend({
   type: z.nativeEnum(ReportEntity),
+  filters: z
+    .object({
+      id: z.string(),
+      value: z.unknown(),
+    })
+    .array()
+    .optional(),
+  sort: z
+    .object({
+      id: z.string(),
+      desc: z.boolean(),
+    })
+    .array()
+    .optional(),
 });
 
 export type GetReportCountInput = z.infer<typeof getReportCount>;

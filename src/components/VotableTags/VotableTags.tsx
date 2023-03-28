@@ -2,6 +2,7 @@ import { ActionIcon, Center, Group, GroupProps, Loader } from '@mantine/core';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons';
 import { useMemo, useState } from 'react';
 import { VotableTag } from '~/components/VotableTags/VotableTag';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { trpc } from '~/utils/trpc';
 
@@ -12,6 +13,7 @@ export function VotableTags({
   tags: initialTags,
   ...props
 }: GalleryTagProps) {
+  const currentUser = useCurrentUser();
   const { data: tags = initialTags, isLoading } = trpc.tag.getVotableTags.useQuery(
     { id, type },
     { enabled: !initialTags }
@@ -22,9 +24,18 @@ export function VotableTags({
   const [showAll, setShowAll] = useState(false);
   const displayedTags = useMemo(() => {
     if (!tags) return [];
-    if (showAll) return tags;
-    return tags.slice(0, limit);
-  }, [tags, showAll, limit]);
+    let displayTags = tags;
+    if (currentUser?.isModerator)
+      displayTags = tags.sort((a, b) => {
+        const aMod = a.type === 'Moderation';
+        const bMod = b.type === 'Moderation';
+        if (aMod && !bMod) return -1;
+        if (!aMod && bMod) return 1;
+        return 0;
+      });
+    if (showAll) return displayTags;
+    return displayTags.slice(0, limit);
+  }, [tags, showAll, limit, currentUser?.isModerator]);
 
   if (!initialTags && isLoading)
     return (

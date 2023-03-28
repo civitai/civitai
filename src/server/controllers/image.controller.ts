@@ -85,12 +85,12 @@ export const getGalleryImageDetailHandler = async ({
     return {
       ...image,
       metrics: {
-        likeCount: stats?.likeCountAllTime,
-        dislikeCount: stats?.dislikeCountAllTime,
-        laughCount: stats?.laughCountAllTime,
-        cryCount: stats?.cryCountAllTime,
-        heartCount: stats?.heartCountAllTime,
-        commentCount: stats?.commentCountAllTime,
+        likeCount: stats?.likeCountAllTime ?? 0,
+        dislikeCount: stats?.dislikeCountAllTime ?? 0,
+        laughCount: stats?.laughCountAllTime ?? 0,
+        cryCount: stats?.cryCountAllTime ?? 0,
+        heartCount: stats?.heartCountAllTime ?? 0,
+        commentCount: stats?.commentCountAllTime ?? 0,
       },
       tags: tags.map(({ tag, ...other }) => ({ ...tag, ...other })),
     };
@@ -296,7 +296,11 @@ export const getInfiniteImagesHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return await getAllImages({ ...input, userId: ctx.user?.id });
+    return await getAllImages({
+      ...input,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

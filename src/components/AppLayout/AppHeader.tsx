@@ -55,6 +55,7 @@ import { LoginRedirectReason } from '~/utils/login-helpers';
 import { UploadTracker } from '~/components/Resource/UploadTracker';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
+import { ModerationNav } from '~/components/Moderation/ModerationNav';
 
 const HEADER_HEIGHT = 70;
 
@@ -389,6 +390,7 @@ export function AppHeader() {
             )}
             {currentUser?.showNsfw && <BrowsingModeIcon />}
             {currentUser && <NotificationBell />}
+            {currentUser?.isModerator && <ModerationNav />}
             <Menu
               width={260}
               opened={userMenuOpened}

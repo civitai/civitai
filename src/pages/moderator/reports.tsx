@@ -21,8 +21,9 @@ import {
   MantineSize,
   Anchor,
   ScrollArea,
+  SelectItem,
 } from '@mantine/core';
-import { ReportStatus } from '@prisma/client';
+import { ReportReason, ReportStatus } from '@prisma/client';
 import { IconExternalLink } from '@tabler/icons';
 import produce from 'immer';
 import upperFirst from 'lodash/upperFirst';
@@ -46,13 +47,22 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { GetReportsProps } from '~/server/controllers/report.controller';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 import { constants } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { Meta } from '~/components/Meta/Meta';
 import { Form, InputTextArea, useForm } from '~/libs/form';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import {
+  MantineReactTable,
+  MRT_ColumnDef,
+  MRT_ColumnFiltersState,
+  MRT_PaginationState,
+  MRT_SortingState,
+} from 'mantine-react-table';
+import { useQueryClient } from '@tanstack/react-query';
+import { getQueryKey } from '@trpc/react-query';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerAuthSession(context);
@@ -75,12 +85,43 @@ export default function Reports() {
   const page = router.query.page ? Number(router.query.page) : 1;
   const [type, setType] = useState(ReportEntity.Model);
   const [selected, setSelected] = useState<number>();
-
-  const { data, isLoading, isFetching } = trpc.report.getAll.useQuery({
-    page,
-    limit,
-    type,
+  const [columnFilters, setColumnFilters] = useState<MRT_ColumnFiltersState>([
+    {
+      id: 'reason',
+      value: [
+        ReportReason.AdminAttention,
+        ReportReason.Claim,
+        ReportReason.Ownership,
+        ReportReason.TOSViolation,
+      ],
+    },
+    {
+      id: 'status',
+      value: [ReportStatus.Pending, ReportStatus.Processing],
+    },
+  ]);
+  const [sorting, setSorting] = useState<MRT_SortingState>([{ id: 'createdAt', desc: true }]);
+  const [pagination, setPagination] = useState<MRT_PaginationState>({
+    pageIndex: 0,
+    pageSize: 20,
   });
+
+  const { data, isLoading, isFetching } = trpc.report.getAll.useQuery(
+    {
+      page: pagination.pageIndex + 1,
+      limit: pagination.pageSize,
+      type,
+      filters: columnFilters,
+      sort: sorting,
+    },
+    {
+      keepPreviousData: true,
+    }
+  );
+  const reports = useMemo(
+    () => data?.items.map((x) => ({ ...x, page, type, limit })) ?? [],
+    [data?.items, page, type, limit]
+  );
 
   const handlePageChange = (page: number) => {
     const [pathname, query] = router.asPath.split('?');
@@ -96,98 +137,145 @@ export default function Reports() {
     setSelected(undefined);
   };
 
+  const columns = useMemo<MRT_ColumnDef<(typeof reports)[0]>[]>(
+    () => [
+      {
+        id: 'id',
+        accesorKey: 'id',
+        header: '',
+        Cell: ({ row: { original: report } }) => (
+          <Group spacing="xs" noWrap>
+            <Button compact size="xs" onClick={() => setSelected(report.id)}>
+              Details
+            </Button>
+            <Tooltip label="Open reported item" withArrow>
+              <ActionIcon
+                component="a"
+                href={getReportLink(report)}
+                target="_blank"
+                variant="subtle"
+                size="sm"
+              >
+                <IconExternalLink />
+              </ActionIcon>
+            </Tooltip>
+          </Group>
+        ),
+        enableHiding: false,
+        enableSorting: false,
+        enableColumnFilter: false,
+        enableColumnActions: false,
+        width: 120,
+      },
+      {
+        id: 'reason',
+        header: 'Reason',
+        accessorFn: (x) => splitUppercase(x.reason),
+        filterFn: 'equals',
+        filterVariant: 'multi-select',
+        enableSorting: false,
+        mantineFilterMultiSelectProps: {
+          data: Object.values(ReportReason).map(
+            (x) =>
+              ({
+                label: getDisplayName(x),
+                value: x,
+              } as SelectItem)
+          ) as any,
+        },
+      },
+      {
+        accessorKey: 'status',
+        header: 'Status',
+        Cell: ({ row: { original: report } }) => (
+          <ToggleReportStatus id={report.id} status={report.status} size="md" />
+        ),
+        filterFn: 'equals',
+        filterVariant: 'multi-select',
+        enableSorting: false,
+        mantineFilterMultiSelectProps: {
+          data: Object.values(ReportStatus).map(
+            (x) =>
+              ({
+                label: getDisplayName(x),
+                value: x,
+              } as SelectItem)
+          ) as any,
+        },
+      },
+      {
+        id: 'createdAt',
+        accessorFn: (x) => formatDate(x.createdAt),
+        header: 'Reported',
+        filterVariant: 'date',
+      },
+      {
+        id: 'reportedBy',
+        accessorFn: (x) => x.user.username,
+        header: 'Reported by',
+        enableSorting: false,
+        Cell: ({ row: { original: report } }) => (
+          <Link href={`/user/${report.user.username}`} passHref>
+            <Text variant="link" component="a" target="_blank">
+              {report.user.username}
+            </Text>
+          </Link>
+        ),
+      },
+      {
+        id: 'alsoReportedBy',
+        header: 'Also reported by',
+        accessorFn: (x) =>
+          x.alsoReportedBy.length ? `${abbreviateNumber(x.alsoReportedBy.length)} Users` : null,
+        enableSorting: false,
+        enableColumnFilter: false,
+      },
+    ],
+    []
+  );
+
   return (
     <>
       <Meta title="Reports" />
       <Container size="xl" pb="xl">
         <Stack>
-          <Title>Reports</Title>
-          <SegmentedControl
-            data={Object.values(ReportEntity).map((x) => ({ label: upperFirst(x), value: x }))}
-            onChange={handleTypeChange}
-            value={type}
+          <Group align="flex-end">
+            <Title>Reports</Title>
+            <SegmentedControl
+              size="sm"
+              data={Object.values(ReportEntity).map((x) => ({ label: upperFirst(x), value: x }))}
+              onChange={handleTypeChange}
+              value={type}
+            />
+          </Group>
+          <MantineReactTable
+            columns={columns}
+            data={reports}
+            manualFiltering
+            manualPagination
+            manualSorting
+            onColumnFiltersChange={setColumnFilters}
+            onPaginationChange={setPagination}
+            onSortingChange={setSorting}
+            enableMultiSort={false}
+            rowCount={data?.totalItems ?? 0}
+            enableStickyHeader
+            enableHiding={false}
+            enableGlobalFilter={false}
+            mantineTableContainerProps={{
+              sx: { maxHeight: 'calc(100vh - 360px)' },
+            }}
+            initialState={{
+              density: 'sm',
+            }}
+            state={{
+              isLoading,
+              pagination,
+              columnFilters,
+              showProgressBars: isFetching,
+              sorting,
+            }}
           />
-          <ScrollArea style={{ position: 'relative' }}>
-            <LoadingOverlay visible={isLoading || isFetching} />
-            <Table striped>
-              <thead>
-                <tr>
-                  <th></th>
-                  <th>Reason</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Reported by</th>
-                  <th>Also reported by</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data &&
-                  data.items.map((item) => (
-                    <Box
-                      component="tr"
-                      key={item.id}
-                      sx={(theme) => ({
-                        backgroundColor:
-                          selected === item.id
-                            ? theme.colorScheme === 'dark'
-                              ? `${theme.colors.dark[4]} !important`
-                              : `${theme.colors.gray[2]} !important`
-                            : undefined,
-                      })}
-                    >
-                      <td>
-                        <Group spacing="xs" noWrap>
-                          <Button compact size="xs" onClick={() => setSelected(item.id)}>
-                            Details
-                          </Button>
-                          <Tooltip label="Open reported item" withArrow>
-                            <ActionIcon
-                              component="a"
-                              href={getReportLink(item)}
-                              target="_blank"
-                              variant="subtle"
-                              size="sm"
-                            >
-                              <IconExternalLink />
-                            </ActionIcon>
-                          </Tooltip>
-                        </Group>
-                      </td>
-                      <td>{splitUppercase(item.reason)}</td>
-                      <td>
-                        <ToggleReportStatus
-                          id={item.id}
-                          status={item.status}
-                          page={page}
-                          type={type}
-                          limit={limit}
-                        />
-                      </td>
-                      <td>{formatDate(item.createdAt)}</td>
-                      <td>
-                        <Link href={`/user/${item.user.username}`} passHref>
-                          <Text variant="link" component="a" target="_blank">
-                            {item.user.username}
-                          </Text>
-                        </Link>
-                      </td>
-                      <td>
-                        {item.alsoReportedBy.length > 0
-                          ? `${abbreviateNumber(item.alsoReportedBy.length)} Users`
-                          : null}
-                      </td>
-                    </Box>
-                  ))}
-              </tbody>
-            </Table>
-          </ScrollArea>
-          {data && data.totalPages > 1 && (
-            <Group position="apart">
-              <Text>Total {data.totalItems} items</Text>
-
-              <Pagination page={page} onChange={handlePageChange} total={data.totalPages} />
-            </Group>
-          )}
         </Stack>
       </Container>
       {data && (
@@ -195,8 +283,6 @@ export default function Reports() {
           report={data.items.find((x) => x.id === selected)}
           onClose={() => setSelected(undefined)}
           type={type}
-          page={page}
-          limit={limit}
         />
       )}
     </>
@@ -209,14 +295,10 @@ function ReportDrawer({
   report,
   onClose,
   type,
-  page,
-  limit,
 }: {
   report?: ReportDetail;
   onClose: () => void;
   type: ReportEntity;
-  page: number;
-  limit: number;
 }) {
   const theme = useMantineTheme();
   const mobile = useIsMobile();
@@ -294,14 +376,7 @@ function ReportDrawer({
             description="Use this input to set the status of the report"
             descriptionProps={{ sx: { marginBottom: 5 } }}
           >
-            <ToggleReportStatus
-              id={report.id}
-              status={report.status}
-              page={page}
-              type={type}
-              limit={limit}
-              size="md"
-            />
+            <ToggleReportStatus id={report.id} status={report.status} size="md" />
           </Input.Wrapper>
           <Form form={form} onSubmit={handleSaveReport}>
             <Stack>
@@ -425,37 +500,28 @@ const getReportLink = (report: ReportDetail) => {
   }
 };
 
-function ToggleReportStatus({
-  id,
-  status,
-  type,
-  page,
-  limit,
-  size,
-}: SetReportStatusInput & { type: ReportEntity; page: number; limit: number; size?: MantineSize }) {
-  const queryUtils = trpc.useContext();
-  // const [status, setStatus] = useState(initialStatus);
+function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?: MantineSize }) {
+  const queryClient = useQueryClient();
 
   const { mutate, isLoading } = trpc.report.setStatus.useMutation({
     onSuccess(_, request) {
-      // setStatus(request.status);
-      queryUtils.report.getAll.setData(
-        { type, page, limit },
-        produce((old) => {
-          if (old) {
-            const index = old.items.findIndex((x) => x.id === id);
-            old.items[index].status = request.status;
-          }
+      const queryKey = getQueryKey(trpc.report.getAll);
+      queryClient.setQueriesData(
+        { queryKey, exact: false },
+        produce((old: any) => {
+          const item = old?.items?.find((x: any) => x.id === id);
+          if (item) item.status = request.status;
         })
       );
     },
   });
+  const statusColor = reportStatusColorScheme[status];
 
   return (
     <Menu>
       <Menu.Target>
-        <Badge color={reportStatusColorScheme[status]} size={size} sx={{ cursor: 'pointer' }}>
-          {isLoading ? <Loader variant="dots" size="sm" /> : status}
+        <Badge color={statusColor} size={size} sx={{ cursor: 'pointer' }}>
+          {isLoading ? <Loader variant="dots" size="sm" mx="md" color={statusColor} /> : status}
         </Badge>
       </Menu.Target>
       <Menu.Dropdown>

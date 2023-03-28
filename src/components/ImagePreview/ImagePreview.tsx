@@ -8,20 +8,22 @@ import {
   Group,
   HoverCard,
   MantineNumberSize,
+  Menu,
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageModel } from '~/server/selectors/image.selector';
 // import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { EdgeImage, EdgeImageProps } from '~/components/EdgeImage/EdgeImage';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { IconAlertTriangle, IconExclamationMark, IconInfoCircle } from '@tabler/icons';
+import { IconAlertTriangle, IconCheck, IconInfoCircle, IconX } from '@tabler/icons';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { getClampedSize } from '~/utils/blurhash';
-import { CSSProperties } from 'react';
+import { CSSProperties, useState } from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { trpc } from '~/utils/trpc';
 
 type ImagePreviewProps = {
   nsfw?: boolean;
@@ -36,7 +38,17 @@ type ImagePreviewProps = {
 } & Omit<BoxProps, 'component'>;
 
 export function ImagePreview({
-  image: { id, url, name, width, height, hash, meta, generationProcess, needsReview },
+  image: {
+    id,
+    url,
+    name,
+    width,
+    height,
+    hash,
+    meta,
+    generationProcess,
+    needsReview: initialNeedsReview,
+  },
   edgeImageProps = {},
   nsfw,
   aspectRatio,
@@ -49,6 +61,21 @@ export function ImagePreview({
   ...props
 }: ImagePreviewProps) {
   const { classes, cx } = useStyles({ radius });
+  const user = useCurrentUser();
+  const [needsReview, setNeedsReview] = useState(initialNeedsReview);
+
+  // TODO Briant: Perhaps move this to a moderation provider or store?
+  const moderateImagesMutation = trpc.image.moderate.useMutation();
+  const handleModerate = async (accept: boolean) => {
+    if (!user?.isModerator) return;
+    moderateImagesMutation.mutate({
+      ids: [id],
+      needsReview: accept ? false : undefined,
+      delete: !accept ? true : undefined,
+    });
+    setNeedsReview(false);
+  };
+
   aspectRatio ??= Math.max((width ?? 16) / (height ?? 9), 9 / 16);
 
   if (!edgeImageProps.width && !edgeImageProps.height) {
@@ -81,25 +108,48 @@ export function ImagePreview({
     </ImageMetaPopover>
   );
 
-  const NeedsReviewBadge = needsReview && (
-    <HoverCard width={200} withArrow>
-      <HoverCard.Target>
-        <ThemeIcon size="lg" color="yellow">
-          <IconAlertTriangle strokeWidth={2.5} size={26} />
-        </ThemeIcon>
-      </HoverCard.Target>
-      <HoverCard.Dropdown p={8}>
-        <Stack spacing={0}>
-          <Text weight="bold" size="xs">
-            Flagged for review
-          </Text>
-          <Text size="xs">
-            {`This image won't be visible to other users until it's reviewed by our moderators.`}
-          </Text>
-        </Stack>
-      </HoverCard.Dropdown>
-    </HoverCard>
+  let NeedsReviewBadge = needsReview && (
+    <ThemeIcon size="lg" color="yellow">
+      <IconAlertTriangle strokeWidth={2.5} size={26} />
+    </ThemeIcon>
   );
+
+  if (needsReview && user?.isModerator)
+    NeedsReviewBadge = (
+      <Menu position="bottom">
+        <Menu.Target>
+          <Box>{NeedsReviewBadge}</Box>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Item
+            onClick={() => handleModerate(true)}
+            icon={<IconCheck size={14} stroke={1.5} />}
+          >
+            Approve
+          </Menu.Item>
+          <Menu.Item onClick={() => handleModerate(false)} icon={<IconX size={14} stroke={1.5} />}>
+            Reject
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
+    );
+  else if (needsReview) {
+    NeedsReviewBadge = (
+      <HoverCard width={200} withArrow>
+        <HoverCard.Target>{NeedsReviewBadge}</HoverCard.Target>
+        <HoverCard.Dropdown p={8}>
+          <Stack spacing={0}>
+            <Text weight="bold" size="xs">
+              Flagged for review
+            </Text>
+            <Text size="xs">
+              {`This image won't be visible to other users until it's reviewed by our moderators.`}
+            </Text>
+          </Stack>
+        </HoverCard.Dropdown>
+      </HoverCard>
+    );
+  }
 
   const edgeImageStyle: CSSProperties = {
     maxHeight: '100%',

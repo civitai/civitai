@@ -16,11 +16,13 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
+import { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
 import { useListState } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import { TagType } from '@prisma/client';
 import {
   IconCheck,
+  IconExternalLink,
   IconInfoCircle,
   IconReload,
   IconSquareCheck,
@@ -33,8 +35,10 @@ import {
 import { GetServerSideProps } from 'next';
 import { useEffect, useMemo, useRef } from 'react';
 import { useInView } from 'react-intersection-observer';
+import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { ImageConnectionLink } from '~/components/Image/ImageConnectionLink/ImageConnectionLink';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
@@ -249,6 +253,12 @@ export default function Images() {
     if (inView) fetchNextPage();
   }, [fetchNextPage, inView]);
 
+  const tooltipProps: Omit<TooltipProps, 'label' | 'children'> = {
+    position: 'bottom',
+    withArrow: true,
+    withinPortal: true,
+  };
+
   return (
     <Container size="xl">
       <Stack>
@@ -268,17 +278,23 @@ export default function Images() {
           }}
         >
           <Group noWrap spacing="xs">
-            <ActionIcon variant="outline" onClick={handleSelectAll}>
-              <IconSquareCheck size="1.25rem" />
-            </ActionIcon>
-            <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
-              <IconSquareOff size="1.25rem" />
-            </ActionIcon>
+            <ButtonTooltip label="Select all" {...tooltipProps}>
+              <ActionIcon variant="outline" onClick={handleSelectAll}>
+                <IconSquareCheck size="1.25rem" />
+              </ActionIcon>
+            </ButtonTooltip>
+            <ButtonTooltip label="Clear selection" {...tooltipProps}>
+              <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
+                <IconSquareOff size="1.25rem" />
+              </ActionIcon>
+            </ButtonTooltip>
             <Menu>
               <Menu.Target>
-                <ActionIcon variant="outline" disabled={!selected.length}>
-                  <IconTag size="1.25rem" />
-                </ActionIcon>
+                <ButtonTooltip label="Add tag" {...tooltipProps}>
+                  <ActionIcon variant="outline" disabled={!selected.length}>
+                    <IconTag size="1.25rem" />
+                  </ActionIcon>
+                </ButtonTooltip>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>Add Tag</Menu.Label>
@@ -291,9 +307,11 @@ export default function Images() {
             </Menu>
             <Menu>
               <Menu.Target>
-                <ActionIcon variant="outline" disabled={!selected.length}>
-                  <IconTagOff size="1.25rem" />
-                </ActionIcon>
+                <ButtonTooltip label="Remove tag" {...tooltipProps}>
+                  <ActionIcon variant="outline" disabled={!selected.length}>
+                    <IconTagOff size="1.25rem" />
+                  </ActionIcon>
+                </ButtonTooltip>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>Remove Tag</Menu.Label>
@@ -310,9 +328,11 @@ export default function Images() {
               onConfirm={handleApproveSelected}
               withArrow
             >
-              <ActionIcon variant="outline" disabled={!selected.length} color="green">
-                <IconCheck size="1.25rem" />
-              </ActionIcon>
+              <ButtonTooltip label="Accept" {...tooltipProps}>
+                <ActionIcon variant="outline" disabled={!selected.length} color="green">
+                  <IconCheck size="1.25rem" />
+                </ActionIcon>
+              </ButtonTooltip>
             </PopConfirm>
             <PopConfirm
               message={`Are you sure you want to delete ${selected.length} image(s)?`}
@@ -320,13 +340,17 @@ export default function Images() {
               onConfirm={handleDeleteSelected}
               withArrow
             >
-              <ActionIcon variant="outline" disabled={!selected.length} color="red">
-                <IconTrash size="1.25rem" />
-              </ActionIcon>
+              <ButtonTooltip label="Delete" {...tooltipProps}>
+                <ActionIcon variant="outline" disabled={!selected.length} color="red">
+                  <IconTrash size="1.25rem" />
+                </ActionIcon>
+              </ButtonTooltip>
             </PopConfirm>
-            <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
-              <IconReload size="1.25rem" />
-            </ActionIcon>
+            <ButtonTooltip label="Refresh" {...tooltipProps}>
+              <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
+                <IconReload size="1.25rem" />
+              </ActionIcon>
+            </ButtonTooltip>
           </Group>
         </Paper>
 
@@ -434,6 +458,23 @@ function ImageGridItem({
                   width={450}
                   placeholder="empty"
                 />
+                {image.connections && (
+                  <ImageConnectionLink {...image.connections}>
+                    <ActionIcon
+                      variant="transparent"
+                      style={{ position: 'absolute', bottom: '5px', left: '5px' }}
+                      size="lg"
+                    >
+                      <IconExternalLink
+                        color="white"
+                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                        opacity={0.8}
+                        strokeWidth={2.5}
+                        size={26}
+                      />
+                    </ActionIcon>
+                  </ImageConnectionLink>
+                )}
                 {image.meta && (
                   <ImageMetaPopover
                     meta={image.meta as ImageMetaProps}

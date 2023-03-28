@@ -38,6 +38,8 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { VotableTagModel } from '~/libs/tags';
+import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { getTagsNeedingReview } from '~/server/services/system-cache';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -55,9 +57,33 @@ export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
   return result.map((x) => x.image);
 };
 
-export const getGalleryImages = async <
-  TOrderBy extends Prisma.Enumerable<Prisma.ImageOrderByWithRelationInput>
->({
+type GetGalleryImagesRaw = {
+  id: number;
+  name: string | null;
+  url: string;
+  nsfw: boolean;
+  width: number | null;
+  height: number | null;
+  hash: string | null;
+  meta: Prisma.JsonValue;
+  generationProcess: ImageGenerationProcess | null;
+  createdAt: Date;
+  scannedAt: Date | null;
+  needsReview: boolean;
+  userId: number;
+  index: number | null;
+  modelId: number | null;
+  reviewId: number | null;
+  cryCount: number;
+  laughCount: number;
+  likeCount: number;
+  dislikeCount: number;
+  heartCount: number;
+  commentCount: number;
+  reactions?: ReviewReactions[];
+  cursorId?: bigint;
+};
+export const getGalleryImages = async ({
   limit,
   cursor,
   modelId,
@@ -65,7 +91,6 @@ export const getGalleryImages = async <
   reviewId,
   userId,
   user,
-  orderBy,
   infinite,
   period,
   sort,
@@ -77,97 +102,199 @@ export const getGalleryImages = async <
   types,
   tagReview,
   needsReview,
-}: GetGalleryImageInput & { orderBy?: TOrderBy; user?: SessionUser }) => {
+}: GetGalleryImageInput & { user?: SessionUser }) => {
   const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const isMod = user?.isModerator ?? false;
   needsReview = isMod ? needsReview : false;
   tagReview = isMod ? tagReview : false;
 
-  const conditionalFilters: Prisma.Enumerable<Prisma.ImageWhereInput> = [];
-  if (!!excludedTagIds?.length)
-    conditionalFilters.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
+  const AND: Prisma.Sql[] = [];
+  // Exclude TOS violations
+  if (!isMod) AND.push(Prisma.sql`i."tosViolation" = false`);
 
-  if (!!tags?.length) conditionalFilters.push({ tags: { some: { tagId: { in: tags } } } });
-  else if (!needsReview && !tagReview && !(modelId || modelVersionId || reviewId)) {
+  // Exclude images that need review
+  if (!isMod) {
+    const needsReviewOR = [
+      Prisma.sql`i."needsReview" = false`,
+      Prisma.sql`i."userId" = ${user?.id}`,
+    ];
+    AND.push(Prisma.sql`(${Prisma.join(needsReviewOR, ' OR ')})`);
+  }
+
+  // Exclude specific tags
+  if (!!excludedTagIds?.length) {
+    const OR = [
+      Prisma.join(
+        [
+          Prisma.sql`i."scannedAt" IS NOT NULL`,
+          Prisma.sql`NOT EXISTS (
+          SELECT 1 FROM "TagsOnImage" toi
+          WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(excludedTagIds)})
+        )`,
+        ],
+        ' AND '
+      ),
+    ];
+    if (userId) OR.push(Prisma.sql`i."userId" = ${userId}`);
+    AND.push(Prisma.sql`(${Prisma.join(OR, ' OR ')})`);
+  }
+
+  // Filter to specific user
+  if (userId) AND.push(Prisma.sql`i."userId" = ${userId}`);
+
+  // Filter to specific tags
+  if (tags?.length) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "TagsOnImage" toi
+      WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(tags)})
+    )`);
+  } else if (infinite && !needsReview && !tagReview) {
     const periodStart = decreaseDate(new Date(), 3, 'days');
-    conditionalFilters.push({ featuredAt: { gt: periodStart } });
+    AND.push(Prisma.sql`i."featuredAt" > ${periodStart}`);
   }
 
-  if (isFeatured) conditionalFilters.push({ featuredAt: { not: null } });
+  // Filter to featured images
+  if (isFeatured) AND.push(Prisma.sql`i."featuredAt" IS NOT NULL`);
 
-  if (!!excludedUserIds?.length) conditionalFilters.push({ userId: { notIn: excludedUserIds } });
+  // Exclude specific users
+  if (!!excludedUserIds?.length)
+    AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
 
-  if (!!excludedImageIds?.length) conditionalFilters.push({ id: { notIn: excludedImageIds } });
+  // Exclude specific images
+  if (!!excludedImageIds?.length)
+    AND.push(Prisma.sql`i.id NOT IN (${Prisma.join(excludedImageIds)})`);
 
-  if (types && types.length) conditionalFilters.push({ generationProcess: { in: types } });
+  // Filter to specific image generation types
+  if (types && types.length) AND.push(Prisma.sql`i."generationProcess" IN (${Prisma.join(types)})`);
 
-  const infiniteWhere: Prisma.ImageFindManyArgs['where'] = {
-    connections: {
-      modelId,
-      modelVersionId,
-      reviewId,
+  // Filter to specific image connections
+  if (reviewId) AND.push(Prisma.sql`ior."reviewId" = ${reviewId}`);
+  else if (modelVersionId) {
+    AND.push(Prisma.sql`iom."modelVersionId" = ${modelVersionId}`);
+    AND.push(Prisma.sql`ior."reviewId" IS NULL`);
+  } else if (modelId) AND.push(Prisma.sql`m."id" = ${modelId}`);
+  AND.push(Prisma.sql`(rev.id IS NULL OR rev."tosViolation" = false)`);
+
+  let orderBy = 'i.id DESC';
+  if (!infinite) orderBy = 'COALESCE(ior."index",iom."index",0)';
+  else if (sort === ImageSort.MostComments) orderBy = `r."commentCount${period}Rank"`;
+  else if (sort === ImageSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
+
+  if (needsReview) {
+    AND.length = 0;
+    AND.push(Prisma.sql`i."needsReview" = true`);
+    orderBy = 'i.id';
+  } else if (tagReview) {
+    AND.length = 0;
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "TagsOnImage" toi
+      WHERE toi."imageId" = i.id AND toi."needsReview" = true
+      )`);
+    orderBy = 'i.id';
+  }
+
+  const [cursorProp, cursorDirection] = orderBy?.split(' ');
+  if (cursor) {
+    const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
+    if (cursorProp)
+      AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
+  }
+
+  console.time('getGalleryImages');
+  const rawImages = await dbRead.$queryRaw<GetGalleryImagesRaw[]>`
+    SELECT
+      i.id,
+      i.name,
+      i.url,
+      i.nsfw,
+      i.width,
+      i.height,
+      i.hash,
+      i.meta,
+      i."generationProcess",
+      i."createdAt",
+      i."scannedAt",
+      i."needsReview",
+      i."userId",
+      i."postId",
+      i."createdAt",
+      COALESCE(ior."index",iom."index",0) "index",
+      m.id "modelId",
+      ior."reviewId",
+      COALESCE(im."cryCount", 0) "cryCount",
+      COALESCE(im."laughCount", 0) "laughCount",
+      COALESCE(im."likeCount", 0) "likeCount",
+      COALESCE(im."dislikeCount", 0) "dislikeCount",
+      COALESCE(im."heartCount", 0) "heartCount",
+      COALESCE(im."commentCount", 0) "commentCount",
+      ${Prisma.raw(!user?.id ? 'null' : 'ir.reactions')} "reactions",
+      ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
+    FROM "Image" i
+    ${Prisma.raw(cursorProp?.startsWith('r.') ? 'JOIN "ImageRank" r ON r."imageId" = i.id' : '')}
+    LEFT JOIN "ImagesOnModels" iom ON iom."imageId" = i.id
+    LEFT JOIN "ModelVersion" mv ON mv.id = iom."modelVersionId"
+    LEFT JOIN "ImagesOnReviews" ior ON ior."imageId" = i.id
+    LEFT JOIN "Review" rev ON rev.id = ior."reviewId"
+    JOIN "Model" m ON m.id = COALESCE(mv."modelId", rev."modelId") AND m.status = 'Published' AND m."tosViolation" = false
+    LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'
+    ${
+      !user
+        ? Prisma.sql``
+        : Prisma.sql`LEFT JOIN (
+        SELECT "imageId", jsonb_agg(reaction) "reactions"
+        FROM "ImageReaction"
+        WHERE "userId" = ${user.id}
+        GROUP BY "imageId"
+      ) ir ON ir."imageId" = i.id`
+    }
+    WHERE ${Prisma.join(AND, ' AND ')}
+    ORDER BY ${Prisma.raw(orderBy)}
+    LIMIT ${limit}
+  `;
+
+  // Get Tags for images
+  const imageIds = rawImages.map((i) => i.id);
+  const rawTags = await dbRead.tagsOnImage.findMany({
+    where: { disabled: false, imageId: { in: imageIds } },
+    select: {
+      imageId: true,
+      automated: true,
+      needsReview: true,
+      tag: { select: { ...simpleTagSelect, type: true } },
     },
-    OR: [
-      {
-        // Only include images from published models and without tosViolation
-        imagesOnModels: {
-          modelVersion: { model: { status: ModelStatus.Published, tosViolation: false } },
-        },
-      },
-      {
-        imagesOnReviews: { review: { tosViolation: false } },
-      },
-    ],
-    AND: conditionalFilters.length ? conditionalFilters : undefined,
-  };
-  const finiteWhere: Prisma.ImageWhereInput = {
-    imagesOnModels:
-      modelVersionId || modelId
-        ? { modelVersionId, modelVersion: modelId ? { modelId } : undefined }
-        : undefined,
-    imagesOnReviews: reviewId ? { reviewId } : undefined,
-    tags: excludedTagIds?.length ? { none: { tagId: { in: excludedTagIds } } } : undefined,
-    id: excludedImageIds?.length ? { notIn: excludedImageIds } : undefined,
-  };
-
-  let where: Prisma.ImageWhereInput = {};
-  if (needsReview) where.needsReview = true;
-  else if (tagReview) where.tags = { some: { needsReview: true } };
-  else {
-    where = {
-      userId,
-      tosViolation: !isMod ? false : undefined,
-      OR: [{ needsReview: false }, { userId: user?.id }],
-      ...(infinite ? infiniteWhere : finiteWhere),
-    };
-  }
-
-  const items = await dbRead.image.findMany({
-    cursor: cursor ? { id: cursor } : undefined,
-    take: limit,
-    where,
-    select: imageGallerySelect({ user }),
-    orderBy: orderBy ?? [
-      ...(sort === ImageSort.MostComments
-        ? [{ rank: { [`commentCount${period}Rank`]: 'asc' } }]
-        : sort === ImageSort.MostReactions
-        ? [{ rank: { [`reactionCount${period}Rank`]: 'asc' } }]
-        : []),
-      { id: 'desc' },
-    ],
   });
 
-  return items.map(({ stats, ...image }) => ({
-    ...image,
-    metrics: {
-      likeCount: stats?.likeCountAllTime,
-      dislikeCount: stats?.dislikeCountAllTime,
-      laughCount: stats?.laughCountAllTime,
-      cryCount: stats?.cryCountAllTime,
-      heartCount: stats?.heartCountAllTime,
-      commentCount: stats?.commentCountAllTime,
-    },
-  }));
+  // Get Cosmetics for images
+  const userIds = [...new Set(rawImages.map((i) => i.userId))];
+  const rawUsers = await dbRead.user.findMany({
+    where: { id: { in: userIds } },
+    select: userWithCosmeticsSelect,
+  });
+
+  const images = rawImages.map(
+    ({
+      likeCount,
+      dislikeCount,
+      laughCount,
+      cryCount,
+      heartCount,
+      commentCount,
+      modelId,
+      reviewId,
+      index,
+      reactions,
+      ...i
+    }) => ({
+      ...i,
+      metrics: { likeCount, dislikeCount, laughCount, cryCount, heartCount, commentCount },
+      connections: index ? { modelId, reviewId, index: index as number | null } : null,
+      reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
+      tags: rawTags.filter((t) => t.imageId === i.id).map(({ imageId, ...tag }) => tag),
+      user: rawUsers.find((u) => u.id === i.userId) as UserWithCosmetics,
+    })
+  );
+  console.timeEnd('getGalleryImages');
+  return images;
 };
 
 export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) => {
@@ -222,6 +349,13 @@ export const moderateImages = async ({
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
       data: { nsfw, needsReview },
+    });
+
+    // Remove tags that triggered review
+    const tagIds = await getTagsNeedingReview();
+    await dbWrite.tagsOnImage.updateMany({
+      where: { imageId: { in: ids }, tagId: { in: tagIds.map((x) => x.id) } },
+      data: { disabled: true },
     });
   }
 };
@@ -461,14 +595,18 @@ export const getAllImages = async ({
   period,
   sort,
   userId,
+  isModerator,
   tags,
   generation,
   reviewId,
   withTags, // TODO.justin - return image tags when this is requested
   prioritizedUserIds,
-}: GetInfiniteImagesInput & { userId?: number; user?: SessionUser }) => {
-  const AND = [Prisma.sql`i."needsReview" = false`];
+}: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean }) => {
+  const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
+
+  // If User Is Mod
+  if (!isModerator) AND.push(Prisma.sql`i."needsReview" = false`);
 
   // Filter to specific model/review content
   if (modelId || modelVersionId || reviewId) {
@@ -593,14 +731,14 @@ export const getAllImages = async ({
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     ${Prisma.raw(
       !userId
-        ? ''
-        : `LEFT JOIN (
+        ? Prisma.sql``
+        : Prisma.sql`LEFT JOIN (
       SELECT "imageId", jsonb_agg(reaction) "reactions"
       FROM "ImageReaction"
       WHERE "userId" = ${userId}
       GROUP BY "imageId"
     ) ir ON ir."imageId" = i.id`
-    )}
+    }
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit + 1}
@@ -762,7 +900,6 @@ export const getImagesForModelVersion = async ({
   ];
   if (!!excludedTagIds?.length) {
     imageWhere.push(Prisma.sql`i."scannedAt" IS NOT NULL`);
-    // const excludedTags = excludedTagIds.join(',');
     imageWhere.push(
       Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = iom."imageId" AND toi.disabled = false AND toi."tagId" IN (${Prisma.join(
         excludedTagIds

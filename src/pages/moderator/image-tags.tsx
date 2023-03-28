@@ -10,17 +10,18 @@ import {
   Divider,
   Group,
   Loader,
-  Menu,
   Paper,
   Stack,
   Text,
   Title,
+  TooltipProps,
 } from '@mantine/core';
 import { useListState } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import {
   IconBan,
   IconCheck,
+  IconExternalLink,
   IconInfoCircle,
   IconReload,
   IconSquareCheck,
@@ -33,14 +34,17 @@ import {
 import { GetServerSideProps } from 'next';
 import { useEffect, useMemo, useRef } from 'react';
 import { useInView } from 'react-intersection-observer';
+import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { ImageConnectionLink } from '~/components/Image/ImageConnectionLink/ImageConnectionLink';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
+import { getTagDisplayName } from '~/libs/tags';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { ImageGetGalleryInfinite } from '~/types/router';
@@ -187,6 +191,12 @@ export default function ImageTags() {
     if (inView) fetchNextPage();
   }, [fetchNextPage, inView]);
 
+  const tooltipProps: Omit<TooltipProps, 'label' | 'children'> = {
+    position: 'bottom',
+    withArrow: true,
+    withinPortal: true,
+  };
+
   return (
     <Container size="xl">
       <Stack>
@@ -206,21 +216,27 @@ export default function ImageTags() {
           }}
         >
           <Group noWrap spacing="xs">
-            <ActionIcon variant="outline" onClick={handleSelectAll}>
-              <IconSquareCheck size="1.25rem" />
-            </ActionIcon>
-            <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
-              <IconSquareOff size="1.25rem" />
-            </ActionIcon>
+            <ButtonTooltip label="Select all" {...tooltipProps}>
+              <ActionIcon variant="outline" onClick={handleSelectAll}>
+                <IconSquareCheck size="1.25rem" />
+              </ActionIcon>
+            </ButtonTooltip>
+            <ButtonTooltip label="Clear selection" {...tooltipProps}>
+              <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
+                <IconSquareOff size="1.25rem" />
+              </ActionIcon>
+            </ButtonTooltip>
             <PopConfirm
               message={`Are you sure you want to approve ${selected.length} tag removal(s)?`}
               position="bottom-end"
               onConfirm={() => handleSelected(true)}
               withArrow
             >
-              <ActionIcon variant="outline" disabled={!selected.length} color="green">
-                <IconCheck size="1.25rem" />
-              </ActionIcon>
+              <ButtonTooltip label="Approve selected" {...tooltipProps}>
+                <ActionIcon variant="outline" disabled={!selected.length} color="green">
+                  <IconCheck size="1.25rem" />
+                </ActionIcon>
+              </ButtonTooltip>
             </PopConfirm>
             <PopConfirm
               message={`Are you sure you want to decline ${selected.length} tag removal(s)?`}
@@ -228,13 +244,17 @@ export default function ImageTags() {
               onConfirm={() => handleSelected(false)}
               withArrow
             >
-              <ActionIcon variant="outline" disabled={!selected.length} color="red">
-                <IconBan size="1.25rem" />
-              </ActionIcon>
+              <ButtonTooltip label="Decline selected" {...tooltipProps}>
+                <ActionIcon variant="outline" disabled={!selected.length} color="red">
+                  <IconBan size="1.25rem" />
+                </ActionIcon>
+              </ButtonTooltip>
             </PopConfirm>
-            <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
-              <IconReload size="1.25rem" />
-            </ActionIcon>
+            <ButtonTooltip label="Refresh" {...tooltipProps}>
+              <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
+                <IconReload size="1.25rem" />
+              </ActionIcon>
+            </ButtonTooltip>
           </Group>
         </Paper>
 
@@ -300,16 +320,24 @@ function ImageGridItem({
   );
   const needsReview = tags.toReview.length > 0;
 
-  const renderTag = (tag: (typeof tags.toReview)[number]) => (
-    <Badge key={tag.id} variant="filled" color="gray" pr={0}>
-      <Group spacing={0}>
-        {tag.name}
-        <ActionIcon size="sm" variant="transparent" onClick={() => disableTag(image.id, tag.id)}>
-          <IconX strokeWidth={3} size=".75rem" />
-        </ActionIcon>
-      </Group>
-    </Badge>
-  );
+  const renderTag = (tag: (typeof tags.toReview)[number]) => {
+    const isModeration = tag.type === 'Moderation';
+    return (
+      <Badge
+        key={tag.id}
+        variant={isModeration ? 'light' : 'filled'}
+        color={isModeration ? 'red' : 'gray'}
+        pr={0}
+      >
+        <Group spacing={0}>
+          {getTagDisplayName(tag.name)}
+          <ActionIcon size="sm" variant="transparent" onClick={() => disableTag(image.id, tag.id)}>
+            <IconX strokeWidth={3} size=".75rem" />
+          </ActionIcon>
+        </Group>
+      </Badge>
+    );
+  };
 
   return (
     <Card shadow="sm" p="xs" sx={{ opacity: !needsReview ? 0.2 : undefined }} withBorder>
@@ -355,6 +383,23 @@ function ImageGridItem({
                   width={450}
                   placeholder="empty"
                 />
+                {image.connections && (
+                  <ImageConnectionLink {...image.connections}>
+                    <ActionIcon
+                      variant="transparent"
+                      style={{ position: 'absolute', bottom: '5px', left: '5px' }}
+                      size="lg"
+                    >
+                      <IconExternalLink
+                        color="white"
+                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                        opacity={0.8}
+                        strokeWidth={2.5}
+                        size={26}
+                      />
+                    </ActionIcon>
+                  </ImageConnectionLink>
+                )}
                 {image.meta && (
                   <ImageMetaPopover
                     meta={image.meta as ImageMetaProps}
