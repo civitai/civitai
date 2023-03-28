@@ -143,36 +143,37 @@ export function ModelCarousel({
               <div style={{ width: '100%', position: 'relative' }}>
                 <ImageGuard.ToggleConnect />
                 <ImageGuard.Report />
-                <ImageGuard.Unsafe>
-                  <AspectRatio
-                    ratio={(image.width ?? 1) / (image.height ?? 1)}
-                    sx={(theme) => ({
-                      width: '100%',
-                      borderRadius: theme.radius.md,
-                      overflow: 'hidden',
-                    })}
-                  >
-                    <MediaHash {...image} />
-                  </AspectRatio>
-                </ImageGuard.Unsafe>
-                <ImageGuard.Safe>
-                  <RoutedContextLink
-                    modal="imageDetailModal"
-                    imageId={image.id}
-                    modelId={modelId}
-                    modelVersionId={modelVersionId}
-                    prioritizedUserIds={[modelUserId]}
-                    limit={limit}
-                  >
-                    <ImagePreview
-                      image={image}
-                      edgeImageProps={{ width: 400 }}
-                      radius="md"
-                      style={{ width: '100%' }}
-                      withMeta
-                    />
-                  </RoutedContextLink>
-                </ImageGuard.Safe>
+                <RoutedContextLink
+                  modal="imageDetailModal"
+                  imageId={image.id}
+                  modelVersionId={modelVersionId}
+                  prioritizedUserIds={[modelUserId]}
+                  limit={limit}
+                >
+                  <>
+                    <ImageGuard.Unsafe>
+                      <AspectRatio
+                        ratio={(image.width ?? 1) / (image.height ?? 1)}
+                        sx={(theme) => ({
+                          width: '100%',
+                          borderRadius: theme.radius.md,
+                          overflow: 'hidden',
+                        })}
+                      >
+                        <MediaHash {...image} />
+                      </AspectRatio>
+                    </ImageGuard.Unsafe>
+                    <ImageGuard.Safe>
+                      <ImagePreview
+                        image={image}
+                        edgeImageProps={{ width: 400 }}
+                        radius="md"
+                        style={{ width: '100%' }}
+                        withMeta
+                      />
+                    </ImageGuard.Safe>
+                  </>
+                </RoutedContextLink>
               </div>
             </Center>
           </Carousel.Slide>

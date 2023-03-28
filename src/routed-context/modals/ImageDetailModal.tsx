@@ -11,7 +11,11 @@ export default createRoutedContext({
     modelVersionId: z.number().optional(),
     postId: z.number().optional(),
     username: z.string().optional(),
-    prioritizedUserIds: z.array(z.number()).optional(),
+    prioritizedUserIds: z.preprocess((val) => {
+      if (!val) return val;
+      if (Array.isArray(val)) return val;
+      else return [val];
+    }, z.array(z.number()).optional()),
     limit: z.number().optional(),
   }),
   Element: ({ context, props }) => {

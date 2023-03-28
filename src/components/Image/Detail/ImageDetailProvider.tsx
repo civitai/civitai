@@ -64,6 +64,8 @@ export function ImageDetailProvider({
    * NOTE: consider what props are being passed to the query when we are querying by things like `postId`
    */
   // the globally set filter values should only be applied when accessing the image detail from the image gallery
+
+  //  TODO.briant - determine a good way to know what sets of values to use here
   const globalImageFilters = useImageFilters();
   const filters = useMemo(() => {
     let baseFilters: Record<string, unknown> = {};
@@ -76,7 +78,6 @@ export function ImageDetailProvider({
         : { ...baseFilters, limit }
     );
   }, [globalImageFilters, postId, modelId, modelVersionId, username, prioritizedUserIds, limit]);
-  // const filters = !postId && !modelId && !username ? globalImageFilters : {};
 
   const { data, isLoading } = trpc.image.getInfinite.useInfiniteQuery(filters, {
     getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),

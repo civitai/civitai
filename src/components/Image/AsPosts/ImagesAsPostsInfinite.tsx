@@ -4,7 +4,7 @@ import { createContext, useContext, useMemo } from 'react';
 import { useImageFilters } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
-import { Paper, Stack, Text, LoadingOverlay, Overlay, Center, Loader } from '@mantine/core';
+import { Paper, Stack, Text, LoadingOverlay } from '@mantine/core';
 
 type ImagesAsPostsInfiniteState = {
   modelId?: number;
