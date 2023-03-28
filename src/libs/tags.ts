@@ -24,3 +24,5 @@ const tagNameOverrides = {
 export function getTagDisplayName(name: string) {
   return tagNameOverrides[name] || name;
 }
+
+export const tagsNeedingReview = ['child', 'teen', 'baby', 'girl', 'boy'];

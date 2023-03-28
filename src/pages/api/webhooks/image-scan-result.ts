@@ -5,6 +5,7 @@ import { Prisma, TagTarget, TagType } from '@prisma/client';
 import { auditMetaData } from '~/utils/image-metadata';
 import { deleteImageById } from '~/server/services/image.service';
 import { topLevelModerationCategories } from '~/libs/moderation';
+import { tagsNeedingReview } from '~/libs/tags';
 
 const tagSchema = z.object({
   tag: z.string().transform((x) => x.toLowerCase().trim()),
@@ -134,7 +135,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
       nsfw = false;
     for (const { name, type } of tags) {
       if (type === TagType.Moderation) nsfw = true;
-      if (['child', 'teen', 'baby'].includes(name)) hasMinorTag = true;
+      if (tagsNeedingReview.includes(name)) hasMinorTag = true;
       else if (['anime', 'cartoon', 'comics', 'manga'].includes(name)) hasAnimatedTag = true;
       else if (['adult'].includes(name)) hasAdultTag = true;
     }

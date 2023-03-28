@@ -1,4 +1,5 @@
 import { TagType } from '@prisma/client';
+import { tagsNeedingReview } from '~/libs/tags';
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 import { createLogger } from '~/utils/logging';
@@ -37,5 +38,23 @@ export async function getSystemTags() {
   });
 
   log('got system tags');
+  return tags;
+}
+
+export async function getTagsNeedingReview() {
+  const cachedTags = await redis.get(`system:tags-needing-review`);
+  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
+
+  log('getting tags needing review');
+  const tags = await dbWrite.tag.findMany({
+    where: { name: { in: tagsNeedingReview } },
+    select: { id: true, name: true },
+  });
+
+  await redis.set(`system:tags-needing-review`, JSON.stringify(tags), {
+    EX: SYSTEM_CACHE_EXPIRY,
+  });
+
+  log('got tags needing review');
   return tags;
 }

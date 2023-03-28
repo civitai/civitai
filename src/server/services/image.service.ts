@@ -39,6 +39,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { VotableTagModel } from '~/libs/tags';
 import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { getTagsNeedingReview } from '~/server/services/system-cache';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -346,6 +347,13 @@ export const moderateImages = async ({
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
       data: { nsfw, needsReview },
+    });
+
+    // Remove tags that triggered review
+    const tagIds = await getTagsNeedingReview();
+    await dbWrite.tagsOnImage.updateMany({
+      where: { imageId: { in: ids }, tagId: { in: tagIds.map((x) => x.id) } },
+      data: { disabled: true },
     });
   }
 };

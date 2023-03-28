@@ -42,6 +42,7 @@ import { GalleryResources } from '~/components/Gallery/GalleryResources';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
+import { ImageConnectionLink } from '~/components/Image/ImageConnectionLink/ImageConnectionLink';
 
 export function GalleryDetail2() {
   const { classes, cx } = useStyles();
@@ -132,25 +133,7 @@ export function GalleryDetail2() {
                 </Group>
                 <CloseButton size="lg" variant="default" onClick={close} />
               </Group>
-              {infinite && image.connections && (
-                <Link
-                  href={
-                    image.connections.reviewId
-                      ? `/models/${image.connections.modelId}?modal=reviewThread&reviewId=${image.connections.reviewId}`
-                      : `/models/${image.connections.modelId}`
-                  }
-                  passHref
-                >
-                  <Anchor size="xs" target="_blank">
-                    <Group spacing={4} align="center">
-                      <Text inherit>
-                        {image.connections.reviewId ? 'Go to review thread' : 'Go to model page'}
-                      </Text>
-                      <IconExternalLink size={14} />
-                    </Group>
-                  </Anchor>
-                </Link>
-              )}
+              {infinite && image.connections && <ImageConnectionLink {...image.connections} />}
             </Stack>
           </Card.Section>
           <Card.Section
