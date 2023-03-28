@@ -168,15 +168,15 @@ export const getGalleryImages = async ({
   if (types && types.length) AND.push(Prisma.sql`i."generationProcess" IN (${Prisma.join(types)})`);
 
   // Filter to specific image connections
-  if (reviewId) AND.push(Prisma.sql`ic."reviewId" = ${reviewId}`);
+  if (reviewId) AND.push(Prisma.sql`ior."reviewId" = ${reviewId}`);
   else if (modelVersionId) {
-    AND.push(Prisma.sql`ic."modelVersionId" = ${modelVersionId}`);
-    if (!infinite) AND.push(Prisma.sql`ic."reviewId" IS NULL`);
-  } else if (modelId) AND.push(Prisma.sql`ic."modelId" = ${modelId}`);
+    AND.push(Prisma.sql`iom."modelVersionId" = ${modelVersionId}`);
+    AND.push(Prisma.sql`ior."reviewId" IS NULL`);
+  } else if (modelId) AND.push(Prisma.sql`m."id" = ${modelId}`);
   AND.push(Prisma.sql`(rev.id IS NULL OR rev."tosViolation" = false)`);
 
   let orderBy = 'i.id DESC';
-  if (!infinite) orderBy = 'ic."index"';
+  if (!infinite) orderBy = 'COALESCE(ior."index",iom."index",0)';
   else if (sort === ImageSort.MostComments) orderBy = `r."commentCount${period}Rank"`;
   else if (sort === ImageSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
 
@@ -218,9 +218,9 @@ export const getGalleryImages = async ({
       i."userId",
       i."postId",
       i."createdAt",
-      ic."index",
-      ic."modelId",
-      ic."reviewId",
+      COALESCE(ior."index",iom."index",0) "index",
+      m.id "modelId",
+      ior."reviewId",
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",
@@ -231,20 +231,22 @@ export const getGalleryImages = async ({
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
     FROM "Image" i
     ${Prisma.raw(cursorProp?.startsWith('r.') ? 'JOIN "ImageRank" r ON r."imageId" = i.id' : '')}
-    JOIN "ImageConnection" ic ON ic."imageId" = i.id
-    JOIN "Model" m ON m.id = ic."modelId" AND m.status = 'Published' AND m."tosViolation" = false
-    LEFT JOIN "Review" rev ON ic."reviewId" IS NOT NULL AND rev.id = ic."reviewId"
+    LEFT JOIN "ImagesOnModels" iom ON iom."imageId" = i.id
+    LEFT JOIN "ModelVersion" mv ON mv.id = iom."modelVersionId"
+    LEFT JOIN "ImagesOnReviews" ior ON ior."imageId" = i.id
+    LEFT JOIN "Review" rev ON rev.id = ior."reviewId"
+    JOIN "Model" m ON m.id = COALESCE(mv."modelId", rev."modelId") AND m.status = 'Published' AND m."tosViolation" = false
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'
-    ${Prisma.raw(
+    ${
       !user
-        ? ''
-        : `LEFT JOIN (
+        ? Prisma.sql``
+        : Prisma.sql`LEFT JOIN (
         SELECT "imageId", jsonb_agg(reaction) "reactions"
         FROM "ImageReaction"
         WHERE "userId" = ${user.id}
         GROUP BY "imageId"
       ) ir ON ir."imageId" = i.id`
-    )}
+    }
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit}
@@ -726,16 +728,16 @@ export const getAllImages = async ({
     JOIN "User" u ON u.id = i."userId"
     ${Prisma.raw(cursorProp?.startsWith('r.') ? 'JOIN "ImageRank" r ON r."imageId" = i.id' : '')}
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = ${period}::"MetricTimeframe"
-    ${Prisma.raw(
+    ${
       !userId
-        ? ''
-        : `LEFT JOIN (
+        ? Prisma.sql``
+        : Prisma.sql`LEFT JOIN (
       SELECT "imageId", jsonb_agg(reaction) "reactions"
       FROM "ImageReaction"
       WHERE "userId" = ${userId}
       GROUP BY "imageId"
     ) ir ON ir."imageId" = i.id`
-    )}
+    }
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit + 1}
