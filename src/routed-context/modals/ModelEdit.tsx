@@ -51,9 +51,9 @@ export default createRoutedContext({
           ) : model ? (
             <Stack spacing="xl">
               <Link href={`/models/v2/${modelId}`} passHref shallow>
-                <Anchor size="xs">
+                <Anchor size="sm">
                   <Group spacing={4}>
-                    <IconArrowLeft size={12} />
+                    <IconArrowLeft size={18} strokeWidth={1.5} />
                     <Text inherit>Back to {model.name} page</Text>
                   </Group>
                 </Anchor>

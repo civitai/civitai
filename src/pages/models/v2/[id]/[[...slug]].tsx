@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Alert,
   Badge,
+  Box,
   Button,
   Container,
   createStyles,
@@ -405,7 +406,7 @@ export default function ModelDetailsV2({
                     </IconBadge>
                   )}
                 </Group>
-                <Menu position="bottom-end" transition="pop-top-right">
+                <Menu position="bottom-end" transition="pop-top-right" withinPortal>
                   <Menu.Target>
                     <ActionIcon variant="outline">
                       <IconDotsVertical size={16} />
