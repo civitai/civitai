@@ -130,7 +130,7 @@ function DiscussionItem({ data, width }: ItemProps) {
   return 'rating' in data ? (
     <ReviewDiscussionItem review={data} width={width} />
   ) : (
-    <CommentDiscussionItem comment={data} />
+    <CommentDiscussionItem data={data} />
   );
 }
 

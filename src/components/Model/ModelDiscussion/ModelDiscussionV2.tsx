@@ -27,14 +27,14 @@ export function ModelDiscussionV2({ modelId, limit }: Props) {
         {hasItems ? (
           <MasonryGrid
             items={comments}
-            render={DiscussionItem}
+            render={CommentDiscussionItem}
             isRefetching={isRefetching}
             isFetchingNextPage={isFetchingNextPage}
           />
         ) : (
           <Paper
             p="xl"
-            sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 300 }}
+            sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 200 }}
           >
             <Stack>
               <Text size="xl">There are no comments for this model yet.</Text>
@@ -66,17 +66,4 @@ type Props = {
   modelId: number;
   limit?: number;
   // filters: { filterBy: ReviewFilter[]; sort: ReviewSort };
-};
-
-function DiscussionItem({ data, width }: ItemProps) {
-  return 'rating' in data ? (
-    <ReviewDiscussionItem review={data} width={width} />
-  ) : (
-    <CommentDiscussionItem comment={data} />
-  );
-}
-
-type ItemProps = {
-  data: ReviewGetAllItem | CommentGetAllItem;
-  width: number;
 };

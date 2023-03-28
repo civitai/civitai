@@ -15,7 +15,7 @@ import { CommentGetAllItem } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
-export function CommentDiscussionItem({ comment }: Props) {
+export function CommentDiscussionItem({ data: comment }: Props) {
   const currentUser = useCurrentUser();
 
   const { data: reactions = [] } = trpc.comment.getReactions.useQuery(
@@ -137,4 +137,4 @@ export function CommentDiscussionItem({ comment }: Props) {
   );
 }
 
-type Props = { comment: CommentGetAllItem };
+type Props = { data: CommentGetAllItem };

@@ -1,10 +1,6 @@
 import { Button, Center, Grid, LoadingOverlay, Paper, Stack, Text, Loader } from '@mantine/core';
 import React, { useMemo } from 'react';
-import { InView } from 'react-intersection-observer';
 
-import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
-import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/CommentDiscussionItem';
-import { ReviewDiscussionItem } from '~/components/Model/ModelDiscussion/ReviewDiscussionItem';
 import { CommentV2Sort, ReviewSort } from '~/server/common/enums';
 import { GetCommentsV2Input } from '~/server/schema/commentv2.schema';
 import { trpc } from '~/utils/trpc';
