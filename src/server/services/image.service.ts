@@ -168,6 +168,7 @@ export const getGalleryImages = async ({
   if (types && types.length) AND.push(Prisma.sql`i."generationProcess" IN (${Prisma.join(types)})`);
 
   // Filter to specific image connections
+  const optionalRank = !!(reviewId || modelVersionId || modelId);
   if (reviewId) AND.push(Prisma.sql`ior."reviewId" = ${reviewId}`);
   else if (modelVersionId) {
     AND.push(Prisma.sql`iom."modelVersionId" = ${modelVersionId}`);
@@ -230,7 +231,11 @@ export const getGalleryImages = async ({
       ${Prisma.raw(!user?.id ? 'null' : 'ir.reactions')} "reactions",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
     FROM "Image" i
-    ${Prisma.raw(cursorProp?.startsWith('r.') ? 'JOIN "ImageRank" r ON r."imageId" = i.id' : '')}
+    ${Prisma.raw(
+      cursorProp?.startsWith('r.')
+        ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id`
+        : ''
+    )}
     LEFT JOIN "ImagesOnModels" iom ON iom."imageId" = i.id
     LEFT JOIN "ModelVersion" mv ON mv.id = iom."modelVersionId"
     LEFT JOIN "ImagesOnReviews" ior ON ior."imageId" = i.id
@@ -619,6 +624,7 @@ export const getAllImages = async ({
   if (!isModerator) AND.push(Prisma.sql`i."needsReview" = false`);
 
   // Filter to specific model/review content
+  const optionalRank = !!(modelId || modelVersionId || reviewId);
   if (modelId || modelVersionId || reviewId) {
     const irhAnd = [Prisma.sql`irr."imageId" = i.id`];
     if (modelVersionId) irhAnd.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
@@ -736,7 +742,11 @@ export const getAllImages = async ({
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
-    ${Prisma.raw(cursorProp?.startsWith('r.') ? 'JOIN "ImageRank" r ON r."imageId" = i.id' : '')}
+    ${Prisma.raw(
+      cursorProp?.startsWith('r.')
+        ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id`
+        : ''
+    )}
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     ${
       !userId
