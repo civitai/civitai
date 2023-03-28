@@ -2055,6 +2055,7 @@ model ImageResourceHelper {
   reviewDetails         String?
   reviewCreatedAt       DateTime?
   name                  String?
+  hash                  String?
   modelVersionId        Int?
   modelVersionName      String?
   modelVersionCreatedAt DateTime?

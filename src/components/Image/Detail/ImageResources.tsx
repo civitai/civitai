@@ -8,17 +8,17 @@ import {
   Stack,
   Text,
   Alert,
+  CopyButton,
 } from '@mantine/core';
 import { IconDownload, IconMessageCircle2, IconHeart, IconStar } from '@tabler/icons';
 import Link from 'next/link';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ImageResourceModel } from '~/server/controllers/image.controller';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { cloneElement } from 'react';
+import { cloneElement, useMemo } from 'react';
 
 const useStyles = createStyles(() => ({
   statBadge: {
@@ -39,6 +39,29 @@ export function ImageResources({ imageId }: { imageId: number }) {
       staleTime: Infinity,
     });
 
+  const resources = useMemo(() => {
+    const resources =
+      data
+        ?.map((resource, index) => {
+          const isFavorite = favoriteModels.find((id) => resource.modelId === id);
+          const isAvailable = resource.modelVersionId !== null;
+          return {
+            ...resource,
+            key: resource.modelVersionId ?? resource.modelName ?? index,
+            isFavorite,
+            isAvailable,
+          };
+        })
+        .sort((a, b) => {
+          if (a.isAvailable && !b.isAvailable) return -1;
+          if (!a.isAvailable && b.isAvailable) return 1;
+          if (a.isFavorite && !b.isFavorite) return -1;
+          if (!a.isFavorite && b.isFavorite) return 1;
+          return 0;
+        }) ?? [];
+    return resources;
+  }, [data, favoriteModels]);
+
   return (
     <Stack>
       {isLoading ? (
@@ -46,74 +69,94 @@ export function ImageResources({ imageId }: { imageId: number }) {
           <Skeleton height={16} radius="md" />
           <Skeleton height={16} radius="md" />
         </Stack>
-      ) : !!data?.length ? (
-        data?.map((resource, index) => {
-          const isFavorite = favoriteModels.find((id) => resource.modelId === id);
+      ) : !!resources.length ? (
+        resources.map(({ key, isFavorite, isAvailable, ...resource }) => {
           return (
-            <Wrapper
-              resource={resource}
-              key={resource.modelVersionId ?? resource.modelName ?? index}
-            >
-              <Card p={8} sx={{ backgroundColor: theme.colors.dark[7] }} withBorder>
+            <Wrapper resource={resource} key={key}>
+              <Card
+                p={8}
+                sx={{ backgroundColor: theme.colors.dark[7], opacity: isAvailable ? 1 : 0.3 }}
+                withBorder
+              >
                 <Stack spacing="xs">
                   <Group spacing={4} position="apart" noWrap>
                     <Text size="sm" weight={500} lineClamp={1}>
                       {resource.modelName ?? resource.name}
                     </Text>
+                    {!isAvailable && (
+                      <Badge radius="sm" size="sm" color="yellow">
+                        Unavailable
+                      </Badge>
+                    )}
                     {resource.modelType && (
                       <Badge radius="sm" size="sm">
                         {getDisplayName(resource.modelType)}
                       </Badge>
                     )}
+                    {!isAvailable && resource.hash && (
+                      <CopyButton value={resource.hash}>
+                        {({ copy, copied }) => (
+                          <Badge onClick={copy} radius="sm" size="sm" sx={{ cursor: 'pointer' }}>
+                            {copied ? 'Copied...' : resource.hash}
+                          </Badge>
+                        )}
+                      </CopyButton>
+                    )}
                   </Group>
-                  <Group spacing={0} position="apart">
-                    <IconBadge
-                      className={classes.statBadge}
-                      sx={{ userSelect: 'none' }}
-                      icon={
-                        <Rating
-                          size="xs"
-                          value={resource.modelRating ?? 0}
-                          readOnly
-                          fractions={4}
-                          emptySymbol={
-                            <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />
-                          }
-                        />
-                      }
-                    >
-                      <Text
-                        size="xs"
-                        color={(resource.modelRatingCount ?? 0) > 0 ? undefined : 'dimmed'}
-                      >
-                        {abbreviateNumber(resource.modelRatingCount ?? 0)}
-                      </Text>
-                    </IconBadge>
-                    <Group spacing={4}>
+                  {isAvailable && (
+                    <Group spacing={0} position="apart">
                       <IconBadge
                         className={classes.statBadge}
+                        sx={{ userSelect: 'none' }}
                         icon={
-                          <IconHeart
-                            size={14}
-                            style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                            color={isFavorite ? theme.colors.red[6] : undefined}
+                          <Rating
+                            size="xs"
+                            value={resource.modelRating ?? 0}
+                            readOnly
+                            fractions={4}
+                            emptySymbol={
+                              <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />
+                            }
                           />
                         }
-                        color={isFavorite ? 'red' : 'gray'}
                       >
-                        <Text size="xs">{abbreviateNumber(resource.modelFavoriteCount ?? 0)}</Text>
+                        <Text
+                          size="xs"
+                          color={(resource.modelRatingCount ?? 0) > 0 ? undefined : 'dimmed'}
+                        >
+                          {abbreviateNumber(resource.modelRatingCount ?? 0)}
+                        </Text>
                       </IconBadge>
-                      <IconBadge
-                        className={classes.statBadge}
-                        icon={<IconMessageCircle2 size={14} />}
-                      >
-                        <Text size="xs">{abbreviateNumber(resource.modelCommentCount ?? 0)}</Text>
-                      </IconBadge>
-                      <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
-                        <Text size={12}>{abbreviateNumber(resource.modelDownloadCount ?? 0)}</Text>
-                      </IconBadge>
+                      <Group spacing={4}>
+                        <IconBadge
+                          className={classes.statBadge}
+                          icon={
+                            <IconHeart
+                              size={14}
+                              style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                              color={isFavorite ? theme.colors.red[6] : undefined}
+                            />
+                          }
+                          color={isFavorite ? 'red' : 'gray'}
+                        >
+                          <Text size="xs">
+                            {abbreviateNumber(resource.modelFavoriteCount ?? 0)}
+                          </Text>
+                        </IconBadge>
+                        <IconBadge
+                          className={classes.statBadge}
+                          icon={<IconMessageCircle2 size={14} />}
+                        >
+                          <Text size="xs">{abbreviateNumber(resource.modelCommentCount ?? 0)}</Text>
+                        </IconBadge>
+                        <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
+                          <Text size={12}>
+                            {abbreviateNumber(resource.modelDownloadCount ?? 0)}
+                          </Text>
+                        </IconBadge>
+                      </Group>
                     </Group>
-                  </Group>
+                  )}
                 </Stack>
               </Card>
             </Wrapper>
@@ -130,13 +173,13 @@ const Wrapper = ({
   resource,
   children,
 }: {
-  resource: ImageResourceModel;
+  resource: { modelId: number | null; modelName: string | null; modelVersionId: number | null };
   children: React.ReactElement;
 }) => {
   if (!resource.modelId) return children;
   return (
     <Link
-      href={`/models/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
+      href={`/models/v2/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
         resource.modelVersionId
       }`}
       passHref

@@ -868,13 +868,14 @@ export const getImage = async ({
 
 export const getImageResources = async ({ id }: GetByIdInput) => {
   return await dbRead.imageResourceHelper.findMany({
-    where: { imageId: id },
+    where: { imageId: id, OR: [{ hash: { not: null } }, { modelVersionId: { not: null } }] },
     select: {
       reviewId: true,
       reviewRating: true,
       reviewDetails: true,
       reviewCreatedAt: true,
       name: true,
+      hash: true,
       modelVersionId: true,
       modelVersionName: true,
       modelVersionCreatedAt: true,
