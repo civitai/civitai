@@ -11,7 +11,7 @@ import { Stack, Text, Anchor } from '@mantine/core';
 import Link from 'next/link';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { ModelStatus } from '@prisma/client';
+import { ModelStatus, ModelType } from '@prisma/client';
 import { UploadType } from '~/server/common/enums';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import { z } from 'zod';
@@ -28,7 +28,7 @@ export type FileFromContextProps = {
   name: string;
   type?: ModelFileType | null;
   sizeKB?: number;
-  size?: 'Full' | 'Pruned' | null;
+  size?: 'full' | 'pruned' | null;
   fp?: 'fp16' | 'fp32' | null;
   versionId?: number;
   file?: File;
@@ -41,11 +41,16 @@ type FilesContextState = {
   hasPending: boolean;
   errors: SchemaError[] | null;
   files: FileFromContextProps[];
+  modelId?: number;
+  fileExtensions: string[];
+  fileTypes: ModelFileType[];
+  maxFiles: number;
   onDrop: (files: File[]) => void;
   startUpload: () => Promise<void>;
   retry: (uuid: string) => Promise<void>;
   updateFile: (uuid: string, file: Partial<FileFromContextProps>) => void;
   removeFile: (uuid: string) => void;
+  checkNoConflicts: () => boolean;
 };
 
 type FilesProviderProps = {
@@ -148,7 +153,20 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     },
   });
 
-  const upsertFileMutation = trpc.modelFile.upsert.useMutation({
+  const checkNoConflicts = () => {
+    const noConflicts = checkConflictingFiles(files);
+    if (!noConflicts) {
+      showErrorNotification({
+        title: 'Duplicate file types',
+        error: new Error(
+          'There are multiple files with the same type and size, please adjust your files'
+        ),
+      });
+    }
+    return noConflicts;
+  };
+
+  const createFileMutation = trpc.modelFile.create.useMutation({
     async onSuccess(result) {
       const hasPublishedPosts = result.modelVersion._count.posts > 0;
       const isVersionPublished = result.modelVersion.status === ModelStatus.Published;
@@ -274,7 +292,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         };
         if (versionId) {
           try {
-            const saved = await upsertFileMutation.mutateAsync({
+            const saved = await createFileMutation.mutateAsync({
               ...result,
               sizeKB: bytesToKB(size),
               modelVersionId: versionId,
@@ -284,7 +302,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
             setItems((items) => items.filter((x) => x.uuid !== result.uuid));
             setFiles((state) => {
               const index = state.findIndex((x) => x.uuid === uuid);
-              state[index] = { ...state[index], id: saved.id };
+              state[index] = { ...state[index], id: saved.id, isUploading: false };
               return [...state];
             });
           } catch (e: unknown) {}
@@ -309,14 +327,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           return;
         }
 
-        if (!checkConflictingFiles(files)) {
-          return showErrorNotification({
-            title: 'Duplicate file types',
-            error: new Error(
-              'There are multiple files with the same type and size, please adjust your files'
-            ),
-          });
-        }
+        if (!checkNoConflicts()) return;
 
         handleUpload(file);
       })
@@ -329,6 +340,9 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     await handleUpload(file);
   };
 
+  const { acceptedModelFiles, acceptedFileTypes, maxFiles } =
+    dropzoneOptionsByModelType[model?.type ?? 'Checkpoint'];
+
   return (
     <FilesContext.Provider
       value={{
@@ -340,6 +354,11 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         retry,
         updateFile: handleUpdateFile,
         removeFile,
+        fileExtensions: acceptedFileTypes,
+        fileTypes: acceptedModelFiles,
+        modelId: model?.id,
+        maxFiles,
+        checkNoConflicts,
       }}
     >
       {children}
@@ -363,7 +382,7 @@ const metadataSchema = modelFileMetadataSchema
   .array();
 
 // TODO.manuel: This is a hacky way to check for duplicates
-const checkConflictingFiles = (files: FileFromContextProps[]) => {
+export const checkConflictingFiles = (files: FileFromContextProps[]) => {
   const conflictCount: Record<string, number> = {};
 
   files.forEach((item) => {
@@ -373,4 +392,51 @@ const checkConflictingFiles = (files: FileFromContextProps[]) => {
   });
 
   return Object.values(conflictCount).every((count) => count === 1);
+};
+
+type DropzoneOptions = {
+  acceptedFileTypes: string[];
+  acceptedModelFiles: ModelFileType[];
+  maxFiles: number;
+};
+
+const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
+  Checkpoint: {
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml'],
+    acceptedModelFiles: ['Model', 'Config', 'VAE', 'Training Data'],
+    maxFiles: 11,
+  },
+  LORA: {
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
+    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
+    maxFiles: 3,
+  },
+  LoCon: {
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
+    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
+    maxFiles: 3,
+  },
+  TextualInversion: {
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
+    acceptedModelFiles: ['Model', 'Negative', 'Training Data'],
+    maxFiles: 3,
+  },
+  Hypernetwork: {
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
+    acceptedModelFiles: ['Model', 'Training Data'],
+    maxFiles: 2,
+  },
+  AestheticGradient: {
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
+    acceptedModelFiles: ['Model', 'Training Data'],
+    maxFiles: 2,
+  },
+  Controlnet: {
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin'],
+    acceptedModelFiles: ['Model'],
+    maxFiles: 2,
+  },
+  Poses: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
+  Wildcards: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
+  Other: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
 };

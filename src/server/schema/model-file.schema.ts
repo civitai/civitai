@@ -18,9 +18,8 @@ export const modelFileSchema = z.object({
 
 export type ModelFileInput = z.infer<typeof modelFileSchema>;
 
-export type ModelFileUpsertInput = z.infer<typeof modelFileUpsertSchema>;
-export const modelFileUpsertSchema = z.object({
-  id: z.number().optional(),
+export type ModelFileCreateInput = z.infer<typeof modelFileCreateSchema>;
+export const modelFileCreateSchema = z.object({
   name: z.string(),
   url: z.string().url().min(1, 'You must select a file'),
   sizeKB: z.number(),
@@ -29,8 +28,16 @@ export const modelFileUpsertSchema = z.object({
   metadata: modelFileMetadataSchema.optional(),
 });
 
+export type ModelFileUpdateInput = z.infer<typeof modelFileUpdateSchema>;
 export const modelFileUpdateSchema = z.object({
-  id: z.number(),
+  id: z.number().optional(),
   type: z.enum(constants.modelFileTypes).optional(),
-  modelVersionId: z.number().optional(), // used when a user needs to reassign a file to another version
+  modelVersionId: z.number().optional(),
+  metadata: modelFileMetadataSchema.optional(),
 });
+
+// export const modelFileUpdateSchema = z.object({
+//   id: z.number(),
+//   type: z.enum(constants.modelFileTypes).optional(),
+//   modelVersionId: z.number().optional(), // used when a user needs to reassign a file to another version
+// });

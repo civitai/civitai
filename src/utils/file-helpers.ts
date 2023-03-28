@@ -1,5 +1,5 @@
 import { Prisma, ScanResultCode } from '@prisma/client';
-import { ModelFileInput, ModelFileUpsertInput } from '~/server/schema/model-file.schema';
+import { ModelFileInput } from '~/server/schema/model-file.schema';
 
 export function getModelFileFormat(filename: string): ModelFileFormat {
   if (filename.endsWith('.safetensors')) return 'SafeTensor';
