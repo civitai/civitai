@@ -663,7 +663,6 @@ export const getAllImages = async ({
   if (excludedImageIds?.length)
     AND.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedImageIds)})`);
 
-  console.log('_____EXCLUDED TAG IDS______');
   // Exclude specific tags
   if (excludedTagIds?.length) {
     const OR = [
@@ -895,19 +894,19 @@ export const getImagesForModelVersion = async ({
 }) => {
   if (!Array.isArray(modelVersionIds)) modelVersionIds = [modelVersionIds];
   const imageWhere: Prisma.Sql[] = [
-    Prisma.sql`iom."modelVersionId" IN (${Prisma.join(modelVersionIds)})`,
+    Prisma.sql`p."modelVersionId" IN (${Prisma.join(modelVersionIds)})`,
     Prisma.sql`i."needsReview" = false`,
   ];
   if (!!excludedTagIds?.length) {
     imageWhere.push(Prisma.sql`i."scannedAt" IS NOT NULL`);
     imageWhere.push(
-      Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = iom."imageId" AND toi.disabled = false AND toi."tagId" IN (${Prisma.join(
+      Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i.id AND toi.disabled = false AND toi."tagId" IN (${Prisma.join(
         excludedTagIds
       )}) )`
     );
   }
   if (!!excludedIds?.length) {
-    imageWhere.push(Prisma.sql`iom."imageId" NOT IN (${Prisma.join(excludedIds)})`);
+    imageWhere.push(Prisma.sql`i.id NOT IN (${Prisma.join(excludedIds)})`);
   }
   if (!!excludedUserIds?.length) {
     imageWhere.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
@@ -916,12 +915,20 @@ export const getImagesForModelVersion = async ({
   const images = await dbRead.$queryRaw<ImagesForModelVersions[]>`
     WITH targets AS (
       SELECT
-        iom."modelVersionId",
-        MIN(iom.index) "index"
-      FROM "ImagesOnModels" iom
-      JOIN "Image" i ON i.id = iom."imageId"
-      WHERE ${Prisma.join(imageWhere, ' AND ')}
-      GROUP BY iom."modelVersionId"
+        id,
+        "modelVersionId"
+      FROM (
+        SELECT
+          i.id,
+          p."modelVersionId",
+          row_number() OVER (PARTITION BY p."modelVersionId" ORDER BY i."postId", i.index) row_num
+        FROM "Image" i
+        JOIN "Post" p ON p.id = i."postId"
+        JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+        JOIN "Model" m ON m.id = mv."modelId" AND m."userId" = p."userId"
+        WHERE ${Prisma.join(imageWhere, ' AND ')}
+      ) ranked
+      WHERE ranked.row_num = 1
     )
     SELECT
       i.id,
@@ -934,8 +941,7 @@ export const getImagesForModelVersion = async ({
       i.hash,
       t."modelVersionId"
     FROM targets t
-    JOIN "ImagesOnModels" iom ON iom.index = t.index AND iom."modelVersionId" = t."modelVersionId"
-    JOIN "Image" i ON i.id = iom."imageId";
+    JOIN "Image" i ON i.id = t.id
   `;
   console.timeEnd('getImagesForModelVersion');
 
