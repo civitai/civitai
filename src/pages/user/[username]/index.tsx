@@ -365,7 +365,7 @@ export default function UserPage({
               <Title order={3}>Draft models</Title>
               <Text color="dimmed">Incomplete models not yet published</Text>
             </Stack>
-            <UserDraftModels />
+            <UserDraftModels enabled={!!currentUser && isSameUser} />
           </Tabs.Panel>
         </Container>
       </Tabs>

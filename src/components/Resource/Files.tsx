@@ -120,11 +120,7 @@ function FilesComponent({ model }: Props) {
 
   return (
     <Stack>
-      <Dropzone
-        accept={{ 'application/octet-stream': acceptedFileTypes }}
-        onDrop={onDrop}
-        maxFiles={maxFiles}
-      >
+      <Dropzone accept={{ 'mime/type': acceptedFileTypes }} onDrop={onDrop} maxFiles={maxFiles}>
         <Group position="center" spacing="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
           <Dropzone.Accept>
             <IconUpload

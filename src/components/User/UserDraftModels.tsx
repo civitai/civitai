@@ -49,17 +49,16 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function UserDraftModels() {
+export function UserDraftModels({ enabled = false }: Props) {
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useContext();
-  const currentUser = useCurrentUser();
 
   const [page, setPage] = useState(1);
   const [scrolled, setScrolled] = useState(false);
 
   const { data, isLoading } = trpc.model.getMyDraftModels.useQuery(
     { page, limit: 10 },
-    { enabled: !!currentUser }
+    { enabled }
   );
   const { items, ...pagination } = data || {
     items: [],
@@ -180,3 +179,5 @@ export function UserDraftModels() {
     </Stack>
   );
 }
+
+type Props = { enabled?: boolean };

@@ -44,9 +44,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const features = useFeatureFlags();
   const queryUtils = trpc.useContext();
 
-  const acceptsTrainedWords = ['Checkpoint', 'TextualInversion', 'LORA'].includes(
-    model?.type ?? ''
-  );
+  const acceptsTrainedWords = [
+    'Checkpoint',
+    'TextualInversion',
+    'LORA',
+    'LoCon',
+    'Wildcards',
+  ].includes(model?.type ?? '');
   const isTextualInversion = model?.type === 'TextualInversion';
 
   const defaultValues: Schema = {
@@ -54,7 +58,11 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     name: version?.name ?? '',
     baseModel: version?.baseModel ?? 'SD 1.5',
     trainedWords: version?.trainedWords ?? [],
-    skipTrainedWords: version?.trainedWords ? !version.trainedWords.length : !acceptsTrainedWords,
+    skipTrainedWords: acceptsTrainedWords
+      ? version?.trainedWords
+        ? !version.trainedWords.length
+        : false
+      : true,
     earlyAccessTimeFrame:
       version?.earlyAccessTimeFrame && features.earlyAccessModel
         ? String(version.earlyAccessTimeFrame)
@@ -97,11 +105,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     if (version)
       form.reset({
         ...version,
-        modelId: version?.modelId ?? model?.id ?? -1,
+        modelId: version.modelId ?? model?.id ?? -1,
         baseModel: version.baseModel,
-        skipTrainedWords: version.trainedWords
-          ? !version.trainedWords.length
-          : !acceptsTrainedWords,
+        skipTrainedWords: acceptsTrainedWords
+          ? version?.trainedWords
+            ? !version.trainedWords.length
+            : false
+          : true,
         earlyAccessTimeFrame:
           version.earlyAccessTimeFrame && features.earlyAccessModel
             ? String(version.earlyAccessTimeFrame)

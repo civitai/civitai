@@ -480,7 +480,6 @@ export const ingestImage = async ({
 }: {
   image: IngestImageInput;
 }): Promise<IngestImageReturnType> => {
-  if (!isProd) return { type: 'success', data: { tags: [] } };
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
   const { url, id, width: oWidth, name } = ingestImageSchema.parse(image);
@@ -498,27 +497,38 @@ export const ingestImage = async ({
 
   await dbWrite.image.update({
     where: { id },
-    data: { scanRequestedAt: new Date() },
+    data: { scanRequestedAt: new Date(), scannedAt: !isProd ? new Date() : undefined },
     select: { id: true },
   });
 
-  const { ok, deleted, blockedFor, tags, error } = (await fetch(env.IMAGE_SCANNING_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  }).then((res) => res.json())) as ImageScanResultResponse;
+  if (!isProd) {
+    await dbWrite.tagsOnImage.create({
+      data: {
+        imageId: id,
+        tagId: 7756,
+        automated: true,
+        confidence: 100,
+      },
+    });
+  } else {
+    const { ok, deleted, blockedFor, tags, error } = (await fetch(env.IMAGE_SCANNING_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then((res) => res.json())) as ImageScanResultResponse;
 
-  if (deleted)
-    return {
-      type: 'blocked',
-      data: { tags, blockedFor },
-    };
+    if (deleted)
+      return {
+        type: 'blocked',
+        data: { tags, blockedFor },
+      };
 
-  if (error) {
-    return {
-      type: 'error',
-      data: { error },
-    };
+    if (error) {
+      return {
+        type: 'error',
+        data: { error },
+      };
+    }
   }
 
   const imageTags = await dbWrite.tag.findMany({
