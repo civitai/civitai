@@ -66,11 +66,14 @@ export function ImageDetailProvider({
   // the globally set filter values should only be applied when accessing the image detail from the image gallery
   const globalImageFilters = useImageFilters();
   const filters = useMemo(() => {
-    const baseFilters = { postId, modelId, modelVersionId, username, prioritizedUserIds, limit };
+    let baseFilters: Record<string, unknown> = {};
+    if (postId || modelId) baseFilters = { postId, modelId };
+    else if (modelVersionId) baseFilters = { modelVersionId, prioritizedUserIds };
+    else if (username) baseFilters = { username };
     return removeEmpty(
       !postId && !modelVersionId && !username && !prioritizedUserIds?.length
-        ? { ...baseFilters, ...globalImageFilters }
-        : baseFilters
+        ? { ...baseFilters, limit, ...globalImageFilters }
+        : { ...baseFilters, limit }
     );
   }, [globalImageFilters, postId, modelId, modelVersionId, username, prioritizedUserIds, limit]);
   // const filters = !postId && !modelId && !username ? globalImageFilters : {};
