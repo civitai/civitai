@@ -25,42 +25,40 @@ export function ResourceReviewTotals({
           return acc + Number(key) * value;
         }, 0) / total
       : 0);
-  const roundedAverage = Math.round(average * 10) / 10;
+  const roundedAverage = Math.round(average * 100) / 100;
 
   return (
-    <Accordion variant="separated">
-      <Accordion.Item value="resource-reviews">
-        <Accordion.Control>
-          <Stack spacing={0}>
-            <Group>
-              <Text>Reviews</Text>
-              <Text size="sm" color="dimmed">
-                {total} global ratings
-              </Text>
-            </Group>
-            <Group>
-              <Rating value={roundedAverage} />
-              <Text>{roundedAverage} out of 5</Text>
-            </Group>
-          </Stack>
-        </Accordion.Control>
-        <Accordion.Panel>
-          <div className={classes.grid}>
-            {ratings.map((rating) => {
-              const progress = (data ? data[rating] / total : 0) * 100;
-              const rounded = Math.ceil(progress);
-              return (
-                <Fragment key={rating}>
-                  <Text>{rating} star</Text>
-                  <Progress value={progress} size="lg" />
-                  <Text align="right">{rounded}%</Text>
-                </Fragment>
-              );
-            })}
-          </div>
-        </Accordion.Panel>
-      </Accordion.Item>
-    </Accordion>
+    <Accordion.Item value="resource-reviews">
+      <Accordion.Control>
+        <Stack spacing={0}>
+          <Group>
+            <Text>Reviews</Text>
+            <Text size="sm" color="dimmed">
+              {total} version ratings
+            </Text>
+          </Group>
+          <Group>
+            <Rating value={roundedAverage} readOnly />
+            <Text>{roundedAverage} out of 5</Text>
+          </Group>
+        </Stack>
+      </Accordion.Control>
+      <Accordion.Panel px="sm" pb="sm">
+        <div className={classes.grid}>
+          {ratings.map((rating) => {
+            const progress = (data && total ? data[rating] / total : 0) * 100;
+            const rounded = Math.ceil(progress);
+            return (
+              <Fragment key={rating}>
+                <Text>{rating} star</Text>
+                <Progress value={progress} color="yellow" size="lg" />
+                <Text align="right">{rounded}%</Text>
+              </Fragment>
+            );
+          })}
+        </div>
+      </Accordion.Panel>
+    </Accordion.Item>
   );
 }
 

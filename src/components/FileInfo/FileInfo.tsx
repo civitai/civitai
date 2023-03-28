@@ -1,11 +1,20 @@
 import { Popover, ThemeIcon } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons';
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelById } from '~/types/router';
+import { formatKBytes } from '~/utils/number-helpers';
 
 export function FileInfo({ file }: Props) {
   if (!file.hashes || !file.hashes.length) return null;
+
+  const items = [
+    { label: 'Hashes', value: <ModelHash hashes={file.hashes} /> },
+    { label: 'Size', value: formatKBytes(file.sizeKB) },
+  ];
+  if (file.metadata?.fp) items.push({ label: 'Floating Point', value: file.metadata.fp });
+  if (file.metadata?.size) items.push({ label: 'Size', value: file.metadata.size });
 
   return (
     <Popover withinPortal withArrow>
@@ -21,8 +30,8 @@ export function FileInfo({ file }: Props) {
           <IconInfoCircle />
         </ThemeIcon>
       </Popover.Target>
-      <Popover.Dropdown>
-        <ModelHash hashes={file.hashes} />
+      <Popover.Dropdown p={0}>
+        <DescriptionTable items={items}></DescriptionTable>
       </Popover.Dropdown>
     </Popover>
   );

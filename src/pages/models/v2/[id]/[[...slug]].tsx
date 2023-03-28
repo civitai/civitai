@@ -498,7 +498,7 @@ export default function ModelDetailsV2({
               </Group>
               <Group spacing={4}>
                 <Text size="xs" color="dimmed">
-                  Last updated: {formatDate(model.updatedAt)}
+                  Updated: {formatDate(model.updatedAt)}
                 </Text>
                 {model.tagsOnModels.length > 0 && <Divider orientation="vertical" />}
                 <Collection

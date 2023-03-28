@@ -1,6 +1,10 @@
 import sanitize from 'sanitize-html';
 
-export function sanitizeHtml(html: string, options?: sanitize.IOptions) {
+export type santizeHtmlOptions = sanitize.IOptions & { stripEmpty?: boolean };
+export function sanitizeHtml(
+  html: string,
+  { stripEmpty, ...options }: santizeHtmlOptions = { stripEmpty: false }
+) {
   return sanitize(html, {
     allowedTags: [
       'p',
@@ -45,6 +49,14 @@ export function sanitizeHtml(html: string, options?: sanitize.IOptions) {
       div: ['data-youtube-video'],
       span: ['class', 'data-type', 'data-id', 'data-label'],
     },
+    exclusiveFilter: stripEmpty
+      ? (frame) => {
+          return (
+            frame.tag === 'p' && // The node is a p tag
+            !frame.text.trim() // The element has no text
+          );
+        }
+      : undefined,
     allowedIframeHostnames: ['www.youtube.com'],
     transformTags: {
       a: sanitize.simpleTransform('a', { rel: 'ugc' }),

@@ -30,6 +30,7 @@ export const modelVersionUpsertSchema = z.object({
   baseModel: z.enum(constants.baseModels),
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
+    stripEmpty: true,
   }).nullish(),
   steps: z.number().min(0).nullish(),
   epochs: z.number().min(0).max(100000).nullish(),
@@ -51,6 +52,7 @@ export const modelVersionUpsertSchema2 = z.object({
   baseModel: z.enum(constants.baseModels),
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
+    stripEmpty: true,
   }).nullish(),
   steps: z.number().min(0).nullish(),
   epochs: z.number().min(0).max(100000).nullish(),

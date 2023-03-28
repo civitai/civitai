@@ -1,6 +1,7 @@
 import {
   Accordion,
   Badge,
+  Box,
   Button,
   Card,
   Grid,
@@ -167,13 +168,20 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
     </Menu.Item>
   ));
   const downloadFileItems = version.files.map((file) => (
-    <Card key={file.id}>
+    <Card
+      key={file.id}
+      radius={0}
+      py="xs"
+      sx={(theme) => ({
+        backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+      })}
+    >
       <Stack spacing={4}>
         <Group position="apart" noWrap>
           <Text size="xs" weight={500} lineClamp={2}>
             {`${
               ['Model', 'Pruned Model'].includes(file.type) ? file.metadata.format + ' ' : ''
-            }${startCase(file.type)} (${formatKBytes(file.sizeKB)})`}
+            }${startCase(file.type)} ${file.metadata.fp} (${formatKBytes(file.sizeKB)})`}
           </Text>
           <Button
             component="a"
@@ -322,14 +330,37 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
           <ModelFileAlert versionId={version.id} modelType={model.type} files={version.files} />
           <Accordion
             variant="separated"
-            defaultValue={['version-details']}
-            styles={{ content: { padding: 0 } }}
-            multiple
+            defaultValue={'version-details'}
+            styles={(theme) => ({
+              content: { padding: 0 },
+              item: {
+                overflow: 'hidden',
+                borderColor:
+                  theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
+                boxShadow: theme.shadows.sm,
+              },
+              control: {
+                padding: theme.spacing.sm,
+              },
+            })}
+            multiple={false}
           >
             <Accordion.Item value="version-details">
               <Accordion.Control>Details</Accordion.Control>
               <Accordion.Panel>
-                <DescriptionTable items={modelDetails} labelWidth="30%" withBorder={false} />
+                <DescriptionTable
+                  items={modelDetails}
+                  labelWidth="30%"
+                  withBorder={true}
+                  paperProps={{
+                    sx: {
+                      borderLeft: 0,
+                      borderRight: 0,
+                      borderBottom: 0,
+                    },
+                    radius: 0,
+                  }}
+                />
               </Accordion.Panel>
             </Accordion.Item>
             <Accordion.Item value="version-files">
@@ -350,15 +381,15 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                 </Group>
               </Accordion.Control>
               <Accordion.Panel>
-                <Stack spacing={8}>{downloadFileItems}</Stack>
+                <Stack spacing={2}>{downloadFileItems}</Stack>
               </Accordion.Panel>
             </Accordion.Item>
+            <ResourceReviewTotals
+              modelVersionId={version.id}
+              rating={version.rank?.ratingAllTime}
+              count={version.rank?.ratingCountAllTime}
+            />
           </Accordion>
-          <ResourceReviewTotals
-            modelVersionId={version.id}
-            rating={version.rank?.ratingAllTime}
-            count={version.rank?.ratingCountAllTime}
-          />
           <CreatorCard user={model.user} />
 
           <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>
@@ -417,11 +448,11 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
           )}
           {version.description && (
             <Stack spacing={4}>
-              <Title order={3} weight={500}>
+              <Title order={3} size="sm" weight={500}>
                 About this version
               </Title>
               <Stack spacing={4}>
-                {version.description && (
+                <Box sx={{ p: { fontSize: 14, marginBottom: 10 } }}>
                   <ContentClamp
                     maxHeight={150}
                     controlRef={controlRef}
@@ -429,7 +460,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                   >
                     <RenderHtml html={version.description} />
                   </ContentClamp>
-                )}
+                </Box>
                 {cleanDescription.length > 150 ? (
                   <Text
                     variant="link"
