@@ -420,7 +420,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
               <Title order={3} weight={500}>
                 About this version
               </Title>
-              <Group spacing={4}>
+              <Stack spacing={4}>
                 {version.description && (
                   <ContentClamp
                     maxHeight={150}
@@ -441,7 +441,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                     Show more
                   </Text>
                 ) : null}
-              </Group>
+              </Stack>
             </Stack>
           )}
         </Stack>

@@ -58,7 +58,7 @@ export function ModelVersionWizard({ data }: Props) {
       <Stack spacing="xl" py="xl">
         <Link href={`/models/v2/${id}`} passHref>
           <Anchor size="xs">
-            <Group spacing={4}>
+            <Group spacing={4} noWrap>
               <IconArrowLeft size={12} />
               <Text inherit>Back to {modelVersion?.model.name} page</Text>
             </Group>

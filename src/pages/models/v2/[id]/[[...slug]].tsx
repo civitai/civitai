@@ -51,18 +51,14 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import ImagesAsPostsInfinite from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
 import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
 import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
-import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
-import { ModelDiscussionsInfinite } from '~/components/Model/Discussion/ModelDiscussionsInfinite';
 import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
-import { ModelGallery } from '~/components/Model/ModelGallery/ModelGallery';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { ResourceReviewTotals } from '~/components/ResourceReview/ResourceReviewTotals';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -460,12 +456,14 @@ export default function ModelDetailsV2({
                         >
                           Edit Model
                         </Menu.Item>
-                        <Menu.Item
-                          icon={<IconArrowsSort size={14} stroke={1.5} />}
-                          onClick={toggle}
-                        >
-                          Reorder Versions
-                        </Menu.Item>
+                        {versionCount > 1 && (
+                          <Menu.Item
+                            icon={<IconArrowsSort size={14} stroke={1.5} />}
+                            onClick={toggle}
+                          >
+                            Reorder Versions
+                          </Menu.Item>
+                        )}
                       </>
                     )}
                     {(!currentUser || !isOwner || isModerator) && (

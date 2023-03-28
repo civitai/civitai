@@ -1,3 +1,4 @@
+import { ModelStatus } from '@prisma/client';
 import { ModelWizard } from '~/components/Resource/Wizard/ModelWizard';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -19,12 +20,16 @@ export const getServerSideProps = createServerSideProps({
     const id = Number(params.id);
     if (!isNumber(id)) return { notFound: true };
 
-    const model = await dbRead.model.findUnique({ where: { id }, select: { userId: true } });
-    if (!model) return { notFound: true };
+    const model = await dbRead.model.findUnique({
+      where: { id },
+      select: { userId: true, status: true, publishedAt: true, deletedAt: true },
+    });
+    if (!model || model.deletedAt) return { notFound: true };
 
-    const isOwner = model.userId === session.user?.id;
     const isModerator = session.user?.isModerator ?? false;
-    if (!isOwner && !isModerator)
+    const isOwner = model.userId === session.user?.id || isModerator;
+    const isPublished = model.status === ModelStatus.Published && model.publishedAt;
+    if (!isOwner || isPublished)
       return {
         redirect: {
           destination: `/models/v2/${params.id}`,

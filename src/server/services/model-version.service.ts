@@ -39,7 +39,7 @@ export const getDefaultModelVersion = async ({
         take: 1,
         where: modelVersionId ? { id: modelVersionId } : undefined,
         orderBy: { index: 'asc' },
-        select: { id: true, model: { select: { userId: true } } },
+        select: { id: true, status: true, model: { select: { userId: true } } },
       },
     },
   });

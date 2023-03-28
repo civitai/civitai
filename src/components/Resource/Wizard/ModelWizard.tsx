@@ -8,7 +8,6 @@ import {
   Stepper,
   Title,
 } from '@mantine/core';
-import { useDidUpdate } from '@mantine/hooks';
 import { IconX } from '@tabler/icons';
 import isEqual from 'lodash/isEqual';
 import { useRouter } from 'next/router';
@@ -48,20 +47,59 @@ export function ModelWizard() {
   const router = useRouter();
   const getUploadStatus = useS3UploadStore((state) => state.getStatus);
 
-  const { id, step = '1' } = router.query;
-  const parsedStep = Array.isArray(step) ? Number(step[0]) : Number(step);
-
-  const [state, setState] = useState<WizardState>({
-    step: isNumber(parsedStep) ? parsedStep : 1,
-  });
+  const { id } = router.query;
+  const isNew = router.pathname.includes('/new');
+  const [state, setState] = useState<WizardState>({ step: 1 });
 
   const { data: model } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
 
-  useDidUpdate(() => {
-    router.push(`/models/v2/${id}/wizard?step=${state.step}`, undefined, { shallow: true });
-  }, [id, state.step]);
+  const editing = !!model;
+  const hasVersions = model && model.modelVersions.length > 0;
+  const hasFiles = model && model.modelVersions.some((version) => version.files.length > 0);
+
+  const { uploading, error, aborted } = getUploadStatus(
+    (file) => file.meta?.versionId === state.modelVersion?.id
+  );
+
+  const goNext = () => {
+    if (state.step < 4)
+      router.replace(`/models/v2/${id}/wizard?step=${state.step + 1}`, undefined, {
+        shallow: true,
+      });
+  };
+
+  const goBack = () => {
+    if (state.step > 1)
+      router.replace(`/models/v2/${id}/wizard?step=${state.step - 1}`, undefined, {
+        shallow: true,
+      });
+  };
 
   useEffect(() => {
+    // redirect to correct if missing values
+    if (!isNew) {
+      if (!hasVersions)
+        router.replace(`/models/v2/${id}/wizard?step=2`, undefined, { shallow: true });
+      else if (!hasFiles)
+        router.replace(`/models/v2/${id}/wizard?step=3`, undefined, { shallow: true });
+      else router.replace(`/models/v2/${id}/wizard?step=4`, undefined, { shallow: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasFiles, hasVersions, id, isNew]);
+
+  useEffect(() => {
+    // set current step based on query param
+    if (!isNew && state.step.toString() !== router.query.step) {
+      const rawStep = router.query.step;
+      const step = Number(rawStep);
+      const validStep = isNumber(step) && step >= 1 && step <= 4;
+
+      setState((current) => ({ ...current, step: validStep ? step : 1 }));
+    }
+  }, [isNew, router.query.step, state.step]);
+
+  useEffect(() => {
+    // set state model data when query has finished and there's data
     if (model) {
       const parsedModel = {
         ...model,
@@ -77,32 +115,6 @@ export function ModelWizard() {
     }
   }, [model, state.model]);
 
-  const goNext = () => {
-    if (state.step < 4) {
-      setState((current) => ({
-        ...current,
-        step: current.step + 1,
-      }));
-    }
-  };
-
-  const goBack = () => {
-    if (state.step > 1) {
-      setState((current) => ({
-        ...current,
-        step: current.step - 1,
-      }));
-    }
-  };
-
-  const editing = !!model;
-  const hasVersions = model && model.modelVersions.length > 0;
-  const hasFiles = model && model.modelVersions.some((version) => version.files.length > 0);
-
-  const { uploading, error, aborted } = getUploadStatus(
-    (file) => file.meta?.versionId === state.modelVersion?.id
-  );
-
   return (
     <Container size="sm">
       <ActionIcon
@@ -111,7 +123,7 @@ export function ModelWizard() {
         radius="xl"
         variant="light"
         onClick={() =>
-          editing && hasVersions && hasFiles ? router.push(`/models/v2/${id}`) : router.back()
+          router.pathname.includes('/new') ? router.back() : router.replace(`/models/v2/${id}`)
         }
       >
         <IconX />
@@ -119,7 +131,9 @@ export function ModelWizard() {
       <Stack py="xl">
         <Stepper
           active={state.step - 1}
-          onStepClick={(step) => setState((current) => ({ ...current, step: step + 1 }))}
+          onStepClick={(step) =>
+            router.replace(`/models/v2/${id}/wizard?step=${step + 1}`, undefined, { shallow: true })
+          }
           allowNextStepsSelect={false}
           size="sm"
         >
