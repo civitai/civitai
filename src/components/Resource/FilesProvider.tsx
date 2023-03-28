@@ -34,6 +34,7 @@ export type FileFromContextProps = {
   file?: File;
   uuid: string;
   isPending?: boolean;
+  isUploading?: boolean;
 };
 
 type FilesContextState = {
@@ -252,6 +253,13 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
 
   const handleUpload = async ({ type, size, fp, versionId, file, uuid }: FileFromContextProps) => {
     if (!file || !type) return;
+    setFiles((state) => {
+      const index = state.findIndex((x) => x.uuid === uuid);
+      if (index === -1) throw new Error('out of bounds');
+      state[index] = { ...state[index], isPending: false, isUploading: true };
+      return [...state];
+    });
+
     return await upload(
       {
         file,

@@ -208,8 +208,9 @@ function FileCard({ file: versionFile, fileTypes, modelId, index }: FileCardProp
       });
     },
   });
-  const handleRemoveFile = async () => {
+  const handleRemoveFile = async (uuid?: string) => {
     if (versionFile.id) await deleteFileMutation.mutateAsync({ id: versionFile.id });
+    else if (uuid) removeFile(uuid);
   };
 
   const filterByFileExtension = (value: ModelFileType) => {
@@ -246,11 +247,11 @@ function FileCard({ file: versionFile, fileTypes, modelId, index }: FileCardProp
           >
             {versionFile.name}
           </Text>
-          {!!versionFile.id && (
+          {!versionFile.isUploading && (
             <Tooltip label="Remove file" position="left">
               <ActionIcon
                 color="red"
-                onClick={handleRemoveFile}
+                onClick={() => handleRemoveFile(versionFile.uuid)}
                 loading={deleteFileMutation.isLoading}
               >
                 <IconTrash />
@@ -258,7 +259,7 @@ function FileCard({ file: versionFile, fileTypes, modelId, index }: FileCardProp
             </Tooltip>
           )}
         </Group>
-        {!!versionFile.id ? (
+        {!!versionFile.id || versionFile.isUploading ? (
           <>
             <Stack spacing={0}>
               <Text size="sm" weight="bold">

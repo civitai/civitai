@@ -152,7 +152,6 @@ export const useS3UploadStore = create<StoreProps>()(
       abort: (uuid) => {
         // TODO.posts - check with justin
         const item = get().items.find((x) => x.uuid === uuid);
-        console.log({ item });
         item?.abort();
       },
       upload: async ({ file, type, options, meta }, cb) => {
