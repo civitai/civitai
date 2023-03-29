@@ -23,7 +23,16 @@ export const constants = {
     browsingMode: BrowsingMode.All,
     limit: 50,
   },
-  baseModels: ['SD 1.4', 'SD 1.5', 'SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'Other'],
+  baseModels: [
+    'SD 1.4',
+    'SD 1.5',
+    'SD 2.0',
+    'SD 2.0 768',
+    'SD 2.1',
+    'SD 2.1 768',
+    'SD 2.1 Unclip',
+    'Other',
+  ],
   modelFileTypes: [
     'Model',
     'Text Encoder',

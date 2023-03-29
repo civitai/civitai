@@ -40,24 +40,15 @@ const schema = z.object({
     .string()
     .min(3, 'Your username must be at least 3 characters long')
     .regex(/^[A-Za-z0-9_]*$/, 'The "username" field can only contain letters, numbers, and _.'),
-  tos: z.preprocess(
-    (val) => (val === false ? null : val),
-    z.boolean({
-      invalid_type_error: 'You have to agree to the terms of service to use the app',
-      required_error: 'You have to agree to the terms of service to use the app',
-    })
-  ),
   email: z
     .string({
       invalid_type_error: 'Please provide an email',
       required_error: 'Please provide an email',
     })
     .email(),
-  blurNsfw: z.boolean(),
-  showNsfw: z.boolean(),
 });
 
-export default function OnboardingModal({ context, id }: ContextModalProps) {
+export default function OnboardingModal() {
   const user = useCurrentUser();
   const utils = trpc.useContext();
   const { classes } = useStyles();
@@ -66,22 +57,21 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
     schema,
     mode: 'onChange',
     shouldUnregister: false,
-    defaultValues: { ...user, showNsfw: true, blurNsfw: true },
+    defaultValues: { ...user },
   });
   const username = form.watch('username');
   const [debounced] = useDebouncedValue(username, 300);
 
   const onboarded = {
     tos: !!user?.tos,
-    profile: !!user?.username || !!user?.email,
+    profile: !!user?.username || !user?.email,
     content: !!user?.onboarded,
   };
-  // const [activeStep, setActiveStep] = useState(Object.values(onboarded).indexOf(false));
-  const [activeStep, setActiveStep] = useState(2);
+  const [activeStep, setActiveStep] = useState(Object.values(onboarded).indexOf(false));
 
   const { data: terms, isLoading: termsLoading } = trpc.content.get.useQuery(
     { slug: 'tos' },
-    { enabled: onboarded.tos }
+    { enabled: !onboarded.tos }
   );
 
   // Check if username is available
@@ -94,17 +84,19 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
   const { mutate, isLoading, error } = trpc.user.update.useMutation();
   const { mutate: acceptTOS, isLoading: acceptTOSLoading } = trpc.user.acceptTOS.useMutation();
   const { mutate: completeOnboarding, isLoading: completeOnboardingLoading } =
-    trpc.user.completeOnboarding.useMutation();
-
-  if (!user || user.onboarded) {
-    context.closeModal(id);
-    return null;
-  }
+    trpc.user.completeOnboarding.useMutation({
+      async onSuccess() {
+        await reloadSession();
+        await invalidateModeratedContent(utils);
+        // context.closeModal(id);
+      },
+    });
 
   const handleSubmit = (values: z.infer<typeof schema>) => {
     if (!user) return;
+    // TOS is true here because it was already accepted
     mutate(
-      { ...user, ...values },
+      { ...user, ...values, tos: true },
       {
         onSuccess: async () => {
           setActiveStep((x) => x + 1);
@@ -122,13 +114,7 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
     });
   };
   const handleCompleteOnboarding = () => {
-    completeOnboarding(undefined, {
-      async onSuccess() {
-        await reloadSession();
-        await invalidateModeratedContent(utils);
-        context.closeModal(id);
-      },
-    });
+    completeOnboarding();
   };
 
   return (
@@ -243,7 +229,7 @@ export default function OnboardingModal({ context, id }: ContextModalProps) {
                       !usernameAvailable ||
                       !username ||
                       usernameAvailableLoading ||
-                      !form.formState.isValid
+                      !(form.formState.isValid || !form.formState.isDirty)
                     }
                     size="lg"
                     type="submit"

@@ -6,7 +6,6 @@ import { env } from '~/env/server.mjs';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
-import { getGetUrl } from '~/utils/s3-utils';
 import requestIp from 'request-ip';
 import { constants, ModelFileType } from '~/server/common/constants';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
@@ -14,6 +13,7 @@ import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import { getJoinLink } from '~/utils/join-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
+import { getDownloadUrl } from '~/utils/delivery-worker';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -172,7 +172,7 @@ export default RateLimitedEndpoint(
     }
 
     const fileName = getDownloadFilename({ model: modelVersion.model, modelVersion, file });
-    const { url } = await getGetUrl(file.url, { fileName });
+    const { url } = await getDownloadUrl(file.url, fileName);
     res.redirect(url);
   },
   ['GET'],

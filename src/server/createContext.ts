@@ -11,8 +11,10 @@ export const parseBrowsingMode = (
 ) => {
   if (!session) return BrowsingMode.SFW;
   if (!session.user?.showNsfw) return BrowsingMode.SFW;
+  if (!session) return BrowsingMode.SFW;
+  if (!session.user?.showNsfw) return BrowsingMode.SFW;
   const browsingMode = parseFiltersCookie(cookies)?.browsingMode;
-  return browsingMode ?? BrowsingMode.SFW;
+  return browsingMode ?? BrowsingMode.NSFW; // NSFW = "My Filters" and should be the default if a user is authed
 };
 
 export const createContext = async ({

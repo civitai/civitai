@@ -17,6 +17,7 @@ import {
   refreshHiddenModelsForUser,
   refreshHiddenUsersForUser,
 } from '~/server/services/user-cache.service';
+import { cancelSubscription } from '~/server/services/stripe.service';
 
 // const xprisma = prisma.$extends({
 //   result: {
@@ -336,6 +337,10 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
     }),
   ]);
   await invalidateSession(id);
+
+  // Cancel their subscription
+  await cancelSubscription({ userId: user.id });
+
   return result;
 };
 

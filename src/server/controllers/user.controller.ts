@@ -47,6 +47,8 @@ import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.se
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { isUUID } from '~/utils/string-helpers';
 import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
+import { dbWrite } from '~/server/db/client';
+import { cancelSubscription } from '~/server/services/stripe.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -219,7 +221,7 @@ export const updateUserHandler = async ({
       },
     });
     if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
-    if (showNsfw === false) await refreshAllHiddenForUser({ userId: id });
+    if (ctx.user.showNsfw !== showNsfw) await refreshAllHiddenForUser({ userId: id });
 
     return updatedUser;
   } catch (error) {
@@ -657,6 +659,15 @@ export const toggleBanHandler = async ({
     data: { bannedAt: user.bannedAt ? null : new Date() },
   });
   await invalidateSession(id);
+
+  // Unpublish their models
+  await dbWrite.model.updateMany({
+    where: { userId: id },
+    data: { publishedAt: null, status: 'Unpublished' },
+  });
+
+  // Cancel their subscription
+  await cancelSubscription({ userId: id });
 
   return updatedUser;
 };

@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { getGetUrl } from '~/utils/s3-utils';
+import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { UserActivityType } from '@prisma/client';
@@ -47,7 +47,7 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
     return res.status(500).json({ error: 'Invalid database operation', cause: error });
   }
 
-  const { url } = await getGetUrl(key);
+  const { url } = await getDownloadUrl(key);
 
   res.redirect(url);
 }

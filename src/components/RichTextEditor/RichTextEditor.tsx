@@ -82,6 +82,27 @@ function openLinkWhitelistRequestModal() {
   });
 }
 
+const LinkWithValidation = Link.extend({
+  onUpdate() {
+    const url = this.editor.getAttributes('link')?.href;
+
+    if (url) {
+      const valid = validateThirdPartyUrl(url);
+      if (!valid) {
+        this.editor.chain().focus().extendMarkRange('link').unsetLink().run();
+        openLinkWhitelistRequestModal();
+      }
+    }
+  },
+}).configure({
+  validate: (url) => {
+    const valid = validateThirdPartyUrl(url);
+    if (!valid) openLinkWhitelistRequestModal();
+
+    return valid;
+  },
+});
+
 export function RichTextEditor({
   id,
   label,
@@ -100,6 +121,7 @@ export function RichTextEditor({
   defaultSuggestions,
   innerRef,
   onSuperEnter,
+  withLinkValidation,
   ...props
 }: Props) {
   const { classes } = useStyles();
@@ -109,6 +131,8 @@ export function RichTextEditor({
   const addLink = includeControls.includes('link');
   const addMedia = includeControls.includes('media');
   const addMentions = includeControls.includes('mentions');
+
+  const linkExtension = withLinkValidation ? LinkWithValidation : Link;
 
   const extensions: Extensions = [
     Placeholder.configure({ placeholder }),
@@ -137,30 +161,7 @@ export function RichTextEditor({
         ]
       : []),
     ...(addFormatting ? [Underline] : []),
-    ...(addLink
-      ? [
-          Link.extend({
-            onUpdate() {
-              const url = this.editor.getAttributes('link')?.href;
-
-              if (url) {
-                const valid = validateThirdPartyUrl(url);
-                if (!valid) {
-                  this.editor.chain().focus().extendMarkRange('link').unsetLink().run();
-                  openLinkWhitelistRequestModal();
-                }
-              }
-            },
-          }).configure({
-            validate: (url) => {
-              const valid = validateThirdPartyUrl(url);
-              if (!valid) openLinkWhitelistRequestModal();
-
-              return valid;
-            },
-          }),
-        ]
-      : []),
+    ...(addLink ? [linkExtension] : []),
     ...(addMedia
       ? [
           Image,
@@ -350,4 +351,5 @@ type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
     defaultSuggestions?: Array<{ id: number; label: string }>;
     innerRef?: React.ForwardedRef<EditorCommandsRef>;
     onSuperEnter?: () => void;
+    withLinkValidation?: boolean;
   };

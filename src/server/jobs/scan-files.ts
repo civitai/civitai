@@ -7,6 +7,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getGetUrl, getS3Client } from '~/utils/s3-utils';
 
 import { createJob } from './job';
+import { getDownloadUrl } from '~/utils/delivery-worker';
 
 export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
   const scanCutOff = dayjs().subtract(1, 'day').toDate();
@@ -41,7 +42,7 @@ type ScannerRequest = {
 export async function requestScannerTasks({
   file: { id: fileId, url: s3Url },
   s3,
-  tasks = ['Import', 'Scan', 'Hash'],
+  tasks = ['Scan', 'Hash'],
   lowPriority = false,
 }: ScannerRequest) {
   if (!Array.isArray(tasks)) tasks = [tasks];
@@ -57,6 +58,8 @@ export async function requestScannerTasks({
   let fileUrl = s3Url;
   if (s3Url.includes(env.S3_UPLOAD_BUCKET) || s3Url.includes(env.S3_SETTLED_BUCKET)) {
     ({ url: fileUrl } = await getGetUrl(s3Url, { s3, expiresIn: 7 * 24 * 60 * 60 }));
+  } else {
+    ({ url: fileUrl } = await getDownloadUrl(s3Url)); 
   }
 
   const scanUrl =

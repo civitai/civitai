@@ -141,9 +141,10 @@ export const getGalleryImages = async ({
 
   // Filter to specific user
   if (userId) AND.push(Prisma.sql`i."userId" = ${userId}`);
+  const targetedAlbum = !!(reviewId || modelVersionId || modelId);
 
   // Filter to specific tags
-  if (tags?.length) {
+  if (!targetedAlbum && tags?.length) {
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "TagsOnImage" toi
       WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(tags)})
@@ -168,7 +169,7 @@ export const getGalleryImages = async ({
   if (types && types.length) AND.push(Prisma.sql`i."generationProcess" IN (${Prisma.join(types)})`);
 
   // Filter to specific image connections
-  const optionalRank = !!(reviewId || modelVersionId || modelId);
+  const optionalRank = targetedAlbum;
   if (reviewId) AND.push(Prisma.sql`ior."reviewId" = ${reviewId}`);
   else if (modelVersionId) {
     AND.push(Prisma.sql`iom."modelVersionId" = ${modelVersionId}`);
@@ -201,7 +202,6 @@ export const getGalleryImages = async ({
       AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
   }
 
-  console.time('getGalleryImages');
   const rawImages = await dbRead.$queryRaw<GetGalleryImagesRaw[]>`
     SELECT
       i.id,
@@ -298,7 +298,6 @@ export const getGalleryImages = async ({
       user: rawUsers.find((u) => u.id === i.userId) as UserWithCosmetics,
     })
   );
-  console.timeEnd('getGalleryImages');
   return images;
 };
 
@@ -709,8 +708,6 @@ export const getAllImages = async ({
     orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}),0,1), ${orderBy}`;
   }
 
-  console.log('getAllImages start');
-  console.time('getAllImages');
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
     SELECT
       i.id,
@@ -762,7 +759,6 @@ export const getAllImages = async ({
     ORDER BY ${Prisma.raw(orderBy)} NULLS LAST
     LIMIT ${limit + 1}
   `;
-  console.timeLog('getAllImages');
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
   if (withTags) {
@@ -780,7 +776,6 @@ export const getAllImages = async ({
         downVotes: true,
       },
     });
-    console.timeLog('getAllImages');
 
     tagsVar = rawTags.map(({ tagId, tagName, tagType, ...tag }) => ({
       ...tag,
@@ -801,7 +796,6 @@ export const getAllImages = async ({
         );
         if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
       }
-      console.timeLog('getAllImages');
     }
   }
 
@@ -839,7 +833,6 @@ export const getAllImages = async ({
       tags: tagsVar?.filter((x) => x.imageId === i.id),
     })
   );
-  console.timeEnd('getAllImages');
 
   let nextCursor: bigint | undefined;
   if (images.length > limit) {
@@ -932,7 +925,6 @@ export const getImagesForModelVersion = async ({
   if (!!excludedUserIds?.length) {
     imageWhere.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
-  console.time('getImagesForModelVersion');
   const images = await dbRead.$queryRaw<ImagesForModelVersions[]>`
     WITH targets AS (
       SELECT
@@ -964,7 +956,6 @@ export const getImagesForModelVersion = async ({
     FROM targets t
     JOIN "Image" i ON i.id = t.id
   `;
-  console.timeEnd('getImagesForModelVersion');
 
   return images;
 };

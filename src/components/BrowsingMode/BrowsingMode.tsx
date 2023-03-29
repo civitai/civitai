@@ -9,6 +9,7 @@ import {
   ActionIcon,
   Indicator,
 } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { IconEye, IconEyeOff, TablerIconProps } from '@tabler/icons';
 import { useEffect } from 'react';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
@@ -27,7 +28,10 @@ const options = [
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   const currentUser = useCurrentUser();
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
+  const cookieMode = useFiltersContext((state) => state.browsingMode);
+
+  const [browsingMode] = useLocalStorage({ key: 'browsing-mode', defaultValue: cookieMode });
+
   if (!currentUser || !browsingMode) return null;
 
   const indicatorColor = {
@@ -58,13 +62,18 @@ type BrowsingModeIconProps = {
 export function BrowsingModeMenu() {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
+  const cookieMode = useFiltersContext((state) => state.browsingMode);
   const setFilters = useFiltersContext((state) => state.setFilters);
   const setBrowsingMode = (mode: BrowsingMode) => {
     setFilters({ browsingMode: mode });
     invalidateModeratedContentDebounced(queryUtils);
+    setMode(mode);
   };
   const isMobile = useIsMobile();
+  const [browsingMode, setMode] = useLocalStorage({
+    key: 'browsing-mode',
+    defaultValue: cookieMode,
+  });
 
   useEffect(() => {
     if (!browsingMode)

@@ -73,7 +73,11 @@ export const getReviewById = <TSelect extends Prisma.ReviewSelect>({
   const isMod = user?.isModerator ?? false;
 
   return dbRead.review.findFirst({
-    where: { id, tosViolation: !isMod ? false : undefined },
+    where: {
+      id,
+      tosViolation: !isMod ? false : undefined,
+      model: isMod ? undefined : { OR: [{ status: 'Published' }, { userId: user?.id }] },
+    },
     select,
   });
 };

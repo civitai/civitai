@@ -1,4 +1,11 @@
-import { MetricTimeframe, ModelStatus, ModelType, Prisma, TagTarget } from '@prisma/client';
+import {
+  CommercialUse,
+  MetricTimeframe,
+  ModelStatus,
+  ModelType,
+  Prisma,
+  TagTarget,
+} from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
@@ -62,6 +69,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     excludedIds,
     checkpointType,
     status,
+    allowNoCredit,
+    allowDifferentLicense,
+    allowDerivatives,
+    allowCommercialUse,
   },
   select,
   user: sessionUser,
@@ -91,6 +102,27 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (sessionUser?.isModerator) {
     AND.push({ status: status && status.length > 0 ? { in: status } : ModelStatus.Published });
   }
+
+  // Filter by model permissions
+  if (allowCommercialUse !== undefined) {
+    const commercialUseOr: CommercialUse[] = [];
+    switch (allowCommercialUse) {
+      case CommercialUse.None:
+        commercialUseOr.push(CommercialUse.None);
+        break;
+      case CommercialUse.Image:
+        commercialUseOr.push(CommercialUse.Image);
+      case CommercialUse.Rent:
+        commercialUseOr.push(CommercialUse.Rent);
+      case CommercialUse.Sell:
+        commercialUseOr.push(CommercialUse.Sell);
+    }
+    AND.push({ allowCommercialUse: { in: commercialUseOr } });
+  }
+  if (allowDerivatives !== undefined) AND.push({ allowDerivatives });
+  if (allowDifferentLicense !== undefined) AND.push({ allowDifferentLicense });
+  if (allowNoCredit !== undefined) AND.push({ allowNoCredit });
+
   if (query) {
     AND.push({
       OR: [

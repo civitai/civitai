@@ -6,6 +6,8 @@ const log = createLogger('update-metrics', 'blue');
 
 const METRIC_LAST_UPDATED_KEY = 'last-metrics-update';
 const RANK_LAST_UPDATED_KEY = 'last-rank-update';
+const RANK_FAST_LAST_UPDATED_KEY = 'last-rank-fast-update';
+const RANK_FAST_UPDATE_DELAY = 1000 * 60 * 5; // 5 minutes
 const RANK_UPDATE_DELAY = 1000 * 60 * 60; // 60 minutes
 
 export const updateMetricsJob = createJob(
@@ -15,10 +17,13 @@ export const updateMetricsJob = createJob(
     // Get the last time this ran from the KeyValue store
     // --------------------------------------
     const dates = await dbWrite.keyValue.findMany({
-      where: { key: { in: [METRIC_LAST_UPDATED_KEY, RANK_LAST_UPDATED_KEY] } },
+      where: { key: { in: [METRIC_LAST_UPDATED_KEY, RANK_LAST_UPDATED_KEY, RANK_FAST_LAST_UPDATED_KEY] } },
     });
     const lastUpdateDate = new Date(
       (dates.find((d) => d.key === METRIC_LAST_UPDATED_KEY)?.value as number) ?? 0
+    );
+    const lastRankFastDate = new Date(
+      (dates?.find((d) => d.key === RANK_FAST_LAST_UPDATED_KEY)?.value as number) ?? 0
     );
     const lastRankDate = new Date(
       (dates?.find((d) => d.key === RANK_LAST_UPDATED_KEY)?.value as number) ?? 0
@@ -1395,9 +1400,6 @@ export const updateMetricsJob = createJob(
     await updateTagMetrics();
     await updateImageMetrics();
     await updatePostMetrics();
-    await refreshModelRank();
-    await refreshVersionModelRank();
-    await refreshTagRank();
     log('Updated metrics');
 
     // Update the last update time
@@ -1407,6 +1409,21 @@ export const updateMetricsJob = createJob(
       create: { key: METRIC_LAST_UPDATED_KEY, value: new Date().getTime() },
       update: { value: new Date().getTime() },
     });
+
+    // Check if we need to update the fast ranks
+    // --------------------------------------------
+    const shouldUpdateFastRanks = lastRankFastDate.getTime() + RANK_FAST_UPDATE_DELAY <= new Date().getTime();
+    if (shouldUpdateFastRanks) {
+      await refreshModelRank();
+      await refreshVersionModelRank();
+      await refreshTagRank();
+      log('Updated fast ranks');
+      await dbWrite?.keyValue.upsert({
+        where: { key: RANK_FAST_LAST_UPDATED_KEY },
+        create: { key: RANK_FAST_LAST_UPDATED_KEY, value: new Date().getTime() },
+        update: { value: new Date().getTime() },
+      });
+    }
 
     // Check if we need to update the slow ranks
     // --------------------------------------------

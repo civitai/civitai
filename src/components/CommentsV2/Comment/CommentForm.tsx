@@ -74,7 +74,6 @@ export const CommentForm = ({
           { entityId, entityType, limit },
           produce((data) => {
             if (!data) {
-              console.log('no data');
               data = {
                 pages: [],
                 pageParams: [],
@@ -152,6 +151,7 @@ export const CommentForm = ({
           classNames={{
             content: classes.content,
           }}
+          withLinkValidation
         />
         {focused && (
           <Group position="right">

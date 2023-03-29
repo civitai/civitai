@@ -15,7 +15,14 @@ import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
 
-export const getAllModelsSchema = z.object({
+const licensingSchema = z.object({
+  allowNoCredit: z.boolean().optional(),
+  allowCommercialUse: z.nativeEnum(CommercialUse).optional(),
+  allowDerivatives: z.boolean().optional(),
+  allowDifferentLicense: z.boolean().optional(),
+});
+
+export const getAllModelsSchema = licensingSchema.extend({
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
   page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
   cursor: z.preprocess((val) => Number(val), z.number()).optional(),
@@ -69,13 +76,6 @@ export const getAllModelsSchema = z.object({
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
 export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;
-
-const licensingSchema = z.object({
-  allowNoCredit: z.boolean().optional(),
-  allowCommercialUse: z.nativeEnum(CommercialUse).optional(),
-  allowDerivatives: z.boolean().optional(),
-  allowDifferentLicense: z.boolean().optional(),
-});
 
 export type ModelInput = z.infer<typeof modelSchema>;
 export const modelSchema = licensingSchema.extend({
