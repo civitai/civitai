@@ -141,9 +141,10 @@ export const getGalleryImages = async ({
 
   // Filter to specific user
   if (userId) AND.push(Prisma.sql`i."userId" = ${userId}`);
+  const targetedAlbum = !!(reviewId || modelVersionId || modelId);
 
   // Filter to specific tags
-  if (tags?.length) {
+  if (!targetedAlbum && tags?.length) {
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "TagsOnImage" toi
       WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(tags)})
@@ -168,7 +169,7 @@ export const getGalleryImages = async ({
   if (types && types.length) AND.push(Prisma.sql`i."generationProcess" IN (${Prisma.join(types)})`);
 
   // Filter to specific image connections
-  const optionalRank = !!(reviewId || modelVersionId || modelId);
+  const optionalRank = targetedAlbum;
   if (reviewId) AND.push(Prisma.sql`ior."reviewId" = ${reviewId}`);
   else if (modelVersionId) {
     AND.push(Prisma.sql`iom."modelVersionId" = ${modelVersionId}`);
