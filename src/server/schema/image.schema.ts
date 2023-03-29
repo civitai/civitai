@@ -126,7 +126,7 @@ export const getReviewImagesSchema = z.object({
 export type GetGalleryImageInput = z.infer<typeof getGalleryImageSchema>;
 export const getGalleryImageSchema = z.object({
   limit: z.number().min(0).max(200).default(constants.galleryFilterDefaults.limit),
-  cursor: z.number().optional(),
+  cursor: z.union([z.bigint(), z.number()]).optional(),
   modelId: z.number().optional(),
   reviewId: z.number().optional(),
   modelVersionId: z.number().optional(),
@@ -180,7 +180,7 @@ export const ingestImageSchema = z.object({
 export type GetInfiniteImagesInput = z.infer<typeof getInfiniteImagesSchema>;
 export const getInfiniteImagesSchema = z.object({
   limit: z.number().min(0).max(200).default(100),
-  cursor: z.bigint().optional(),
+  cursor: z.union([z.bigint(), z.number()]).optional(),
   postId: z.number().optional(),
   modelId: z.number().optional(),
   modelVersionId: z.number().optional(),
