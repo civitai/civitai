@@ -335,8 +335,6 @@ export const updateModelHandler = async ({
   const { user } = ctx;
   const { id, poi, nsfw } = input;
 
-  console.log('___WHAT IS YOUR NAME?___');
-
   if (poi && nsfw) {
     throw throwBadRequestError(
       `Models or images depicting real people in NSFW contexts are not permitted.`

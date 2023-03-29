@@ -202,7 +202,6 @@ export const getGalleryImages = async ({
       AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
   }
 
-  console.time('getGalleryImages');
   const rawImages = await dbRead.$queryRaw<GetGalleryImagesRaw[]>`
     SELECT
       i.id,
@@ -299,7 +298,6 @@ export const getGalleryImages = async ({
       user: rawUsers.find((u) => u.id === i.userId) as UserWithCosmetics,
     })
   );
-  console.timeEnd('getGalleryImages');
   return images;
 };
 
@@ -699,8 +697,6 @@ export const getAllImages = async ({
     orderBy = `IIF(i."userId" IN (${Prisma.join(prioritizedUserIds)}),0,1), ${orderBy}`;
   }
 
-  console.log('getAllImages start');
-  console.time('getAllImages');
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
     SELECT
       i.id,
@@ -748,7 +744,6 @@ export const getAllImages = async ({
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit + 1}
   `;
-  console.timeLog('getAllImages');
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
   if (withTags) {
@@ -766,7 +761,6 @@ export const getAllImages = async ({
         downVotes: true,
       },
     });
-    console.timeLog('getAllImages');
 
     tagsVar = rawTags.map(({ tagId, tagName, tagType, ...tag }) => ({
       ...tag,
@@ -787,7 +781,6 @@ export const getAllImages = async ({
         );
         if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
       }
-      console.timeLog('getAllImages');
     }
   }
 
@@ -825,7 +818,6 @@ export const getAllImages = async ({
       tags: tagsVar?.filter((x) => x.imageId === i.id),
     })
   );
-  console.timeEnd('getAllImages');
 
   let nextCursor: bigint | undefined;
   if (images.length > limit) {
@@ -917,7 +909,6 @@ export const getImagesForModelVersion = async ({
   if (!!excludedUserIds?.length) {
     imageWhere.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
-  console.time('getImagesForModelVersion');
   const images = await dbRead.$queryRaw<ImagesForModelVersions[]>`
     WITH targets AS (
       SELECT
@@ -942,7 +933,6 @@ export const getImagesForModelVersion = async ({
     JOIN "ImagesOnModels" iom ON iom.index = t.index AND iom."modelVersionId" = t."modelVersionId"
     JOIN "Image" i ON i.id = iom."imageId";
   `;
-  console.timeEnd('getImagesForModelVersion');
 
   return images;
 };

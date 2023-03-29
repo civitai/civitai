@@ -185,13 +185,7 @@ export default function OnboardingModal() {
                 title="Account Details"
                 description="Please verify your account details"
               />
-              <Form
-                form={form}
-                onSubmit={handleSubmit}
-                onError={(error) => {
-                  console.log(error);
-                }}
-              >
+              <Form form={form} onSubmit={handleSubmit}>
                 <Stack>
                   {!user?.email && (
                     <InputText size="lg" name="email" label="Email" type="email" withAsterisk />

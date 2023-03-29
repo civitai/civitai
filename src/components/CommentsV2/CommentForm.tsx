@@ -74,7 +74,6 @@ export const CommentForm = ({
           { entityId, entityType, limit },
           produce((data) => {
             if (!data) {
-              console.log('no data');
               data = {
                 pages: [],
                 pageParams: [],
