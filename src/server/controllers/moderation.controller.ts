@@ -3,7 +3,10 @@ import { throwDbError } from '~/server/utils/errorHandling';
 import { dbWrite } from '~/server/db/client';
 import { UpdatePreferencesSchema } from '~/server/schema/moderation.schema';
 import { TagEngagementType, TagType } from '@prisma/client';
-import { refreshHiddenTagsForUser } from '~/server/services/user-cache.service';
+import {
+  refreshHiddenImagesForUser,
+  refreshHiddenTagsForUser,
+} from '~/server/services/user-cache.service';
 
 const getAllowedModTags = (userId: number) =>
   dbWrite.tagEngagement.findMany({
@@ -70,6 +73,7 @@ export const updatePreferencesHandler = async ({
     }
 
     await refreshHiddenTagsForUser({ userId });
+    await refreshHiddenImagesForUser({ userId });
   } catch (error) {
     throw throwDbError(error);
   }
