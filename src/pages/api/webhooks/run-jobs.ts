@@ -20,6 +20,7 @@ import { Job } from '~/server/jobs/job';
 import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
 import { disabledVotedTags } from '~/server/jobs/disabled-voted-tags';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
+import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 
 const jobs: Job[] = [
   scanFilesJob,
@@ -35,6 +36,7 @@ const jobs: Job[] = [
   applyVotedTags,
   disabledVotedTags,
   removeOldDrafts,
+  resetToDraftWithoutRequirements,
   ...applyDiscordRoles,
 ];
 
