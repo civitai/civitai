@@ -50,7 +50,7 @@ export const disabledVotedTags = createJob('disable-voted-tags', '*/2 * * * *', 
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
       JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
-      WHERE vote."createdAt" > '${lastApplied}' AND applied."disabled" = FALSE AND applied."automated" = TRUE
+      WHERE vote."createdAt" > '${lastApplied}' AND applied."disabled" = FALSE
     ), under_threshold AS (
       SELECT
         a."imageId",

@@ -60,6 +60,16 @@ export function VotableTag({
   const theme = useMantineTheme();
   const isModeration = type === 'Moderation';
   const voteColor = isModeration ? theme.colors.red[7] : theme.colors.blue[5];
+  const badgeColor = theme.fn.variant({
+    color: isModeration ? 'red' : 'gray',
+    variant: isModeration ? 'light' : 'filled',
+  });
+  const badgeBorder = theme.fn.lighten(badgeColor.background ?? theme.colors.gray[4], 0.05);
+  const badgeBg = theme.fn.rgba(badgeColor.background ?? theme.colors.gray[4], 0.3);
+  const progressBg = theme.fn.rgba(
+    badgeColor.background ?? theme.colors.gray[4],
+    isModeration ? 0.4 : 0.8
+  );
   const opacity = 0.2 + (Math.max(Math.min(score, 10), 0) / 10) * 0.8;
 
   const runDebouncer = (fn: () => void) => {
@@ -88,9 +98,21 @@ export function VotableTag({
     <Badge
       radius="xs"
       key={tagId}
-      variant={isModeration ? 'light' : 'filled'}
-      color={isModeration ? 'red' : 'gray'}
-      style={{ opacity }}
+      sx={{
+        position: 'relative',
+        background: badgeBg,
+        borderColor: badgeBorder,
+        color: badgeColor.color,
+        [`&:before`]: {
+          content: '""',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          bottom: 0,
+          backgroundColor: progressBg,
+          width: `${opacity * 100}%`,
+        },
+      }}
       px={0}
     >
       <Group spacing={0}>
@@ -108,7 +130,9 @@ export function VotableTag({
             />
           </ActionIcon>
         </LoginPopover>
-        <span>{getTagDisplayName(name)}</span>
+        <span title={`Score: ${score}`} style={{ cursor: 'default', zIndex: 10 }}>
+          {getTagDisplayName(name)}
+        </span>
         <LoginPopover>
           <ActionIcon variant="transparent" size="sm" onClick={handleDownvote}>
             <IconArrowBigDown

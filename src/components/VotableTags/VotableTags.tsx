@@ -1,4 +1,4 @@
-import { ActionIcon, Center, Group, GroupProps, Loader } from '@mantine/core';
+import { ActionIcon, Center, Group, GroupProps, Loader, MantineProvider } from '@mantine/core';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons';
 import { useMemo, useState } from 'react';
 import { VotableTag } from '~/components/VotableTags/VotableTag';
@@ -46,29 +46,31 @@ export function VotableTags({
   if (!tags) return null;
 
   return (
-    <Group spacing={4} px="md" {...props}>
-      {displayedTags.map((tag) => (
-        <VotableTag
-          key={tag.id}
-          entityId={id}
-          entityType={type}
-          tagId={tag.id}
-          name={tag.name}
-          vote={tag.vote}
-          type={tag.type}
-          score={tag.score}
-          onChange={({ tagId, vote }) => {
-            if (vote === 0) removeVotes({ tags: [tagId], type, id });
-            else addVotes({ tags: [tagId], vote, type, id });
-          }}
-        />
-      ))}
-      {tags.length > limit && (
-        <ActionIcon variant="transparent" size="sm" onClick={() => setShowAll((prev) => !prev)}>
-          {showAll ? <IconChevronUp strokeWidth={3} /> : <IconChevronDown strokeWidth={3} />}
-        </ActionIcon>
-      )}
-    </Group>
+    <MantineProvider theme={{ colorScheme: 'dark' }}>
+      <Group spacing={4} px="md" {...props}>
+        {displayedTags.map((tag) => (
+          <VotableTag
+            key={tag.id}
+            entityId={id}
+            entityType={type}
+            tagId={tag.id}
+            name={tag.name}
+            vote={tag.vote}
+            type={tag.type}
+            score={tag.score}
+            onChange={({ tagId, vote }) => {
+              if (vote === 0) removeVotes({ tags: [tagId], type, id });
+              else addVotes({ tags: [tagId], vote, type, id });
+            }}
+          />
+        ))}
+        {tags.length > limit && (
+          <ActionIcon variant="transparent" size="sm" onClick={() => setShowAll((prev) => !prev)}>
+            {showAll ? <IconChevronUp strokeWidth={3} /> : <IconChevronDown strokeWidth={3} />}
+          </ActionIcon>
+        )}
+      </Group>
+    </MantineProvider>
   );
 }
 
