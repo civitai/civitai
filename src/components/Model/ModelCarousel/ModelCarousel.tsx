@@ -22,7 +22,7 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { ImageGetInfinite } from '~/types/router';
+import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -92,17 +92,24 @@ export function ModelCarousel({
   modelId,
   modelVersionId,
   modelUserId,
-  images,
+  // images,
   nsfw,
   mobile = false,
-  loading = false,
   limit = 10,
 }: Props) {
   const router = useRouter();
   const { classes, cx } = useStyles();
   const { filters, clearFilters } = useGalleryFilters();
 
-  if (loading)
+  const { data, isLoading } = trpc.image.getInfinite.useInfiniteQuery({
+    modelVersionId: modelVersionId,
+    prioritizedUserIds: [modelUserId],
+    limit,
+  });
+
+  const images = data?.pages.flatMap((x) => x.items) ?? [];
+
+  if (isLoading)
     return (
       <Box
         className={cx(!mobile && classes.carousel, mobile && classes.mobileBlock)}
@@ -119,7 +126,7 @@ export function ModelCarousel({
       </Box>
     );
 
-  if (!loading && !images.length) {
+  if (!isLoading && !images.length) {
     const hasTagFilters = filters.tags && filters.tags.length > 0;
 
     return (
@@ -257,12 +264,10 @@ export function ModelCarousel({
 }
 
 type Props = {
-  images: ImageGetInfinite;
   modelVersionId: number;
   modelId: number;
   modelUserId: number;
   nsfw: boolean;
   mobile?: boolean;
-  loading?: boolean;
   limit?: number;
 };

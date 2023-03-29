@@ -56,7 +56,7 @@ export default function ImagesAsPostsInfinite({
       />
       {isLoading && (
         <Paper style={{ minHeight: 200, position: 'relative' }}>
-          <LoadingOverlay visible />
+          <LoadingOverlay visible zIndex={10} />
         </Paper>
       )}
       {!isLoading && !items.length && (

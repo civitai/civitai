@@ -167,7 +167,7 @@ export function ImagesAsPostsCard({
                 />
               ) : (
                 <Carousel
-                  key={cardWidth}
+                  key={`${data.images.map((x) => x.id).join('_')}_${cardWidth}`}
                   withControls
                   draggable
                   loop

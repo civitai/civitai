@@ -71,12 +71,6 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
   const displayCivitaiLink = civitaiLinked && version.hashes.length > 0;
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
 
-  const { data: { items } = { items: [] }, isLoading } = trpc.image.getInfinite.useQuery({
-    modelVersionId: version.id,
-    prioritizedUserIds: [model.user.id],
-    limit: CAROUSEL_LIMIT,
-  });
-
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const updatePostMutation = trpc.post.update.useMutation();
@@ -234,8 +228,6 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
             nsfw={model.nsfw}
             modelVersionId={version.id}
             modelUserId={model.user.id}
-            images={items}
-            loading={isLoading}
             limit={CAROUSEL_LIMIT}
             mobile
           />
@@ -531,8 +523,6 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
             nsfw={model.nsfw}
             modelVersionId={version.id}
             modelUserId={model.user.id}
-            images={items}
-            loading={isLoading}
             limit={CAROUSEL_LIMIT}
           />
           {model.description ? (

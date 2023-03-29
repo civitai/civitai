@@ -10,6 +10,7 @@ import {
   Sx,
   ActionIcon,
   Menu,
+  HoverCard,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { Prisma } from '@prisma/client';
@@ -21,6 +22,9 @@ import {
   IconLock,
   IconPlus,
   IconPencil,
+  IconAlertTriangle,
+  IconCheck,
+  IconX,
 } from '@tabler/icons';
 import React, { cloneElement, createContext, useContext, useState, useCallback } from 'react';
 import { create } from 'zustand';
@@ -34,6 +38,7 @@ import { SimpleTag } from '~/server/selectors/tag.selector';
 import { useImageStore } from '~/store/images.store';
 import { isDefined } from '~/utils/type-guards';
 import Router, { useRouter } from 'next/router';
+import { trpc } from '~/utils/trpc';
 
 export type ImageGuardConnect = {
   entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post';
@@ -104,6 +109,7 @@ type ImageProps = {
   imageNsfw?: boolean;
   postId?: number | null;
   width?: number | null;
+  needsReview?: boolean;
 };
 
 type ImageGuardProps<T extends ImageProps> = {
@@ -220,6 +226,18 @@ ImageGuard.Report = function ReportImage({
   position?: 'static' | 'top-left' | 'top-right';
 }) {
   const { image, showReportNsfw, isOwner, isModerator } = useImageGuardContentContext();
+  const [needsReview, setNeedsReview] = useState(image.needsReview);
+
+  const moderateImagesMutation = trpc.image.moderate.useMutation();
+  const handleModerate = async (accept: boolean) => {
+    if (!isModerator) return;
+    moderateImagesMutation.mutate({
+      ids: [image.id],
+      needsReview: accept ? false : undefined,
+      delete: !accept ? true : undefined,
+    });
+    setNeedsReview(false);
+  };
   if (!showReportNsfw) return null;
 
   const handleClick = (e: React.SyntheticEvent) => {
@@ -234,47 +252,95 @@ ImageGuard.Report = function ReportImage({
     Router.push(`/posts/${image.postId}/edit`);
   };
 
-  return (
-    <Menu position="left-start" withArrow offset={-5}>
-      <Menu.Target>
-        <ActionIcon
-          variant="transparent"
-          p={0}
-          onClick={(e: React.MouseEvent) => {
-            e.preventDefault();
-            e.stopPropagation();
-          }}
-          sx={{
-            width: 30,
-            position: 'absolute',
-            top: 5,
-            left: position === 'top-left' ? 5 : undefined,
-            right: position === 'top-right' ? 5 : undefined,
-            zIndex: 8,
-          }}
-        >
-          <IconDotsVertical
-            size={26}
-            color="#fff"
-            filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-          />
-        </ActionIcon>
-      </Menu.Target>
-      <Menu.Dropdown>
-        {!isOwner && (
-          <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleClick}>
-            Report image
+  let NeedsReviewBadge = needsReview && (
+    <ThemeIcon size="lg" color="yellow">
+      <IconAlertTriangle strokeWidth={2.5} size={26} />
+    </ThemeIcon>
+  );
+
+  if (needsReview && isModerator)
+    NeedsReviewBadge = (
+      <Menu position="bottom">
+        <Menu.Target>
+          <Box>{NeedsReviewBadge}</Box>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Item
+            onClick={() => handleModerate(true)}
+            icon={<IconCheck size={14} stroke={1.5} />}
+          >
+            Approve
           </Menu.Item>
-        )}
-        {(isOwner || isModerator) && image.postId && (
-          <>
-            <Menu.Item icon={<IconPencil size={14} stroke={1.5} />} onClick={handleEditClick}>
-              Edit Image Post
+          <Menu.Item onClick={() => handleModerate(false)} icon={<IconX size={14} stroke={1.5} />}>
+            Reject
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
+    );
+  else if (needsReview) {
+    NeedsReviewBadge = (
+      <HoverCard width={200} withArrow>
+        <HoverCard.Target>{NeedsReviewBadge}</HoverCard.Target>
+        <HoverCard.Dropdown p={8}>
+          <Stack spacing={0}>
+            <Text weight="bold" size="xs">
+              Flagged for review
+            </Text>
+            <Text size="xs">
+              {`This image won't be visible to other users until it's reviewed by our moderators.`}
+            </Text>
+          </Stack>
+        </HoverCard.Dropdown>
+      </HoverCard>
+    );
+  }
+
+  return (
+    <Group
+      spacing={4}
+      sx={{
+        position: 'absolute',
+        top: 5,
+        left: position === 'top-left' ? 5 : undefined,
+        right: position === 'top-right' ? 5 : undefined,
+        zIndex: 8,
+      }}
+    >
+      {NeedsReviewBadge}
+      <Menu position="left-start" withArrow offset={-5}>
+        <Menu.Target>
+          <ActionIcon
+            variant="transparent"
+            p={0}
+            onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            sx={{ width: 30 }}
+          >
+            <IconDotsVertical
+              size={26}
+              color="#fff"
+              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+            />
+          </ActionIcon>
+        </Menu.Target>
+        <Menu.Dropdown>
+          {!isOwner && (
+            <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleClick}>
+              Report image
             </Menu.Item>
-          </>
-        )}
-      </Menu.Dropdown>
-    </Menu>
+          )}
+          {(isOwner || isModerator) && image.postId && (
+            <>
+              <Menu.Item icon={<IconPencil size={14} stroke={1.5} />} onClick={handleEditClick}>
+                Edit Image Post
+              </Menu.Item>
+            </>
+          )}
+        </Menu.Dropdown>
+      </Menu>
+    </Group>
   );
 };
 
