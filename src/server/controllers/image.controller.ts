@@ -348,7 +348,11 @@ export const getImagesAsPostsInfiniteHandler = async ({
     // Get reviews from the users who created the posts
     const userIds = [...new Set(Object.values(posts).map(([post]) => post.user.id))];
     const reviews = await dbRead.resourceReview.findMany({
-      where: { userId: { in: userIds } },
+      where: {
+        userId: { in: userIds },
+        modelId: input.modelId,
+        modelVersionId: input.modelVersionId,
+      },
       select: { userId: true, rating: true, details: true },
     });
 
