@@ -338,3 +338,24 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
 
   await dbWrite.purchase.createMany({ data: purchases });
 };
+
+export const cancelSubscription = async ({
+  userId,
+  subscriptionId,
+}: {
+  userId?: number;
+  subscriptionId?: string;
+}) => {
+  if (!subscriptionId && userId) {
+    const subscription = await dbWrite.customerSubscription.findFirst({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!subscription) return;
+    subscriptionId = subscription.id;
+  }
+
+  if (!subscriptionId) throw new Error('No subscription found');
+  const stripe = await getServerStripe();
+  await stripe.subscriptions.del(subscriptionId);
+};
