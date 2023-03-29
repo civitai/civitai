@@ -180,6 +180,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           method: 'POST',
           headers,
           body: JSON.stringify({
+            bucket,
             key,
             type,
             uploadId,
@@ -191,6 +192,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           method: 'POST',
           headers,
           body: JSON.stringify({
+            bucket,
             key,
             type,
             uploadId,

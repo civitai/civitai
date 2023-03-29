@@ -11,8 +11,8 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     return;
   }
 
-  const { key, type, uploadId } = req.body;
-  const result = await abortMultipartUpload(key, uploadId);
+  const { bucket, key, type, uploadId } = req.body;
+  const result = await abortMultipartUpload(bucket, key, uploadId);
   await logToDb('s3-upload-abort', { userId, type, key, uploadId });
 
   res.status(200).json(result);

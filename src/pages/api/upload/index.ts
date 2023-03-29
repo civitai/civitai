@@ -28,6 +28,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     filename: fullFilename,
     key,
     uploadId: result.uploadId,
+    bucket: result.bucket
   });
 
   res.status(200).json(result);
