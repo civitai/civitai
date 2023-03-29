@@ -98,6 +98,7 @@ export default createRoutedContext({
               includeControls={['formatting', 'link', 'mentions']}
               editorSize="xl"
               onSuperEnter={() => form.handleSubmit(handleSaveComment)()}
+              withLinkValidation
             />
             <Group position="apart">
               <Button variant="default" onClick={handleClose}>

@@ -118,6 +118,7 @@ export function EditResourceReview({
                       editorSize="sm"
                       placeholder="Add review comments..."
                       styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
+                      withLinkValidation
                     />
                     <Group grow spacing="xs">
                       <Button variant="default" onClick={toggleEditDetail}>
