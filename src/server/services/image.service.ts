@@ -624,7 +624,7 @@ export const getAllImages = async ({
   if (!isModerator) AND.push(Prisma.sql`i."needsReview" = false`);
 
   // Filter to specific model/review content
-  const optionalRank = !!(modelId || modelVersionId || reviewId);
+  const optionalRank = !!(modelId || modelVersionId || reviewId || username);
   if (modelId || modelVersionId || reviewId) {
     const irhAnd = [Prisma.sql`irr."imageId" = i.id`];
     if (modelVersionId) irhAnd.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
@@ -759,7 +759,7 @@ export const getAllImages = async ({
     ) ir ON ir."imageId" = i.id`
     }
     WHERE ${Prisma.join(AND, ' AND ')}
-    ORDER BY ${Prisma.raw(orderBy)}
+    ORDER BY ${Prisma.raw(orderBy)} NULLS LAST
     LIMIT ${limit + 1}
   `;
   console.timeLog('getAllImages');
