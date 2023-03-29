@@ -50,10 +50,7 @@ export function ModerationCard({
 
   const changePreference = (name: string, value: boolean, children?: ModerationCategory[]) => {
     const changes = { [name]: value };
-    if (children) {
-      const isEmpty = !children.some((x) => preferences[x.value]);
-      if (isEmpty) for (const child of children) changes[child.value] = value;
-    }
+    if (children) for (const child of children) changes[child.value] = value;
 
     const values = { ...preferences, ...changes };
     setPreferences(values);
@@ -68,8 +65,12 @@ export function ModerationCard({
         if (isEmpty) {
           const values = { ...preferences };
           for (const category of moderationCategories) {
+            if (category.hidden) continue;
             values[category.value] = true;
-            for (const child of category.children ?? []) values[child.value] = true;
+            for (const child of category.children ?? []) {
+              if (child.hidden) continue;
+              values[child.value] = true;
+            }
           }
           setPreferences(values);
           mutateDebounced(values);
