@@ -1,5 +1,6 @@
 import { Carousel } from '@mantine/carousel';
-import { AspectRatio, Badge, Card, createStyles, Group, Paper, Rating } from '@mantine/core';
+import { ActionIcon, AspectRatio, createStyles, Group, Paper, Rating } from '@mantine/core';
+import { IconInfoCircle } from '@tabler/icons';
 import { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -7,6 +8,7 @@ import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -86,6 +88,7 @@ export function ImagesAsPostsCard({
                       {({ safe }) => (
                         <>
                           <div className={classes.imageContainer}>
+                            <ImageGuard.Report />
                             <ImageGuard.ToggleImage
                               sx={(theme) => ({
                                 backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
@@ -105,7 +108,10 @@ export function ImagesAsPostsCard({
                             >
                               <>
                                 {!safe ? (
-                                  <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                                  <AspectRatio
+                                    ratio={(image?.width ?? 1) / (image?.height ?? 1)}
+                                    sx={{ width: '100%' }}
+                                  >
                                     <MediaHash {...image} />
                                   </AspectRatio>
                                 ) : (
@@ -171,6 +177,7 @@ export function ImagesAsPostsCard({
                           {({ safe }) => (
                             <>
                               <div className={classes.imageContainer}>
+                                <ImageGuard.Report />
                                 <ImageGuard.ToggleConnect
                                   sx={(theme) => ({
                                     backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
@@ -192,6 +199,7 @@ export function ImagesAsPostsCard({
                                     {!safe ? (
                                       <AspectRatio
                                         ratio={(image?.width ?? 1) / (image?.height ?? 1)}
+                                        sx={{ width: '100%' }}
                                       >
                                         <MediaHash {...image} />
                                       </AspectRatio>
@@ -219,6 +227,22 @@ export function ImagesAsPostsCard({
                                         }}
                                         readonly={!safe}
                                       />
+                                      {!image.hideMeta && image.meta && (
+                                        <ImageMetaPopover
+                                          meta={image.meta as any}
+                                          generationProcess={image.generationProcess ?? undefined}
+                                        >
+                                          <ActionIcon variant="transparent" size="sm">
+                                            <IconInfoCircle
+                                              color="white"
+                                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                              opacity={0.8}
+                                              strokeWidth={2.5}
+                                              size={18}
+                                            />
+                                          </ActionIcon>
+                                        </ImageMetaPopover>
+                                      )}
                                     </div>
                                   </>
                                 </RoutedContextLink>
@@ -272,7 +296,9 @@ const useStyles = createStyles((theme) => ({
   },
   footer: {
     display: 'flex',
-    flexDirection: 'column',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     position: 'absolute',
     bottom: 0,
     left: 0,
