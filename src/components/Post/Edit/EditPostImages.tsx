@@ -120,7 +120,7 @@ function ImageController({
             </Badge>
           )}
         </Group>
-        <Menu position="bottom-end">
+        <Menu position="bottom-end" withinPortal>
           <Menu.Target>
             <ActionIcon size="lg" variant="transparent" p={0} className={classes.actions}>
               <IconDotsVertical
@@ -276,7 +276,7 @@ const useStyles = createStyles((theme) => {
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
-      minHeight: 100,
+      minHeight: 200,
     },
     actions: {
       position: 'absolute',

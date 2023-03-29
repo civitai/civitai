@@ -106,41 +106,59 @@ export function ImagesAsPostsCard({
                               onClick={handleClick}
                               className={classes.link}
                             >
-                              <>
-                                {!safe ? (
-                                  <AspectRatio
-                                    ratio={(image?.width ?? 1) / (image?.height ?? 1)}
-                                    sx={{ width: '100%' }}
-                                  >
-                                    <MediaHash {...image} />
-                                  </AspectRatio>
-                                ) : (
-                                  <EdgeImage
-                                    src={image.url}
-                                    name={image.name ?? image.id.toString()}
-                                    alt={image.name ?? undefined}
-                                    width={450}
-                                    placeholder="empty"
-                                    style={{ width: '100%', zIndex: 2, position: 'relative' }}
-                                  />
-                                )}
-                                <div className={classes.footer}>
-                                  <Reactions
-                                    entityId={image.id}
-                                    entityType="image"
-                                    reactions={image.reactions}
-                                    metrics={{
-                                      likeCount: image.stats?.likeCountAllTime,
-                                      dislikeCount: image.stats?.dislikeCountAllTime,
-                                      heartCount: image.stats?.heartCountAllTime,
-                                      laughCount: image.stats?.laughCountAllTime,
-                                      cryCount: image.stats?.cryCountAllTime,
-                                    }}
-                                    readonly={!safe}
-                                  />
-                                </div>
-                              </>
+                              {!safe ? (
+                                <AspectRatio
+                                  ratio={(image?.width ?? 1) / (image?.height ?? 1)}
+                                  sx={{ width: '100%' }}
+                                >
+                                  <MediaHash {...image} />
+                                </AspectRatio>
+                              ) : (
+                                <EdgeImage
+                                  src={image.url}
+                                  name={image.name ?? image.id.toString()}
+                                  alt={image.name ?? undefined}
+                                  width={450}
+                                  placeholder="empty"
+                                  style={{ width: '100%', position: 'relative' }}
+                                />
+                              )}
                             </RoutedContextLink>
+                            <Reactions
+                              entityId={image.id}
+                              entityType="image"
+                              reactions={image.reactions}
+                              metrics={{
+                                likeCount: image.stats?.likeCountAllTime,
+                                dislikeCount: image.stats?.dislikeCountAllTime,
+                                heartCount: image.stats?.heartCountAllTime,
+                                laughCount: image.stats?.laughCountAllTime,
+                                cryCount: image.stats?.cryCountAllTime,
+                              }}
+                              readonly={!safe}
+                              withinPortal
+                              className={classes.reactions}
+                            />
+                            {!image.hideMeta && image.meta && (
+                              <ImageMetaPopover
+                                meta={image.meta as any}
+                                generationProcess={image.generationProcess ?? undefined}
+                              >
+                                <ActionIcon
+                                  className={classes.info}
+                                  variant="transparent"
+                                  size="lg"
+                                >
+                                  <IconInfoCircle
+                                    color="white"
+                                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                    opacity={0.8}
+                                    strokeWidth={2.5}
+                                    size={26}
+                                  />
+                                </ActionIcon>
+                              </ImageMetaPopover>
+                            )}
                           </div>
                         </>
                       )}
@@ -158,13 +176,17 @@ export function ImagesAsPostsCard({
                   controlSize={32}
                   styles={{
                     indicators: {
-                      bottom: 50,
-                      zIndex: 15,
+                      bottom: 0,
+                      zIndex: 5,
+                      display: 'flex',
+                      gap: 1,
                     },
                     indicator: {
-                      width: 8,
+                      width: 'auto',
                       height: 8,
+                      flex: 1,
                       transition: 'width 250ms ease',
+                      borderRadius: 0,
                     },
                   }}
                 >
@@ -210,42 +232,48 @@ export function ImagesAsPostsCard({
                                         alt={image.name ?? undefined}
                                         width={450}
                                         placeholder="empty"
-                                        style={{ width: '100%', zIndex: 2, position: 'relative' }}
+                                        style={{ width: '100%' }}
                                       />
                                     )}
-                                    <div className={classes.footer}>
-                                      <Reactions
-                                        entityId={image.id}
-                                        entityType="image"
-                                        reactions={image.reactions}
-                                        metrics={{
-                                          likeCount: image.stats?.likeCountAllTime,
-                                          dislikeCount: image.stats?.dislikeCountAllTime,
-                                          heartCount: image.stats?.heartCountAllTime,
-                                          laughCount: image.stats?.laughCountAllTime,
-                                          cryCount: image.stats?.cryCountAllTime,
-                                        }}
-                                        readonly={!safe}
-                                      />
-                                      {!image.hideMeta && image.meta && (
-                                        <ImageMetaPopover
-                                          meta={image.meta as any}
-                                          generationProcess={image.generationProcess ?? undefined}
-                                        >
-                                          <ActionIcon variant="transparent" size="sm">
-                                            <IconInfoCircle
-                                              color="white"
-                                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                              opacity={0.8}
-                                              strokeWidth={2.5}
-                                              size={18}
-                                            />
-                                          </ActionIcon>
-                                        </ImageMetaPopover>
-                                      )}
-                                    </div>
                                   </>
                                 </RoutedContextLink>
+                                <Reactions
+                                  entityId={image.id}
+                                  entityType="image"
+                                  reactions={image.reactions}
+                                  metrics={{
+                                    likeCount: image.stats?.likeCountAllTime,
+                                    dislikeCount: image.stats?.dislikeCountAllTime,
+                                    heartCount: image.stats?.heartCountAllTime,
+                                    laughCount: image.stats?.laughCountAllTime,
+                                    cryCount: image.stats?.cryCountAllTime,
+                                  }}
+                                  readonly={!safe}
+                                  withinPortal
+                                  className={classes.reactions}
+                                  style={{ bottom: 14 }}
+                                />
+                                {!image.hideMeta && image.meta && (
+                                  <ImageMetaPopover
+                                    meta={image.meta as any}
+                                    generationProcess={image.generationProcess ?? undefined}
+                                  >
+                                    <ActionIcon
+                                      className={classes.info}
+                                      variant="transparent"
+                                      size="lg"
+                                      style={{ bottom: 13 }}
+                                    >
+                                      <IconInfoCircle
+                                        color="white"
+                                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                        opacity={0.8}
+                                        strokeWidth={2.5}
+                                        size={26}
+                                      />
+                                    </ActionIcon>
+                                  </ImageMetaPopover>
+                                )}
                               </div>
                             </>
                           )}
@@ -290,7 +318,7 @@ const useStyles = createStyles((theme) => ({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingBottom: 42,
+    // paddingBottom: 42,
     background: theme.colors.dark[9],
     flexDirection: 'column',
   },
@@ -322,5 +350,23 @@ const useStyles = createStyles((theme) => ({
     background: theme.fn.rgba(theme.colorScheme === 'dark' ? '#000' : '#fff', 0.75),
     padding: `0 ${theme.spacing.xs}px`,
     borderRadius: theme.radius.sm,
+  },
+  reactions: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    borderRadius: theme.radius.sm,
+    background: theme.fn.rgba(
+      theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[0],
+      0.8
+    ),
+    backdropFilter: 'blur(13px) saturate(160%)',
+    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
+    padding: 4,
+  },
+  info: {
+    position: 'absolute',
+    bottom: 5,
+    right: 5,
   },
 }));

@@ -352,7 +352,7 @@ function TabContent({ version, nsfw, type, locked, modelId, modelName }: TabCont
                     >
                       <ImagePreview
                         image={image}
-                        edgeImageProps={{ width: 400 }}
+                        edgeImageProps={{ width: 450 }}
                         radius="md"
                         aspectRatio={1}
                         onClick={() =>

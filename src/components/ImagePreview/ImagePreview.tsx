@@ -155,7 +155,7 @@ export function ImagePreview({
     maxHeight: '100%',
     maxWidth: '100%',
   };
-  if (onClick) edgeImageStyle.cursor = 'pointer';
+  // if (onClick) edgeImageStyle.cursor = 'pointer'; // !important - this line was causing hydration errors
   if (style?.height || style?.maxHeight) edgeImageStyle.maxHeight = '100%';
   const Image = nsfw ? (
     <Center style={{ width: cw, height: ch, maxWidth: '100%' }}>

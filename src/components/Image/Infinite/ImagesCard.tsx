@@ -36,36 +36,36 @@ export function ImagesCard({
     return image.tags.filter((x) => x.type === 'Moderation');
   }, [image.tags]);
 
-  const hideFooter = Array.isArray(tags) && tags.length === 0;
+  const showVotes = tags && Array.isArray(tags) && !!tags.length;
 
   return (
     <InView>
       {({ inView, ref }) => (
-        <RoutedContextLink
-          modal="imageDetailModal"
-          imageId={image.id}
-          modelId={modelId}
-          postId={postId}
-          username={username}
-        >
-          <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
-            {inView && (
-              <>
-                <ImageGuard
-                  images={[image]}
-                  render={(image) => (
-                    <ImageGuard.Content>
-                      {({ safe }) => (
-                        <>
-                          <ImageGuard.Report />
-                          <ImageGuard.ToggleImage
-                            sx={(theme) => ({
-                              backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
-                              color: 'white',
-                              backdropFilter: 'blur(7px)',
-                              boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
-                            })}
-                          />
+        <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
+          {inView && (
+            <>
+              <ImageGuard
+                images={[image]}
+                render={(image) => (
+                  <ImageGuard.Content>
+                    {({ safe }) => (
+                      <>
+                        <ImageGuard.Report />
+                        <ImageGuard.ToggleImage
+                          sx={(theme) => ({
+                            backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
+                            color: 'white',
+                            backdropFilter: 'blur(7px)',
+                            boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
+                          })}
+                        />
+                        <RoutedContextLink
+                          modal="imageDetailModal"
+                          imageId={image.id}
+                          modelId={modelId}
+                          postId={postId}
+                          username={username}
+                        >
                           {!safe ? (
                             <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                               <MediaHash {...image} />
@@ -77,57 +77,61 @@ export function ImagesCard({
                               alt={image.name ?? undefined}
                               width={450}
                               placeholder="empty"
-                              style={{ width: '100%', zIndex: 2, position: 'relative' }}
+                              style={{ width: '100%', position: 'relative' }}
                             />
                           )}
-                          {hideFooter ? null : (
-                            <div className={classes.footer}>
-                              {!image.tags ? (
-                                <>
-                                  <Reactions
-                                    entityId={image.id}
-                                    entityType="image"
-                                    reactions={image.reactions}
-                                    metrics={{
-                                      likeCount: image.stats?.likeCountAllTime,
-                                      dislikeCount: image.stats?.dislikeCountAllTime,
-                                      heartCount: image.stats?.heartCountAllTime,
-                                      laughCount: image.stats?.laughCountAllTime,
-                                      cryCount: image.stats?.cryCountAllTime,
-                                    }}
-                                    readonly={!safe}
+                        </RoutedContextLink>
+                        {showVotes ? (
+                          <div className={classes.footer}>
+                            <VotableTags entityType="image" entityId={image.id} tags={tags} />
+                          </div>
+                        ) : (
+                          <>
+                            <Reactions
+                              entityId={image.id}
+                              entityType="image"
+                              reactions={image.reactions}
+                              metrics={{
+                                likeCount: image.stats?.likeCountAllTime,
+                                dislikeCount: image.stats?.dislikeCountAllTime,
+                                heartCount: image.stats?.heartCountAllTime,
+                                laughCount: image.stats?.laughCountAllTime,
+                                cryCount: image.stats?.cryCountAllTime,
+                              }}
+                              readonly={!safe}
+                              withinPortal
+                              className={classes.reactions}
+                            />
+                            {!image.hideMeta && image.meta && (
+                              <ImageMetaPopover
+                                meta={image.meta as any}
+                                generationProcess={image.generationProcess ?? undefined}
+                              >
+                                <ActionIcon
+                                  className={classes.info}
+                                  variant="transparent"
+                                  size="lg"
+                                >
+                                  <IconInfoCircle
+                                    color="white"
+                                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                    opacity={0.8}
+                                    strokeWidth={2.5}
+                                    size={26}
                                   />
-                                  {!image.hideMeta && image.meta && (
-                                    <ImageMetaPopover
-                                      meta={image.meta as any}
-                                      generationProcess={image.generationProcess ?? undefined}
-                                    >
-                                      <ActionIcon variant="transparent" size="sm">
-                                        <IconInfoCircle
-                                          color="white"
-                                          filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                          opacity={0.8}
-                                          strokeWidth={2.5}
-                                          size={18}
-                                        />
-                                      </ActionIcon>
-                                    </ImageMetaPopover>
-                                  )}
-                                </>
-                              ) : (
-                                <VotableTags entityType="image" entityId={image.id} tags={tags} />
-                              )}
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </ImageGuard.Content>
-                  )}
-                />
-              </>
-            )}
-          </MasonryCard>
-        </RoutedContextLink>
+                                </ActionIcon>
+                              </ImageMetaPopover>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )}
+                  </ImageGuard.Content>
+                )}
+              />
+            </>
+          )}
+        </MasonryCard>
       )}
     </InView>
   );
@@ -159,5 +163,23 @@ const useStyles = createStyles((theme) => ({
     zIndex: 10,
     gap: 6,
     padding: theme.spacing.xs,
+  },
+  reactions: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    borderRadius: theme.radius.sm,
+    background: theme.fn.rgba(
+      theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+      0.8
+    ),
+    backdropFilter: 'blur(13px) saturate(160%)',
+    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
+    padding: 4,
+  },
+  info: {
+    position: 'absolute',
+    bottom: 5,
+    right: 5,
   },
 }));

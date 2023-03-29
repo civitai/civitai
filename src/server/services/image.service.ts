@@ -502,19 +502,19 @@ export const ingestImage = async ({
 
   await dbWrite.image.update({
     where: { id },
-    data: { scanRequestedAt: new Date(), scannedAt: !isProd ? new Date() : undefined },
+    data: { scanRequestedAt: new Date() },
     select: { id: true },
   });
 
   if (!isProd) {
-    await dbWrite.tagsOnImage.create({
-      data: {
-        imageId: id,
-        tagId: 7756,
-        automated: true,
-        confidence: 100,
-      },
-    });
+    // await dbWrite.tagsOnImage.create({
+    //   data: {
+    //     imageId: id,
+    //     tagId: 7756,
+    //     automated: true,
+    //     confidence: 100,
+    //   },
+    // });
   } else {
     const { ok, deleted, blockedFor, tags, error } = (await fetch(env.IMAGE_SCANNING_ENDPOINT, {
       method: 'POST',
@@ -1064,4 +1064,35 @@ export const getImagesForPosts = async ({
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   }));
 };
+
+// type ImageTagResult = { id: number; name: string; isCategory: boolean; postCount: number }[];
+// export const getPostTags = async ({
+//   query,
+//   limit,
+//   excludedTagIds,
+// }: GetPostTagsInput & { excludedTagIds?: number[] }) => {
+//   const showTrending = query === undefined || query.length < 2;
+//   const tags = await dbRead.$queryRaw<PostQueryResult>`
+//     SELECT
+//       t.id,
+//       t.name,
+//       t."isCategory",
+//       COALESCE(${
+//         showTrending ? Prisma.sql`s."postCountDay"` : Prisma.sql`s."postCountAllTime"`
+//       }, 0)::int AS "postCount"
+//     FROM "Tag" t
+//     LEFT JOIN "TagStat" s ON s."tagId" = t.id
+//     LEFT JOIN "TagRank" r ON r."tagId" = t.id
+//     WHERE
+//       ${showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`}
+//     ORDER BY ${Prisma.raw(
+//       showTrending ? `r."postCountDayRank" DESC` : `LENGTH(t.name), r."postCountAllTimeRank" DESC`
+//     )}
+//     LIMIT ${limit}
+//   `;
+
+//   return (
+//     !!excludedTagIds?.length ? tags.filter((x) => !excludedTagIds.includes(x.id)) : tags
+//   ).sort((a, b) => b.postCount - a.postCount);
+// };
 // #endregion

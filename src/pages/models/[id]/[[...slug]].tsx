@@ -997,7 +997,7 @@ function ModelCarousel({
                   >
                     <ImagePreview
                       image={image}
-                      edgeImageProps={{ width: 400 }}
+                      edgeImageProps={{ width: 450 }}
                       radius="md"
                       onClick={() =>
                         openRoutedContext('galleryDetailModal', {

@@ -1,13 +1,12 @@
-import { Paper, Stack, Text, Center, Loader, LoadingOverlay } from '@mantine/core';
+import { Paper, Stack, Text, LoadingOverlay } from '@mantine/core';
 import { createContext, useContext, useMemo } from 'react';
 
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { trpc } from '~/utils/trpc';
 import { useImageFilters } from '~/providers/FiltersProvider';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
-import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
-import { BrowsingMode, ImageSort } from '~/server/common/enums';
+import { BrowsingMode } from '~/server/common/enums';
 
 type ImagesInfiniteState = {
   modelId?: number;
@@ -89,7 +88,7 @@ export default function ImagesInfinite({
       />
       {isLoading && (
         <Paper style={{ minHeight: 200, position: 'relative' }}>
-          <LoadingOverlay visible />
+          <LoadingOverlay visible zIndex={10} />
         </Paper>
       )}
       {!isLoading && !images.length && (

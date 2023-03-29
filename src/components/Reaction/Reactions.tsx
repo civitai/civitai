@@ -1,10 +1,12 @@
 import { Button, Group, Popover, Text, PopoverProps, GroupProps } from '@mantine/core';
 import { ReviewReactions } from '@prisma/client';
 import { IconMoodSmile, IconPlus } from '@tabler/icons';
+import { capitalize } from 'lodash-es';
+import { useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
-import { ReactionButton } from './ReactionButton';
+import { ReactionButton, useReactionsStore } from './ReactionButton';
 
 export type ReactionMetrics = {
   likeCount?: number;
@@ -42,6 +44,18 @@ export function Reactions({
   ...groupProps
 }: ReactionsProps & Omit<GroupProps, 'children' | 'onClick'>) {
   const currentUser = useCurrentUser();
+  const storedReactions = useReactionsStore({ entityType, entityId }) ?? {};
+
+  const hasAllReactions = Object.entries(metrics).every(([key, value]) => {
+    // ie. converts the key `likeCount` to `Like`
+    const reactionType = capitalize(key).replace(/count/, '');
+    const hasReaction =
+      storedReactions[reactionType] !== undefined
+        ? storedReactions[reactionType]
+        : !!reactions.find((x) => x.reaction === reactionType);
+
+    return value > 0 || !!storedReactions[reactionType] || hasReaction;
+  });
 
   return (
     <Group
@@ -55,38 +69,40 @@ export function Reactions({
       }}
       {...groupProps}
     >
-      <Popover
-        shadow="md"
-        position={popoverPosition}
-        withArrow
-        disabled={readonly}
-        withinPortal={withinPortal}
-      >
-        <Popover.Target>
-          <Button variant="subtle" size="xs" color="gray" radius="xl" compact>
-            <Group spacing={2}>
-              <IconPlus size={14} stroke={1.5} />
-              <IconMoodSmile size={14} stroke={1.5} />
-            </Group>
-          </Button>
-        </Popover.Target>
-        <Popover.Dropdown p={4}>
-          {currentUser ? (
-            <ReactionsList
-              reactions={reactions}
-              metrics={metrics}
-              entityType={entityType}
-              entityId={entityId}
-            >
-              {ReactionSelector}
-            </ReactionsList>
-          ) : (
-            <Text color="dimmed" size="xs" px="xs">
-              You must be logged in to react
-            </Text>
-          )}
-        </Popover.Dropdown>
-      </Popover>
+      {!hasAllReactions && (
+        <Popover
+          shadow="md"
+          position={popoverPosition}
+          withArrow
+          disabled={readonly}
+          withinPortal={withinPortal}
+        >
+          <Popover.Target>
+            <Button variant="subtle" size="xs" color="gray" radius="xl" compact>
+              <Group spacing={2}>
+                <IconPlus size={14} stroke={1.5} />
+                <IconMoodSmile size={14} stroke={1.5} />
+              </Group>
+            </Button>
+          </Popover.Target>
+          <Popover.Dropdown p={4}>
+            {currentUser ? (
+              <ReactionsList
+                reactions={reactions}
+                metrics={metrics}
+                entityType={entityType}
+                entityId={entityId}
+              >
+                {ReactionSelector}
+              </ReactionsList>
+            ) : (
+              <Text color="dimmed" size="xs" px="xs">
+                You must be logged in to react
+              </Text>
+            )}
+          </Popover.Dropdown>
+        </Popover>
+      )}
 
       <ReactionsList
         reactions={reactions}
@@ -162,7 +178,7 @@ function ReactionBadge({
   reaction: ReviewReactions;
 }) {
   return (
-    <Button size="xs" radius="xl" variant="light" color={hasReacted ? 'blue' : 'gray'} compact>
+    <Button size="xs" radius="xs" variant="light" color={hasReacted ? 'blue' : 'gray'} compact>
       <Group spacing={4} align="center">
         <Text inherit>{availableReactions[reaction]}</Text>
         <Text inherit>{count}</Text>
@@ -179,7 +195,7 @@ function ReactionSelector({
   hasReacted: boolean;
 }) {
   return (
-    <Button size="xs" radius="sm" variant={'subtle'} color={hasReacted ? 'blue' : 'gray'}>
+    <Button size="xs" radius="xs" variant={'subtle'} color={hasReacted ? 'blue' : 'gray'}>
       {availableReactions[reaction]}
     </Button>
   );

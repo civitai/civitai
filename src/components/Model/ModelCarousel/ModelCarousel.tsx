@@ -68,6 +68,24 @@ const useStyles = createStyles((theme) => ({
     gap: 6,
     padding: theme.spacing.xs,
   },
+  reactions: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    borderRadius: theme.radius.sm,
+    background: theme.fn.rgba(
+      theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[0],
+      0.8
+    ),
+    backdropFilter: 'blur(13px) saturate(160%)',
+    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
+    padding: 4,
+  },
+  info: {
+    position: 'absolute',
+    bottom: 5,
+    right: 5,
+  },
 }));
 
 export function ModelCarousel({
@@ -188,47 +206,45 @@ export function ModelCarousel({
                           <MediaHash {...image} />
                         </AspectRatio>
                       ) : (
-                        <>
-                          <ImagePreview
-                            image={image}
-                            edgeImageProps={{ width: 400 }}
-                            radius="md"
-                            style={{ width: '100%' }}
-                          />
-                          <div className={classes.footer}>
-                            <Reactions
-                              entityId={image.id}
-                              entityType="image"
-                              reactions={image.reactions}
-                              metrics={{
-                                likeCount: image.stats?.likeCountAllTime,
-                                dislikeCount: image.stats?.dislikeCountAllTime,
-                                heartCount: image.stats?.heartCountAllTime,
-                                laughCount: image.stats?.laughCountAllTime,
-                                cryCount: image.stats?.cryCountAllTime,
-                              }}
-                              readonly={!safe}
-                            />
-                            {!image.hideMeta && image.meta && (
-                              <ImageMetaPopover
-                                meta={image.meta as any}
-                                generationProcess={image.generationProcess ?? undefined}
-                              >
-                                <ActionIcon variant="transparent" size="sm">
-                                  <IconInfoCircle
-                                    color="white"
-                                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                    opacity={0.8}
-                                    strokeWidth={2.5}
-                                    size={18}
-                                  />
-                                </ActionIcon>
-                              </ImageMetaPopover>
-                            )}
-                          </div>
-                        </>
+                        <ImagePreview
+                          image={image}
+                          edgeImageProps={{ width: 450 }}
+                          radius="md"
+                          style={{ width: '100%' }}
+                        />
                       )}
                     </RoutedContextLink>
+                    <Reactions
+                      entityId={image.id}
+                      entityType="image"
+                      reactions={image.reactions}
+                      metrics={{
+                        likeCount: image.stats?.likeCountAllTime,
+                        dislikeCount: image.stats?.dislikeCountAllTime,
+                        heartCount: image.stats?.heartCountAllTime,
+                        laughCount: image.stats?.laughCountAllTime,
+                        cryCount: image.stats?.cryCountAllTime,
+                      }}
+                      readonly={!safe}
+                      withinPortal
+                      className={classes.reactions}
+                    />
+                    {!image.hideMeta && image.meta && (
+                      <ImageMetaPopover
+                        meta={image.meta as any}
+                        generationProcess={image.generationProcess ?? undefined}
+                      >
+                        <ActionIcon className={classes.info} variant="transparent" size="lg">
+                          <IconInfoCircle
+                            color="white"
+                            filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                            opacity={0.8}
+                            strokeWidth={2.5}
+                            size={26}
+                          />
+                        </ActionIcon>
+                      </ImageMetaPopover>
+                    )}
                   </div>
                 </Center>
               )}

@@ -23,7 +23,7 @@ export function ModelDiscussionV2({ modelId, limit }: Props) {
   return (
     <Grid gutter="xl">
       <Grid.Col span={12} sx={{ position: 'relative' }}>
-        <LoadingOverlay visible={isLoading} />
+        <LoadingOverlay visible={isLoading} zIndex={10} />
         {hasItems ? (
           <MasonryGrid
             items={comments}

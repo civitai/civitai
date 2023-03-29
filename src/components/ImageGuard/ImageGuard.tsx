@@ -13,8 +13,15 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { Prisma } from '@prisma/client';
-import { IconDotsVertical, IconEye, IconEyeOff, IconFlag, IconLock, IconPlus } from '@tabler/icons';
-import { useRouter } from 'next/router';
+import {
+  IconDotsVertical,
+  IconEye,
+  IconEyeOff,
+  IconFlag,
+  IconLock,
+  IconPlus,
+  IconPencil,
+} from '@tabler/icons';
 import React, { cloneElement, createContext, useContext, useState, useCallback } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -26,6 +33,7 @@ import { ImageModel } from '~/server/selectors/image.selector';
 import { SimpleTag } from '~/server/selectors/tag.selector';
 import { useImageStore } from '~/store/images.store';
 import { isDefined } from '~/utils/type-guards';
+import Router, { useRouter } from 'next/router';
 
 export type ImageGuardConnect = {
   entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post';
@@ -94,6 +102,8 @@ type ImageProps = {
   id: number;
   nsfw: boolean;
   imageNsfw?: boolean;
+  postId?: number | null;
+  width?: number | null;
 };
 
 type ImageGuardProps<T extends ImageProps> = {
@@ -129,7 +139,9 @@ const ImageGuardContentCtx = createContext<{
   showToggleConnect: boolean;
   canToggleNsfw: boolean;
   showReportNsfw: boolean;
-}>({} as any);
+  isOwner: boolean;
+  isModerator: boolean;
+} | null>(null);
 const useImageGuardContentContext = () => {
   const context = useContext(ImageGuardContentCtx);
   if (!context)
@@ -156,6 +168,8 @@ function ImageGuardContentProvider({
     useCallback((state) => state.images[image.id.toString()] ?? {}, [image.id])
   );
   const userId: number | undefined = (image as any).userId ?? (image as any).user?.id;
+  const isOwner = userId === currentUser?.id;
+  const isModerator = currentUser?.isModerator ?? false;
   const showing = showConnection ?? showImage;
   const nsfw = !!userId && userId === currentUser?.id ? false : imageStore.nsfw ?? image.nsfw;
   const nsfwWithBlur = nsfw && shouldBlur;
@@ -181,6 +195,8 @@ function ImageGuardContentProvider({
           nsfw: nsfwWithBlur,
           imageNsfw: nsfw,
         },
+        isOwner,
+        isModerator,
       }}
     >
       {children}
@@ -203,13 +219,19 @@ ImageGuard.Report = function ReportImage({
 }: {
   position?: 'static' | 'top-left' | 'top-right';
 }) {
-  const { image, showReportNsfw } = useImageGuardContentContext();
+  const { image, showReportNsfw, isOwner, isModerator } = useImageGuardContentContext();
   if (!showReportNsfw) return null;
 
   const handleClick = (e: React.SyntheticEvent) => {
     e.preventDefault();
     e.stopPropagation();
     openContext('report', { entityType: ReportEntity.Image, entityId: image.id });
+  };
+
+  const handleEditClick = (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    Router.push(`/posts/${image.postId}/edit`);
   };
 
   return (
@@ -239,17 +261,21 @@ ImageGuard.Report = function ReportImage({
         </ActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
-        <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleClick}>
-          Report image
-        </Menu.Item>
+        {!isOwner && (
+          <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleClick}>
+            Report image
+          </Menu.Item>
+        )}
+        {(isOwner || isModerator) && image.postId && (
+          <>
+            <Menu.Item icon={<IconPencil size={14} stroke={1.5} />} onClick={handleEditClick}>
+              Edit Image Post
+            </Menu.Item>
+          </>
+        )}
       </Menu.Dropdown>
     </Menu>
   );
-};
-
-type ToggleStatus = 'show' | 'hide';
-type ToggleProps = {
-  children: ({ status }: { status: ToggleStatus }) => React.ReactElement;
 };
 
 ImageGuard.ToggleImage = function ToggleImage({
