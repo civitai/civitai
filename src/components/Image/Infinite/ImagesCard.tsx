@@ -1,4 +1,4 @@
-import { AspectRatio, createStyles } from '@mantine/core';
+import { ActionIcon, AspectRatio, createStyles } from '@mantine/core';
 import { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
@@ -10,6 +10,8 @@ import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { useImagesInfiniteContext } from '~/components/Image/Infinite/ImagesInfinite';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { IconInfoCircle } from '@tabler/icons';
 
 export function ImagesCard({
   data: image,
@@ -81,19 +83,37 @@ export function ImagesCard({
                           {hideFooter ? null : (
                             <div className={classes.footer}>
                               {!image.tags ? (
-                                <Reactions
-                                  entityId={image.id}
-                                  entityType="image"
-                                  reactions={image.reactions}
-                                  metrics={{
-                                    likeCount: image.stats?.likeCountAllTime,
-                                    dislikeCount: image.stats?.dislikeCountAllTime,
-                                    heartCount: image.stats?.heartCountAllTime,
-                                    laughCount: image.stats?.laughCountAllTime,
-                                    cryCount: image.stats?.cryCountAllTime,
-                                  }}
-                                  readonly={!safe}
-                                />
+                                <>
+                                  <Reactions
+                                    entityId={image.id}
+                                    entityType="image"
+                                    reactions={image.reactions}
+                                    metrics={{
+                                      likeCount: image.stats?.likeCountAllTime,
+                                      dislikeCount: image.stats?.dislikeCountAllTime,
+                                      heartCount: image.stats?.heartCountAllTime,
+                                      laughCount: image.stats?.laughCountAllTime,
+                                      cryCount: image.stats?.cryCountAllTime,
+                                    }}
+                                    readonly={!safe}
+                                  />
+                                  {!image.hideMeta && image.meta && (
+                                    <ImageMetaPopover
+                                      meta={image.meta as any}
+                                      generationProcess={image.generationProcess ?? undefined}
+                                    >
+                                      <ActionIcon variant="transparent" size="sm">
+                                        <IconInfoCircle
+                                          color="white"
+                                          filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                          opacity={0.8}
+                                          strokeWidth={2.5}
+                                          size={18}
+                                        />
+                                      </ActionIcon>
+                                    </ImageMetaPopover>
+                                  )}
+                                </>
                               ) : (
                                 <VotableTags entityType="image" entityId={image.id} tags={tags} />
                               )}
@@ -122,7 +142,9 @@ const useStyles = createStyles((theme) => ({
   },
   footer: {
     display: 'flex',
-    flexDirection: 'column',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     position: 'absolute',
     bottom: 0,
     left: 0,
