@@ -66,7 +66,11 @@ export const getCommentById = <TSelect extends Prisma.CommentSelect>({
   const isMod = user?.isModerator ?? false;
 
   return dbRead.comment.findFirst({
-    where: { id, tosViolation: !isMod ? false : undefined },
+    where: {
+      id,
+      tosViolation: !isMod ? false : undefined,
+      model: isMod ? undefined : { OR: [{ status: 'Published' }, { userId: user?.id }] },
+    },
     select,
   });
 };
