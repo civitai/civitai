@@ -900,11 +900,13 @@ export const getImagesForModelVersion = async ({
   excludedTagIds,
   excludedIds,
   excludedUserIds,
+  currentUserId,
 }: {
   modelVersionIds: number | number[];
   excludedTagIds?: number[];
   excludedIds?: number[];
   excludedUserIds?: number[];
+  currentUserId?: number;
 }) => {
   if (!Array.isArray(modelVersionIds)) modelVersionIds = [modelVersionIds];
   const imageWhere: Prisma.Sql[] = [
@@ -912,12 +914,19 @@ export const getImagesForModelVersion = async ({
     Prisma.sql`i."needsReview" = false`,
   ];
   if (!!excludedTagIds?.length) {
-    imageWhere.push(Prisma.sql`i."scannedAt" IS NOT NULL`);
-    imageWhere.push(
-      Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i.id AND toi.disabled = false AND toi."tagId" IN (${Prisma.join(
-        excludedTagIds
-      )}) )`
-    );
+    const excludedTagsOr: Prisma.Sql[] = [
+      Prisma.join(
+        [
+          Prisma.sql`i."scannedAt" IS NOT NULL`,
+          Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i.id AND toi.disabled = false AND toi."tagId" IN (${Prisma.join(
+            excludedTagIds
+          )}) )`,
+        ],
+        ' AND '
+      ),
+    ];
+    if (currentUserId) excludedTagsOr.push(Prisma.sql`i."userId" = ${currentUserId}`);
+    imageWhere.push(Prisma.sql`(${Prisma.join(excludedTagsOr, ' OR ')})`);
   }
   if (!!excludedIds?.length) {
     imageWhere.push(Prisma.sql`i.id NOT IN (${Prisma.join(excludedIds)})`);

@@ -12,7 +12,7 @@ export const getServerSideProps = createServerSideProps({
     if (!session)
       return {
         redirect: {
-          destination: `/models/v2/${params.id}`,
+          destination: `/models/${params.id}`,
           permanent: false,
         },
       };
@@ -32,7 +32,7 @@ export const getServerSideProps = createServerSideProps({
     if (!isOwner)
       return {
         redirect: {
-          destination: `/models/v2/${params.id}?modelVersionId=${versionId}`,
+          destination: `/models/${params.id}?modelVersionId=${versionId}`,
           permanent: false,
         },
       };
@@ -42,7 +42,7 @@ export const getServerSideProps = createServerSideProps({
     if (version.status === ModelStatus.Published)
       return {
         redirect: {
-          destination: `/models/v2/${params.id}?modelVersionId=${versionId}`,
+          destination: `/models/${params.id}?modelVersionId=${versionId}`,
           permanent: false,
         },
       };

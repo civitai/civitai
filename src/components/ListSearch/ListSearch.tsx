@@ -88,7 +88,7 @@ export function ListSearch({ onSearch }: Props) {
   const handleSetModel = (query: string) => {
     const model = models?.items.find((x) => x.name.toLowerCase() === query.toLowerCase());
     if (!model) return;
-    router.push(`/models/v2/${model.id}/${slugit(model.name)}`);
+    router.push(`/models/${model.id}/${slugit(model.name)}`);
   };
 
   const handleSetQuery = (query: string) => {

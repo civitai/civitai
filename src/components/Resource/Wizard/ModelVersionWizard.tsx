@@ -1,23 +1,25 @@
 import { Anchor, Button, Container, Group, Stack, Stepper, Text, Title } from '@mantine/core';
-import { useDidUpdate } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
 import { IconAlertTriangle, IconArrowLeft } from '@tabler/icons';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
-import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { PostEditWrapper } from '~/components/Post/Edit/PostEditLayout';
 import { Files } from '~/components/Resource/Files';
-import { trpc } from '~/utils/trpc';
-import { PostUpsertForm } from '../Forms/PostUpsertForm';
-import { ModelById } from '~/types/router';
+import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { useS3UploadStore } from '~/store/s3-upload.store';
-import { openConfirmModal } from '@mantine/modals';
+import { ModelById } from '~/types/router';
+import { trpc } from '~/utils/trpc';
+import { isNumber } from '~/utils/type-guards';
+
+import { PostUpsertForm } from '../Forms/PostUpsertForm';
 
 export function ModelVersionWizard({ data }: Props) {
   const router = useRouter();
 
   const { id, versionId, step = '1' } = router.query;
+  const isNew = router.pathname.includes('/create');
   const parsedStep = Array.isArray(step) ? Number(step[0]) : Number(step);
 
   const [activeStep, setActiveStep] = useState<number>(parsedStep);
@@ -33,25 +35,50 @@ export function ModelVersionWizard({ data }: Props) {
   );
 
   const goNext = () => {
-    if (activeStep < 3) {
-      setActiveStep((current) => current + 1);
-    }
-  };
-
-  const goBack = () => {
-    if (activeStep > 1) {
-      setActiveStep((current) => current - 1);
-    }
-  };
-
-  useDidUpdate(() => {
-    if (modelVersion?.id)
-      router.push(
-        `/models/v2/${id}/model-versions/${modelVersion.id}/wizard?step=${activeStep}`,
+    if (activeStep < 3)
+      router.replace(
+        `/models/${id}/model-versions/${versionId}/wizard?step=${activeStep + 1}`,
         undefined,
         { shallow: true }
       );
-  }, [id, activeStep, modelVersion]);
+  };
+
+  const goBack = () => {
+    if (activeStep > 1)
+      router.replace(
+        `/models/${id}/model-versions/${versionId}/wizard?step=${activeStep - 1}`,
+        undefined,
+        { shallow: true }
+      );
+  };
+
+  const hasFiles = modelVersion && !!modelVersion.files?.length;
+
+  useEffect(() => {
+    // redirect to correct step if missing values
+    if (!isNew) {
+      if (!hasFiles)
+        router.replace(`/models/${id}/model-versions/${versionId}/wizard?step=2`, undefined, {
+          shallow: true,
+        });
+      else
+        router.replace(`/models/${id}/model-versions/${versionId}/wizard?step=3`, undefined, {
+          shallow: true,
+        });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasFiles, id, isNew, versionId]);
+
+  useEffect(() => {
+    // set current step based on query param
+    if (!isNew && activeStep.toString() !== router.query.step) {
+      const rawStep = router.query.step;
+      const step = Number(rawStep);
+      const validStep = isNumber(step) && step >= 1 && step <= 3;
+
+      setActiveStep(validStep ? step : 1);
+    }
+  }, [isNew, router.query.step, activeStep]);
 
   const editing = !!modelVersion?.id;
   const postId = modelVersion?.posts?.[0]?.id;
@@ -59,7 +86,7 @@ export function ModelVersionWizard({ data }: Props) {
   return (
     <Container size="sm">
       <Stack spacing="xl" py="xl">
-        <Link href={`/models/v2/${id}`} passHref>
+        <Link href={`/models/${id}`} passHref>
           <Anchor size="xs">
             <Group spacing={4} noWrap>
               <IconArrowLeft size={12} />
@@ -69,7 +96,9 @@ export function ModelVersionWizard({ data }: Props) {
         </Link>
         <Stepper
           active={activeStep - 1}
-          onStepClick={(step) => setActiveStep(step + 1)}
+          onStepClick={(step) =>
+            router.replace(`/models/${id}/model-versions/${versionId}/wizard?step=${step + 1}`)
+          }
           allowNextStepsSelect={false}
           size="sm"
         >
@@ -82,7 +111,7 @@ export function ModelVersionWizard({ data }: Props) {
                 onSubmit={(result) => {
                   if (editing) return goNext();
                   router.replace(
-                    `/models/v2/${id}/model-versions/${result?.id}/wizard?step=2`,
+                    `/models/${id}/model-versions/${result?.id}/wizard?step=2`,
                     undefined,
                     {
                       shallow: true,
