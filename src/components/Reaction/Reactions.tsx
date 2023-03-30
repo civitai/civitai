@@ -78,10 +78,10 @@ export function Reactions({
           withinPortal={withinPortal}
         >
           <Popover.Target>
-            <Button variant="subtle" size="xs" color="gray" radius="xl" compact>
+            <Button variant="subtle" size="xs" color="gray" radius="xs" px={4} compact>
               <Group spacing={2}>
-                <IconPlus size={14} stroke={1.5} />
-                <IconMoodSmile size={14} stroke={1.5} />
+                <IconPlus size={16} stroke={2.5} />
+                <IconMoodSmile size={18} stroke={2.5} />
               </Group>
             </Button>
           </Popover.Target>
@@ -178,9 +178,17 @@ function ReactionBadge({
   reaction: ReviewReactions;
 }) {
   return (
-    <Button size="xs" radius="xs" variant="light" color={hasReacted ? 'blue' : 'gray'} compact>
+    <Button
+      size="xs"
+      radius="xs"
+      variant="light"
+      pl={2}
+      pr={4}
+      color={hasReacted ? 'blue' : 'gray'}
+      compact
+    >
       <Group spacing={4} align="center">
-        <Text inherit>{availableReactions[reaction]}</Text>
+        <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>{availableReactions[reaction]}</Text>
         <Text inherit>{count}</Text>
       </Group>
     </Button>

@@ -103,7 +103,7 @@ export function EditResourceReview({
             <Stack>
               {!editDetail ? (
                 <Text variant="link" onClick={toggleEditDetail} size="sm">
-                  <Group spacing={4}>
+                  <Group spacing={4} sx={{ cursor: 'pointer' }}>
                     <IconChevronDown size={16} />{' '}
                     <span>{!details ? 'Add' : 'Edit'} Review Comments</span>
                   </Group>

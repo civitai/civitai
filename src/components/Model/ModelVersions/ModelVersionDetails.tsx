@@ -486,7 +486,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                 {version.description && (
                   <Box sx={{ p: { fontSize: 14, marginBottom: 10 } }}>
                     <ContentClamp
-                      maxHeight={150}
+                      maxHeight={100}
                       controlRef={controlRef}
                       styles={{ control: { display: 'none' } }}
                     >

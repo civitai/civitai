@@ -17,6 +17,7 @@ import {
   IconPhotoEdit,
   IconChevronLeft,
   IconChevronRight,
+  IconFileSettings,
 } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
@@ -140,8 +141,10 @@ export function ModelVersionList({
 
                 return onVersionClick(version);
               }}
-              leftIcon={
-                showExtraIcons && (missingFiles || missingPosts) ? (
+              compact
+            >
+              <Group spacing={0}>
+                {showExtraIcons && (missingFiles || missingPosts) ? (
                   <ThemeIcon
                     color="yellow"
                     variant="light"
@@ -151,10 +154,11 @@ export function ModelVersionList({
                   >
                     <IconAlertTriangle size={14} />
                   </ThemeIcon>
-                ) : undefined
-              }
-              rightIcon={
-                showExtraIcons ? (
+                ) : undefined}
+                <Box miw={40} ta="center">
+                  {version.name}
+                </Box>
+                {showExtraIcons ? (
                   <Menu withinPortal>
                     <Menu.Target>
                       <Box
@@ -195,7 +199,7 @@ export function ModelVersionList({
                         Edit details
                       </Menu.Item>
                       <Menu.Item
-                        icon={<IconPhotoEdit size={14} stroke={1.5} />}
+                        icon={<IconFileSettings size={14} stroke={1.5} />}
                         // TODO.manuel: link to files edit
                         onClick={(e) => {
                           e.stopPropagation();
@@ -218,11 +222,8 @@ export function ModelVersionList({
                       )}
                     </Menu.Dropdown>
                   </Menu>
-                ) : undefined
-              }
-              compact
-            >
-              {version.name}
+                ) : undefined}
+              </Group>
             </Button>
           );
         })}

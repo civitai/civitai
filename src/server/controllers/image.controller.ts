@@ -363,6 +363,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const createdAt = images.map((image) => image.createdAt).sort()[0];
       return {
         postId: images[0].postId,
+        publishedAt: images[0].publishedAt,
         createdAt,
         user,
         images,

@@ -583,6 +583,7 @@ type GetAllImagesRaw = {
   needsReview: boolean;
   userId: number;
   postId: number;
+  publishedAt: Date | null;
   username: string | null;
   userImage: string | null;
   deletedAt: Date | null;
@@ -619,8 +620,21 @@ export const getAllImages = async ({
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
 
-  // If User Is Mod
-  if (!isModerator) AND.push(Prisma.sql`i."needsReview" = false`);
+  // If User Isn't mod
+  if (!isModerator) {
+    // Hide images that need review
+    const needsReviewOr = [Prisma.sql`i."needsReview" = false`];
+    // Hide images that aren't published
+    const publishedOr = [Prisma.sql`p."publishedAt" IS NOT NULL`];
+
+    if (userId) {
+      const belongsToUser = Prisma.sql`i."userId" = ${userId}`;
+      needsReviewOr.push(belongsToUser);
+      publishedOr.push(belongsToUser);
+    }
+    AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
+    AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
+  }
 
   // Filter to specific model/review content
   const optionalRank = !!(modelId || modelVersionId || reviewId || username);
@@ -730,6 +744,7 @@ export const getAllImages = async ({
       i."needsReview",
       i."userId",
       i."postId",
+      p."publishedAt",
       u.username,
       u.image "userImage",
       u."deletedAt",
@@ -743,6 +758,7 @@ export const getAllImages = async ({
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
+    JOIN "Post" p ON p.id = i."postId"
     ${Prisma.raw(
       cursorProp?.startsWith('r.')
         ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id`
@@ -803,7 +819,9 @@ export const getAllImages = async ({
     }
   }
 
-  const images: Array<ImageV2Model & { tags: VotableTagModel[] | undefined }> = rawImages.map(
+  const images: Array<
+    ImageV2Model & { tags: VotableTagModel[] | undefined; publishedAt: Date | null }
+  > = rawImages.map(
     ({
       reactions,
       userId: creatorId,
