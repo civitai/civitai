@@ -353,7 +353,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         modelId: input.modelId,
         modelVersionId: input.modelVersionId,
       },
-      select: { userId: true, rating: true, details: true },
+      select: { userId: true, rating: true, details: true, id: true },
     });
 
     // Prepare the results
@@ -367,8 +367,9 @@ export const getImagesAsPostsInfiniteHandler = async ({
         images,
         review: review
           ? {
-              rating: review?.rating,
+              rating: review.rating,
               details: review?.details,
+              id: review.id,
             }
           : undefined,
       };

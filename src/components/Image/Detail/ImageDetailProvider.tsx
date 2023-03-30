@@ -68,10 +68,16 @@ export function ImageDetailProvider({
   //  TODO.briant - determine a good way to know what sets of values to use here
   const globalImageFilters = useImageFilters();
   const filters = useMemo(() => {
-    let baseFilters: Record<string, unknown> = {};
-    if (postId || modelId) baseFilters = { postId, modelId };
-    else if (modelVersionId) baseFilters = { modelVersionId, prioritizedUserIds };
-    else if (username) baseFilters = { username };
+    const baseFilters: Record<string, unknown> = {
+      postId,
+      modelId,
+      modelVersionId,
+      prioritizedUserIds,
+      username,
+    };
+    // if (postId || modelId) baseFilters = { postId, modelId };
+    // else if (modelVersionId) baseFilters = { modelVersionId, prioritizedUserIds };
+    // else if (username) baseFilters = { username };
     return removeEmpty(
       !postId && !modelVersionId && !username && !prioritizedUserIds?.length
         ? { ...baseFilters, limit, ...globalImageFilters }

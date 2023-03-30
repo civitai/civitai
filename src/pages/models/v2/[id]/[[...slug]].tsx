@@ -74,6 +74,8 @@ import { scrollToTop } from '~/utils/scroll-utils';
 import { removeTags, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
+import Router from 'next/router';
+import { QS } from '~/utils/qs';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -305,6 +307,31 @@ export default function ModelDetailsV2({
       if (version) setSelectedVersion(version);
     }
   }, [model?.modelVersions, router.query.modelVersionId]);
+
+  // when a user navigates back in their browser, set the previous url with the query string model={id}
+  useEffect(() => {
+    Router.beforePopState(({ as, url }) => {
+      if (as === '/' || as.startsWith('/?') || as.startsWith('/user/') || as.startsWith('/tag/')) {
+        const [route, queryString] = as.split('?');
+        const [, otherQueryString] = url.split('?');
+        const queryParams = QS.parse(queryString);
+        const otherParams = QS.parse(otherQueryString);
+        Router.replace(
+          { pathname: route, query: { ...queryParams, ...otherParams, model: id } },
+          as,
+          {
+            shallow: true,
+          }
+        );
+
+        return false;
+      }
+
+      return true;
+    });
+
+    return () => Router.beforePopState(() => true);
+  }, [id]); // Add any state variables to dependencies array if needed.
 
   if (loadingModel) return <PageLoader />;
   if (!model) return <NotFound />;

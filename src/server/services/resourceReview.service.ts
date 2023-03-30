@@ -1,3 +1,4 @@
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { getReactionsSelect } from './../selectors/reaction.selector';
 import {
   GetResourceReviewsInfiniteInput,
@@ -9,6 +10,30 @@ import { dbWrite, dbRead } from '~/server/db/client';
 import { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
 import { Prisma } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+
+export type ResourceReviewDetailModel = AsyncReturnType<typeof getResourceReview>;
+export const getResourceReview = async ({ id }: GetByIdInput) => {
+  const result = await dbRead.resourceReview.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      thread: {
+        select: {
+          _count: { select: { comments: true } },
+        },
+      },
+      model: { select: { name: true, id: true } },
+      modelVersion: { select: { name: true, id: true } },
+      details: true,
+      createdAt: true,
+      rating: true,
+      user: { select: userWithCosmeticsSelect },
+      helper: { select: { imageCount: true } },
+    },
+  });
+  if (!result) throw throwNotFoundError();
+  return result;
+};
 
 export const getResourceReviews = async ({ resourceIds }: GetResourceReviewsInput) => {
   return await dbWrite.resourceReview.findMany({
@@ -55,7 +80,6 @@ export const getResourceReviewsInfinite = async ({
       createdAt: true,
       rating: true,
       user: { select: userWithCosmeticsSelect },
-      reactions: { select: getReactionsSelect },
       helper: { select: { imageCount: true } },
     },
   });

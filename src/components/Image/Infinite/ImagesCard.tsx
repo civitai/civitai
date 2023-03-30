@@ -21,7 +21,7 @@ export function ImagesCard({
   width: number;
 }) {
   const { classes } = useStyles();
-  const { modelId, postId, username } = useImagesInfiniteContext();
+  const { modelId, postId, username, modelVersionId } = useImagesInfiniteContext();
 
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
@@ -65,6 +65,7 @@ export function ImagesCard({
                           modelId={modelId}
                           postId={postId}
                           username={username}
+                          modelVersionId={modelVersionId}
                         >
                           {!safe ? (
                             <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
@@ -77,7 +78,7 @@ export function ImagesCard({
                               alt={image.name ?? undefined}
                               width={450}
                               placeholder="empty"
-                              style={{ width: '100%', position: 'relative' }}
+                              style={{ width: '100%' }}
                             />
                           )}
                         </RoutedContextLink>

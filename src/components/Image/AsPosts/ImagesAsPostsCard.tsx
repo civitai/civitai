@@ -1,5 +1,15 @@
 import { Carousel } from '@mantine/carousel';
-import { ActionIcon, AspectRatio, createStyles, Group, Paper, Rating } from '@mantine/core';
+import {
+  ActionIcon,
+  AspectRatio,
+  createStyles,
+  Group,
+  Paper,
+  Rating,
+  Text,
+  Center,
+  Button,
+} from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons';
 import { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
@@ -12,8 +22,10 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { trpc } from '~/utils/trpc';
 
 export function ImagesAsPostsCard({
@@ -23,7 +35,8 @@ export function ImagesAsPostsCard({
   data: ImagesAsPostModel;
   width: number;
 }) {
-  const { classes } = useStyles();
+  const currentUser = useCurrentUser();
+  const { classes, cx } = useStyles();
   const { modelId, username } = useImagesAsPostsInfiniteContext();
   const queryUtils = trpc.useContext();
   const postId = data.postId ?? undefined;
@@ -77,7 +90,19 @@ export function ImagesAsPostsCard({
                     withUsername
                     linkToProfile
                   />
-                  {data.review && <Rating value={data.review?.rating} readOnly />}
+                  {data.review ? (
+                    <IconBadge
+                      className={classes.statBadge}
+                      sx={{ userSelect: 'none' }}
+                      icon={<Rating size="xs" value={data.review?.rating} readOnly fractions={4} />}
+                    >
+                      <Center>
+                        <IconInfoCircle size={16} />
+                      </Center>
+                    </IconBadge>
+                  ) : currentUser?.id === data.user.id ? (
+                    <Button compact>Add Review</Button>
+                  ) : null}
                 </Group>
               </Paper>
               {data.images.length === 1 ? (
@@ -187,6 +212,7 @@ export function ImagesAsPostsCard({
                       flex: 1,
                       transition: 'width 250ms ease',
                       borderRadius: 0,
+                      boxShadow: '0 0 3px rgba(0, 0, 0, .3)',
                     },
                   }}
                 >
@@ -368,5 +394,10 @@ const useStyles = createStyles((theme) => ({
     position: 'absolute',
     bottom: 5,
     right: 5,
+  },
+  statBadge: {
+    background: 'rgba(212,212,212,0.2)',
+    backdropFilter: 'blur(7px)',
+    cursor: 'pointer',
   },
 }));

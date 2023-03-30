@@ -6,6 +6,7 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteResourceReviewHandler,
   getRatingTotalsHandler,
+  getResourceReviewHandler,
   getResourceReviewsInfiniteHandler,
   upsertResourceReviewHandler,
 } from './../controllers/resourceReview.controller';
@@ -46,6 +47,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 
 export const resourceReviewRouter = router({
   // getResources: publicProcedure.input(getResourceReviewsSchema).query(getResourceReviewsHandler),
+  get: publicProcedure.input(getByIdSchema).query(getResourceReviewHandler),
   getInfinite: publicProcedure
     .input(getResourceReviewsInfinite)
     .query(getResourceReviewsInfiniteHandler),

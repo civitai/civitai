@@ -30,7 +30,7 @@ export function NavigateBack({
     if (hasHistory) router.back();
     else {
       const navigate = options.replace ? router.replace : router.push;
-      navigate(url, as, options);
+      navigate(url, as, { shallow: true, ...options });
     }
   };
 
@@ -51,8 +51,8 @@ export function BackButton({
   return (
     <NavigateBack url={url} as={as} options={options}>
       {({ onClick }) => (
-        <Group spacing="xs">
-          <ActionIcon onClick={onClick}>
+        <Group spacing="xs" onClick={onClick}>
+          <ActionIcon>
             <IconArrowLeft />
           </ActionIcon>
           {children}

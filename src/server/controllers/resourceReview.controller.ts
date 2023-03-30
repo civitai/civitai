@@ -1,3 +1,4 @@
+import { getResourceReview } from './../services/resourceReview.service';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetRatingTotalsInput,
@@ -14,6 +15,14 @@ import {
   upsertResourceReview,
 } from '~/server/services/resourceReview.service';
 import { Context } from '~/server/createContext';
+
+export const getResourceReviewHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    return await getResourceReview(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
 
 export const getResourceReviewsHandler = async ({ input }: { input: GetResourceReviewsInput }) => {
   try {

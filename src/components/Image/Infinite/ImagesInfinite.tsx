@@ -7,6 +7,8 @@ import { useImageFilters } from '~/providers/FiltersProvider';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { removeEmpty } from '~/utils/object-helpers';
 import { BrowsingMode } from '~/server/common/enums';
+import { useRouter } from 'next/router';
+import { parseImagesQueryParams } from '~/components/Image/image.utils';
 
 type ImagesInfiniteState = {
   modelId?: number;
@@ -25,44 +27,17 @@ export const useImagesInfiniteContext = () => {
   return context;
 };
 
-type ImagesInfiniteProps = ImagesInfiniteState & { columnWidth?: number };
+type ImagesInfiniteProps = { columnWidth?: number; filters?: ImagesInfiniteState };
 
 export default function ImagesInfinite({
   columnWidth = 300,
-  modelId,
-  modelVersionId,
-  postId,
-  username,
-  reviewId,
-  withTags,
-  prioritizedUserIds,
-  browsingMode,
+  filters: filterOverrides = {},
 }: ImagesInfiniteProps) {
+  const router = useRouter();
   const globalFilters = useImageFilters();
-  const filters = useMemo(() => {
-    const baseFilters = {
-      postId,
-      modelId,
-      modelVersionId,
-      username,
-      withTags,
-      prioritizedUserIds,
-      browsingMode,
-    };
-    return removeEmpty(
-      !postId && !modelVersionId && !reviewId ? { ...baseFilters, ...globalFilters } : baseFilters
-    );
-  }, [
-    globalFilters,
-    postId,
-    modelId,
-    modelVersionId,
-    username,
-    reviewId,
-    withTags,
-    prioritizedUserIds,
-    browsingMode,
-  ]);
+  const parsedParams = parseImagesQueryParams(router.query);
+  const baseFilters = { ...parsedParams, ...filterOverrides };
+  const filters = removeEmpty({ ...baseFilters, ...globalFilters });
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.image.getInfinite.useInfiniteQuery(filters, {
@@ -75,7 +50,7 @@ export default function ImagesInfinite({
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
   return (
-    <ImagesInfiniteContext.Provider value={{ modelId, modelVersionId, postId, username }}>
+    <ImagesInfiniteContext.Provider value={baseFilters}>
       <MasonryGrid2
         data={images}
         hasNextPage={hasNextPage}
