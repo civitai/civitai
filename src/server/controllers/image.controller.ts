@@ -40,6 +40,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { ImageSort } from '~/server/common/enums';
 
 export const getModelVersionImagesHandler = ({
   input: { modelVersionId },
@@ -316,7 +317,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
-    console.log('__HIT ME___');
     const posts: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
     let remaining = limit;
 
@@ -360,9 +360,10 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const results = Object.values(posts).map((images) => {
       const user = images[0].user;
       const review = reviews.find((review) => review.userId === user.id);
+      const createdAt = images.map((image) => image.createdAt).sort()[0];
       return {
         postId: images[0].postId,
-        createdAt: images[0].createdAt,
+        createdAt,
         user,
         images,
         review: review
@@ -374,6 +375,13 @@ export const getImagesAsPostsInfiniteHandler = async ({
           : undefined,
       };
     });
+
+    if (input.sort === ImageSort.Newest)
+      results.sort((a, b) => {
+        if (a.createdAt < b.createdAt) return 1;
+        if (a.createdAt > b.createdAt) return -1;
+        return 0;
+      });
 
     return {
       nextCursor: cursor,
