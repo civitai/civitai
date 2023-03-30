@@ -12,7 +12,7 @@ export function ImageCategories() {
     limit: 100,
   });
 
-  const tags = useFiltersContext((state) => state.image.tags);
+  const tags = useFiltersContext((state) => state.image.tags ?? []);
   const setFilters = useFiltersContext((state) => state.setFilters);
 
   return (

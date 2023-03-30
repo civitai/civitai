@@ -14,7 +14,7 @@ export function PostCategories() {
 
   const { data: items = [] } = trpc.post.getTags.useQuery({ limit: 100 });
 
-  const tags = useFiltersContext((state) => state.post.tags);
+  const tags = useFiltersContext((state) => state.post.tags ?? []);
   const setFilters = useFiltersContext((state) => state.setFilters);
 
   return (

@@ -119,30 +119,28 @@ export const getRatingTotals = async ({ modelVersionId }: GetRatingTotalsInput) 
   return transformed;
 };
 
-export const upsertResourceReview = async (
-  data: UpsertResourceReviewInput & { userId: number }
-) => {
+export const upsertResourceReview = (data: UpsertResourceReviewInput & { userId: number }) => {
   if (!data.id)
-    return await dbWrite.resourceReview.create({
+    return dbWrite.resourceReview.create({
       data: { ...data, thread: { create: {} } },
       select: { id: true },
     });
   else
-    return await dbWrite.resourceReview.update({
+    return dbWrite.resourceReview.update({
       where: { id: data.id },
       data,
       select: { id: true },
     });
 };
 
-export const deleteResourceReview = async ({ id }: GetByIdInput) => {
-  return await dbWrite.resourceReview.delete({ where: { id } });
+export const deleteResourceReview = ({ id }: GetByIdInput) => {
+  return dbWrite.resourceReview.delete({ where: { id } });
 };
 
-export const updateResourceReview = async ({ id, rating, details }: UpdateResourceReviewInput) => {
-  return await dbWrite.resourceReview.update({
+export const updateResourceReview = ({ id, rating, details }: UpdateResourceReviewInput) => {
+  return dbWrite.resourceReview.update({
     where: { id },
     data: { rating, details },
-    select: { id },
+    select: { id: true },
   });
 };
