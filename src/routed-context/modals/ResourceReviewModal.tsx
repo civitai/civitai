@@ -1,4 +1,4 @@
-import { Modal } from '@mantine/core';
+import { Modal, Box } from '@mantine/core';
 import { z } from 'zod';
 import { ResourceReviewDetail } from '~/components/ResourceReview/ResourceReviewDetail';
 import { createRoutedContext } from '~/routed-context/create-routed-context';
@@ -11,12 +11,14 @@ export default createRoutedContext({
     return (
       <Modal
         opened={context.opened}
-        onClose={() => undefined}
+        onClose={context.close} // TODO.Briant
         withCloseButton={false}
+        size={960}
         padding={0}
-        style={{ maxWidth: 1200 }}
       >
-        <ResourceReviewDetail {...props} />
+        <Box pt="xs" pb="xl">
+          <ResourceReviewDetail {...props} />
+        </Box>
       </Modal>
     );
   },

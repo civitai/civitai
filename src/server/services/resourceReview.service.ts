@@ -22,7 +22,7 @@ export const getResourceReview = async ({ id }: GetByIdInput) => {
           _count: { select: { comments: true } },
         },
       },
-      model: { select: { name: true, id: true } },
+      model: { select: { name: true, id: true, userId: true } },
       modelVersion: { select: { name: true, id: true } },
       details: true,
       createdAt: true,

@@ -1,15 +1,28 @@
-import { Container, Group, Stack, Center, Loader, Text, ActionIcon } from '@mantine/core';
-import { IconArrowLeft } from '@tabler/icons';
-import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
+import {
+  Container,
+  Group,
+  Stack,
+  Center,
+  Loader,
+  Text,
+  Title,
+  Badge,
+  Rating,
+  Box,
+  CloseButton,
+} from '@mantine/core';
+import { NextLink } from '@mantine/next';
+import { NavigateBack } from '~/components/BackButton/BackButton';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { trpc } from '~/utils/trpc';
-import { slugit, getDisplayName } from '~/utils/string-helpers';
-import { QS } from '~/utils/qs';
+import { slugit } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
-import { useEffect } from 'react';
 import { ResourceReviewDetailModel } from '~/server/services/resourceReview.service';
-import { ResourceReviewCard } from '~/components/ResourceReview/ResourceReviewCard';
 import { ResourceReviewCarousel } from '~/components/ResourceReview/ResourceReviewCarousel';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { ResourceReviewComments } from '~/components/ResourceReview/ResourceReviewComments';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
@@ -18,23 +31,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const getModelUrl = (data: ResourceReviewDetailModel) =>
     `/models/${data.model.id}/${slugit(data.model.name)}`;
   const getModelWithVersionUrl = (data: ResourceReviewDetailModel) =>
-    `${getModelUrl}?modelVersionId=${data.modelVersion.id}`;
-
-  // // when a user navigates back in their browser, set the previous url with the query string model={id}
-  // useEffect(() => {
-  //   if (!data) return;
-  //   const modelUrl = getModelUrl(data);
-  //   const modelWithVersionUrl = getModelWithVersionUrl(data);
-  //   router.beforePopState(({ as, url }) => {
-  //     if (!as.startsWith(modelUrl)) {
-  //       return false;
-  //     }
-
-  //     return true;
-  //   });
-
-  //   return () => router.beforePopState(() => true);
-  // }, [reviewId, data]); // Add any state variables to dependencies array if needed.
+    `${getModelUrl(data)}?modelVersionId=${data.modelVersion.id}`;
 
   if (isLoading)
     return (
@@ -44,29 +41,80 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
     );
   if (!data) return <NoContent />;
 
+  const commentCount = data.thread?._count.comments ?? 0;
+
   return (
-    <Container>
-      <Stack>
-        <Group>
-          <NavigateBack url={getModelWithVersionUrl(data)}>
-            {({ onClick }) => (
-              <Text variant="link" onClick={onClick}>
-                <Group spacing="xs">
-                  <IconArrowLeft />
-                  {data.model.name}
-                </Group>
+    <>
+      <Container mb="md">
+        <Stack>
+          <Group position="apart" noWrap align="center">
+            <Title order={3} sx={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              Review:{' '}
+              <Text
+                component={NextLink}
+                href={getModelWithVersionUrl(data)}
+                variant="link"
+                lineClamp={1}
+                sx={{ cursor: 'pointer' }}
+                shallow
+              >
+                {data.model.name} - {data.modelVersion.name}
               </Text>
-            )}
-          </NavigateBack>
-        </Group>
-        {data.user.username && (
-          <ResourceReviewCarousel
-            username={data.user.username}
-            modelVersionId={data.modelVersion.id}
-            reviewId={reviewId}
-          />
-        )}
-      </Stack>
-    </Container>
+            </Title>
+
+            <NavigateBack url={getModelWithVersionUrl(data)}>
+              {({ onClick }) => <CloseButton onClick={onClick} size="lg" />}
+            </NavigateBack>
+          </Group>
+          <Group spacing="xs" align="center">
+            <UserAvatar
+              user={data.user}
+              subText={<DaysFromNow date={data.createdAt} />}
+              subTextForce
+              badge={
+                data.user.id === data.model.userId ? (
+                  <Badge size="xs" color="violet">
+                    OP
+                  </Badge>
+                ) : null
+              }
+              size="lg"
+              spacing="xs"
+              withUsername
+              linkToProfile
+            />
+            <Rating value={data.rating} fractions={2} readOnly />
+          </Group>
+        </Stack>
+      </Container>
+      {data.user.username && (
+        <Box
+          mb="md"
+          sx={(theme) => ({
+            background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
+          })}
+        >
+          <Container py="md">
+            <ResourceReviewCarousel
+              username={data.user.username}
+              modelVersionId={data.modelVersion.id}
+              reviewId={reviewId}
+            />
+          </Container>
+        </Box>
+      )}
+      <Container>
+        <Stack>
+          {data.details && <RenderHtml html={data.details} />}
+
+          <Stack spacing="xs">
+            <Title order={3}>
+              {commentCount.toLocaleString()} {commentCount === 1 ? 'Comment' : 'Comments'}
+            </Title>
+            <ResourceReviewComments reviewId={reviewId} userId={data.user.id} />
+          </Stack>
+        </Stack>
+      </Container>
+    </>
   );
 }

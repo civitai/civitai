@@ -4,7 +4,7 @@ import { CommentV2Sort } from '~/server/common/enums';
 export type CommentConnectorInput = z.infer<typeof commentConnectorSchema>;
 export const commentConnectorSchema = z.object({
   entityId: z.number(),
-  entityType: z.enum(['question', 'answer', 'image', 'post', 'model', 'comment']),
+  entityType: z.enum(['question', 'answer', 'image', 'post', 'model', 'comment', 'review']),
 });
 
 export type GetCommentsV2Input = z.infer<typeof getCommentsV2Schema>;

@@ -22,6 +22,7 @@ const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'))
 const ModelEdit = dynamic(() => import('~/routed-context/modals/ModelEdit'));
 const ModelVersionEdit = dynamic(() => import('~/routed-context/modals/ModelVersionEdit'));
 const FilesEdit = dynamic(() => import('~/routed-context/modals/FilesEdit'));
+const ResourceReviewModal = dynamic(() => import('~/routed-context/modals/ResourceReviewModal'));
 
 // this is they type I want to hook up at some point
 type ModalRegistry<P> = {
@@ -128,6 +129,22 @@ const registry = {
         },
         {
           pathname: `/images/${imageId}`,
+          query: args,
+        },
+        { shallow: true },
+      ];
+    },
+  },
+  resourceReviewModal: {
+    Component: ResourceReviewModal,
+    resolve: ({ reviewId, ...args }: React.ComponentProps<typeof ResourceReviewModal>) => {
+      const slug = Router.query.slug ?? 'placeholder';
+      return [
+        {
+          query: { ...Router.query, slug, reviewId, ...args, modal: 'resourceReviewModal' },
+        },
+        {
+          pathname: `/reviews/${reviewId}`,
           query: args,
         },
         { shallow: true },

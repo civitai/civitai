@@ -23,6 +23,7 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { NextLink } from '@mantine/next';
+import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 
 export function ResourceReviewCarousel({
   username,
@@ -94,7 +95,7 @@ export function ResourceReviewCarousel({
                       modelVersionId={modelVersionId}
                       username={username}
                     >
-                      {!safe ? (
+                      {/* {!safe ? (
                         <AspectRatio
                           ratio={(image.width ?? 1) / (image.height ?? 1)}
                           sx={(theme) => ({
@@ -112,7 +113,28 @@ export function ResourceReviewCarousel({
                           radius="md"
                           style={{ width: '100%' }}
                         />
-                      )}
+                      )} */}
+                      <AspectRatio
+                        ratio={1}
+                        sx={(theme) => ({
+                          width: '100%',
+                          borderRadius: theme.radius.md,
+                          overflow: 'hidden',
+                        })}
+                      >
+                        {!safe ? (
+                          <MediaHash {...image} />
+                        ) : (
+                          <EdgeImage
+                            src={image.url}
+                            name={image.name ?? image.id.toString()}
+                            alt={image.name ?? undefined}
+                            width={450}
+                            placeholder="empty"
+                            style={{ width: '100%' }}
+                          />
+                        )}
+                      </AspectRatio>
                     </RoutedContextLink>
                     <Reactions
                       entityId={image.id}
@@ -154,7 +176,7 @@ export function ResourceReviewCarousel({
       />
       {viewMore && (
         <Carousel.Slide style={{ display: 'flex', alignItems: 'center' }}>
-          <Button
+          {/* <Button
             component={NextLink}
             href={`/images?modelVersionId=${modelVersionId}&username=${username}`}
             variant="outline"
@@ -162,7 +184,26 @@ export function ResourceReviewCarousel({
             className={classes.viewMore}
           >
             View more
-          </Button>
+          </Button> */}
+          <AspectRatio
+            ratio={1}
+            sx={(theme) => ({
+              width: '100%',
+              borderRadius: theme.radius.md,
+              overflow: 'hidden',
+            })}
+          >
+            <Button
+              component={NextLink}
+              href={`/images?modelVersionId=${modelVersionId}&username=${username}`}
+              variant="outline"
+              fullWidth
+              className={classes.viewMore}
+              radius="md"
+            >
+              View more
+            </Button>
+          </AspectRatio>
         </Carousel.Slide>
       )}
     </Carousel>

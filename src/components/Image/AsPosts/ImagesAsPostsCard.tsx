@@ -91,15 +91,19 @@ export function ImagesAsPostsCard({
                     linkToProfile
                   />
                   {data.review ? (
-                    <IconBadge
-                      className={classes.statBadge}
-                      sx={{ userSelect: 'none' }}
-                      icon={<Rating size="xs" value={data.review?.rating} readOnly fractions={4} />}
-                    >
-                      <Center>
-                        <IconInfoCircle size={16} />
-                      </Center>
-                    </IconBadge>
+                    <RoutedContextLink modal="resourceReviewModal" reviewId={data.review.id}>
+                      <IconBadge
+                        className={classes.statBadge}
+                        sx={{ userSelect: 'none' }}
+                        icon={
+                          <Rating size="xs" value={data.review?.rating} readOnly fractions={4} />
+                        }
+                      >
+                        <Center>
+                          <IconInfoCircle size={16} />
+                        </Center>
+                      </IconBadge>
+                    </RoutedContextLink>
                   ) : currentUser?.id === data.user.id ? (
                     <Button compact>Add Review</Button>
                   ) : null}
