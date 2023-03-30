@@ -78,7 +78,7 @@ export function UserAvatar({
             </Group>
           )}
           {subText && (typeof subText === 'string' || subTextForce) ? (
-            <Text size={subTextSize} color="dimmed">
+            <Text size={subTextSize} color="dimmed" my={-2}>
               {subText}
             </Text>
           ) : (

@@ -74,7 +74,7 @@ export function CommentDiscussionItem({ data: comment }: Props) {
 
   return (
     <Card radius="md" p="md" withBorder>
-      <Group align="flex-start" position="apart" noWrap>
+      <Group align="flex-start" position="apart" noWrap mb="xs">
         <UserAvatar
           user={comment.user}
           subText={<DaysFromNow date={comment.createdAt} />}

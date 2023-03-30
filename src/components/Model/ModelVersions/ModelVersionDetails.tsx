@@ -420,6 +420,37 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
               rating={version.rank?.ratingAllTime}
               count={version.rank?.ratingCountAllTime}
             />
+            {version.description && (
+              <Accordion.Item value="version-description">
+                <Accordion.Control>{`About this version`}</Accordion.Control>
+                <Accordion.Panel px="sm" pb="sm">
+                  <Stack spacing={4}>
+                    {version.description && (
+                      <Box sx={{ p: { fontSize: 14, marginBottom: 10 } }}>
+                        <ContentClamp
+                          maxHeight={200}
+                          controlRef={controlRef}
+                          styles={{ control: { display: 'none' } }}
+                        >
+                          <RenderHtml html={version.description} />
+                        </ContentClamp>
+                      </Box>
+                    )}
+                    {cleanDescription.length > 150 ? (
+                      <Text
+                        variant="link"
+                        size="xs"
+                        onClick={toggle}
+                        tabIndex={0}
+                        sx={{ cursor: 'pointer' }}
+                      >
+                        Show more
+                      </Text>
+                    ) : null}
+                  </Stack>
+                </Accordion.Panel>
+              </Accordion.Item>
+            )}
           </Accordion>
           <CreatorCard user={model.user} />
 
@@ -476,37 +507,6 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
             <AlertWithIcon icon={<IconMessageCircle2 />}>
               {`A verified artist believes this model was fine-tuned on their art. We're discussing this with the model creator and artist`}
             </AlertWithIcon>
-          )}
-          {version.description && (
-            <Stack spacing={4}>
-              <Title order={3} size="sm" weight={500}>
-                About this version
-              </Title>
-              <Stack spacing={4}>
-                {version.description && (
-                  <Box sx={{ p: { fontSize: 14, marginBottom: 10 } }}>
-                    <ContentClamp
-                      maxHeight={100}
-                      controlRef={controlRef}
-                      styles={{ control: { display: 'none' } }}
-                    >
-                      <RenderHtml html={version.description} />
-                    </ContentClamp>
-                  </Box>
-                )}
-                {cleanDescription.length > 150 ? (
-                  <Text
-                    variant="link"
-                    size="xs"
-                    onClick={toggle}
-                    tabIndex={0}
-                    sx={{ cursor: 'pointer' }}
-                  >
-                    Show more
-                  </Text>
-                ) : null}
-              </Stack>
-            </Stack>
           )}
         </Stack>
       </Grid.Col>

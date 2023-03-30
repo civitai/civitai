@@ -203,7 +203,9 @@ export const removePostTagHandler = async ({
 // #region [post resources]
 export const getPostResourcesHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
-    return await getPostResources({ ...input });
+    const resources = await getPostResources({ ...input });
+
+    return resources.filter((x) => x.name !== 'vae');
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

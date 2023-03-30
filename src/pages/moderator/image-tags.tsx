@@ -26,13 +26,11 @@ import {
   IconReload,
   IconSquareCheck,
   IconSquareOff,
-  IconTag,
-  IconTagOff,
-  IconTrash,
   IconX,
 } from '@tabler/icons';
 import { GetServerSideProps } from 'next';
-import { useEffect, useMemo, useRef } from 'react';
+import Link from 'next/link';
+import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 
@@ -48,7 +46,6 @@ import { getTagDisplayName } from '~/libs/tags';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { ImageGetGalleryInfinite } from '~/types/router';
-import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
@@ -69,6 +66,7 @@ export default function ImageTags() {
   const queryUtils = trpc.useContext();
   const [selected, selectedHandlers] = useListState([] as number[]);
 
+  // TODO.images: Change endpoint to image.getInfinite
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching, refetch } =
     trpc.image.getGalleryImagesInfinite.useInfiniteQuery(
       { tagReview: true },
@@ -383,12 +381,14 @@ function ImageGridItem({
                   width={450}
                   placeholder="empty"
                 />
-                {image.connections && (
-                  <ImageConnectionLink {...image.connections}>
+                {image.postId && (
+                  <Link href={`/posts/${image.postId}`} passHref>
                     <ActionIcon
+                      component="a"
                       variant="transparent"
                       style={{ position: 'absolute', bottom: '5px', left: '5px' }}
                       size="lg"
+                      target="_blank"
                     >
                       <IconExternalLink
                         color="white"
@@ -398,7 +398,7 @@ function ImageGridItem({
                         size={26}
                       />
                     </ActionIcon>
-                  </ImageConnectionLink>
+                  </Link>
                 )}
                 {image.meta && (
                   <ImageMetaPopover

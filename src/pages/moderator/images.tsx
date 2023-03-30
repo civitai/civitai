@@ -33,7 +33,8 @@ import {
   IconX,
 } from '@tabler/icons';
 import { GetServerSideProps } from 'next';
-import { useEffect, useMemo, useRef } from 'react';
+import Link from 'next/link';
+import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 
@@ -72,6 +73,7 @@ export default function Images() {
   const queryUtils = trpc.useContext();
   const [selected, selectedHandlers] = useListState([] as number[]);
 
+  // TODO.images: Change endpoint to image.getInfinite
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching, refetch } =
     trpc.image.getGalleryImagesInfinite.useInfiniteQuery(
       { needsReview: true },
@@ -458,12 +460,14 @@ function ImageGridItem({
                   width={450}
                   placeholder="empty"
                 />
-                {image.connections && (
-                  <ImageConnectionLink {...image.connections}>
+                {image.postId && (
+                  <Link href={`/posts/${image.postId}`} passHref>
                     <ActionIcon
+                      component="a"
                       variant="transparent"
                       style={{ position: 'absolute', bottom: '5px', left: '5px' }}
                       size="lg"
+                      target="_blank"
                     >
                       <IconExternalLink
                         color="white"
@@ -473,7 +477,7 @@ function ImageGridItem({
                         size={26}
                       />
                     </ActionIcon>
-                  </ImageConnectionLink>
+                  </Link>
                 )}
                 {image.meta && (
                   <ImageMetaPopover
