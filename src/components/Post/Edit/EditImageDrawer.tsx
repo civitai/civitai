@@ -146,11 +146,11 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
           <Stack spacing="xl" pt="md" pb={4}>
             <ImagePreview
               image={image}
-              edgeImageProps={{ width: 220 }}
+              edgeImageProps={{ width: 450 }}
               aspectRatio={1}
               style={{ maxWidth: 110 }}
             />
-            <Stack spacing="xs">
+            {/* <Stack spacing="xs">
               <InputCheckbox
                 name="nsfw"
                 disabled={hasModerationTags}
@@ -164,7 +164,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
                 }
               />
               <InputCheckbox name="hideMeta" label="Hide generation data" />
-            </Stack>
+            </Stack> */}
             <Input.Wrapper label="Tags">
               <Group spacing={4}>
                 {!!tags.length ? (
@@ -203,54 +203,56 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
                       </>
                     }
                   />
-                  {image.resourceHelper.map((resource) => (
-                    <Card key={resource.id} p={8} withBorder>
-                      <Stack>
-                        <Group spacing={4} position="apart" noWrap align="flex-start">
-                          <Group spacing={4} noWrap>
-                            {resource.modelVersionId ? (
-                              <Group spacing={4}>
-                                {resource.modelName && (
-                                  <Text size="sm" weight={500} lineClamp={1}>
-                                    {resource.modelName}
-                                  </Text>
-                                )}
-                                {resource.modelVersionName && (
-                                  <Badge style={{ textTransform: 'none' }}>
-                                    {resource.modelVersionName}
-                                  </Badge>
-                                )}
-                              </Group>
-                            ) : (
-                              <Group spacing={4}>
-                                <Popover width={300} withinPortal withArrow>
-                                  <Popover.Target>
-                                    <ActionIcon size="xs">
-                                      <IconInfoCircle size={16} />
-                                    </ActionIcon>
-                                  </Popover.Target>
-                                  <Popover.Dropdown>
-                                    <Text>
-                                      The detected image resource was not found in our system
+                  {image.resourceHelper
+                    .filter((x) => x.name !== 'vae')
+                    .map((resource) => (
+                      <Card key={resource.id} p={8} withBorder>
+                        <Stack>
+                          <Group spacing={4} position="apart" noWrap align="flex-start">
+                            <Group spacing={4} noWrap>
+                              {resource.modelVersionId ? (
+                                <Group spacing={4}>
+                                  {resource.modelName && (
+                                    <Text size="sm" weight={500} lineClamp={1}>
+                                      {resource.modelName}
                                     </Text>
-                                  </Popover.Dropdown>
-                                </Popover>
-                                <Text size="sm" weight={500} lineClamp={1}>
-                                  {resource.name}
-                                </Text>
-                              </Group>
+                                  )}
+                                  {resource.modelVersionName && (
+                                    <Badge style={{ textTransform: 'none' }}>
+                                      {resource.modelVersionName}
+                                    </Badge>
+                                  )}
+                                </Group>
+                              ) : (
+                                <Group spacing={4}>
+                                  <Popover width={300} withinPortal withArrow>
+                                    <Popover.Target>
+                                      <ActionIcon size="xs">
+                                        <IconInfoCircle size={16} />
+                                      </ActionIcon>
+                                    </Popover.Target>
+                                    <Popover.Dropdown>
+                                      <Text>
+                                        The detected image resource was not found in our system
+                                      </Text>
+                                    </Popover.Dropdown>
+                                  </Popover>
+                                  <Text size="sm" weight={500} lineClamp={1}>
+                                    {resource.name}
+                                  </Text>
+                                </Group>
+                              )}
+                              {/* <IconVersions size={16} /> */}
+                            </Group>
+                            {resource.modelType && (
+                              <Badge radius="sm" size="sm">
+                                {splitUppercase(resource.modelType)}
+                              </Badge>
                             )}
-                            {/* <IconVersions size={16} /> */}
                           </Group>
-                          {resource.modelType && (
-                            <Badge radius="sm" size="sm">
-                              {splitUppercase(resource.modelType)}
-                            </Badge>
-                          )}
-                        </Group>
-                      </Stack>
-                    </Card>
-                  ))}
+                        </Stack>
+                      </Card>
+                    ))}
                 </Stack>
               ) : (
                 <Alert color="yellow">

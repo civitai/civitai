@@ -269,7 +269,10 @@ export const addPostImage = async ({
     ? await dbRead.modelFileHash.findMany({
         where: {
           file: { type: { in: toInclude } },
-          hash: { in: metaResources.map((x) => x.hash), mode: 'insensitive' },
+          hash: {
+            in: metaResources.filter((x) => x.name !== 'vae').map((x) => x.hash),
+            mode: 'insensitive',
+          },
         },
         select: {
           hash: true,

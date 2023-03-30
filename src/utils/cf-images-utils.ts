@@ -32,7 +32,7 @@ export async function getUploadUrl(
   body.append('metadata', JSON.stringify({ userId, ...metadata }));
 
   const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/images/direct_upload`,
+    `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/images/v2/direct_upload`,
     {
       method: 'POST',
       headers: {
@@ -42,6 +42,7 @@ export async function getUploadUrl(
     }
   );
 
+  if (!response.ok) throw new Error(response.statusText);
   const result = (await response.json()) as DirectUploadResponse;
   if (!result.success) throw new Error(result.errors.join('\n'));
 

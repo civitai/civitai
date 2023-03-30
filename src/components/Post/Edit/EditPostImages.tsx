@@ -154,7 +154,7 @@ function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
   return (
     <Card className={classes.container} withBorder p={0}>
       <EdgeImage src={url} alt={name ?? undefined} />
-      {status === 'uploading' && trackedFile && (
+      {trackedFile && (
         <Card radius={0} p="sm" className={cx(classes.footer, classes.ambient)}>
           <Group noWrap>
             <Text>{trackedFile.status}</Text>

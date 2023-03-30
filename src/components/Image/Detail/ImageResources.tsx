@@ -63,7 +63,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
   }, [data, favoriteModels]);
 
   return (
-    <Stack>
+    <Stack spacing={4}>
       {isLoading ? (
         <Stack spacing="xs">
           <Skeleton height={16} radius="md" />

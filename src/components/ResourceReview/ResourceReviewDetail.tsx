@@ -24,6 +24,7 @@ import { ResourceReviewComments } from '~/components/ResourceReview/ResourceRevi
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ResourceReviewMenu } from '~/components/ResourceReview/ResourceReviewMenu';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
@@ -50,7 +51,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
         <Stack>
           <Group position="apart" noWrap align="center">
             <Title order={3} sx={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              Review:{' '}
+              <span style={{ whiteSpace: 'nowrap' }}>Review:</span>{' '}
               <Text
                 component={NextLink}
                 href={getModelWithVersionUrl(data)}
@@ -87,7 +88,17 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
               withUsername
               linkToProfile
             />
-            <Rating value={data.rating} fractions={2} readOnly />
+            <IconBadge
+              ml="auto"
+              sx={{
+                userSelect: 'none',
+                paddingTop: 4,
+                paddingBottom: 4,
+                paddingRight: 0,
+                height: 'auto',
+              }}
+              icon={<Rating size="md" value={data.rating} fractions={2} readOnly />}
+            ></IconBadge>
           </Group>
         </Stack>
       </Container>

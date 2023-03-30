@@ -9,8 +9,10 @@ import {
   Text,
   Center,
   Button,
+  ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
-import { IconInfoCircle } from '@tabler/icons';
+import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons';
 import { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -27,6 +29,7 @@ import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { trpc } from '~/utils/trpc';
+import { NextLink } from '@mantine/next';
 import { useImageFilters } from '~/providers/FiltersProvider';
 
 export function ImagesAsPostsCard({
@@ -82,7 +85,7 @@ export function ImagesAsPostsCard({
           {inView && (
             <>
               <Paper radius={0}>
-                <Group position="apart" p="xs" noWrap>
+                <Group p="xs" noWrap>
                   <UserAvatar
                     user={data.user}
                     subText={<DaysFromNow date={data.createdAt} />}
@@ -92,23 +95,45 @@ export function ImagesAsPostsCard({
                     withUsername
                     linkToProfile
                   />
-                  {data.review ? (
-                    <RoutedContextLink modal="resourceReviewModal" reviewId={data.review.id}>
-                      <IconBadge
-                        className={classes.statBadge}
-                        sx={{ userSelect: 'none' }}
-                        icon={
-                          <Rating size="xs" value={data.review?.rating} readOnly fractions={4} />
-                        }
-                      >
-                        <Center>
-                          <IconInfoCircle size={16} />
-                        </Center>
-                      </IconBadge>
-                    </RoutedContextLink>
-                  ) : currentUser?.id === data.user.id ? (
-                    <>{/* <Button compact>Add Review</Button> */}</>
-                  ) : null}
+                  <Group ml="auto">
+                    {!data.publishedAt && (
+                      <Tooltip label="Post not Published" withArrow>
+                        <ActionIcon
+                          color="red"
+                          variant="outline"
+                          component={NextLink}
+                          href={`/posts/${data.postId}/edit`}
+                        >
+                          <IconExclamationMark />
+                        </ActionIcon>
+                      </Tooltip>
+                    )}
+                    {data.review ? (
+                      <RoutedContextLink modal="resourceReviewModal" reviewId={data.review.id}>
+                        <IconBadge
+                          className={classes.statBadge}
+                          sx={{
+                            userSelect: 'none',
+                            paddingTop: 4,
+                            paddingBottom: 4,
+                            height: 'auto',
+                          }}
+                          style={{ paddingRight: data.review?.details ? undefined : 0 }}
+                          icon={
+                            <Rating size="sm" value={data.review?.rating} readOnly fractions={4} />
+                          }
+                        >
+                          {data.review?.details && (
+                            <Center>
+                              <IconMessage size={18} strokeWidth={2.5} />
+                            </Center>
+                          )}
+                        </IconBadge>
+                      </RoutedContextLink>
+                    ) : currentUser?.id === data.user.id ? (
+                      <>{/* <Button compact>Add Review</Button> */}</>
+                    ) : null}
+                  </Group>
                 </Group>
               </Paper>
               {data.images.length === 1 ? (

@@ -571,6 +571,7 @@ export default function ModelDetailsV2({
               <Button
                 component={NextLink}
                 href={`/models/${model.id}/model-versions/create`}
+                variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                 color="gray"
                 leftIcon={<IconPlus size={16} />}
                 compact
