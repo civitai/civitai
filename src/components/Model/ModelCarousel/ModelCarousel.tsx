@@ -23,6 +23,7 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useFiltersContext, useImageFilters } from '~/providers/FiltersProvider';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { ImageSort } from '~/server/common/enums';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { trpc } from '~/utils/trpc';
 
@@ -107,6 +108,8 @@ export function ModelCarousel({
   const { images, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
+    period: 'AllTime',
+    sort: ImageSort.MostReactions,
     limit,
   });
 

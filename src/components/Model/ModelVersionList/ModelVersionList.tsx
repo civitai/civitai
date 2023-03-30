@@ -143,7 +143,7 @@ export function ModelVersionList({
               }}
               compact
             >
-              <Group spacing={0}>
+              <Group spacing={0} noWrap>
                 {showExtraIcons && (missingFiles || missingPosts) ? (
                   <ThemeIcon
                     color="yellow"
@@ -155,7 +155,7 @@ export function ModelVersionList({
                     <IconAlertTriangle size={14} />
                   </ThemeIcon>
                 ) : undefined}
-                <Box miw={40} ta="center">
+                <Box miw={40} pr="xs" ta="center">
                   {version.name}
                 </Box>
                 {showExtraIcons ? (

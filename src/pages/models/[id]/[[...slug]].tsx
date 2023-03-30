@@ -77,6 +77,8 @@ import { isNumber } from '~/utils/type-guards';
 import Router from 'next/router';
 import { QS } from '~/utils/qs';
 import useIsClient from '~/hooks/useIsClient';
+import { ImageSort } from '~/server/common/enums';
+import { useQueryImages } from '~/components/Image/image.utils';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -89,9 +91,11 @@ export const getServerSideProps = createServerSideProps({
 
     const version = await getDefaultModelVersion({ modelId: id, modelVersionId });
     if (version)
-      await ssg?.image.getInfinite.prefetch({
+      await ssg?.image.getInfinite.prefetchInfinite({
         modelVersionId: version.id,
         prioritizedUserIds: [version.model.userId],
+        period: 'AllTime',
+        sort: ImageSort.MostReactions,
         limit: 10,
       });
 
@@ -147,13 +151,17 @@ export default function ModelDetailsV2({
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
 
-  const { data: { items: versionImages } = { items: [] } } = trpc.image.getInfinite.useQuery(
+  const { images: versionImages } = useQueryImages(
     {
       modelVersionId: latestVersion?.id,
       prioritizedUserIds: model ? [model.user.id] : undefined,
+      period: 'AllTime',
+      sort: ImageSort.MostReactions,
       limit: 10,
     },
-    { enabled: !!latestVersion }
+    {
+      enabled: !!latestVersion,
+    }
   );
 
   const deleteMutation = trpc.model.delete.useMutation({

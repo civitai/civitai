@@ -36,7 +36,7 @@ export const parseImagesQueryParams = (
 
 export const useQueryImages = (
   overrides?: Partial<GetInfiniteImagesInput>,
-  options?: { keepPreviousData?: boolean }
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   const router = useRouter();
   const globalFilters = useImageFilters();
