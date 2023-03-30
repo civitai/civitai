@@ -8,4 +8,4 @@ export const getSanitizedStringSchema = (options?: santizeHtmlOptions) =>
     const str = String(val);
     const result = sanitizeHtml(str, options);
     return result;
-  }, z.string().nullable());
+  }, z.string());

@@ -21,6 +21,7 @@ import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
 import { disabledVotedTags } from '~/server/jobs/disabled-voted-tags';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
+import { isProd } from '~/env/other';
 
 const jobs: Job[] = [
   scanFilesJob,
@@ -55,8 +56,7 @@ export default WebhookEndpoint(async (req, res) => {
       if (runJob !== name) continue;
     } else if (!isCronMatch(cron, now)) continue;
 
-    const jobLock = await redis?.get(`job:${name}`);
-    if (jobLock === 'true') {
+    if (await isLocked(name)) {
       log(`${name} already running`);
       alreadyRunning.push(name);
       continue;
@@ -66,13 +66,13 @@ export default WebhookEndpoint(async (req, res) => {
       const jobStart = Date.now();
       try {
         log(`${name} starting`);
-        await redis?.set(`job:${name}`, 'true', { EX: options.lockExpiration });
+        lock(name, options.lockExpiration);
         await run();
         log(`${name} successful: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`);
       } catch (e) {
         log(`${name} failed: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`, e);
       } finally {
-        await redis?.del(`job:${name}`);
+        unlock(name);
       }
     };
 
@@ -117,3 +117,18 @@ function isCronMatch(
 const querySchema = z.object({
   run: z.string().optional(),
 });
+
+async function isLocked(name: string) {
+  if (!isProd) return false;
+  return (await redis?.get(`job:${name}`)) === 'true';
+}
+
+async function lock(name: string, lockExpiration: number) {
+  if (!isProd) return;
+  await redis?.set(`job:${name}`, 'true', { EX: lockExpiration });
+}
+
+async function unlock(name: string) {
+  if (!isProd) return;
+  await redis?.del(`job:${name}`);
+}

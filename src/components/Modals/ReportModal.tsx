@@ -170,7 +170,7 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
 
               // review invalidate
               if (reviewId) {
-                await queryUtils.review.getDetail.setData(
+                queryUtils.review.getDetail.setData(
                   { id: reviewId },
                   produce((old) => {
                     if (old) {

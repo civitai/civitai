@@ -3,7 +3,6 @@ import {
   AspectRatio,
   Badge,
   Box,
-  Card,
   createStyles,
   DefaultMantineColor,
   Group,
@@ -28,7 +27,7 @@ import {
 import dayjs from 'dayjs';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
@@ -166,8 +165,11 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
   const { id, image, name, rank, user, locked } = data ?? {};
 
   const [loading, setLoading] = useState(false);
-  // const { ref, inView } = useInView();
-  const inView = true;
+  const { ref, inView } = useInView();
+  const viewLoadedRef = useRef(false);
+  if (inView && !viewLoadedRef.current) {
+    viewLoadedRef.current = true;
+  }
 
   const {
     data: { Favorite: favoriteModels = [], Hide: hiddenModels = [] } = { Favorite: [], Hide: [] },
@@ -186,12 +188,12 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
     hidden.find(({ id }) => id === user.id) || hiddenModels.find((modelId) => modelId === id);
 
   const height = useMemo(() => {
-    if (!image.width || !image.height) return 300;
+    if (!image?.width || !image?.height) return 300;
     const width = itemWidth > 0 ? itemWidth : 300;
     const aspectRatio = image.width / image.height;
     const imageHeight = Math.floor(width / aspectRatio) + (aspectRatio >= 1 ? 60 : 0);
     return Math.min(imageHeight, 600);
-  }, [itemWidth, image.width, image.height]);
+  }, [itemWidth, image?.width, image?.height]);
 
   const modelText = (
     <Text size={14} weight={500} color="white" style={{ flex: 1, lineHeight: 1 }}>
@@ -288,14 +290,14 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
     </LoginRedirect>
   );
 
-  const reportImageOption = (
+  const reportImageOption = image && (
     <LoginRedirect reason="report-content" key="report-image">
       <Menu.Item
         icon={<IconFlag size={14} stroke={1.5} />}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
-          openContext('report', { entityType: ReportEntity.Image, entityId: data.image.id });
+          openContext('report', { entityType: ReportEntity.Image, entityId: image.id });
         }}
       >
         Report Image
@@ -342,7 +344,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
     >
       <Link href={`/models/${id}/${slugit(name)}`} passHref>
         <MasonryCard
-          // ref={ref}
+          ref={ref}
           withBorder
           component="a"
           shadow="sm"
@@ -352,7 +354,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
             if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
           }}
         >
-          {inView && (
+          {image && (inView || viewLoadedRef.current) && (
             <>
               <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} />
               <ImageGuard
@@ -449,7 +451,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                         variant="filled"
                         size="lg"
                         color={color}
-                        sx={(theme) => ({
+                        sx={() => ({
                           opacity: 0.8,
                           boxShadow:
                             '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 8px 15px -5px',
