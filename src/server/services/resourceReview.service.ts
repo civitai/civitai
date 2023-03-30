@@ -3,6 +3,7 @@ import { getReactionsSelect } from './../selectors/reaction.selector';
 import {
   GetResourceReviewsInfiniteInput,
   GetRatingTotalsInput,
+  UpdateResourceReviewInput,
 } from './../schema/resourceReview.schema';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
@@ -136,4 +137,12 @@ export const upsertResourceReview = async (
 
 export const deleteResourceReview = async ({ id }: GetByIdInput) => {
   return await dbWrite.resourceReview.delete({ where: { id } });
+};
+
+export const updateResourceReview = async ({ id, rating, details }: UpdateResourceReviewInput) => {
+  return await dbWrite.resourceReview.update({
+    where: { id },
+    data: { rating, details },
+    select: { id },
+  });
 };

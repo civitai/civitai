@@ -23,6 +23,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ResourceReviewComments } from '~/components/ResourceReview/ResourceReviewComments';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { ResourceReviewMenu } from '~/components/ResourceReview/ResourceReviewMenu';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
@@ -62,9 +63,12 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
               </Text>
             </Title>
 
-            <NavigateBack url={getModelWithVersionUrl(data)}>
-              {({ onClick }) => <CloseButton onClick={onClick} size="lg" />}
-            </NavigateBack>
+            <Group spacing={4} noWrap>
+              <ResourceReviewMenu reviewId={reviewId} userId={data.user.id} />
+              <NavigateBack url={getModelWithVersionUrl(data)}>
+                {({ onClick }) => <CloseButton onClick={onClick} size="lg" />}
+              </NavigateBack>
+            </Group>
           </Group>
           <Group spacing="xs" align="center">
             <UserAvatar
@@ -117,4 +121,19 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
       </Container>
     </>
   );
+}
+
+function EditableRating({ id, rating }: { id: number; rating: number }) {
+  const { mutate, isLoading } = trpc.resourceReview.update.useMutation();
+  return (
+    <Rating
+      value={rating}
+      onChange={(value) => mutate({ id, rating: value })}
+      readOnly={isLoading}
+    />
+  );
+}
+
+function EditableDetails({ id, details }: { id: number; details?: string }) {
+  return <></>;
 }
