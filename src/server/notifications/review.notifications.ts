@@ -18,7 +18,7 @@ export const reviewNotifications = createNotificationProcessor({
             'modelVersionName', mv.name,
             'username', u.username
           ) "details"
-        FROM "Review" r
+        FROM "ResourceReview" r
         JOIN "User" u ON r."userId" = u.id
         JOIN "ModelVersion" mv ON mv.id = r."modelVersionId"
         JOIN "Model" m ON m.id = mv."modelId"
@@ -56,7 +56,7 @@ export const reviewNotifications = createNotificationProcessor({
       WHERE ua."userId" IS NOT NULL
         AND ua."createdAt" >= CURRENT_DATE-INTERVAL '72 hour'
         AND ua."createdAt" <= CURRENT_DATE-INTERVAL '71.75 hour'
-        AND NOT EXISTS (SELECT 1 FROM "Review" r WHERE "modelId" = m.id AND r."userId" = ua."userId")
+        AND NOT EXISTS (SELECT 1 FROM "ResourceReview" r WHERE "modelId" = m.id AND r."userId" = ua."userId")
       ), de_duped AS (
         SELECT
           *
