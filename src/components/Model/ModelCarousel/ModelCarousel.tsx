@@ -162,7 +162,9 @@ export function ModelCarousel({
               //     : router.push(`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`)
               // }
               onClick={() =>
-                router.push(`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`)
+                router.push(
+                  `/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}&returnUrl=${router.asPath}`
+                )
               }
             >
               {/* {hasTagFilters ? 'Clear Filters' : 'Share Images'} */}

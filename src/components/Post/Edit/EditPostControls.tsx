@@ -34,6 +34,7 @@ export function EditPostControls() {
 
 function ManagePostStatus() {
   const router = useRouter();
+  const returnUrl = router.query.returnUrl as string;
   const currentUser = useCurrentUser();
   const id = useEditPostContext((state) => state.id);
   const tags = useEditPostContext((state) => state.tags);
@@ -55,7 +56,8 @@ function ManagePostStatus() {
       {
         onSuccess: () => {
           setPublishedAt(publishedAt);
-          router.push(`/user/${currentUser.username}/posts`);
+          if (returnUrl) router.push(returnUrl);
+          else router.push(`/user/${currentUser.username}/posts`);
         },
       }
     );

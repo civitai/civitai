@@ -657,7 +657,7 @@ export default function ModelDetailsV2({
                       leftIcon={<IconPlus size={16} />}
                       href={`/posts/create?modelId=${model.id}${
                         selectedVersion ? `&modelVersionId=${selectedVersion.id}` : ''
-                      }`}
+                      }&returnUrl=${router.asPath}`}
                     >
                       Add post
                     </Button>

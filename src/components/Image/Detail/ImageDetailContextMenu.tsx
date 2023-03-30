@@ -1,21 +1,26 @@
 import { Menu, Loader } from '@mantine/core';
 import { closeModal, openConfirmModal } from '@mantine/modals';
 import { useState } from 'react';
-import { useGalleryDetailContext } from './GalleryDetailProvider';
+import { useGalleryDetailContext } from '../../Gallery/GalleryDetailProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { IconTrash, IconBan, IconLock } from '@tabler/icons';
 import { ToggleLockComments } from '~/components/CommentsV2';
+import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
+import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
+import { useRouter } from 'next/router';
 
 /*
 TODO.gallery
   - we really need to implement stores for our key entities (model, review, image) that will allow us to update values without having to deal with the react-query cache. For an example, refer to the TosViolationButton component below.
 */
 
-export function GalleryDetailContextMenu({ children }: { children: React.ReactElement }) {
-  const { image, isMod } = useGalleryDetailContext();
+export function ImageDetailContextMenu({ children }: { children: React.ReactElement }) {
+  const { image, isMod } = useImageDetailContext();
   const [opened, setOpened] = useState(false);
   const [loading, setLoading] = useState(false);
+  const router = useRouter();
+  const queryUtils = trpc.useContext();
 
   const handleClose = () => {
     setLoading(false);
@@ -26,11 +31,27 @@ export function GalleryDetailContextMenu({ children }: { children: React.ReactEl
     onClick();
   };
 
+  const handleDeleteSuccess = () => {
+    handleClose();
+    queryUtils.image.getInfinite.invalidate();
+    queryUtils.image.getImagesAsPostsInfinite.invalidate();
+    router.back();
+  };
+
+  const handleTosViolationSuccess = () => {
+    handleClose();
+    queryUtils.image.getInfinite.invalidate();
+    queryUtils.image.getImagesAsPostsInfinite.invalidate();
+    router.back();
+  };
+
+  if (!image) return null;
+
   return (
     <Menu opened={opened} onChange={setOpened} closeOnClickOutside={!loading}>
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown>
-        <DeleteButton onSuccess={handleClose}>
+        <DeleteImage imageId={image.id} onSuccess={handleDeleteSuccess}>
           {({ onClick, isLoading }) => (
             <Menu.Item
               color="red"
@@ -42,9 +63,9 @@ export function GalleryDetailContextMenu({ children }: { children: React.ReactEl
               Delete
             </Menu.Item>
           )}
-        </DeleteButton>
+        </DeleteImage>
         {isMod && (
-          <TosViolationButton onSuccess={handleClose}>
+          <TosViolationButton onSuccess={handleTosViolationSuccess}>
             {({ onClick, isLoading }) => (
               <Menu.Item
                 icon={isLoading ? <Loader size={14} /> : <IconBan size={14} stroke={1.5} />}
@@ -78,46 +99,12 @@ export function GalleryDetailContextMenu({ children }: { children: React.ReactEl
   );
 }
 
-function DeleteButton({ children, onSuccess }: ButtonCallbackProps) {
-  const { image, close } = useGalleryDetailContext();
-  const queryUtils = trpc.useContext();
-  const { mutate, isLoading } = trpc.image.delete.useMutation({
-    async onSuccess() {
-      if (image && image.connections?.modelId) {
-        await queryUtils.model.getById.invalidate({ id: image.connections?.modelId });
-
-        if (image.connections?.reviewId) {
-          await queryUtils.review.getDetail.invalidate({ id: image.connections?.reviewId });
-          await queryUtils.review.getAll.invalidate({ modelId: image.connections?.modelId });
-        }
-      }
-      close();
-      onSuccess?.();
-    },
-    onError(error) {
-      showErrorNotification({ error: new Error(error.message) });
-    },
-  });
-  const handleDeleteImage = () => {
-    if (image) mutate({ id: image.id });
-  };
-
-  return children({ onClick: handleDeleteImage, isLoading });
-}
-
 function TosViolationButton({ children, onSuccess }: ButtonCallbackProps) {
-  const { image, close } = useGalleryDetailContext();
-  const queryUtils = trpc.useContext();
+  const { image } = useImageDetailContext();
 
   const { mutate, isLoading } = trpc.image.setTosViolation.useMutation({
     async onSuccess() {
-      if (image) {
-        await queryUtils.image.getGalleryImageDetail.invalidate({ id: image.id });
-        if (image.connections?.modelId)
-          await queryUtils.model.getById.invalidate({ id: image.connections?.modelId });
-      }
       closeModal('confirm-tos-violation');
-      close();
       onSuccess?.();
     },
     onError(error) {

@@ -43,7 +43,11 @@ export default function PostCreate() {
           const postId = response.id;
           queryUtils.post.getEdit.setData({ id: postId }, () => response);
           upload({ postId, modelVersionId: versionId }, files);
-          router.push({ pathname: `/posts/${postId}/edit` });
+          const returnUrl = router.query.returnUrl as string;
+          let pathname = `/posts/${postId}/edit`;
+          if (returnUrl) pathname += `?returnUrl=${returnUrl}`;
+
+          router.push({ pathname });
         },
       }
     );

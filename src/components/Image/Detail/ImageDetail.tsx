@@ -26,7 +26,7 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { GalleryDetailContextMenu } from '~/components/Gallery/GalleryDetailContextMenu';
+import { ImageDetailContextMenu } from '~/components/Image/Detail/ImageDetailContextMenu';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
@@ -90,11 +90,11 @@ export function ImageDetail() {
                       </ActionIcon>
                     </ReportImageButton>
                     {(isMod || isOwner) && (
-                      <GalleryDetailContextMenu>
+                      <ImageDetailContextMenu>
                         <ActionIcon size="lg">
                           <IconDotsVertical />
                         </ActionIcon>
-                      </GalleryDetailContextMenu>
+                      </ImageDetailContextMenu>
                     )}
                   </Group>
                 </Group>
