@@ -213,7 +213,10 @@ export const getModelsInfiniteHandler = async ({
         const [version] = modelVersions;
         if (!version) return null;
         const [image] = images.filter((i) => i.modelVersionId === version.id);
-        const hideImageless = !ctx.user?.isModerator && model.user.id !== ctx.user?.id;
+        const hideImageless =
+          !ctx.user?.isModerator &&
+          model.user.id !== ctx.user?.id &&
+          (input.user || input.username);
         if (!image && hideImageless) return null;
 
         const rank = model.rank; // NOTE: null before metrics kick in
