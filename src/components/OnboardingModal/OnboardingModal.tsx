@@ -64,7 +64,7 @@ export default function OnboardingModal() {
 
   const onboarded = {
     tos: !!user?.tos,
-    profile: !!user?.username || !user?.email,
+    profile: !!user?.username || !!user?.email,
     content: !!user?.onboarded,
   };
   const [activeStep, setActiveStep] = useState(Object.values(onboarded).indexOf(false));

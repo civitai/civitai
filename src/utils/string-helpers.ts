@@ -3,6 +3,12 @@ import slugify from 'slugify';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
 
+function getUrlDomain(url: string) {
+  // convert url string into a URL object and extract just the domain, avoiding subdomains
+  // e.g. https://www.google.com/ -> google.com
+  return new URL(url).hostname.split('.').slice(-2).join('.');
+}
+
 export function splitUppercase(value: string) {
   return value
     .trim()
@@ -105,6 +111,6 @@ export function isUUID(value: string) {
 }
 
 export const validateThirdPartyUrl = (url: string) => {
-  const toValidate = new URL(url).origin;
-  return allowedUrls.includes(toValidate);
+  const toValidate = getUrlDomain(url);
+  return allowedUrls.map(getUrlDomain).includes(toValidate);
 };
