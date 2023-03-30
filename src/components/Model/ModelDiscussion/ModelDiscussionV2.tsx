@@ -1,17 +1,18 @@
 import { Button, Grid, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/CommentDiscussionItem';
-import { ReviewDiscussionItem } from '~/components/Model/ModelDiscussion/ReviewDiscussionItem';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { ReviewSort } from '~/server/common/enums';
-import { CommentGetAllItem, ReviewGetAllItem } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
-export function ModelDiscussionV2({ modelId, limit }: Props) {
+export function ModelDiscussionV2({ modelId, limit: initialLimit = 8 }: Props) {
+  const isMobile = useIsMobile();
+  const [limit] = useState(isMobile ? initialLimit / 2 : initialLimit);
   const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage, isRefetching } =
     trpc.comment.getAll.useInfiniteQuery(
-      { modelId, limit: limit ?? 8, sort: ReviewSort.Newest },
+      { modelId, limit: limit, sort: ReviewSort.Newest },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
         keepPreviousData: false,

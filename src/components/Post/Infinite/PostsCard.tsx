@@ -30,7 +30,7 @@ export function PostsCard({
   }, [cardWidth, image.width, image.height]);
 
   return (
-    <InView>
+    <InView triggerOnce>
       {({ inView, ref }) => (
         <Link href={`/posts/${id}`} passHref>
           <MasonryCard

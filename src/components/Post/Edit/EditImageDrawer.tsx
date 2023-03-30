@@ -146,7 +146,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
           <Stack spacing="xl" pt="md" pb={4}>
             <ImagePreview
               image={image}
-              edgeImageProps={{ width: 220 }}
+              edgeImageProps={{ width: 450 }}
               aspectRatio={1}
               style={{ maxWidth: 110 }}
             />
