@@ -226,7 +226,8 @@ export const getModelsInfiniteHandler = async ({
         const [version] = modelVersions;
         if (!version) return null;
         const [image] = images.filter((i) => i.modelVersionId === version.id);
-        if (!image) return null;
+        const hideImageless = !ctx.user?.isModerator && model.user.id !== ctx.user?.id;
+        if (!image && hideImageless) return null;
 
         const rank = model.rank; // NOTE: null before metrics kick in
         const earlyAccess =
