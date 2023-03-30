@@ -3,9 +3,6 @@ import { parseKey } from './s3-utils';
 
 const deliveryWorkerEndpoint = `${env.DELIVERY_WORKER_ENDPOINT}?token=${env.DELIVERY_WORKER_TOKEN}`;
 
-env.CF_ACCOUNT_ID
-
-
 export type DownloadInfo = {
   url: string;
   urlExpiryDate: Date;
@@ -21,8 +18,7 @@ export type DeliveryWorkerStatus = {
   all: BucketInfo[];
 };
 
-
-export async function getDownloadUrl(fileUrl: string, fileName?: string) {  
+export async function getDownloadUrl(fileUrl: string, fileName?: string) {
   const { key } = parseKey(fileUrl);
 
   const response = await fetch(deliveryWorkerEndpoint, {
@@ -31,16 +27,17 @@ export async function getDownloadUrl(fileUrl: string, fileName?: string) {
     body: JSON.stringify({ key, fileName }),
   });
 
+  if (!response.ok) throw new Error(response.statusText);
   const result = await response.json();
   return result as DownloadInfo;
 }
 
 export async function getDeliveryWorkerStatus() {
   const url = new URL(deliveryWorkerEndpoint);
-  url.pathname = "status";
+  url.pathname = 'status';
 
   const response = await fetch(url.toString());
-  const result = await response.json() as DeliveryWorkerStatus;
+  const result = (await response.json()) as DeliveryWorkerStatus;
 
   return result;
 }

@@ -13,6 +13,7 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
   const scanCutOff = dayjs().subtract(1, 'day').toDate();
   const where: Prisma.ModelFileWhereInput = {
     virusScanResult: ScanResultCode.Pending,
+    exists: true,
     OR: [{ scanRequestedAt: null }, { scanRequestedAt: { lt: scanCutOff } }],
   };
 
@@ -20,15 +21,26 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
     where,
     select: { id: true, url: true },
   });
+  
   const s3 = getS3Client();
+  const sent: number[] = [];
+  const failed: number[] = [];
+  for (const file of files) {
+    const success = await requestScannerTasks({ file, s3 });
+    if (success) sent.push(file.id);
+    else failed.push(file.id);
+  }
 
-  for (const file of files) await requestScannerTasks({ file, s3 });
-
+  // Mark sent as requested
   await dbWrite.modelFile.updateMany({
-    where,
-    data: {
-      scanRequestedAt: new Date(),
-    },
+    where: { id: { in: sent } },
+    data: { scanRequestedAt: new Date() },
+  });
+
+  // Mark failed doesn't exist
+  await dbWrite.modelFile.updateMany({
+    where: { id: { in: failed } },
+    data: { exists: false },
   });
 });
 
@@ -56,10 +68,15 @@ export async function requestScannerTasks({
     ]);
 
   let fileUrl = s3Url;
-  if (s3Url.includes(env.S3_UPLOAD_BUCKET) || s3Url.includes(env.S3_SETTLED_BUCKET)) {
-    ({ url: fileUrl } = await getGetUrl(s3Url, { s3, expiresIn: 7 * 24 * 60 * 60 }));
-  } else {
-    ({ url: fileUrl } = await getDownloadUrl(s3Url)); 
+  try {
+    if (s3Url.includes(env.S3_UPLOAD_BUCKET) || s3Url.includes(env.S3_SETTLED_BUCKET)) {
+      ({ url: fileUrl } = await getGetUrl(s3Url, { s3, expiresIn: 7 * 24 * 60 * 60 }));
+    } else {
+      ({ url: fileUrl } = await getDownloadUrl(s3Url));
+    }
+  } catch (error) {
+    console.error(`Failed to get download url for ${s3Url}`);
+    return false;
   }
 
   const scanUrl =
@@ -79,6 +96,8 @@ export async function requestScannerTasks({
       'Content-Type': 'application/json',
     },
   });
+
+  return true;
 }
 
 type FileScanRequest = {
