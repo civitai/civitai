@@ -1,6 +1,7 @@
 import {
   getRatingTotalsSchema,
   getResourceReviewsInfinite,
+  updateResourceReviewSchema,
 } from './../schema/resourceReview.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -8,14 +9,11 @@ import {
   getRatingTotalsHandler,
   getResourceReviewHandler,
   getResourceReviewsInfiniteHandler,
+  updateResourceReviewHandler,
   upsertResourceReviewHandler,
 } from './../controllers/resourceReview.controller';
-import { getResourceReviewsHandler } from '~/server/controllers/resourceReview.controller';
 import { dbRead } from '~/server/db/client';
-import {
-  getResourceReviewsSchema,
-  upsertResourceReviewSchema,
-} from '~/server/schema/resourceReview.schema';
+import { upsertResourceReviewSchema } from '~/server/schema/resourceReview.schema';
 import { middleware, publicProcedure, router, protectedProcedure } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 
@@ -46,7 +44,6 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 });
 
 export const resourceReviewRouter = router({
-  // getResources: publicProcedure.input(getResourceReviewsSchema).query(getResourceReviewsHandler),
   get: publicProcedure.input(getByIdSchema).query(getResourceReviewHandler),
   getInfinite: publicProcedure
     .input(getResourceReviewsInfinite)
@@ -56,6 +53,10 @@ export const resourceReviewRouter = router({
     .input(upsertResourceReviewSchema)
     .use(isOwnerOrModerator)
     .mutation(upsertResourceReviewHandler),
+  update: protectedProcedure
+    .input(updateResourceReviewSchema)
+    .use(isOwnerOrModerator)
+    .mutation(updateResourceReviewHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)

@@ -26,3 +26,10 @@ export const upsertResourceReviewSchema = z.object({
   rating: z.number(),
   details: z.string().optional(),
 });
+
+export type UpdateResourceReviewInput = z.infer<typeof updateResourceReviewSchema>;
+export const updateResourceReviewSchema = z.object({
+  id: z.number(),
+  rating: z.number().optional(),
+  details: z.string().optional(),
+});

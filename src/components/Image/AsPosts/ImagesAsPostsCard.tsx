@@ -105,7 +105,7 @@ export function ImagesAsPostsCard({
                       </IconBadge>
                     </RoutedContextLink>
                   ) : currentUser?.id === data.user.id ? (
-                    <Button compact>Add Review</Button>
+                    <>{/* <Button compact>Add Review</Button> */}</>
                   ) : null}
                 </Group>
               </Paper>
