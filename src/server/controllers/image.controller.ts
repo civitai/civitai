@@ -383,6 +383,22 @@ export const getImagesAsPostsInfiniteHandler = async ({
         if (a.createdAt > b.createdAt) return -1;
         return 0;
       });
+    else if (input.sort === ImageSort.MostReactions)
+      results.sort((a, b) => {
+        const aReactions = Object.values(a.images[0].stats ?? {}).reduce((a, b) => a + b, 0);
+        const bReactions = Object.values(b.images[0].stats ?? {}).reduce((a, b) => a + b, 0);
+        if (aReactions < bReactions) return 1;
+        if (aReactions > bReactions) return -1;
+        return 0;
+      });
+    else if (input.sort === ImageSort.MostComments)
+      results.sort((a, b) => {
+        const aComments = a.images[0].stats?.commentCountAllTime ?? 0;
+        const bComments = b.images[0].stats?.commentCountAllTime ?? 0;
+        if (aComments < bComments) return 1;
+        if (aComments > bComments) return -1;
+        return 0;
+      });
 
     return {
       nextCursor: cursor,
