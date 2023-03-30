@@ -646,8 +646,8 @@ export default function ModelDetailsV2({
               ) : null}
 
               <Stack spacing="md">
-                <Group spacing="xs">
-                  <Title order={2}>Images</Title>
+                <Group spacing="xs" align="flex-end">
+                  <Title order={2}>Gallery</Title>
                   <LoginRedirect reason="create-review">
                     <Button
                       component={NextLink}
