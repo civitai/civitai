@@ -12,8 +12,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export default function PostEdit() {
   const reorder = useEditPostContext((state) => state.reorder);
-  const features = useFeatureFlags();
-  if (!features.posts) return <NotFound />;
 
   return (
     <Container>

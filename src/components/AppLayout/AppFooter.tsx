@@ -125,17 +125,6 @@ export function AppFooter() {
           >
             API
           </Button>
-          {features.posts && (
-            <Button
-              component={NextLink}
-              prefetch={false}
-              href="/posts/create"
-              {...buttonProps}
-              px={mobile ? 5 : 'xs'}
-            >
-              Create Post
-            </Button>
-          )}
           <Button component="a" href="https://status.civitai.com" {...buttonProps} target="_blank">
             Status
           </Button>

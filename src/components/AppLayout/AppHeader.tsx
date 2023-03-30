@@ -207,7 +207,7 @@ export function AppHeader() {
       },
       {
         href: `/user/${currentUser?.username}/posts`,
-        visible: !!currentUser && features.posts,
+        visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
             <IconAlbum stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />

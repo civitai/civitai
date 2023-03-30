@@ -29,7 +29,7 @@ export default function ImagesAsPostsInfinite({
     () => removeEmpty({ ...globalFilters, modelId, username, limit: 50 }),
     [globalFilters, modelId, username]
   );
-  console.log({ filters });
+
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
       { ...filters },

@@ -34,16 +34,15 @@ export const parseImagesQueryParams = (
   return imagesQueryParamSchema.parse(QS.parse(QS.stringify(params)));
 };
 
-export const useQueryImages = (overrides?: Partial<GetInfiniteImagesInput>) => {
+export const useQueryImages = (
+  overrides?: Partial<GetInfiniteImagesInput>,
+  options?: { keepPreviousData?: boolean }
+) => {
   const router = useRouter();
   const globalFilters = useImageFilters();
   const parsedParams = parseImagesQueryParams(router.query);
   const combined = { ...parsedParams, ...overrides };
   if (!!combined.modelId) combined.modelVersionId = undefined;
-  // a post's image should be sorted by their index
-  // const isPostImagesQuery = !!combined.postId && !combined.modelId;
-  // const ignoreGlobalFilters =
-  //   !!combined.postId || (!!combined.modelVersionId && !!combined.prioritizedUserIds?.length);
 
   const filters = removeEmpty({ ...globalFilters, ...combined });
 
@@ -51,12 +50,10 @@ export const useQueryImages = (overrides?: Partial<GetInfiniteImagesInput>) => {
     getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
     getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
     trpc: { context: { skipBatch: true } },
-    keepPreviousData: true,
+    ...options,
   });
-
-  console.log({ filters });
 
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
-  return { data: images, ...rest };
+  return { data, images, ...rest };
 };

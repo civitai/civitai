@@ -49,8 +49,6 @@ export default function PostCreate() {
     );
   };
 
-  const features = useFeatureFlags();
-  if (!features.posts) return <NotFound />;
   let backButtonUrl = modelId ? `/models/${modelId}` : '/';
   if (modelVersionId) backButtonUrl += `?modelVersionId=${modelVersionId}`;
 

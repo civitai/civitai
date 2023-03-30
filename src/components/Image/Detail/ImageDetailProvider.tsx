@@ -61,32 +61,7 @@ export function ImageDetailProvider({
   const currentUser = useCurrentUser();
 
   // #region [data fetching]
-  /**
-   * NOTE: consider what props are being passed to the query when we are querying by things like `postId`
-   */
-  // the globally set filter values should only be applied when accessing the image detail from the image gallery
-
-  // //  TODO.briant - determine a good way to know what sets of values to use here
-  // const globalImageFilters = useImageFilters();
-  // const filters = useMemo(() => {
-  //   const baseFilters: Record<string, unknown> = {
-  //     postId,
-  //     modelId,
-  //     modelVersionId,
-  //     prioritizedUserIds,
-  //     username,
-  //   };
-  //   // if (postId || modelId) baseFilters = { postId, modelId };
-  //   // else if (modelVersionId) baseFilters = { modelVersionId, prioritizedUserIds };
-  //   // else if (username) baseFilters = { username };
-  //   return removeEmpty(
-  //     !postId && !modelVersionId && !username && !prioritizedUserIds?.length
-  //       ? { ...baseFilters, limit, ...globalImageFilters }
-  //       : { ...baseFilters, limit }
-  //   );
-  // }, [globalImageFilters, postId, modelId, modelVersionId, username, prioritizedUserIds, limit]);
-
-  const { data: images, isLoading } = useQueryImages({
+  const { images, isLoading } = useQueryImages({
     postId,
     modelId,
     modelVersionId,
@@ -94,12 +69,6 @@ export function ImageDetailProvider({
     username,
     limit,
   });
-
-  // const { data, isLoading } = trpc.image.getInfinite.useInfiniteQuery(filters, {
-  //   getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-  //   getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
-  //   trpc: { context: { skipBatch: true } },
-  // });
 
   const { data: prefetchedImage } = trpc.image.get.useQuery({ id: imageId }, { enabled: false });
 

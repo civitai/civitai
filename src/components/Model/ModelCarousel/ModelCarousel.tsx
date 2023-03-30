@@ -104,19 +104,11 @@ export function ModelCarousel({
   // const setFilters = useFiltersContext((state) => state.setFilters);
   // const filters = useImageFilters();
 
-  const { data: images, isLoading } = useQueryImages({
+  const { images, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
     limit,
   });
-
-  // const { data, isLoading } = trpc.image.getInfinite.useQuery({
-  //   modelVersionId: modelVersionId,
-  //   prioritizedUserIds: [modelUserId],
-  //   limit,
-  // });
-
-  // const images = data?.items ?? [];
 
   if (isLoading)
     return (

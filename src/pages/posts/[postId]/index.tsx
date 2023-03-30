@@ -9,9 +9,6 @@ export default function PostDetailPage() {
   const router = useRouter();
   const postId = Number(router.query.postId);
 
-  const features = useFeatureFlags();
-  if (!features.posts) return <NotFound />;
-
   return (
     <>
       <PostDetail postId={postId} />

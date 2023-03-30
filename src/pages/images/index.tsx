@@ -10,9 +10,6 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
 
 export default function ImagesPage() {
-  const features = useFeatureFlags();
-  if (!features.gallery) return <NotFound />;
-
   return (
     <Container size="xl">
       <Stack spacing="xs">

@@ -18,14 +18,14 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { trpc } from '~/utils/trpc';
 import { useState, useMemo } from 'react';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { useQueryImages } from '~/components/Image/image.utils';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
 export function PostImages({ postId }: { postId: number }) {
   const { classes, cx } = useStyles();
   const [showMore, setShowMore] = useState(false);
-  const { data, isLoading } = trpc.image.getInfinite.useInfiniteQuery({ postId });
-  const images = useMemo(() => data?.pages.flatMap((x) => x.items), [data]);
+  const { images, isLoading } = useQueryImages({ postId });
 
   if (isLoading)
     return (

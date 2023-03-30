@@ -24,6 +24,7 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { NextLink } from '@mantine/next';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { useQueryImages } from '~/components/Image/image.utils';
 
 export function ResourceReviewCarousel({
   username,
@@ -34,19 +35,18 @@ export function ResourceReviewCarousel({
   modelVersionId: number;
   reviewId: number;
 }) {
-  const router = useRouter();
   const theme = useMantineTheme();
   const mobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm}px)`);
   const { classes, cx } = useStyles();
 
-  const { data, isLoading } = trpc.image.getInfinite.useInfiniteQuery({
+  const { data, images, isLoading } = useQueryImages({
     username,
     modelVersionId,
     limit: 10,
-    sort: ImageSort.Newest,
+    // sort: ImageSort.Newest,
   });
 
-  const images = data?.pages.flatMap((x) => x.items) ?? [];
+  // const images = data?.pages.flatMap((x) => x.items) ?? [];
   const viewMore = data?.pages.some((x) => x.nextCursor !== undefined) ?? false;
 
   if (isLoading)
@@ -131,7 +131,7 @@ export function ResourceReviewCarousel({
                             alt={image.name ?? undefined}
                             width={450}
                             placeholder="empty"
-                            style={{ width: '100%' }}
+                            style={{ width: '100%', objectPosition: 'top' }}
                           />
                         )}
                       </AspectRatio>
