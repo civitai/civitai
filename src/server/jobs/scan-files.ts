@@ -13,7 +13,7 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
   const scanCutOff = dayjs().subtract(1, 'day').toDate();
   const where: Prisma.ModelFileWhereInput = {
     virusScanResult: ScanResultCode.Pending,
-    exists: true,
+    exists: null,
     OR: [{ scanRequestedAt: null }, { scanRequestedAt: { lt: scanCutOff } }],
   };
 
