@@ -70,15 +70,15 @@ export async function requestScannerTasks({
     ]);
 
   let fileUrl = s3Url;
-  if (s3Url.includes(env.S3_UPLOAD_BUCKET) || s3Url.includes(env.S3_SETTLED_BUCKET)) {
-    ({ url: fileUrl } = await getGetUrl(s3Url, { s3, expiresIn: 7 * 24 * 60 * 60 }));
-  } else {
-    try {
+  try {
+    if (s3Url.includes(env.S3_UPLOAD_BUCKET) || s3Url.includes(env.S3_SETTLED_BUCKET)) {
+      ({ url: fileUrl } = await getGetUrl(s3Url, { s3, expiresIn: 7 * 24 * 60 * 60 }));
+    } else {
       ({ url: fileUrl } = await getDownloadUrl(s3Url));
-    } catch (error) {
-      console.error(`Failed to get download url for ${s3Url}`);
-      return false;
     }
+  } catch (error) {
+    console.error(`Failed to get download url for ${s3Url}`);
+    return false;
   }
 
   const scanUrl =
