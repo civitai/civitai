@@ -16,7 +16,7 @@ type ImagesInfiniteState = {
   postId?: number;
   username?: string;
   reviewId?: number;
-  withTags?: boolean;
+
   prioritizedUserIds?: number[];
   browsingMode?: BrowsingMode;
 };
@@ -27,17 +27,22 @@ export const useImagesInfiniteContext = () => {
   return context;
 };
 
-type ImagesInfiniteProps = { columnWidth?: number; filters?: ImagesInfiniteState };
+type ImagesInfiniteProps = {
+  columnWidth?: number;
+  withTags?: boolean;
+  filters?: ImagesInfiniteState;
+};
 
 export default function ImagesInfinite({
   columnWidth = 300,
+  withTags,
   filters: filterOverrides = {},
 }: ImagesInfiniteProps) {
   const router = useRouter();
   const globalFilters = useImageFilters();
   const parsedParams = parseImagesQueryParams(router.query);
   const baseFilters = { ...parsedParams, ...filterOverrides };
-  const filters = removeEmpty({ ...baseFilters, ...globalFilters });
+  const filters = removeEmpty({ ...baseFilters, ...globalFilters, withTags });
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.image.getInfinite.useInfiniteQuery(filters, {

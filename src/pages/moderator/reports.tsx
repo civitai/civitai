@@ -501,6 +501,7 @@ const getReportLink = (report: ReportDetail) => {
 };
 
 function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?: MantineSize }) {
+  // TODO.Briant - create a helper function for this
   const queryClient = useQueryClient();
 
   const { mutate, isLoading } = trpc.report.setStatus.useMutation({

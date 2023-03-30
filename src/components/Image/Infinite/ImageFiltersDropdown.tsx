@@ -8,7 +8,7 @@ import { IconFilterOff } from '@tabler/icons';
 export function ImageFiltersDropdown() {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
-  const showNSFWToggle = !currentUser || currentUser.showNsfw;
+  // const showNSFWToggle = !currentUser || currentUser.showNsfw;
 
   const generation = useFiltersContext((state) => state.image.generation) ?? [];
   // const excludedTags = useFiltersContext((state) => state.image.excludedTags) ?? [];
@@ -25,12 +25,12 @@ export function ImageFiltersDropdown() {
     setFilters({
       image: {
         generation: [],
-        excludedTags: [],
+        // excludedTags: [],
       },
     });
   };
 
-  if (!showNSFWToggle) return null;
+  // if (!showNSFWToggle) return null;
 
   const chipProps: Partial<ChipProps> = {
     radius: 'sm',

@@ -14,6 +14,7 @@ import {
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons';
 import { useRouter } from 'next/router';
+import { useQueryImages } from '~/components/Image/image.utils';
 
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -100,16 +101,22 @@ export function ModelCarousel({
 }: Props) {
   const router = useRouter();
   const { classes, cx } = useStyles();
-  const setFilters = useFiltersContext((state) => state.setFilters);
-  const filters = useImageFilters();
+  // const setFilters = useFiltersContext((state) => state.setFilters);
+  // const filters = useImageFilters();
 
-  const { data, isLoading } = trpc.image.getInfinite.useQuery({
+  const { data: images, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
     limit,
   });
 
-  const images = data?.items ?? [];
+  // const { data, isLoading } = trpc.image.getInfinite.useQuery({
+  //   modelVersionId: modelVersionId,
+  //   prioritizedUserIds: [modelUserId],
+  //   limit,
+  // });
+
+  // const images = data?.items ?? [];
 
   if (isLoading)
     return (
@@ -129,7 +136,7 @@ export function ModelCarousel({
     );
 
   if (!isLoading && !images.length) {
-    const hasTagFilters = filters.tags && filters.tags.length > 0;
+    // const hasTagFilters = filters.tags && filters.tags.length > 0;
 
     return (
       <Paper
@@ -148,21 +155,26 @@ export function ModelCarousel({
           <Stack spacing={4}>
             <Text size="lg">No images found</Text>
             <Text size="sm" color="dimmed">
-              {hasTagFilters
+              {/* {hasTagFilters
                 ? 'Try removing your images filters'
-                : 'Be the first to share your creation for this model'}
+                : 'Share your creation for this model'} */}
+              Share your creation for this model
             </Text>
           </Stack>
           <Group position="center">
             <Button
               variant="outline"
+              // onClick={() =>
+              //   hasTagFilters
+              //     ? setFilters({ image: {} }) // TODO.briant - work on filters, since this won't clear
+              //     : router.push(`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`)
+              // }
               onClick={() =>
-                hasTagFilters
-                  ? setFilters({ image: {} }) // TODO.briant - work on filters, since this won't clear
-                  : router.push(`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`)
+                router.push(`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`)
               }
             >
-              {hasTagFilters ? 'Clear Filters' : 'Share Images'}
+              {/* {hasTagFilters ? 'Clear Filters' : 'Share Images'} */}
+              Share Images
             </Button>
           </Group>
         </Stack>

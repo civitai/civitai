@@ -32,10 +32,10 @@ export default function ImagesPage() {
           </Group>
           <Group spacing={4}>
             <PeriodFilter />
-            <ImageFiltersDropdown />
+            {/* <ImageFiltersDropdown /> */}
           </Group>
         </Group>
-        <ImageCategories />
+        {/* <ImageCategories /> */}
         <ImagesInfinite />
       </Stack>
     </Container>

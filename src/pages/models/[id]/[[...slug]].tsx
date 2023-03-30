@@ -665,10 +665,10 @@ export default function ModelDetailsV2({
               <SortFilter type="image" />
               <Group spacing={4}>
                 <PeriodFilter />
-                <ImageFiltersDropdown />
+                {/* <ImageFiltersDropdown /> */}
               </Group>
             </Group>
-            <ImageCategories />
+            {/* <ImageCategories /> */}
             <ImagesAsPostsInfinite modelId={model.id} />
           </Stack>
         </Stack>

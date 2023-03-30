@@ -143,6 +143,6 @@ export const updateResourceReview = async ({ id, rating, details }: UpdateResour
   return await dbWrite.resourceReview.update({
     where: { id },
     data: { rating, details },
-    select: { id },
+    select: { id: true },
   });
 };

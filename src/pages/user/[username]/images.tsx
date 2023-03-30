@@ -20,8 +20,8 @@ export default function UserImages() {
           <SortFilter type="image" />
           <PeriodFilter />
         </Group>
-        <ImageCategories />
-        <ImagesInfinite username={username} withTags browsingMode={browsingMode} />
+        {/* <ImageCategories /> */}
+        <ImagesInfinite filters={{ username, browsingMode }} withTags />
       </Stack>
     </Container>
   );

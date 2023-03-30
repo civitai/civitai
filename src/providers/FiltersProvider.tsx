@@ -26,9 +26,9 @@ export const postFilterSchema = z
 export const imageFilterSchema = z
   .object({
     sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
-    tags: z.number().array().nullish(),
-    generation: z.nativeEnum(ImageGenerationProcess).array().nullish(),
-    excludedTags: z.number().array().nullish(),
+    // tags: z.number().array().nullish(),
+    generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
+    // excludedTags: z.number().array().nullish(),
   })
   .default({});
 
@@ -131,10 +131,10 @@ export const usePostFilters = () => {
 export const useImageFilters = () => {
   const shared = useSharedFilters('image');
   const sort = useFiltersContext((state) => state.image.sort);
-  const tags = useFiltersContext((state) => state.image.tags);
-  const excludedTags = useFiltersContext((state) => state.image.excludedTags);
+  // const tags = useFiltersContext((state) => state.image.tags);
+  // const excludedTags = useFiltersContext((state) => state.image.excludedTags);
   const generation = useFiltersContext((state) => state.image.generation);
-  return { ...shared, sort, tags, excludedTags, generation };
+  return { ...shared, sort, generation };
 };
 
 export const useQuestionFilters = () => {

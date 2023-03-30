@@ -15,10 +15,6 @@ type Props = {
   prioritizedUserIds?: number[];
 } & Record<string, unknown>;
 
-export function parseImageFilters() {
-  const baseFilters: Record<string, unknown> = {};
-}
-
 export const imagesQueryParamSchema = z.object({
   modelId: z.number().optional(),
   modelVersionId: z.number().optional(),
@@ -42,7 +38,14 @@ export const useQueryImages = (overrides?: Partial<GetInfiniteImagesInput>) => {
   const router = useRouter();
   const globalFilters = useImageFilters();
   const parsedParams = parseImagesQueryParams(router.query);
-  const filters = removeEmpty({ ...globalFilters, ...parsedParams, ...overrides });
+  const combined = { ...parsedParams, ...overrides };
+  if (!!combined.modelId) combined.modelVersionId = undefined;
+  // a post's image should be sorted by their index
+  // const isPostImagesQuery = !!combined.postId && !combined.modelId;
+  // const ignoreGlobalFilters =
+  //   !!combined.postId || (!!combined.modelVersionId && !!combined.prioritizedUserIds?.length);
+
+  const filters = removeEmpty({ ...globalFilters, ...combined });
 
   const { data, ...rest } = trpc.image.getInfinite.useInfiniteQuery(filters, {
     getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
@@ -50,6 +53,8 @@ export const useQueryImages = (overrides?: Partial<GetInfiniteImagesInput>) => {
     trpc: { context: { skipBatch: true } },
     keepPreviousData: true,
   });
+
+  console.log({ filters });
 
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 

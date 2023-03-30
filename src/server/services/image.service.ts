@@ -660,8 +660,10 @@ export const getAllImages = async ({
   }
 
   // Filter to a specific post
-  if (postId) {
-    AND.push(Prisma.sql`i."postId" = ${postId}`);
+  if (postId) AND.push(Prisma.sql`i."postId" = ${postId}`);
+
+  if (postId && !modelId) {
+    // a post image query won't include modelId
     orderBy = `i."index"`;
   } else {
     // Sort by selected sort
@@ -686,7 +688,9 @@ export const getAllImages = async ({
           Prisma.sql`i."scannedAt" IS NOT NULL`,
           Prisma.sql`NOT EXISTS (
           SELECT 1 FROM "TagsOnImage" toi
-          WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(excludedTagIds)})
+          WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join([
+            ...new Set(excludedTagIds),
+          ])})
         )`,
         ],
         ' AND '

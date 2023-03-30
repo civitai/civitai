@@ -27,6 +27,7 @@ import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { trpc } from '~/utils/trpc';
+import { useImageFilters } from '~/providers/FiltersProvider';
 
 export function ImagesAsPostsCard({
   data,
@@ -40,6 +41,7 @@ export function ImagesAsPostsCard({
   const { modelId, username } = useImagesAsPostsInfiniteContext();
   const queryUtils = trpc.useContext();
   const postId = data.postId ?? undefined;
+  const imageFilters = useImageFilters();
 
   const cover = data.images.sort((a, b) => {
     const aHeight = a.height ?? 0;
@@ -58,7 +60,7 @@ export function ImagesAsPostsCard({
   const cardHeight = imageHeight + 60;
 
   const handleClick = () => {
-    queryUtils.image.getInfinite.setInfiniteData({ postId, modelId }, () => {
+    queryUtils.image.getInfinite.setInfiniteData({ postId, modelId, ...imageFilters }, () => {
       return {
         pages: [{ items: data.images, nextCursor: undefined }],
         pageParams: [],
