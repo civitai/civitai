@@ -80,6 +80,7 @@ type GetGalleryImagesRaw = {
   dislikeCount: number;
   heartCount: number;
   commentCount: number;
+  postId: number | null;
   reactions?: ReviewReactions[];
   cursorId?: bigint;
 };
