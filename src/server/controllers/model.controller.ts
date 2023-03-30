@@ -196,6 +196,7 @@ export const getModelsInfiniteHandler = async ({
         excludedTagIds: input.excludedImageTagIds,
         excludedIds: await getHiddenImagesForUser({ userId: ctx.user?.id }),
         excludedUserIds: input.excludedUserIds,
+        currentUserId: ctx.user?.id,
       })
     : [];
 
