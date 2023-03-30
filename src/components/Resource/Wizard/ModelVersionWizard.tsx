@@ -19,7 +19,7 @@ export function ModelVersionWizard({ data }: Props) {
   const router = useRouter();
 
   const { id, versionId, step = '1' } = router.query;
-  const isNew = router.pathname.includes('/new');
+  const isNew = router.pathname.includes('/create');
   const parsedStep = Array.isArray(step) ? Number(step[0]) : Number(step);
 
   const [activeStep, setActiveStep] = useState<number>(parsedStep);
@@ -37,7 +37,7 @@ export function ModelVersionWizard({ data }: Props) {
   const goNext = () => {
     if (activeStep < 3)
       router.replace(
-        `/models/v2/${id}/model-versions/${versionId}/wizard?step=${activeStep + 1}`,
+        `/models/${id}/model-versions/${versionId}/wizard?step=${activeStep + 1}`,
         undefined,
         { shallow: true }
       );
@@ -46,7 +46,7 @@ export function ModelVersionWizard({ data }: Props) {
   const goBack = () => {
     if (activeStep > 1)
       router.replace(
-        `/models/v2/${id}/model-versions/${versionId}/wizard?step=${activeStep - 1}`,
+        `/models/${id}/model-versions/${versionId}/wizard?step=${activeStep - 1}`,
         undefined,
         { shallow: true }
       );
@@ -58,11 +58,11 @@ export function ModelVersionWizard({ data }: Props) {
     // redirect to correct step if missing values
     if (!isNew) {
       if (!hasFiles)
-        router.replace(`/models/v2/${id}/model-versions/${versionId}/wizard?step=2`, undefined, {
+        router.replace(`/models/${id}/model-versions/${versionId}/wizard?step=2`, undefined, {
           shallow: true,
         });
       else
-        router.replace(`/models/v2/${id}/model-versions/${versionId}/wizard?step=3`, undefined, {
+        router.replace(`/models/${id}/model-versions/${versionId}/wizard?step=3`, undefined, {
           shallow: true,
         });
     }
@@ -86,7 +86,7 @@ export function ModelVersionWizard({ data }: Props) {
   return (
     <Container size="sm">
       <Stack spacing="xl" py="xl">
-        <Link href={`/models/v2/${id}`} passHref>
+        <Link href={`/models/${id}`} passHref>
           <Anchor size="xs">
             <Group spacing={4} noWrap>
               <IconArrowLeft size={12} />
@@ -97,7 +97,7 @@ export function ModelVersionWizard({ data }: Props) {
         <Stepper
           active={activeStep - 1}
           onStepClick={(step) =>
-            router.replace(`/models/v2/${id}/model-versions/${versionId}/wizard?step=${step + 1}`)
+            router.replace(`/models/${id}/model-versions/${versionId}/wizard?step=${step + 1}`)
           }
           allowNextStepsSelect={false}
           size="sm"
@@ -111,7 +111,7 @@ export function ModelVersionWizard({ data }: Props) {
                 onSubmit={(result) => {
                   if (editing) return goNext();
                   router.replace(
-                    `/models/v2/${id}/model-versions/${result?.id}/wizard?step=2`,
+                    `/models/${id}/model-versions/${result?.id}/wizard?step=2`,
                     undefined,
                     {
                       shallow: true,

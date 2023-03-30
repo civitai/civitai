@@ -130,11 +130,11 @@ export function ModelVersionList({
                 if (showExtraIcons) {
                   if (missingFiles)
                     return router.push(
-                      `/models/v2/${version.modelId}/model-versions/${version.id}/wizard?step=2`
+                      `/models/${version.modelId}/model-versions/${version.id}/wizard?step=2`
                     );
                   if (missingPosts)
                     return router.push(
-                      `/models/v2/${version.modelId}/model-versions/${version.id}/wizard?step=3`
+                      `/models/${version.modelId}/model-versions/${version.id}/wizard?step=3`
                     );
                 }
 
@@ -190,7 +190,7 @@ export function ModelVersionList({
                             modelVersionId: version.id,
                           });
                         }}
-                        // href={`/models/v2/${version.modelId}/model-versions/${version.id}/edit`}
+                        // href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
                       >
                         Edit details
                       </Menu.Item>

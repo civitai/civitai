@@ -50,7 +50,7 @@ export function ModelWizard() {
   const getUploadStatus = useS3UploadStore((state) => state.getStatus);
 
   const { id } = router.query;
-  const isNew = router.pathname.includes('/new');
+  const isNew = router.pathname.includes('/create');
   const [state, setState] = useState<WizardState>({ step: 1 });
 
   const { data: model } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
@@ -65,14 +65,14 @@ export function ModelWizard() {
 
   const goNext = () => {
     if (state.step < 4)
-      router.replace(`/models/v2/${id}/wizard?step=${state.step + 1}`, undefined, {
+      router.replace(`/models/${id}/wizard?step=${state.step + 1}`, undefined, {
         shallow: true,
       });
   };
 
   const goBack = () => {
     if (state.step > 1)
-      router.replace(`/models/v2/${id}/wizard?step=${state.step - 1}`, undefined, {
+      router.replace(`/models/${id}/wizard?step=${state.step - 1}`, undefined, {
         shallow: true,
       });
   };
@@ -80,11 +80,10 @@ export function ModelWizard() {
   useEffect(() => {
     // redirect to correct step if missing values
     if (!isNew) {
-      if (!hasVersions)
-        router.replace(`/models/v2/${id}/wizard?step=2`, undefined, { shallow: true });
+      if (!hasVersions) router.replace(`/models/${id}/wizard?step=2`, undefined, { shallow: true });
       else if (!hasFiles)
-        router.replace(`/models/v2/${id}/wizard?step=3`, undefined, { shallow: true });
-      else router.replace(`/models/v2/${id}/wizard?step=4`, undefined, { shallow: true });
+        router.replace(`/models/${id}/wizard?step=3`, undefined, { shallow: true });
+      else router.replace(`/models/${id}/wizard?step=4`, undefined, { shallow: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasFiles, hasVersions, id, isNew]);
@@ -127,7 +126,7 @@ export function ModelWizard() {
         radius="xl"
         variant="light"
         onClick={() =>
-          router.pathname.includes('/new') ? router.back() : router.replace(`/models/v2/${id}`)
+          router.pathname.includes('/create') ? router.back() : router.replace(`/models/${id}`)
         }
       >
         <IconX />
@@ -136,7 +135,7 @@ export function ModelWizard() {
         <Stepper
           active={state.step - 1}
           onStepClick={(step) =>
-            router.replace(`/models/v2/${id}/wizard?step=${step + 1}`, undefined, { shallow: true })
+            router.replace(`/models/${id}/wizard?step=${step + 1}`, undefined, { shallow: true })
           }
           allowNextStepsSelect={false}
           size="sm"
@@ -148,7 +147,7 @@ export function ModelWizard() {
                 model={state.model}
                 onSubmit={({ id }) => {
                   if (editing) return goNext();
-                  router.replace(`/models/v2/${id}/wizard?step=2`);
+                  router.replace(`/models/${id}/wizard?step=2`);
                 }}
               >
                 {({ loading }) => (

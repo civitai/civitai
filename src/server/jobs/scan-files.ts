@@ -21,7 +21,7 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
     where,
     select: { id: true, url: true },
   });
-  
+
   const s3 = getS3Client();
   const sent: number[] = [];
   const failed: number[] = [];

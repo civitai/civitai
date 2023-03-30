@@ -37,9 +37,9 @@ export function getModelWizardUrl(model: MyDraftModelGetAll['items'][number]) {
   const hasFiles = model.modelVersions.some((version) => version._count.files > 0);
   const hasPosts = model.modelVersions.some((version) => version._count.posts > 0);
 
-  if (!hasVersion) return `/models/v2/${model.id}/wizard?step=2`;
-  if (hasVersion && !hasFiles && !hasPosts) return `/models/v2/${model.id}/wizard?step=3`;
-  if (hasVersion && hasFiles && !hasPosts) return `/models/v2/${model.id}/wizard?step=4`;
+  if (!hasVersion) return `/models/${model.id}/wizard?step=2`;
+  if (hasVersion && !hasFiles && !hasPosts) return `/models/${model.id}/wizard?step=3`;
+  if (hasVersion && hasFiles && !hasPosts) return `/models/${model.id}/wizard?step=4`;
 
-  return `/models/v2/${model.id}`;
+  return `/models/${model.id}`;
 }

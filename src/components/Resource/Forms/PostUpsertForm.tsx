@@ -122,7 +122,7 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
           await queryUtils.model.getById.invalidate({ id: modelId });
           await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId });
           await queryUtils.image.getInfinite.invalidate();
-          await router.replace(`/models/v2/${modelId}?modelVersionId=${modelVersionId}`);
+          await router.replace(`/models/${modelId}?modelVersionId=${modelVersionId}`);
         },
       }
     );
@@ -149,7 +149,7 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
               await queryUtils.model.getById.invalidate({ id: modelId });
               await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId });
               await queryUtils.image.getInfinite.invalidate();
-              await router.replace(`/models/v2/${modelId}?modelVersionId=${modelVersionId}`);
+              await router.replace(`/models/${modelId}?modelVersionId=${modelVersionId}`);
             },
           }
         );

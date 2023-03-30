@@ -22,6 +22,7 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useFiltersContext, useImageFilters } from '~/providers/FiltersProvider';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme) => ({
@@ -102,13 +103,13 @@ export function ModelCarousel({
   const setFilters = useFiltersContext((state) => state.setFilters);
   const filters = useImageFilters();
 
-  const { data, isLoading } = trpc.image.getInfinite.useInfiniteQuery({
+  const { data, isLoading } = trpc.image.getInfinite.useQuery({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
     limit,
   });
 
-  const images = data?.pages.flatMap((x) => x.items) ?? [];
+  const images = data?.items ?? [];
 
   if (isLoading)
     return (
@@ -239,7 +240,7 @@ export function ModelCarousel({
                     />
                     {!image.hideMeta && image.meta && (
                       <ImageMetaPopover
-                        meta={image.meta as any}
+                        meta={image.meta as ImageMetaProps}
                         generationProcess={image.generationProcess ?? undefined}
                       >
                         <ActionIcon className={classes.info} variant="transparent" size="lg">

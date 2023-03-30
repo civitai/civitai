@@ -179,7 +179,7 @@ const Wrapper = ({
   if (!resource.modelId) return children;
   return (
     <Link
-      href={`/models/v2/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
+      href={`/models/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
         resource.modelVersionId
       }`}
       passHref

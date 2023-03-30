@@ -10,7 +10,7 @@ export const getServerSideProps = createServerSideProps({
     if (!session)
       return {
         redirect: {
-          destination: `/models/v2/${id}`,
+          destination: `/models/${id}`,
           permanent: false,
         },
       };
@@ -30,7 +30,7 @@ export const getServerSideProps = createServerSideProps({
     if (!isOwner && !isModerator)
       return {
         redirect: {
-          destination: `/models/v2/${id}`,
+          destination: `/models/${id}`,
           permanent: false,
         },
       };
