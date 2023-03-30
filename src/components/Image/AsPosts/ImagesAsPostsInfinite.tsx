@@ -6,6 +6,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
 import { Paper, Stack, Text, LoadingOverlay } from '@mantine/core';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { InView, useInView } from 'react-intersection-observer';
 
 type ImagesAsPostsInfiniteState = {
   modelId?: number;
@@ -26,6 +27,7 @@ export default function ImagesAsPostsInfinite({
   modelId,
   username,
 }: ImagesAsPostsInfiniteProps) {
+  const { ref, inView } = useInView({ triggerOnce: true });
   const isMobile = useIsMobile();
   const globalFilters = useImageFilters();
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
@@ -42,38 +44,45 @@ export default function ImagesAsPostsInfinite({
         getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
         trpc: { context: { skipBatch: true } },
         keepPreviousData: true,
+        enabled: inView,
       }
     );
 
   const items = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
   return (
-    <ImagesAsPostsInfiniteContext.Provider value={{ modelId, username }}>
-      <MasonryGrid2
-        data={items}
-        hasNextPage={hasNextPage}
-        isRefetching={isRefetching}
-        isFetchingNextPage={isFetchingNextPage}
-        fetchNextPage={fetchNextPage}
-        columnWidth={columnWidth}
-        render={ImagesAsPostsCard}
-        filters={filters}
-      />
-      {isLoading && (
-        <Paper style={{ minHeight: 200, position: 'relative' }}>
-          <LoadingOverlay visible zIndex={10} />
-        </Paper>
+    <div ref={ref}>
+      {inView ? (
+        <ImagesAsPostsInfiniteContext.Provider value={{ modelId, username }}>
+          <MasonryGrid2
+            data={items}
+            hasNextPage={hasNextPage}
+            isRefetching={isRefetching}
+            isFetchingNextPage={isFetchingNextPage}
+            fetchNextPage={fetchNextPage}
+            columnWidth={columnWidth}
+            render={ImagesAsPostsCard}
+            filters={filters}
+          />
+          {isLoading && (
+            <Paper style={{ minHeight: 200, position: 'relative' }}>
+              <LoadingOverlay visible zIndex={10} />
+            </Paper>
+          )}
+          {!isLoading && !items.length && (
+            <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Stack>
+                <Text size="xl">There are no images for this model yet.</Text>
+                <Text color="dimmed">
+                  Add a post to showcase your images generated from this model.
+                </Text>
+              </Stack>
+            </Paper>
+          )}
+        </ImagesAsPostsInfiniteContext.Provider>
+      ) : (
+        <div style={{ height: 200 }} />
       )}
-      {!isLoading && !items.length && (
-        <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Stack>
-            <Text size="xl">There are no images for this model yet.</Text>
-            <Text color="dimmed">
-              Add a post to showcase your images generated from this model.
-            </Text>
-          </Stack>
-        </Paper>
-      )}
-    </ImagesAsPostsInfiniteContext.Provider>
+    </div>
   );
 }

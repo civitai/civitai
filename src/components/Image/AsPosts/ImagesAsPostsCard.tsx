@@ -60,7 +60,7 @@ export function ImagesAsPostsCard({
     return Math.min(imageHeight, 600);
   }, [cardWidth, cover.width, cover.height]);
 
-  const cardHeight = imageHeight + 60;
+  const cardHeight = imageHeight + 60 + (data.images.length > 1 ? 8 : 0);
 
   const handleClick = () => {
     queryUtils.image.getInfinite.setInfiniteData({ postId, modelId, ...imageFilters }, () => {
@@ -232,7 +232,7 @@ export function ImagesAsPostsCard({
                   controlSize={32}
                   styles={{
                     indicators: {
-                      bottom: 0,
+                      bottom: -7,
                       zIndex: 5,
                       display: 'flex',
                       gap: 1,
@@ -308,7 +308,6 @@ export function ImagesAsPostsCard({
                                   readonly={!safe}
                                   withinPortal
                                   className={classes.reactions}
-                                  style={{ bottom: 14 }}
                                 />
                                 {!image.hideMeta && image.meta && (
                                   <ImageMetaPopover
@@ -319,7 +318,6 @@ export function ImagesAsPostsCard({
                                       className={classes.info}
                                       variant="transparent"
                                       size="lg"
-                                      style={{ bottom: 13 }}
                                     >
                                       <IconInfoCircle
                                         color="white"
