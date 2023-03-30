@@ -186,12 +186,12 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
     hidden.find(({ id }) => id === user.id) || hiddenModels.find((modelId) => modelId === id);
 
   const height = useMemo(() => {
-    if (!image.width || !image.height) return 300;
+    if (!image?.width || !image?.height) return 300;
     const width = itemWidth > 0 ? itemWidth : 300;
     const aspectRatio = image.width / image.height;
     const imageHeight = Math.floor(width / aspectRatio) + (aspectRatio >= 1 ? 60 : 0);
     return Math.min(imageHeight, 600);
-  }, [itemWidth, image.width, image.height]);
+  }, [itemWidth, image?.width, image?.height]);
 
   const modelText = (
     <Text size={14} weight={500} color="white" style={{ flex: 1, lineHeight: 1 }}>
@@ -288,7 +288,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
     </LoginRedirect>
   );
 
-  const reportImageOption = (
+  const reportImageOption = data.image && (
     <LoginRedirect reason="report-content" key="report-image">
       <Menu.Item
         icon={<IconFlag size={14} stroke={1.5} />}

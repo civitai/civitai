@@ -17,7 +17,9 @@ export const updateMetricsJob = createJob(
     // Get the last time this ran from the KeyValue store
     // --------------------------------------
     const dates = await dbWrite.keyValue.findMany({
-      where: { key: { in: [METRIC_LAST_UPDATED_KEY, RANK_LAST_UPDATED_KEY, RANK_FAST_LAST_UPDATED_KEY] } },
+      where: {
+        key: { in: [METRIC_LAST_UPDATED_KEY, RANK_LAST_UPDATED_KEY, RANK_FAST_LAST_UPDATED_KEY] },
+      },
     });
     const lastUpdateDate = new Date(
       (dates.find((d) => d.key === METRIC_LAST_UPDATED_KEY)?.value as number) ?? 0
@@ -1033,6 +1035,14 @@ export const updateMetricsJob = createJob(
           UNION
 
           SELECT
+            i."postId" AS id
+          FROM "ImageReaction" ir
+          JOIN "Image" i ON ir."imageId" = i.id
+          WHERE ir."createdAt" > '${lastUpdate}'
+
+          UNION
+
+          SELECT
             "id"
           FROM "MetricUpdateQueue"
           WHERE type = 'Post'
@@ -1098,31 +1108,31 @@ export const updateMetricsJob = createJob(
         (
           SELECT
             q.id,
-            COALESCE(r.heart_count, 0) AS heart_count,
-            COALESCE(r.year_heart_count, 0) AS year_heart_count,
-            COALESCE(r.month_heart_count, 0) AS month_heart_count,
-            COALESCE(r.week_heart_count, 0) AS week_heart_count,
-            COALESCE(r.day_heart_count, 0) AS day_heart_count,
-            COALESCE(r.laugh_count, 0) AS laugh_count,
-            COALESCE(r.year_laugh_count, 0) AS year_laugh_count,
-            COALESCE(r.month_laugh_count, 0) AS month_laugh_count,
-            COALESCE(r.week_laugh_count, 0) AS week_laugh_count,
-            COALESCE(r.day_laugh_count, 0) AS day_laugh_count,
-            COALESCE(r.cry_count, 0) AS cry_count,
-            COALESCE(r.year_cry_count, 0) AS year_cry_count,
-            COALESCE(r.month_cry_count, 0) AS month_cry_count,
-            COALESCE(r.week_cry_count, 0) AS week_cry_count,
-            COALESCE(r.day_cry_count, 0) AS day_cry_count,
-            COALESCE(r.dislike_count, 0) AS dislike_count,
-            COALESCE(r.year_dislike_count, 0) AS year_dislike_count,
-            COALESCE(r.month_dislike_count, 0) AS month_dislike_count,
-            COALESCE(r.week_dislike_count, 0) AS week_dislike_count,
-            COALESCE(r.day_dislike_count, 0) AS day_dislike_count,
-            COALESCE(r.like_count, 0) AS like_count,
-            COALESCE(r.year_like_count, 0) AS year_like_count,
-            COALESCE(r.month_like_count, 0) AS month_like_count,
-            COALESCE(r.week_like_count, 0) AS week_like_count,
-            COALESCE(r.day_like_count, 0) AS day_like_count,
+            COALESCE(r.heart_count,0) + COALESCE(ir.heart_count,0) AS heart_count,
+            COALESCE(r.year_heart_count,0) + COALESCE(ir.year_heart_count,0) AS year_heart_count,
+            COALESCE(r.month_heart_count,0) + COALESCE(ir.month_heart_count,0) AS month_heart_count,
+            COALESCE(r.week_heart_count,0) + COALESCE(ir.week_heart_count,0) AS week_heart_count,
+            COALESCE(r.day_heart_count,0) + COALESCE(ir.day_heart_count,0) AS day_heart_count,
+            COALESCE(r.laugh_count,0) + COALESCE(ir.laugh_count,0) AS laugh_count,
+            COALESCE(r.year_laugh_count,0) + COALESCE(ir.year_laugh_count,0) AS year_laugh_count,
+            COALESCE(r.month_laugh_count,0) + COALESCE(ir.month_laugh_count,0) AS month_laugh_count,
+            COALESCE(r.week_laugh_count,0) + COALESCE(ir.week_laugh_count,0) AS week_laugh_count,
+            COALESCE(r.day_laugh_count,0) + COALESCE(ir.day_laugh_count,0) AS day_laugh_count,
+            COALESCE(r.cry_count,0) + COALESCE(ir.cry_count,0) AS cry_count,
+            COALESCE(r.year_cry_count,0) + COALESCE(ir.year_cry_count,0) AS year_cry_count,
+            COALESCE(r.month_cry_count,0) + COALESCE(ir.month_cry_count,0) AS month_cry_count,
+            COALESCE(r.week_cry_count,0) + COALESCE(ir.week_cry_count,0) AS week_cry_count,
+            COALESCE(r.day_cry_count,0) + COALESCE(ir.day_cry_count,0) AS day_cry_count,
+            COALESCE(r.dislike_count,0) + COALESCE(ir.dislike_count,0) AS dislike_count,
+            COALESCE(r.year_dislike_count,0) + COALESCE(ir.year_dislike_count,0) AS year_dislike_count,
+            COALESCE(r.month_dislike_count,0) + COALESCE(ir.month_dislike_count,0) AS month_dislike_count,
+            COALESCE(r.week_dislike_count,0) + COALESCE(ir.week_dislike_count,0) AS week_dislike_count,
+            COALESCE(r.day_dislike_count,0) + COALESCE(ir.day_dislike_count,0) AS day_dislike_count,
+            COALESCE(r.like_count,0) + COALESCE(ir.like_count,0) AS like_count,
+            COALESCE(r.year_like_count,0) + COALESCE(ir.year_like_count,0) AS year_like_count,
+            COALESCE(r.month_like_count,0) + COALESCE(ir.month_like_count,0) AS month_like_count,
+            COALESCE(r.week_like_count,0) + COALESCE(ir.week_like_count,0) AS week_like_count,
+            COALESCE(r.day_like_count,0) + COALESCE(ir.day_like_count,0) AS day_like_count,
             COALESCE(c.comment_count, 0) AS comment_count,
             COALESCE(c.year_comment_count, 0) AS year_comment_count,
             COALESCE(c.month_comment_count, 0) AS month_comment_count,
@@ -1173,6 +1183,38 @@ export const updateMetricsJob = createJob(
             FROM "PostReaction" pr
             GROUP BY pr."postId"
           ) r ON q.id = r.id
+          LEFT JOIN (
+            SELECT
+              i."postId" AS id,
+              SUM(IIF(ir.reaction = 'Heart', 1, 0)) AS heart_count,
+              SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_heart_count,
+              SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_heart_count,
+              SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_heart_count,
+              SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_heart_count,
+              SUM(IIF(ir.reaction = 'Like', 1, 0)) AS like_count,
+              SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_like_count,
+              SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_like_count,
+              SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_like_count,
+              SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_like_count,
+              SUM(IIF(ir.reaction = 'Dislike', 1, 0)) AS dislike_count,
+              SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_dislike_count,
+              SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_dislike_count,
+              SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_dislike_count,
+              SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_dislike_count,
+              SUM(IIF(ir.reaction = 'Cry', 1, 0)) AS cry_count,
+              SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_cry_count,
+              SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_cry_count,
+              SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_cry_count,
+              SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_cry_count,
+              SUM(IIF(ir.reaction = 'Laugh', 1, 0)) AS laugh_count,
+              SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_laugh_count,
+              SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_laugh_count,
+              SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_laugh_count,
+              SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_laugh_count
+            FROM "ImageReaction" ir
+            JOIN "Image" i ON i.id = ir."imageId"
+            GROUP BY i."postId"
+          ) ir ON q.id = ir.id
         ) m
         CROSS JOIN (
           SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
@@ -1412,7 +1454,8 @@ export const updateMetricsJob = createJob(
 
     // Check if we need to update the fast ranks
     // --------------------------------------------
-    const shouldUpdateFastRanks = lastRankFastDate.getTime() + RANK_FAST_UPDATE_DELAY <= new Date().getTime();
+    const shouldUpdateFastRanks =
+      lastRankFastDate.getTime() + RANK_FAST_UPDATE_DELAY <= new Date().getTime();
     if (shouldUpdateFastRanks) {
       await refreshModelRank();
       await refreshVersionModelRank();

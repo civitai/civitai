@@ -234,7 +234,7 @@ export const getModelsInfiniteHandler = async ({
             ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
             rating: rank?.[`rating${input.period}`] ?? 0,
           },
-          image,
+          image: image as (typeof images)[0] | undefined,
           earlyAccess,
         };
       })
