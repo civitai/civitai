@@ -1,10 +1,11 @@
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { trpc } from '~/utils/trpc';
-import { createContext, useContext, useMemo } from 'react';
+import { createContext, useContext, useMemo, useState } from 'react';
 import { useImageFilters } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
 import { Paper, Stack, Text, LoadingOverlay } from '@mantine/core';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 type ImagesAsPostsInfiniteState = {
   modelId?: number;
@@ -19,15 +20,18 @@ export const useImagesAsPostsInfiniteContext = () => {
 
 type ImagesAsPostsInfiniteProps = ImagesAsPostsInfiniteState & { columnWidth?: number };
 
+const LIMIT = 50;
 export default function ImagesAsPostsInfinite({
   columnWidth = 300,
   modelId,
   username,
 }: ImagesAsPostsInfiniteProps) {
+  const isMobile = useIsMobile();
   const globalFilters = useImageFilters();
+  const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
   const filters = useMemo(
-    () => removeEmpty({ ...globalFilters, modelId, username, limit: 50 }),
-    [globalFilters, modelId, username]
+    () => removeEmpty({ ...globalFilters, modelId, username, limit }),
+    [globalFilters, modelId, username, limit]
   );
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =

@@ -39,7 +39,7 @@ export function ImagesCard({
   const showVotes = tags && Array.isArray(tags) && !!tags.length;
 
   return (
-    <InView>
+    <InView triggerOnce>
       {({ inView, ref }) => (
         <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
           {inView && (

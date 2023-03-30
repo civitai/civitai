@@ -76,6 +76,7 @@ import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import Router from 'next/router';
 import { QS } from '~/utils/qs';
+import useIsClient from '~/hooks/useIsClient';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -111,6 +112,7 @@ export default function ModelDetailsV2({
   const router = useRouter();
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
+  const isClient = useIsClient();
 
   const [opened, { toggle }] = useDisclosure();
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
@@ -601,77 +603,79 @@ export default function ModelDetailsV2({
               onFavoriteClick={handleToggleFavorite}
             />
           )}
-          {!model.locked ? (
-            <Stack spacing="md">
-              <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
-                <Group spacing="xs">
-                  <Title order={2}>Discussion</Title>
-                  {canDiscuss ? (
-                    <>
-                      <LoginRedirect reason="create-comment">
-                        <Button
-                          className={classes.discussionActionButton}
-                          leftIcon={<IconMessage size={16} />}
-                          variant="outline"
-                          onClick={() => openRoutedContext('commentEdit', {})}
-                          size="xs"
-                        >
-                          Add Comment
-                        </Button>
-                      </LoginRedirect>
-                    </>
-                  ) : (
-                    !isMuted && (
-                      <JoinPopover message="You must be a Supporter Tier member to join this discussion">
-                        <Button
-                          className={classes.discussionActionButton}
-                          leftIcon={<IconClock size={16} />}
-                          variant="outline"
-                          size="xs"
-                          color="green"
-                        >
-                          Early Access
-                        </Button>
-                      </JoinPopover>
-                    )
-                  )}
-                </Group>
-              </Group>
-              {/* <ResourceReviewGrid modelId={model.id} /> */}
-              <ModelDiscussionV2 modelId={model.id} />
-              {/* <ModelDiscussionsInfinite modelId={model.id} modelUserId={model.user.id} limit={8} /> */}
-            </Stack>
-          ) : null}
+          {isClient && (
+            <>
+              {!model.locked ? (
+                <Stack spacing="md">
+                  <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
+                    <Group spacing="xs">
+                      <Title order={2}>Discussion</Title>
+                      {canDiscuss ? (
+                        <>
+                          <LoginRedirect reason="create-comment">
+                            <Button
+                              className={classes.discussionActionButton}
+                              leftIcon={<IconMessage size={16} />}
+                              variant="outline"
+                              onClick={() => openRoutedContext('commentEdit', {})}
+                              size="xs"
+                            >
+                              Add Comment
+                            </Button>
+                          </LoginRedirect>
+                        </>
+                      ) : (
+                        !isMuted && (
+                          <JoinPopover message="You must be a Supporter Tier member to join this discussion">
+                            <Button
+                              className={classes.discussionActionButton}
+                              leftIcon={<IconClock size={16} />}
+                              variant="outline"
+                              size="xs"
+                              color="green"
+                            >
+                              Early Access
+                            </Button>
+                          </JoinPopover>
+                        )
+                      )}
+                    </Group>
+                  </Group>
+                  <ModelDiscussionV2 modelId={model.id} />
+                </Stack>
+              ) : null}
 
-          <Stack spacing="md">
-            <Group spacing="xs">
-              <Title order={2}>Images</Title>
-              <LoginRedirect reason="create-review">
-                <Button
-                  component={NextLink}
-                  className={classes.discussionActionButton}
-                  variant="outline"
-                  size="xs"
-                  leftIcon={<IconPlus size={16} />}
-                  href={`/posts/create?modelId=${model.id}${
-                    selectedVersion ? `&modelVersionId=${selectedVersion.id}` : ''
-                  }`}
-                >
-                  Add post
-                </Button>
-              </LoginRedirect>
-            </Group>
-            {/* IMAGES */}
-            <Group position="apart" spacing={0}>
-              <SortFilter type="image" />
-              <Group spacing={4}>
-                <PeriodFilter />
-                {/* <ImageFiltersDropdown /> */}
-              </Group>
-            </Group>
-            {/* <ImageCategories /> */}
-            <ImagesAsPostsInfinite modelId={model.id} />
-          </Stack>
+              <Stack spacing="md">
+                <Group spacing="xs">
+                  <Title order={2}>Images</Title>
+                  <LoginRedirect reason="create-review">
+                    <Button
+                      component={NextLink}
+                      className={classes.discussionActionButton}
+                      variant="outline"
+                      size="xs"
+                      leftIcon={<IconPlus size={16} />}
+                      href={`/posts/create?modelId=${model.id}${
+                        selectedVersion ? `&modelVersionId=${selectedVersion.id}` : ''
+                      }`}
+                    >
+                      Add post
+                    </Button>
+                  </LoginRedirect>
+                </Group>
+                {/* IMAGES */}
+                <Group position="apart" spacing={0}>
+                  <SortFilter type="image" />
+                  <Group spacing={4}>
+                    <PeriodFilter />
+                    {/* <ImageFiltersDropdown /> */}
+                  </Group>
+                </Group>
+                {/* <ImageCategories /> */}
+                <ImagesAsPostsInfinite modelId={model.id} />
+              </Stack>
+            </>
+          )}
         </Stack>
         {versionCount > 1 ? (
           <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />

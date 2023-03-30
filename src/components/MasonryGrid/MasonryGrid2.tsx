@@ -12,6 +12,7 @@ import { useEffect, useRef } from 'react';
 import { usePrevious } from '@mantine/hooks';
 import { useWindowSize } from '@react-hook/window-size';
 import { useInView } from 'react-intersection-observer';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 type Props<TData, TFilters extends Record<string, unknown>> = Omit<
   UseMasonryOptions<TData>,
