@@ -227,7 +227,6 @@ export const addTagVotes = async ({
       SELECT COUNT(*)::int "count" FROM "Tag"
       WHERE ${tagSelector} IN (${tagIn}) AND "type" = 'Moderation'
     `);
-    console.log('moderationTags', count);
     if (count > 0) await clearCache(userId, type); // Clear cache if it is
   }
 };
