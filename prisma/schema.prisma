@@ -59,6 +59,7 @@ model User {
   username             String?               @unique @db.Citext
   email                String?               @unique
   emailVerified        DateTime?
+  ethereumAddress      String?               @unique
   image                String?
   showNsfw             Boolean?              @default(false)
   blurNsfw             Boolean?              @default(true)

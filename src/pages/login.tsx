@@ -5,6 +5,7 @@ import { BuiltInProviderType } from 'next-auth/providers';
 import { getCsrfToken, getProviders, signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { EmailLogin } from '~/components/EmailLogin/EmailLogin';
+import { EthereumLogin } from '~/components/EthereumLogin/EthereumLogin';
 import { SignInError } from '~/components/SignInError/SignInError';
 import { SocialButton } from '~/components/Social/SocialButton';
 
@@ -55,6 +56,7 @@ export default function Login({
                     );
                   })
               : null}
+            <EthereumLogin callbackUrl={returnUrl} />
             <Divider label="Or" labelPosition="center" />
             <EmailLogin />
           </Stack>

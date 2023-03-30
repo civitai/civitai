@@ -4,6 +4,7 @@
   "editor.codeActionsOnSave": {
     "source.fixAll.eslint": true,
   },
+  "eslint.format.enable": true,
   "files.eol": "\n",
   "[typescriptreact]": {
     "editor.defaultFormatter": "dbaeumer.vscode-eslint"
@@ -14,5 +15,16 @@
   "[sql]": {
     "editor.formatOnSave": false,
   },
-  "typescript.tsdk": "node_modules\\typescript\\lib",
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "cSpell.words": [
+    "agentswap",
+    "Civitai",
+    "Leaderboard",
+    "Mantine",
+    "NEXTAUTH",
+    "siwe",
+    "tanstack",
+    "trpc",
+    "wagmi"
+  ],
 }

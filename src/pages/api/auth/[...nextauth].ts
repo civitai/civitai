@@ -7,6 +7,8 @@ import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
 import EmailProvider from 'next-auth/providers/email';
+import CredentialsProvider from 'next-auth/providers/credentials';
+import { SiweMessage } from 'siwe';
 
 import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
@@ -14,6 +16,8 @@ import { getRandomInt } from '~/utils/number-helpers';
 import { sendVerificationRequest } from '~/server/auth/verificationEmail';
 import { refreshToken, invalidateSession } from '~/server/utils/session-helpers';
 import { getSessionUser, updateAccountScope } from '~/server/services/user.service';
+import { getCsrfToken } from 'next-auth/react';
+import { shortenIfAddress } from '~/utils/address';
 
 const setUserName = async (email: string) => {
   try {
@@ -34,8 +38,8 @@ const setUserName = async (email: string) => {
 
 const useSecureCookies = env.NEXTAUTH_URL.startsWith('https://');
 const cookiePrefix = useSecureCookies ? '__Secure-' : '';
-const { hostname } = new URL(env.NEXTAUTH_URL);
-const cookieName = `${cookiePrefix}civitai-token`;
+const { host, hostname } = new URL(env.NEXTAUTH_URL);
+const cookieName = `${cookiePrefix}agentswap-token`;
 
 export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   adapter: PrismaAdapter(dbWrite),
@@ -120,6 +124,43 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
       },
       sendVerificationRequest,
       from: env.EMAIL_FROM,
+    }),
+    CredentialsProvider({
+      name: 'Ethereum',
+      credentials: {
+        message: { label: 'Message', type: 'text', placeholder: '0x0' },
+        signature: { label: 'Signature', type: 'text', placeholder: '0x0' },
+      },
+      // @ts-expect-error - this is a bug in the types, user.id is string but it should be number
+      async authorize(credentials) {
+        try {
+          const siwe = new SiweMessage(JSON.parse(credentials?.message || '{}'));
+          const { success } = await siwe.verify({
+            signature: credentials?.signature || '',
+            domain: host,
+            nonce: await getCsrfToken({ req }),
+          });
+
+          if (!success) return null;
+
+          const { address: ethereumAddress } = siwe;
+          const existingUser = await dbWrite.user.findUnique({
+            where: { ethereumAddress },
+          });
+          if (existingUser) return existingUser;
+
+          const newUser = await dbWrite.user.create({
+            data: {
+              // Username can not contain period, so we replace it with underscore
+              username: shortenIfAddress(ethereumAddress).replaceAll('.', '_'),
+              ethereumAddress,
+            },
+          });
+          return newUser;
+        } catch (e) {
+          return null;
+        }
+      },
     }),
   ],
   cookies: {

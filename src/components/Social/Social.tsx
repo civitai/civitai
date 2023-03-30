@@ -6,12 +6,13 @@ import {
   IconBrandGoogle,
   IconBrandReddit,
   IconMail,
+  IconCurrencyEthereum,
 } from '@tabler/icons';
 import { BuiltInProviderType } from 'next-auth/providers';
 
 type SocialProps = Partial<
   Record<
-    BuiltInProviderType,
+    BuiltInProviderType | 'ethereum',
     {
       label?: React.ReactNode;
       Icon?: React.FunctionComponent<TablerIconProps>;
@@ -46,12 +47,18 @@ export const socialItems: SocialProps = {
     Icon: IconMail,
     Button: EmailButton,
   },
+  ethereum: {
+    label: 'Ethereum',
+    Icon: IconCurrencyEthereum,
+    Button: EthereumButton,
+  },
 };
 
 const discordColor = '#5865F2';
 const googleColor = '#4285F4';
 const redditColor = '#FF5700';
 const emailColor = '#666';
+const ethereumColor = '#716b94';
 
 export function DiscordButton(props: ButtonProps) {
   return (
@@ -137,6 +144,23 @@ export function EmailButton(props: ButtonProps) {
             theme.colorScheme === 'dark'
               ? theme.fn.lighten(emailColor, 0.1)
               : theme.fn.darken(emailColor, 0.05),
+        },
+      })}
+    />
+  );
+}
+
+export function EthereumButton(props: ButtonProps) {
+  return (
+    <Button
+      {...props}
+      sx={(theme) => ({
+        backgroundColor: ethereumColor,
+        '&:hover': {
+          backgroundColor:
+            theme.colorScheme === 'dark'
+              ? theme.fn.lighten(ethereumColor, 0.1)
+              : theme.fn.darken(ethereumColor, 0.05),
         },
       })}
     />

@@ -35,6 +35,7 @@ import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvide
 import { MetaPWA } from '~/components/Meta/MetaPWA';
 import { FiltersProvider, FiltersInput, parseFiltersCookie } from '~/providers/FiltersProvider';
 import PlausibleProvider from 'next-plausible';
+import { Web3ModalProvider } from '~/providers/Web3ModalProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -108,7 +109,11 @@ function MyApp(props: CustomAppProps) {
                   <CustomModalsProvider>
                     <NotificationsProvider>
                       <FreezeProvider>
-                        <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                        <TosProvider>
+                          <Web3ModalProvider>
+                            {getLayout(<Component {...pageProps} />)}
+                          </Web3ModalProvider>
+                        </TosProvider>
                       </FreezeProvider>
                       <RoutedContextProvider2 />
                     </NotificationsProvider>

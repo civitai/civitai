@@ -30,6 +30,7 @@ export default defineNextConfig({
       'model-share.s3.us-west-1.wasabisys.com',
       'civitai-prod.s3.us-west-1.wasabisys.com',
       'civitai-dev.s3.us-west-1.wasabisys.com',
+      'explorer-api.walletconnect.com'
     ],
   },
   experimental: {
@@ -92,6 +93,19 @@ export default defineNextConfig({
       //   permanent: true,
       // },
     ];
+  },
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      // don't resolve node.js module on the client
+      // to prevent this error on build
+      // Error: Can't resolve '<node.js internal modules>'
+      config.resolve.fallback = {
+        fs: false,
+        net: false,
+        tls: false,
+      }
+    }
+    return config;
   },
   output: 'standalone',
 });

@@ -164,7 +164,7 @@ const verifyAvatar = (avatar: string) => {
 export const acceptTOSHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
     const { id } = ctx.user;
-    await acceptTOS({ id });
+    await acceptTOS({ id: Number(id) });
   } catch (e) {
     throw throwDbError(e);
   }
@@ -205,6 +205,7 @@ export const updateUserHandler = async ({
       id,
       data: {
         ...data,
+        email: typeof data.email === 'string' ? data.email : undefined,
         showNsfw,
         cosmetics: !isSettingCosmetics
           ? undefined

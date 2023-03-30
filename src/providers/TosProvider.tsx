@@ -17,11 +17,7 @@ export function TosProvider({ children }: { children: React.ReactNode }) {
   }, [session]);
 
   const opened =
-    session?.user &&
-    (!session?.user?.tos ||
-      !session.user.email ||
-      !session.user.username ||
-      !session.user.onboarded);
+    session?.user && (!session?.user?.tos || !session.user.username || !session.user.onboarded);
 
   return (
     <>

@@ -108,3 +108,10 @@ export const validateThirdPartyUrl = (url: string) => {
   const toValidate = new URL(url).origin;
   return allowedUrls.includes(toValidate);
 };
+
+/**
+ * Copied from useDapp
+ */
+export function shortenString(str: string) {
+  return str.substring(0, 6) + '...' + str.substring(str.length - 4);
+}

@@ -15,15 +15,12 @@ import {
   ThemeIcon,
   Badge,
 } from '@mantine/core';
-import { ContextModalProps } from '@mantine/modals';
-import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { z } from 'zod';
 
-import { Form, InputCheckbox, InputSwitch, InputText, useForm } from '~/libs/form';
+import { Form, InputText, useForm } from '~/libs/form';
 import { reloadSession } from '~/utils/next-auth-helpers';
 import { trpc } from '~/utils/trpc';
-import { toStringList } from '~/utils/array-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LogoBadge } from '~/components/Logo/LogoBadge';
 import ReactMarkdown from 'react-markdown';
@@ -40,12 +37,6 @@ const schema = z.object({
     .string()
     .min(3, 'Your username must be at least 3 characters long')
     .regex(/^[A-Za-z0-9_]*$/, 'The "username" field can only contain letters, numbers, and _.'),
-  email: z
-    .string({
-      invalid_type_error: 'Please provide an email',
-      required_error: 'Please provide an email',
-    })
-    .email(),
 });
 
 export default function OnboardingModal() {
@@ -88,27 +79,30 @@ export default function OnboardingModal() {
       async onSuccess() {
         await reloadSession();
         await invalidateModeratedContent(utils);
-        // context.closeModal(id);
       },
     });
 
   const handleSubmit = (values: z.infer<typeof schema>) => {
     if (!user) return;
-    // TOS is true here because it was already accepted
-    mutate(
-      { ...user, ...values, tos: true },
-      {
-        onSuccess: async () => {
-          setActiveStep((x) => x + 1);
-        },
-      }
-    );
+    const data = {
+      ...user,
+      ...values,
+      email: user.email === null ? undefined : user.email,
+      // TOS is true here because it was already accepted
+      tos: true,
+    };
+    mutate(data, {
+      onSuccess: async () => {
+        setActiveStep((x) => x + 1);
+      },
+    });
   };
 
   const handleDeclineTOS = () => signOut();
   const handleAcceptTOS = () => {
     acceptTOS(undefined, {
       async onSuccess() {
+        await reloadSession();
         setActiveStep((x) => x + 1);
       },
     });
@@ -187,9 +181,6 @@ export default function OnboardingModal() {
               />
               <Form form={form} onSubmit={handleSubmit}>
                 <Stack>
-                  {!user?.email && (
-                    <InputText size="lg" name="email" label="Email" type="email" withAsterisk />
-                  )}
                   <InputText
                     size="lg"
                     name="username"

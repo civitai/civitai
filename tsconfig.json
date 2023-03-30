@@ -1,8 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES6",
-    "lib": ["dom", "dom.iterable", "esnext"],
-    "types": ["offscreencanvas"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -25,7 +28,7 @@
     "noErrorTruncation": true
   },
   "include": [
-    // "next-env.d.ts",
+    "next-env.d.ts",
     // "**/*.ts",
     // "**/*.tsx",
     // "**/*.cjs",
