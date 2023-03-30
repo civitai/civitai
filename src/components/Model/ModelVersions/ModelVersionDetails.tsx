@@ -58,6 +58,7 @@ const CAROUSEL_LIMIT = 10;
 
 export function ModelVersionDetails({ model, version, user, isFavorite, onFavoriteClick }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
+  const queryUtils = trpc.useContext();
 
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
@@ -73,14 +74,17 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
 
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
-  const updatePostMutation = trpc.post.update.useMutation();
 
   const handlePublishClick = async () => {
-    if (model.status !== ModelStatus.Published) {
-      publishModelMutation.mutate({ id: model.id, versionIds: [version.id] });
-    } else {
-      publishVersionMutation.mutate({ id: version.id });
-    }
+    if (model.status !== ModelStatus.Published)
+      // Publish model, version and all of its posts
+      await publishModelMutation.mutateAsync({ id: model.id, versionIds: [version.id] });
+    // Just publish the version and its posts
+    else await publishVersionMutation.mutateAsync({ id: version.id });
+
+    await queryUtils.model.getById.invalidate({ id: model.id });
+    await queryUtils.modelVersion.getById.invalidate({ id: version.id });
+    await queryUtils.image.getInfinite.invalidate();
   };
 
   const modelDetails: DescriptionTableProps['items'] = [

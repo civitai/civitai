@@ -15,7 +15,12 @@ import { ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
-import { GetAllModelsOutput, ModelInput, ModelUpsertInput } from '~/server/schema/model.schema';
+import {
+  GetAllModelsOutput,
+  ModelInput,
+  ModelUpsertInput,
+  PublishModelSchema,
+} from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import {
   imageSelect,
@@ -679,28 +684,39 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
   return getPagingData({ items, count }, take, page);
 };
 
-export const unpublishModelById = async ({
-  id,
-  includeVersions = false,
-}: GetByIdInput & { includeVersions?: boolean }) => {
-  const model = await dbWrite.model.update({
-    where: { id },
-    data: {
-      status: ModelStatus.Draft,
-      publishedAt: null,
-      modelVersions: includeVersions
-        ? {
-            updateMany: {
-              where: { status: ModelStatus.Published },
-              data: {
-                status: ModelStatus.Draft,
-              },
-            },
-          }
-        : undefined,
+export const publishModelById = async ({ id, versionIds }: PublishModelSchema) => {
+  const model = await dbWrite.$transaction(
+    async (tx) => {
+      const includeVersions = versionIds && versionIds.length > 0;
+      const publishedAt = new Date();
+
+      const model = await dbWrite.model.update({
+        where: { id },
+        data: {
+          status: ModelStatus.Published,
+          publishedAt,
+          modelVersions: includeVersions
+            ? {
+                updateMany: {
+                  where: { id: { in: versionIds } },
+                  data: { status: ModelStatus.Published },
+                },
+              }
+            : undefined,
+        },
+      });
+
+      if (includeVersions) {
+        await tx.post.updateMany({
+          where: { modelVersionId: { in: versionIds } },
+          data: { publishedAt },
+        });
+      }
+
+      return model;
     },
-    select: { id: true },
-  });
+    { timeout: 10000 }
+  );
 
   return model;
 };

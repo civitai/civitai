@@ -27,6 +27,7 @@ import {
   getModels,
   getModelVersionsMicro,
   permaDeleteModelById,
+  publishModelById,
   restoreModelById,
   updateModel,
   updateModelById,
@@ -342,23 +343,7 @@ export const updateModelHandler = async ({
 
 export const publishModelHandler = async ({ input }: { input: PublishModelSchema }) => {
   try {
-    const { id, versionIds } = input;
-    const model = await updateModelById({
-      id,
-      data: {
-        status: ModelStatus.Published,
-        publishedAt: new Date(),
-        modelVersions:
-          versionIds && versionIds.length
-            ? {
-                updateMany: {
-                  where: { id: { in: versionIds } },
-                  data: { status: ModelStatus.Published },
-                },
-              }
-            : undefined,
-      },
-    });
+    const model = await publishModelById({ ...input });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     return model;

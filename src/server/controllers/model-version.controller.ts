@@ -135,7 +135,10 @@ export const publishModelVersionHandler = async ({ input }: { input: GetByIdInpu
   try {
     const version = await updateModelVersionById({
       ...input,
-      data: { status: ModelStatus.Published },
+      data: {
+        status: ModelStatus.Published,
+        posts: { updateMany: { where: { publishedAt: null }, data: { publishedAt: new Date() } } },
+      },
     });
     if (!version) throw throwNotFoundError(`No model with id ${input.id}`);
 

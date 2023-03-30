@@ -78,7 +78,7 @@ export function ModelWizard() {
   };
 
   useEffect(() => {
-    // redirect to correct if missing values
+    // redirect to correct step if missing values
     if (!isNew) {
       if (!hasVersions)
         router.replace(`/models/v2/${id}/wizard?step=2`, undefined, { shallow: true });

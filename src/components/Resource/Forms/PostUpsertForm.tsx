@@ -112,17 +112,13 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
     tags.filter((x) => !!x.id).length > 0 && images.filter((x) => x.type === 'image').length > 0;
   const canPublish = !isUploading && !!modelVersion?.files?.length;
 
-  console.log({ canPublish, canSave, isUploading, modelVersion });
-
   const handlePublish = () => {
     if (!currentUser) return;
-    const publishedAt = new Date();
-    publishModelMutation.mutate({ id: modelId, versionIds: [modelVersionId] });
-    mutate(
-      { id, publishedAt },
+    publishModelMutation.mutate(
+      { id: modelId, versionIds: [modelVersionId] },
       {
         async onSuccess() {
-          setPublishedAt(publishedAt);
+          setPublishedAt(new Date());
           await queryUtils.model.getById.invalidate({ id: modelId });
           await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId });
           await queryUtils.image.getInfinite.invalidate();
