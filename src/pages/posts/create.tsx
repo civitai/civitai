@@ -47,7 +47,7 @@ export default function PostCreate() {
           let pathname = `/posts/${postId}/edit`;
           if (returnUrl) pathname += `?returnUrl=${returnUrl}`;
 
-          router.push({ pathname });
+          router.push(pathname);
         },
       }
     );
