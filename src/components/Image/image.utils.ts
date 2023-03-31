@@ -1,56 +1,44 @@
 import { MetricTimeframe } from '@prisma/client';
-import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
 import { useImageFilters } from '~/providers/FiltersProvider';
 import { ImageSort } from '~/server/common/enums';
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { removeEmpty } from '~/utils/object-helpers';
-import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
+import { numericString, numericStringArray } from '~/utils/zod-helpers';
 
-type Props = {
-  postId?: number;
-  modelId?: number;
-  modelVersionId?: number;
-  username?: string;
-  prioritizedUserIds?: number[];
-} & Record<string, unknown>;
+const zodNumberArrayOptional = numericStringArray().optional();
+const zodNumberOptional = numericString().optional();
 
 export const imagesQueryParamSchema = z.object({
-  modelId: z.number().optional(),
-  modelVersionId: z.number().optional(),
-  postId: z.number().optional(),
+  modelId: zodNumberOptional,
+  modelVersionId: zodNumberOptional,
+  postId: zodNumberOptional,
   username: z.string().optional(),
-  prioritizedUserIds: z.preprocess((val) => {
-    if (!val) return val;
-    if (Array.isArray(val)) return val;
-    else return [val];
-  }, z.array(z.number()).optional()),
-  limit: z.number().optional(),
+  prioritizedUserIds: zodNumberArrayOptional,
+  limit: zodNumberOptional,
   period: z.nativeEnum(MetricTimeframe).optional(),
   sort: z.nativeEnum(ImageSort).optional(),
+  tags: zodNumberArrayOptional,
 });
 
-export const parseImagesQueryParams = (
-  params: Record<string, unknown>
-): z.infer<typeof imagesQueryParamSchema> => {
-  return imagesQueryParamSchema.parse(QS.parse(QS.stringify(params)));
+export const parseImagesQuery = (params: unknown) => {
+  const result = imagesQueryParamSchema.safeParse(params);
+  return result.success ? result.data : {};
 };
 
 export const useQueryImages = (
-  overrides?: Partial<GetInfiniteImagesInput>,
+  filters?: Partial<GetInfiniteImagesInput>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
-  const router = useRouter();
+  filters = filters ?? {};
   const globalFilters = useImageFilters();
-  const parsedParams = parseImagesQueryParams(router.query);
-  const combined = { ...parsedParams, ...overrides };
-  if (!!combined.modelId) combined.modelVersionId = undefined;
+  if (!!filters.modelId) filters.modelVersionId = undefined;
 
-  const filters = removeEmpty({ ...globalFilters, ...combined });
+  const combined = removeEmpty({ ...globalFilters, ...filters });
 
-  const { data, ...rest } = trpc.image.getInfinite.useInfiniteQuery(filters, {
+  const { data, ...rest } = trpc.image.getInfinite.useInfiniteQuery(combined, {
     getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
     getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
     trpc: { context: { skipBatch: true } },

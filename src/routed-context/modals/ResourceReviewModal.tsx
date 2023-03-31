@@ -11,7 +11,7 @@ export default createRoutedContext({
     return (
       <Modal
         opened={context.opened}
-        onClose={context.close} // TODO.Briant
+        onClose={context.close}
         withCloseButton={false}
         size={960}
         padding={0}

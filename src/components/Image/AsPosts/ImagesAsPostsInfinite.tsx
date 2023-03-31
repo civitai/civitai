@@ -7,6 +7,8 @@ import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard'
 import { Paper, Stack, Text, LoadingOverlay } from '@mantine/core';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { InView, useInView } from 'react-intersection-observer';
+import { useRouter } from 'next/router';
+import { parseImagesQuery } from '~/components/Image/image.utils';
 
 type ImagesAsPostsInfiniteState = {
   modelId?: number;
@@ -27,26 +29,27 @@ export default function ImagesAsPostsInfinite({
   modelId,
   username,
 }: ImagesAsPostsInfiniteProps) {
+  const router = useRouter();
   const { ref, inView } = useInView({ triggerOnce: true });
   const isMobile = useIsMobile();
   const globalFilters = useImageFilters();
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
-  const filters = useMemo(
-    () => removeEmpty({ ...globalFilters, modelId, username, limit }),
-    [globalFilters, modelId, username, limit]
-  );
+  const filters = removeEmpty({
+    ...globalFilters,
+    ...parseImagesQuery(router.query),
+    modelId,
+    username,
+    limit,
+  });
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
-    trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
-      { ...filters },
-      {
-        getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-        getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
-        trpc: { context: { skipBatch: true } },
-        keepPreviousData: true,
-        enabled: inView,
-      }
-    );
+    trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(filters, {
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+      trpc: { context: { skipBatch: true } },
+      keepPreviousData: true,
+      enabled: inView,
+    });
 
   const items = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 

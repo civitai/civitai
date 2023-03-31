@@ -38,38 +38,32 @@ export const useImageDetailContext = () => {
 export function ImageDetailProvider({
   children,
   imageId,
-  postId,
-  modelId,
-  modelVersionId,
-  username,
-  limit,
-  prioritizedUserIds,
+  filters,
 }: {
   children: React.ReactElement;
   imageId: number;
-  postId?: number;
-  modelId?: number;
-  modelVersionId?: number;
-  username?: string;
-  limit?: number;
-  prioritizedUserIds?: number[];
+  filters: {
+    postId?: number;
+    modelId?: number;
+    modelVersionId?: number;
+    username?: string;
+    limit?: number;
+    prioritizedUserIds?: number[];
+    tags?: number[];
+  } & Record<string, unknown>;
 }) {
   const router = useRouter();
   const active = router.query.active === 'true';
   const closingRef = useRef(false);
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
+  const { postId, modelId, modelVersionId, username } = filters;
 
   // #region [data fetching]
-  const { images, isLoading } = useQueryImages({
-    postId,
-    modelId,
-    modelVersionId,
-    prioritizedUserIds,
-    username,
-    limit,
-  });
+  const { images, isLoading } = useQueryImages(filters);
 
+  // TODO.Briant - return to this
+  const shouldFetchImage = !!images?.length && !images.find((x) => x.id === imageId);
   const { data: prefetchedImage } = trpc.image.get.useQuery({ id: imageId }, { enabled: false });
 
   // const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);

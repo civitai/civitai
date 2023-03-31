@@ -32,7 +32,7 @@ export default function ImagesPage() {
             {/* <ImageFiltersDropdown /> */}
           </Group>
         </Group>
-        {/* <ImageCategories /> */}
+        <ImageCategories />
         <ImagesInfinite />
       </Stack>
     </Container>

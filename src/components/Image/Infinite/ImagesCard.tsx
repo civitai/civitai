@@ -12,6 +12,7 @@ import { useImagesInfiniteContext } from '~/components/Image/Infinite/ImagesInfi
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { IconInfoCircle } from '@tabler/icons';
+import { useRouter } from 'next/router';
 
 export function ImagesCard({
   data: image,
@@ -20,6 +21,7 @@ export function ImagesCard({
   data: ImagesInfiniteModel;
   width: number;
 }) {
+  const router = useRouter();
   const { classes } = useStyles();
   const { modelId, postId, username, modelVersionId } = useImagesInfiniteContext();
 
@@ -66,6 +68,7 @@ export function ImagesCard({
                           postId={postId}
                           username={username}
                           modelVersionId={modelVersionId}
+                          {...router.query}
                         >
                           {!safe ? (
                             <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>

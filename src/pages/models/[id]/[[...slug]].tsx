@@ -50,7 +50,7 @@ import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import ImagesAsPostsInfinite from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
 import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
-import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
+// import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
@@ -681,7 +681,7 @@ export default function ModelDetailsV2({
                     {/* <ImageFiltersDropdown /> */}
                   </Group>
                 </Group>
-                {/* <ImageCategories /> */}
+                <ImageCategories />
                 <ImagesAsPostsInfinite modelId={model.id} />
               </Stack>
             </>

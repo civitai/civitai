@@ -161,7 +161,7 @@ export function ModelCarousel({
               variant="outline"
               // onClick={() =>
               //   hasTagFilters
-              //     ? setFilters({ image: {} }) // TODO.briant - work on filters, since this won't clear
+              //     ? setFilters({ image: {} })
               //     : router.push(`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`)
               // }
               onClick={() =>

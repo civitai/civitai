@@ -7,7 +7,7 @@ import { createRoutedContext } from '~/routed-context/create-routed-context';
 
 export default createRoutedContext({
   schema: imagesQueryParamSchema.extend({ imageId: z.number() }),
-  Element: ({ context, props }) => {
+  Element: ({ context, props: { imageId, ...filters } }) => {
     return (
       <Modal
         opened={context.opened}
@@ -17,7 +17,7 @@ export default createRoutedContext({
         padding={0}
         style={{ maxHeight: '100vh', maxWidth: '100vw' }}
       >
-        <ImageDetailProvider {...props}>
+        <ImageDetailProvider imageId={imageId} filters={filters}>
           <ImageDetail />
         </ImageDetailProvider>
       </Modal>

@@ -8,7 +8,7 @@ import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { removeEmpty } from '~/utils/object-helpers';
 import { BrowsingMode } from '~/server/common/enums';
 import { useRouter } from 'next/router';
-import { parseImagesQueryParams, useQueryImages } from '~/components/Image/image.utils';
+import { useQueryImages, parseImagesQuery } from '~/components/Image/image.utils';
 
 type ImagesInfiniteState = {
   modelId?: number;
@@ -40,7 +40,7 @@ export default function ImagesInfinite({
 }: ImagesInfiniteProps) {
   const router = useRouter();
   const globalFilters = useImageFilters();
-  const parsedParams = parseImagesQueryParams(router.query);
+  const parsedParams = parseImagesQuery(router.query);
   const baseFilters = { ...parsedParams, ...filterOverrides };
   const filters = removeEmpty({ ...baseFilters, ...globalFilters, withTags });
 

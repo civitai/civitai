@@ -6,10 +6,7 @@ import {
   Group,
   Paper,
   Rating,
-  Text,
   Center,
-  Button,
-  ThemeIcon,
   Tooltip,
 } from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons';
@@ -31,6 +28,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { trpc } from '~/utils/trpc';
 import { NextLink } from '@mantine/next';
 import { useImageFilters } from '~/providers/FiltersProvider';
+import { useRouter } from 'next/router';
 
 export function ImagesAsPostsCard({
   data,
@@ -39,6 +37,7 @@ export function ImagesAsPostsCard({
   data: ImagesAsPostModel;
   width: number;
 }) {
+  const router = useRouter();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   const { modelId, username } = useImagesAsPostsInfiniteContext();
@@ -161,6 +160,7 @@ export function ImagesAsPostsCard({
                               username={username}
                               onClick={handleClick}
                               className={classes.link}
+                              {...router.query}
                             >
                               {!safe ? (
                                 <AspectRatio
@@ -273,6 +273,7 @@ export function ImagesAsPostsCard({
                                   username={username}
                                   onClick={handleClick}
                                   className={classes.link}
+                                  {...router.query}
                                 >
                                   <>
                                     {!safe ? (

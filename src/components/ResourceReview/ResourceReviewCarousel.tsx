@@ -25,6 +25,7 @@ import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { NextLink } from '@mantine/next';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useQueryImages } from '~/components/Image/image.utils';
+import { MetricTimeframe } from '@prisma/client';
 
 export function ResourceReviewCarousel({
   username,
@@ -39,12 +40,14 @@ export function ResourceReviewCarousel({
   const mobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm}px)`);
   const { classes, cx } = useStyles();
 
-  const { data, images, isLoading } = useQueryImages({
+  const filters = {
     username,
     modelVersionId,
-    limit: 10,
-    // sort: ImageSort.Newest,
-  });
+    sort: ImageSort.MostReactions,
+    period: MetricTimeframe.AllTime,
+  };
+
+  const { data, images, isLoading } = useQueryImages({ ...filters, limit: 10 });
 
   // const images = data?.pages.flatMap((x) => x.items) ?? [];
   const viewMore = data?.pages.some((x) => x.nextCursor !== undefined) ?? false;
@@ -90,12 +93,7 @@ export function ResourceReviewCarousel({
                   <div style={{ width: '100%', position: 'relative' }}>
                     <ImageGuard.ToggleConnect />
                     <ImageGuard.Report />
-                    <RoutedContextLink
-                      modal="imageDetailModal"
-                      imageId={image.id}
-                      modelVersionId={modelVersionId}
-                      username={username}
-                    >
+                    <RoutedContextLink modal="imageDetailModal" imageId={image.id} {...filters}>
                       {/* {!safe ? (
                         <AspectRatio
                           ratio={(image.width ?? 1) / (image.height ?? 1)}
