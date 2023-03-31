@@ -16,6 +16,7 @@ import {
   Code,
   BadgeProps,
   AspectRatio,
+  Box,
 } from '@mantine/core';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { Fragment, useState } from 'react';
@@ -74,7 +75,7 @@ function ImageController({
     generationProcess,
     needsReview,
     resourceHelper,
-    tags,
+    _count,
   },
 }: {
   image: PostEditImage;
@@ -93,10 +94,12 @@ function ImageController({
         width={width ?? 1200}
         onLoad={() => setWithBorder(true)}
       />
+      {!!_count.tags && (
+        <Box p="xs">
+          <VotableTags entityType="image" entityId={id} />
+        </Box>
+      )}
       <>
-        <Group className={cx(classes.footer, classes.content)} spacing={6} p="xs" position="right">
-          {!!tags.length && <VotableTags entityType="image" entityId={id} tags={tags} />}
-        </Group>
         <Group className={classes.actions}>
           {meta ? (
             <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
@@ -292,21 +295,21 @@ const useStyles = createStyles((theme) => {
       backdropFilter: 'blur(7px)',
       boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
     },
-    content: {
-      background: theme.fn.gradient({
-        from: 'rgba(37,38,43,0.8)',
-        to: 'rgba(37,38,43,0)',
-        deg: 0,
-      }),
-      backdropFilter: 'blur(13px) saturate(160%)',
-      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    },
-    footer: {
-      position: 'absolute',
-      bottom: 0,
-      right: 0,
-      left: 0,
-    },
+    // content: {
+    //   background: theme.fn.gradient({
+    //     from: 'rgba(37,38,43,0.8)',
+    //     to: 'rgba(37,38,43,0)',
+    //     deg: 0,
+    //   }),
+    //   backdropFilter: 'blur(13px) saturate(160%)',
+    //   boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
+    // },
+    // footer: {
+    //   position: 'absolute',
+    //   bottom: 0,
+    //   right: 0,
+    //   left: 0,
+    // },
     ambient: {
       backgroundColor: theme.fn.rgba(theme.colorScheme === 'dark' ? '#000' : '#fff', 0.5),
     },

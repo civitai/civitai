@@ -145,7 +145,7 @@ export const getPostEditDetail = async ({ id }: GetByIdInput) => {
   return {
     ...post,
     tags: post.tags.flatMap((x) => x.tag),
-    images: post.images.map(({ tagComposites, ...image }) => ({ ...image, tags: tagComposites })),
+    images: post.images,
   };
 };
 
@@ -160,7 +160,7 @@ export const createPost = async ({
   return {
     ...result,
     tags: result.tags.flatMap((x) => x.tag),
-    images: result.images.map(({ tagComposites, ...image }) => ({ ...image, tags: tagComposites })),
+    images: result.images,
   };
 };
 
@@ -195,8 +195,8 @@ export const getPostTags = async ({
         showTrending ? Prisma.sql`s."postCountDay"` : Prisma.sql`s."postCountAllTime"`
       }, 0)::int AS "postCount"
     FROM "Tag" t
-    JOIN "TagStat" s ON s."tagId" = t.id
-    JOIN "TagRank" r ON r."tagId" = t.id
+    LEFT JOIN "TagStat" s ON s."tagId" = t.id
+    LEFT JOIN "TagRank" r ON r."tagId" = t.id
     WHERE
       ${showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`}
     ORDER BY ${Prisma.raw(
@@ -310,9 +310,7 @@ export const addPostImage = async ({
     },
     select: editPostImageSelect,
   });
-
-  const { tagComposites, ...rest } = result;
-  return { ...rest, tags: tagComposites };
+  return result;
 };
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
@@ -333,9 +331,8 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
     select: editPostImageSelect,
   });
-  const { tagComposites, ...rest } = result;
 
-  return { ...rest, tags: tagComposites };
+  return result;
 };
 
 export const reorderPostImages = async ({ imageIds }: ReorderPostImagesInput) => {
