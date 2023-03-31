@@ -48,7 +48,7 @@ export function HiddenTagsSection() {
       queryUtils.user.getTags.setData({ type: 'Hide' }, (old = []) => {
         if (removing) return old.filter((tag) => tag.id !== tagId);
 
-        const { tagsOnModels, ...addedTag } = data?.items.find((tag) => tag.id === tagId) ?? {
+        const { models, ...addedTag } = data?.items.find((tag) => tag.id === tagId) ?? {
           id: tagId,
           name: '',
         };

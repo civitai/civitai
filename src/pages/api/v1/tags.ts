@@ -23,9 +23,9 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
     res.status(200).json({
       items:
-        items?.map(({ tagsOnModels = [], name }) => ({
+        items?.map(({ models = [], name }) => ({
           name,
-          modelCount: tagsOnModels.length ? tagsOnModels.length : undefined,
+          modelCount: models.length ? models.length : undefined,
           link: `${baseUrl.origin}/api/v1/models?tag=${name}`,
         })) ?? [],
       metadata: {
