@@ -123,9 +123,10 @@ const registry = {
     Component: ImageDetailModal,
     resolve: ({ imageId, ...args }: React.ComponentProps<typeof ImageDetailModal>) => {
       const slug = Router.query.slug ?? 'placeholder';
+      const { tags, ...prevRouterParams } = Router.query;
       return [
         {
-          query: { ...Router.query, slug, imageId, ...args, modal: 'imageDetailModal' },
+          query: { ...prevRouterParams, slug, imageId, ...args, modal: 'imageDetailModal' },
         },
         {
           pathname: `/images/${imageId}`,
@@ -188,7 +189,7 @@ export function RoutedContextProvider2() {
   if (!modal) return null;
 
   const query = QS.parse(QS.stringify(router.query));
-  const Modal = registry[query.modal as keyof typeof registry].Component;
+  const Modal = registry[modal as keyof typeof registry].Component;
   return Modal ? <Modal {...(query as any)} /> : null;
 }
 

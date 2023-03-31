@@ -213,6 +213,7 @@ export function ModelCarousel({
                       period="AllTime"
                       sort={ImageSort.MostReactions}
                       limit={limit}
+                      tags={[]}
                     >
                       {!safe ? (
                         <AspectRatio
