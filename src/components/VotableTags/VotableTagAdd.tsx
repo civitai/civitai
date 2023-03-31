@@ -1,17 +1,5 @@
-import {
-  Autocomplete,
-  Badge,
-  createStyles,
-  Group,
-  UnstyledButton,
-  useMantineTheme,
-} from '@mantine/core';
-import {
-  getHotkeyHandler,
-  useDebouncedState,
-  useDebouncedValue,
-  useDisclosure,
-} from '@mantine/hooks';
+import { Autocomplete, Badge, createStyles, Group } from '@mantine/core';
+import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import { TagTarget } from '@prisma/client';
 import { IconPlus } from '@tabler/icons';
 import { useState } from 'react';
@@ -26,6 +14,7 @@ export function VotableTagAdd({ addTag }: VotableTagAddProps) {
   const { data, isFetching } = trpc.tag.getAll.useQuery({
     limit: 10,
     entityType: [TagTarget.Image],
+    types: ['UserGenerated', 'Label'],
     query: debouncedSearch.trim().toLowerCase(),
   });
 
@@ -37,7 +26,7 @@ export function VotableTagAdd({ addTag }: VotableTagAddProps) {
       <Group spacing={4}>
         <IconPlus size={14} strokeWidth={2.5} />
         {!adding ? (
-          <span>TAG</span>
+          <span>Tag</span>
         ) : (
           <Autocomplete
             variant="unstyled"
@@ -48,7 +37,7 @@ export function VotableTagAdd({ addTag }: VotableTagAddProps) {
               data?.items.map((tag) => ({
                 id: tag.id,
                 value: tag.name,
-                label: getDisplayName(tag.name),
+                name: getDisplayName(tag.name),
               })) ?? []
             }
             nothingFound={isFetching ? 'Searching...' : 'Nothing found'}
@@ -76,11 +65,10 @@ type VotableTagAddProps = {
 };
 
 const useStyles = createStyles((theme) => {
-  const badgeColor = theme.fn.variant({ color: 'gray', variant: 'filled' });
+  const badgeColor = theme.fn.variant({ color: 'blue', variant: 'light' });
   const badgeBorder = theme.fn.lighten(badgeColor.background ?? theme.colors.gray[4], 0.05);
   return {
     badge: {
-      textTransform: 'none',
       cursor: 'pointer',
       backgroundColor: badgeColor.background,
       borderColor: badgeBorder,
@@ -104,7 +92,6 @@ const useStyles = createStyles((theme) => {
       fontSize: 11,
     },
     dropdown: {
-      marginTop: -12,
       maxWidth: '300px !important',
     },
   };

@@ -161,7 +161,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
             <Input.Wrapper label="Tags">
               <Group spacing={4}>
                 {hasTags ? (
-                  <VotableTags entityId={image.id} entityType="image" />
+                  <VotableTags entityId={image.id} entityType="image" canAdd canAddModerated />
                 ) : (
                   <Alert color="yellow">
                     There are no tags associated with this image yet. Tags will be assigned to this

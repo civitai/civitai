@@ -477,7 +477,7 @@ export type IngestImageReturnType =
     }
   | {
       type: 'success';
-      data: { tags: ImageTag[] };
+      data: { count: number };
     };
 
 export const ingestImage = async ({
@@ -493,11 +493,13 @@ export const ingestImage = async ({
   const gamma = anim === false ? 0.99 : undefined;
   const edgeUrl = getEdgeUrl(url, { width, anim, gamma });
 
+  const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
   const payload = {
     imageId: id,
     url: edgeUrl,
     wait: true,
     scans: [ImageScanType.Label, ImageScanType.Moderation],
+    callbackUrl,
   };
 
   await dbWrite.image.update({
@@ -506,7 +508,7 @@ export const ingestImage = async ({
     select: { id: true },
   });
 
-  if (!isProd) {
+  if (!isProd && !callbackUrl) {
     // await dbWrite.tagsOnImage.create({
     //   data: {
     //     imageId: id,
@@ -515,12 +517,14 @@ export const ingestImage = async ({
     //     confidence: 100,
     //   },
     // });
+    console.log('skip ingest');
   } else {
     const { ok, deleted, blockedFor, tags, error } = (await fetch(env.IMAGE_SCANNING_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }).then((res) => res.json())) as ImageScanResultResponse;
+    console.log(ok);
 
     if (deleted)
       return {
@@ -536,13 +540,10 @@ export const ingestImage = async ({
     }
   }
 
-  const imageTags = await dbWrite.tag.findMany({
-    where: { tagsOnImage: { some: { imageId: id } } },
-    select: imageTagSelect,
-  });
+  const count = await dbWrite.tagsOnImage.count({ where: { imageId: id } });
   return {
     type: 'success',
-    data: { tags: imageTags },
+    data: { count },
   };
 };
 

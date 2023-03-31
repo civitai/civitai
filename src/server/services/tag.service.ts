@@ -38,6 +38,7 @@ export const getTagWithModelCount = async ({ name }: { name: string }) => {
 export const getTags = async ({
   take,
   skip,
+  types,
   entityType,
   query,
   modelId,
@@ -53,6 +54,7 @@ export const getTags = async ({
   const AND = [Prisma.sql`t."unlisted" = ${unlisted}`];
 
   if (query) AND.push(Prisma.sql`t."name" LIKE ${query + '%'}`);
+  if (types?.length) AND.push(Prisma.sql`t."type"::text IN (${Prisma.join(types)})`);
   if (entityType)
     AND.push(Prisma.sql`t."target" && (ARRAY[${Prisma.join(entityType)}]::"TagTarget"[])`);
   if (modelId)
@@ -226,6 +228,7 @@ export const removeTagVotes = async ({ userId, type, id, tags }: TagVotingInput)
 };
 
 const MODERATOR_VOTE_WEIGHT = 10;
+const CREATOR_VOTE_WEIGHT = 3;
 export const addTagVotes = async ({
   userId,
   type,
@@ -234,7 +237,20 @@ export const addTagVotes = async ({
   isModerator,
   vote,
 }: TagVotingInput & { vote: number }) => {
-  vote *= isModerator ? MODERATOR_VOTE_WEIGHT : 1;
+  // Determine vote weight
+  let isCreator = false;
+  if (type === 'model') {
+    const creator = await dbRead.model.findFirst({ where: { id }, select: { userId: true } });
+    isCreator = creator?.userId === userId;
+  } else if (type === 'image') {
+    const creator = await dbRead.image.findFirst({ where: { id }, select: { userId: true } });
+    isCreator = creator?.userId === userId;
+  }
+  let voteWeight = 1;
+  if (isCreator) voteWeight = CREATOR_VOTE_WEIGHT;
+  else if (isModerator) voteWeight = MODERATOR_VOTE_WEIGHT;
+
+  vote *= voteWeight;
   const isTagIds = typeof tags[0] === 'number';
   const tagSelector = isTagIds ? 'id' : 'name';
   const tagIn = (isTagIds ? tags : tags.map((tag) => `'${tag}'`)).join(', ');

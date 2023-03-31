@@ -1,4 +1,4 @@
-import { TagTarget } from '@prisma/client';
+import { TagTarget, TagType } from '@prisma/client';
 import { z } from 'zod';
 import { taggableEntitySchema, tagVotableEntitySchema } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
@@ -29,6 +29,7 @@ export const getTagsInput = getAllQuerySchema.extend({
       return val === 'true' || val === true;
     }, z.boolean().default(false))
     .optional(),
+  types: z.nativeEnum(TagType).array().optional(),
   entityType: z.nativeEnum(TagTarget).array().optional(),
   modelId: z.number().optional(),
   not: z.number().array().optional(),
