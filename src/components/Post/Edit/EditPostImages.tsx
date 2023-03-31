@@ -15,7 +15,6 @@ import {
   Popover,
   Code,
   BadgeProps,
-  AspectRatio,
   Box,
 } from '@mantine/core';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
@@ -32,11 +31,10 @@ import {
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { useCFUploadStore } from '~/store/cf-upload.store';
 import { EditImageDrawer } from '~/components/Post/Edit/EditImageDrawer';
-import { TagType } from '@prisma/client';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 
-export function EditPostImages({ max = 50 }: { max?: number }) {
+export function EditPostImages({ max = 10 }: { max?: number }) {
   const postId = useEditPostContext((state) => state.id);
   const modelVersionId = useEditPostContext((state) => state.modelVersionId);
   const upload = useEditPostContext((state) => state.upload);
@@ -295,21 +293,12 @@ const useStyles = createStyles((theme) => {
       backdropFilter: 'blur(7px)',
       boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
     },
-    // content: {
-    //   background: theme.fn.gradient({
-    //     from: 'rgba(37,38,43,0.8)',
-    //     to: 'rgba(37,38,43,0)',
-    //     deg: 0,
-    //   }),
-    //   backdropFilter: 'blur(13px) saturate(160%)',
-    //   boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    // },
-    // footer: {
-    //   position: 'absolute',
-    //   bottom: 0,
-    //   right: 0,
-    //   left: 0,
-    // },
+    footer: {
+      position: 'absolute',
+      bottom: 0,
+      right: 0,
+      left: 0,
+    },
     ambient: {
       backgroundColor: theme.fn.rgba(theme.colorScheme === 'dark' ? '#000' : '#fff', 0.5),
     },
