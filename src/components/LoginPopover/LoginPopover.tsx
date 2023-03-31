@@ -85,7 +85,7 @@ export function LoginPopover({
       e.stopPropagation();
       e.preventDefault();
       e.nativeEvent.stopImmediatePropagation();
-      children.props.onClick?.();
+      children.props.onClick?.(e);
     },
   });
 }

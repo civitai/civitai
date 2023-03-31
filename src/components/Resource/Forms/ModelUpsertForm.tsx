@@ -55,7 +55,6 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
   const nsfwPoi = form.watch(['nsfw', 'poi']);
   const { isDirty, errors } = form.formState;
-  const editing = !!model;
 
   const handleModelTypeChange = (value: ModelType) => {
     form.setValue('checkpointType', null);
@@ -69,8 +68,9 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   };
 
   const upsertModelMutation = trpc.model.upsert.useMutation({
-    onSuccess: async (data) => {
+    onSuccess: async (data, payload) => {
       await queryUtils.model.getById.invalidate({ id: data.id });
+      if (!payload.id) await queryUtils.model.getMyDraftModels.invalidate();
       onSubmit(data);
     },
     onError: (error) => {
