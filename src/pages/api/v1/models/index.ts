@@ -14,6 +14,12 @@ import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
 
+export const config = {
+  api: {
+    responseLimit: false,
+  },
+};
+
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
 
