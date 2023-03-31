@@ -5,7 +5,7 @@ import { useRouter } from 'next/router';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { ManagePostMaturity } from '~/components/Post/Edit/EditPostControls';
+import { hiddenLabel, ManagePostMaturity } from '~/components/Post/Edit/EditPostControls';
 import { EditPostImages } from '~/components/Post/Edit/EditPostImages';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { EditPostReviews } from '~/components/Post/Edit/EditPostReviews';
@@ -183,13 +183,7 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
         {!publishedAt ? (
           <>
             Your post is currently{' '}
-            <Tooltip
-              label="When a post is Hidden, you can grab a link and share it outside of the Civitai community.  Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions."
-              maw={300}
-              position="bottom"
-              withArrow
-              multiline
-            >
+            <Tooltip label={hiddenLabel} maw={300} position="bottom" withArrow multiline>
               <Text component="span" underline>
                 hidden
               </Text>

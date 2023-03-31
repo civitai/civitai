@@ -1,6 +1,7 @@
 import { ActionIcon, Center, Group, GroupProps, Loader, MantineProvider } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { VotableTag } from '~/components/VotableTags/VotableTag';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
@@ -21,7 +22,7 @@ export function VotableTags({
   const { mutate: addVotes } = trpc.tag.addTagVotes.useMutation();
   const { mutate: removeVotes } = trpc.tag.removeTagVotes.useMutation();
 
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useLocalStorage({ key: 'showAllTags', defaultValue: false });
   const displayedTags = useMemo(() => {
     if (!tags) return [];
     let displayTags = tags;

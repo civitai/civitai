@@ -75,7 +75,7 @@ export function Reactions({
             size="xs"
             color="gray"
             radius="xs"
-            px={4}
+            px={0}
             compact
             onClick={() => setShowAll((s) => !s)}
           >
@@ -166,7 +166,7 @@ function ReactionBadge({
       radius="xs"
       variant="light"
       pl={2}
-      pr={4}
+      pr={3}
       color={hasReacted ? 'blue' : 'gray'}
       compact
     >

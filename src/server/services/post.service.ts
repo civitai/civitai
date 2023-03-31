@@ -195,8 +195,8 @@ export const getPostTags = async ({
         showTrending ? Prisma.sql`s."postCountDay"` : Prisma.sql`s."postCountAllTime"`
       }, 0)::int AS "postCount"
     FROM "Tag" t
-    LEFT JOIN "TagStat" s ON s."tagId" = t.id
-    LEFT JOIN "TagRank" r ON r."tagId" = t.id
+    JOIN "TagStat" s ON s."tagId" = t.id
+    JOIN "TagRank" r ON r."tagId" = t.id
     WHERE
       ${showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`}
     ORDER BY ${Prisma.raw(
