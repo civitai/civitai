@@ -226,7 +226,10 @@ export const getModelsInfiniteHandler = async ({
         const [version] = modelVersions;
         if (!version) return null;
         const [image] = images.filter((i) => i.modelVersionId === version.id);
-        if (!image) return null;
+        const showImageless =
+          (ctx.user?.isModerator || model.user.id === ctx.user?.id) &&
+          (input.user || input.username);
+        if (!image && !showImageless) return null;
 
         const rank = model.rank; // NOTE: null before metrics kick in
         const earlyAccess =
@@ -246,7 +249,7 @@ export const getModelsInfiniteHandler = async ({
             ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
             rating: rank?.[`rating${input.period}`] ?? 0,
           },
-          image,
+          image: image as (typeof images)[0] | undefined,
           earlyAccess,
         };
       })

@@ -162,8 +162,13 @@ export default RateLimitedEndpoint(
     }
 
     const fileName = getDownloadFilename({ model: modelVersion.model, modelVersion, file });
-    const { url } = await getDownloadUrl(file.url, fileName);
-    res.redirect(url);
+    try {
+      const { url } = await getDownloadUrl(file.url, fileName);
+      res.redirect(url);
+    } catch (err: any) {
+      console.error(`Error downloading file: ${file.url} - ${err.message}`);
+      return res.status(500).json({ error: 'Error downloading file' });
+    }
   },
   ['GET'],
   'download'
