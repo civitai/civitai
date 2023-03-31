@@ -2,7 +2,8 @@ import { Button, Group, Popover, Text, PopoverProps, GroupProps } from '@mantine
 import { ReviewReactions } from '@prisma/client';
 import { IconMoodSmile, IconPlus } from '@tabler/icons';
 import { capitalize } from 'lodash-es';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
@@ -28,7 +29,6 @@ const availableReactions: ReactionToEmoji = {
 type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
   reactions: { userId: number; reaction: ReviewReactions }[];
   metrics?: ReactionMetrics;
-  popoverPosition?: PopoverProps['position'];
   readonly?: boolean;
   withinPortal?: boolean;
 };
@@ -38,13 +38,12 @@ export function Reactions({
   metrics = {},
   entityType,
   entityId,
-  popoverPosition = 'top-start',
   readonly,
   withinPortal,
   ...groupProps
 }: ReactionsProps & Omit<GroupProps, 'children' | 'onClick'>) {
-  const currentUser = useCurrentUser();
   const storedReactions = useReactionsStore({ entityType, entityId }) ?? {};
+  const [showAll, setShowAll] = useState(false);
 
   const hasAllReactions = Object.entries(metrics).every(([key, value]) => {
     // ie. converts the key `likeCount` to `Like`
@@ -58,63 +57,47 @@ export function Reactions({
   });
 
   return (
-    <Group
-      spacing={4}
-      align="center"
-      onClick={(e) => {
-        if (!readonly) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }}
-      {...groupProps}
-    >
-      {!hasAllReactions && (
-        <Popover
-          shadow="md"
-          position={popoverPosition}
-          withArrow
-          disabled={readonly}
-          withinPortal={withinPortal}
-        >
-          <Popover.Target>
-            <Button variant="subtle" size="xs" color="gray" radius="xs" px={4} compact>
-              <Group spacing={2}>
-                <IconPlus size={16} stroke={2.5} />
-                <IconMoodSmile size={18} stroke={2.5} />
-              </Group>
-            </Button>
-          </Popover.Target>
-          <Popover.Dropdown p={4}>
-            {currentUser ? (
-              <ReactionsList
-                reactions={reactions}
-                metrics={metrics}
-                entityType={entityType}
-                entityId={entityId}
-              >
-                {ReactionSelector}
-              </ReactionsList>
-            ) : (
-              <Text color="dimmed" size="xs" px="xs">
-                You must be logged in to react
-              </Text>
-            )}
-          </Popover.Dropdown>
-        </Popover>
-      )}
-
-      <ReactionsList
-        reactions={reactions}
-        metrics={metrics}
-        entityType={entityType}
-        entityId={entityId}
-        noEmpty
-        readonly={readonly}
+    <LoginPopover message="You must be logged in to react to this" withArrow={false}>
+      <Group
+        spacing={4}
+        align="center"
+        onClick={(e) => {
+          if (!readonly) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
+        {...groupProps}
       >
-        {ReactionBadge}
-      </ReactionsList>
-    </Group>
+        {!hasAllReactions && (
+          <Button
+            variant="subtle"
+            size="xs"
+            color="gray"
+            radius="xs"
+            px={4}
+            compact
+            onClick={() => setShowAll((s) => !s)}
+          >
+            <Group spacing={2}>
+              <IconPlus size={16} stroke={2.5} />
+              <IconMoodSmile size={18} stroke={2.5} />
+            </Group>
+          </Button>
+        )}
+
+        <ReactionsList
+          reactions={reactions}
+          metrics={metrics}
+          entityType={entityType}
+          entityId={entityId}
+          noEmpty={!showAll}
+          readonly={readonly}
+        >
+          {ReactionBadge}
+        </ReactionsList>
+      </Group>
+    </LoginPopover>
   );
 }
 

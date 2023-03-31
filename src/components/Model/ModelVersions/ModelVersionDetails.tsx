@@ -543,6 +543,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
           title="About this version"
           overflow="inside"
           onClose={toggle}
+          size="lg"
           centered
         >
           <RenderHtml html={version.description} />

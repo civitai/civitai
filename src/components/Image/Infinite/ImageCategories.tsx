@@ -12,10 +12,12 @@ export function ImageCategories() {
     limit: 100,
   });
 
-  const tags = useFiltersContext((state) => state.image.tags ?? []);
-  const setFilters = useFiltersContext((state) => state.setFilters);
+  return null;
+  // TODO Restore this when we have categories
+  // const tags = useFiltersContext((state) => state.image.tags ?? []);
+  // const setFilters = useFiltersContext((state) => state.setFilters);
 
-  return (
-    <TagScroller data={items} value={tags} onChange={(tags) => setFilters({ image: { tags } })} />
-  );
+  // return (
+  //   <TagScroller data={items} value={tags} onChange={(tags) => setFilters({ image: { tags } })} />
+  // );
 }

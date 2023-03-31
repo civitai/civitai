@@ -77,6 +77,7 @@ export function ResourceReviewCarousel({
       align={images.length > 2 ? 'end' : 'center'}
       withControls={images.length > 2 ? true : false}
       slidesToScroll={mobile ? 1 : 2}
+      loop
     >
       <ImageGuard
         images={images}

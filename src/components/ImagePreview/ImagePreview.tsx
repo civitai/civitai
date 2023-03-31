@@ -29,7 +29,7 @@ type ImagePreviewProps = {
   nsfw?: boolean;
   aspectRatio?: number;
   // lightboxImages?: ImageModel[];
-  image: Omit<ImageModel, 'tags' | 'scannedAt' | 'userId'>;
+  image: Omit<ImageModel, 'tags' | 'scannedAt' | 'userId' | 'postId'>;
   edgeImageProps?: Omit<EdgeImageProps, 'src'>;
   withMeta?: boolean;
   onClick?: React.MouseEventHandler<HTMLImageElement>;
