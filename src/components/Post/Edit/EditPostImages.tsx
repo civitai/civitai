@@ -92,11 +92,7 @@ function ImageController({
         width={width ?? 1200}
         onLoad={() => setWithBorder(true)}
       />
-      {!!_count.tags && (
-        <Box p="xs">
-          <VotableTags entityType="image" entityId={id} />
-        </Box>
-      )}
+      {!!_count.tags && <VotableTags entityType="image" entityId={id} p="xs" />}
       <>
         <Group className={classes.actions}>
           {meta ? (
