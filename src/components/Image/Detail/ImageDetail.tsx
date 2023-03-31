@@ -161,11 +161,7 @@ export function ImageDetail() {
                 <Divider label="Resources" labelPosition="center" />
 
                 <Box px="md">
-                  {/* <ScrollArea.Autosize maxHeight={300}> */}
-                  <Box sx={{ maxHeight: 200, overflowY: 'auto' }}>
-                    <ImageResources imageId={image.id} />
-                  </Box>
-                  {/* </ScrollArea.Autosize> */}
+                  <ImageResources imageId={image.id} />
                 </Box>
                 {image.meta && (
                   <>
