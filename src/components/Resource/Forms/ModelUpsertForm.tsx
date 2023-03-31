@@ -22,7 +22,7 @@ import {
 } from '~/libs/form';
 import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
 import { showErrorNotification } from '~/utils/notifications';
-import { splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const schema = modelUpsertSchema.refine(
@@ -100,11 +100,10 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                   label="Type"
                   placeholder="Type"
                   data={Object.values(ModelType).map((type) => ({
-                    label: splitUppercase(type),
+                    label: getDisplayName(type),
                     value: type,
                   }))}
                   onChange={handleModelTypeChange}
-                  disabled={editing}
                   withAsterisk
                 />
                 {type === 'Checkpoint' && (
@@ -235,14 +234,14 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
             <Paper radius="md" p="xl" withBorder>
               <Stack>
                 <Text size="md" weight={500}>
-                  This model:
+                  This resource:
                 </Text>
                 <InputCheckbox
                   name="poi"
                   label="Depicts an actual person"
                   description="For Example: Tom Cruise or Tom Cruise as Maverick"
                 />
-                <InputCheckbox name="nsfw" label="Is for an adult audience (NSFW)" />
+                <InputCheckbox name="nsfw" label="Is intended to produce mature themes only" />
               </Stack>
             </Paper>
             {nsfwPoi.every((item) => item === true) && (
@@ -253,13 +252,13 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                       <IconExclamationMark />
                     </ThemeIcon>
                     <Text size="xs" sx={{ lineHeight: 1.2 }}>
-                      NSFW content depicting actual people is not permitted.
+                      Mature content depicting actual people is not permitted.
                     </Text>
                   </Group>
                 </Alert>
                 <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
                   Please revise the content of this listing to ensure no actual person is depicted
-                  in an NSFW context out of respect for the individual.
+                  in an mature context out of respect for the individual.
                 </Text>
               </>
             )}

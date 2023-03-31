@@ -55,7 +55,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
 
   const defaultValues: Schema = {
     ...version,
-    name: version?.name ?? '',
+    name: version?.name ?? 'v1.0',
     baseModel: version?.baseModel ?? 'SD 1.5',
     trainedWords: version?.trainedWords ?? [],
     skipTrainedWords: acceptsTrainedWords
@@ -95,6 +95,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         trainedWords: skipTrainedWords ? [] : trainedWords,
       });
       await queryUtils.modelVersion.getById.invalidate({ id: result.id, withFiles: true });
+      if (model) await queryUtils.model.getById.invalidate({ id: model.id });
       onSubmit(result as ModelVersionUpsertInput);
     } else {
       onSubmit(version as ModelVersionUpsertInput);
@@ -107,7 +108,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         ...version,
         modelId: version.modelId ?? model?.id ?? -1,
         baseModel: version.baseModel,
-        skipTrainedWords: acceptsTrainedWords
+        skipTrainedWords: isTextualInversion
+          ? false
+          : acceptsTrainedWords
           ? version?.trainedWords
             ? !version.trainedWords.length
             : false
@@ -118,13 +121,19 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             : '0',
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version]);
+  }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
 
   return (
     <>
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
-          <InputText name="name" label="Name" placeholder="e.g.: v1.0" withAsterisk />
+          <InputText
+            name="name"
+            label="Name"
+            placeholder="e.g.: v1.0"
+            withAsterisk
+            maxLength={10}
+          />
           <Input.Wrapper
             label="Early Access"
             description={

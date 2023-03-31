@@ -26,6 +26,7 @@ type SchemaError = {
 export type FileFromContextProps = {
   id?: number;
   name: string;
+  modelType?: ModelType | null;
   type?: ModelFileType | null;
   sizeKB?: number;
   size?: 'full' | 'pruned' | null;
@@ -82,6 +83,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       fp: file.metadata.fp,
       versionId: version.id,
       uuid: randomId(),
+      modelType: model?.type ?? null,
     })) ?? []) as FileFromContextProps[];
     const uploading = useS3UploadStore
       .getState()
@@ -161,6 +163,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       const errors = validation.error.format() as unknown as Array<{
         [k: string]: ZodErrorSchema;
       }>;
+      console.log(errors);
       setErrors(errors);
       return false;
     }
@@ -271,6 +274,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     const toUpload = files.map((file) => ({
       name: file.name,
       versionId: version?.id,
+      modelType: model?.type,
       file,
       status: 'pending',
       sizeKB: bytesToKB(file.size),
@@ -370,12 +374,16 @@ const metadataSchema = modelFileMetadataSchema
   .extend({
     versionId: z.number(),
     type: z.enum(constants.modelFileTypes),
+    modelType: z.nativeEnum(ModelType),
   })
-  .refine((data) => (data.type === 'Model' ? !!data.size : true), {
-    message: 'Model size is required for model files',
-    path: ['size'],
-  })
-  .refine((data) => (data.type === 'Model' ? !!data.fp : true), {
+  .refine(
+    (data) => (data.type === 'Model' && data.modelType === 'Checkpoint' ? !!data.size : true),
+    {
+      message: 'Model size is required for model files',
+      path: ['size'],
+    }
+  )
+  .refine((data) => (data.type === 'Model' && data.modelType === 'Checkpoint' ? !!data.fp : true), {
     message: 'Floating point is required for model files',
     path: ['fp'],
   })

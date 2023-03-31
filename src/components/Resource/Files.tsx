@@ -34,7 +34,7 @@ import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelVersionById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
-import { getFileExtension } from '~/utils/string-helpers';
+import { getDisplayName, getFileExtension } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import {
   FileFromContextProps,
@@ -177,10 +177,14 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
                 File Type
               </Text>
               <Text size="sm" color="dimmed">
-                {versionFile.type ?? 'undefined'}
+                {getDisplayName(
+                  versionFile.type === 'Model'
+                    ? versionFile.modelType ?? versionFile.type ?? 'undefined'
+                    : versionFile.type ?? 'undefined'
+                )}
               </Text>
             </Stack>
-            {versionFile.type === 'Model' ? (
+            {versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint' ? (
               <>
                 <Stack spacing={0}>
                   <Text size="sm" weight="bold">
@@ -403,7 +407,10 @@ function FileEditForm({
         label="File Type"
         placeholder="Select a type"
         error={error?.type?._errors[0]}
-        data={fileTypes.filter(filterByFileExtension)}
+        data={fileTypes.filter(filterByFileExtension).map((x) => ({
+          label: getDisplayName(x === 'Model' ? versionFile.modelType ?? x : x),
+          value: x,
+        }))}
         value={versionFile.type ?? null}
         onChange={(value: ModelFileType | null) =>
           updateFile(versionFile.uuid, { type: value, size: null, fp: null })
@@ -411,7 +418,7 @@ function FileEditForm({
         withAsterisk
         withinPortal
       />
-      {versionFile.type === 'Model' && (
+      {versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint' && (
         <>
           <Select
             label="Model Size"

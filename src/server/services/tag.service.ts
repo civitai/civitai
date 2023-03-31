@@ -1,4 +1,4 @@
-import { ModelStatus, Prisma } from '@prisma/client';
+import { ModelStatus, Prisma, TagTarget } from '@prisma/client';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
 
@@ -58,7 +58,7 @@ export const getTags = async ({
     AND.push(
       Prisma.sql`EXISTS (SELECT 1 FROM "TagsOnModels" tom WHERE tom."tagId" = t."id" AND tom."modelId" = ${modelId})`
     );
-  if (not) {
+  if (not && !query) {
     AND.push(Prisma.sql`t."id" NOT IN (${Prisma.join(not)})`);
     AND.push(Prisma.sql`NOT EXISTS (
       SELECT 1 FROM "TagsOnTags" tot
@@ -79,7 +79,12 @@ export const getTags = async ({
   }
 
   let orderBy = `t."name" ASC`;
-  if (sort === TagSort.MostImages) orderBy = `r."imageCountAllTimeRank"`;
+  if (query) {
+    orderBy = `LENGTH(t."name")`;
+    if (entityType?.includes(TagTarget.Model)) orderBy += `, r."modelCountAllTimeRank"`;
+    if (entityType?.includes(TagTarget.Image)) orderBy += `, r."imageCountAllTimeRank"`;
+    if (entityType?.includes(TagTarget.Post)) orderBy += `, r."postCountAllTimeRank"`;
+  } else if (sort === TagSort.MostImages) orderBy = `r."imageCountAllTimeRank"`;
   else if (sort === TagSort.MostModels) orderBy = `r."modelCountAllTimeRank"`;
   else if (sort === TagSort.MostPosts) orderBy = `r."postCountAllTimeRank"`;
 
@@ -88,7 +93,7 @@ export const getTags = async ({
       t."id",
       t."name"
     FROM "Tag" t
-    ${Prisma.raw(orderBy.startsWith('r.') ? `JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
+    ${Prisma.raw(orderBy.includes('r.') ? `JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${take} OFFSET ${skip}
