@@ -10,6 +10,7 @@ import {
   GetVotableTagsSchema,
   ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
+import { imageTagCompositeSelect, modelTagCompositSelect } from '~/server/selectors/tag.selector';
 import { getSystemTags } from '~/server/services/system-cache';
 import { userCache } from '~/server/services/user-cache.service';
 
@@ -98,14 +99,7 @@ export const getVotableTags = async ({
   if (type === 'model') {
     const tags = await dbRead.modelTag.findMany({
       where: { modelId: id, score: { gt: 0 } },
-      select: {
-        tagId: true,
-        tagName: true,
-        tagType: true,
-        score: true,
-        upVotes: true,
-        downVotes: true,
-      },
+      select: modelTagCompositSelect,
       orderBy: { score: 'desc' },
       // take,
     });
@@ -131,15 +125,7 @@ export const getVotableTags = async ({
   } else if (type === 'image') {
     const tags = await dbRead.imageTag.findMany({
       where: { imageId: id, OR: [{ score: { gt: 0 } }, { tagType: 'Moderation' }] },
-      select: {
-        tagId: true,
-        tagName: true,
-        tagType: true,
-        score: true,
-        automated: true,
-        upVotes: true,
-        downVotes: true,
-      },
+      select: imageTagCompositeSelect,
       orderBy: { score: 'desc' },
       // take,
     });

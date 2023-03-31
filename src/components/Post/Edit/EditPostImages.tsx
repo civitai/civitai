@@ -33,6 +33,7 @@ import { useCFUploadStore } from '~/store/cf-upload.store';
 import { EditImageDrawer } from '~/components/Post/Edit/EditImageDrawer';
 import { TagType } from '@prisma/client';
 import { PostEditImage } from '~/server/controllers/post.controller';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
 
 export function EditPostImages({ max = 50 }: { max?: number }) {
   const postId = useEditPostContext((state) => state.id);
@@ -84,8 +85,6 @@ function ImageController({
   const setSelectedImageId = useEditPostContext((state) => state.setSelectedImageId);
   const handleSelectImageClick = () => setSelectedImageId(id);
 
-  const generatedTags = tags?.filter((x) => x.type !== TagType.UserGenerated);
-
   return (
     <Card className={classes.container} withBorder={withBorder} p={0}>
       <EdgeImage
@@ -96,11 +95,9 @@ function ImageController({
       />
       <>
         <Group className={cx(classes.footer, classes.content)} spacing={6} p="xs" position="right">
-          {!!generatedTags.length && (
-            <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
-              Generated Tags
-            </Badge>
-          )}
+          {!!tags.length && <VotableTags entityType="image" entityId={id} tags={tags} />}
+        </Group>
+        <Group className={classes.actions}>
           {meta ? (
             <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
               Generation Data
@@ -119,28 +116,28 @@ function ImageController({
               Missing Resources
             </Badge>
           )}
+          <Menu position="bottom-end" withinPortal>
+            <Menu.Target>
+              <ActionIcon size="lg" variant="transparent" p={0}>
+                <IconDotsVertical
+                  size={24}
+                  color="#fff"
+                  style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item onClick={handleSelectImageClick}>Edit image</Menu.Item>
+              <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
+                {({ onClick, isLoading }) => (
+                  <Menu.Item color="red" onClick={onClick}>
+                    Delete image
+                  </Menu.Item>
+                )}
+              </DeleteImage>
+            </Menu.Dropdown>
+          </Menu>
         </Group>
-        <Menu position="bottom-end" withinPortal>
-          <Menu.Target>
-            <ActionIcon size="lg" variant="transparent" p={0} className={classes.actions}>
-              <IconDotsVertical
-                size={24}
-                color="#fff"
-                style={{ filter: `drop-shadow(0 0 2px #000)` }}
-              />
-            </ActionIcon>
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Item onClick={handleSelectImageClick}>Edit image</Menu.Item>
-            <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
-              {({ onClick, isLoading }) => (
-                <Menu.Item color="red" onClick={onClick}>
-                  Delete image
-                </Menu.Item>
-              )}
-            </DeleteImage>
-          </Menu.Dropdown>
-        </Menu>
       </>
     </Card>
   );
@@ -318,6 +315,7 @@ const useStyles = createStyles((theme) => {
 
 const sharedBadgeProps: Partial<BadgeProps> = {
   sx: () => ({ cursor: 'pointer' }),
+  variant: 'filled',
 };
 
 const readyBadgeProps: Partial<BadgeProps> = {

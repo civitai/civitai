@@ -10,6 +10,7 @@ import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { usernameSchema } from '~/server/schema/user.schema';
 import { trpc } from '~/utils/trpc';
+import { removeEmpty } from '~/utils/object-helpers';
 
 type InfiniteModelsProps = {
   columnWidth?: number;
@@ -36,17 +37,11 @@ export function InfiniteModels({ columnWidth = 300, delayNsfw = false }: Infinit
   const modelId = router.query.model ? Number(router.query.model) : undefined;
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
-    trpc.model.getAll.useInfiniteQuery(
-      {
-        ...filters,
-        ...queryParams,
-      },
-      {
-        getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-        getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
-        trpc: { context: { skipBatch: true } },
-      }
-    );
+    trpc.model.getAll.useInfiniteQuery(removeEmpty({ ...filters, ...queryParams }), {
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+      trpc: { context: { skipBatch: true } },
+    });
 
   const isAuthenticated = !!currentUser;
   const models = useMemo(

@@ -145,7 +145,7 @@ export const getPostEditDetail = async ({ id }: GetByIdInput) => {
   return {
     ...post,
     tags: post.tags.flatMap((x) => x.tag),
-    images: post.images.map((image) => ({ ...image, tags: image.tags.flatMap((x) => x.tag) })),
+    images: post.images.map(({ tagComposites, ...image }) => ({ ...image, tags: tagComposites })),
   };
 };
 
@@ -160,7 +160,7 @@ export const createPost = async ({
   return {
     ...result,
     tags: result.tags.flatMap((x) => x.tag),
-    images: result.images.map((image) => ({ ...image, tags: image.tags.flatMap((x) => x.tag) })),
+    images: result.images.map(({ tagComposites, ...image }) => ({ ...image, tags: tagComposites })),
   };
 };
 
@@ -310,7 +310,9 @@ export const addPostImage = async ({
     },
     select: editPostImageSelect,
   });
-  return { ...result, tags: result.tags.flatMap((x) => x.tag) };
+
+  const { image, tagComposites } = result;
+  return { ...result, tags: tagComposites };
 };
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
@@ -331,8 +333,9 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
     select: editPostImageSelect,
   });
+  const { image, tagComposites } = result;
 
-  return { ...result, tags: result.tags.flatMap((x) => x.tag) };
+  return { ...image, tags: tagComposites };
 };
 
 export const reorderPostImages = async ({ imageIds }: ReorderPostImagesInput) => {

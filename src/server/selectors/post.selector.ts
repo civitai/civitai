@@ -1,4 +1,4 @@
-import { simpleTagSelect, imageTagSelect } from './tag.selector';
+import { simpleTagSelect } from './tag.selector';
 import { Prisma } from '@prisma/client';
 
 export const editPostImageSelect = Prisma.validator<Prisma.ImageSelect>()({
@@ -14,7 +14,17 @@ export const editPostImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   generationProcess: true,
   needsReview: true,
   mimeType: true,
-  tags: { select: { tag: { select: imageTagSelect } } },
+  tagComposites: {
+    select: {
+      tagId: true,
+      tagName: true,
+      tagType: true,
+      score: true,
+      automated: true,
+      upVotes: true,
+      downVotes: true,
+    },
+  },
   resourceHelper: true,
 });
 type PostImageNavigationProps = { previewUrl?: string };
