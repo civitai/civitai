@@ -1,7 +1,9 @@
+import { MetricTimeframe } from '@prisma/client';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
 import { useImageFilters } from '~/providers/FiltersProvider';
+import { ImageSort } from '~/server/common/enums';
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
@@ -26,6 +28,8 @@ export const imagesQueryParamSchema = z.object({
     else return [val];
   }, z.array(z.number()).optional()),
   limit: z.number().optional(),
+  period: z.nativeEnum(MetricTimeframe).optional(),
+  sort: z.nativeEnum(ImageSort).optional(),
 });
 
 export const parseImagesQueryParams = (

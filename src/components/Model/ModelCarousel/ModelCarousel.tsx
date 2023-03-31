@@ -210,6 +210,8 @@ export function ModelCarousel({
                       imageId={image.id}
                       modelVersionId={modelVersionId}
                       prioritizedUserIds={[modelUserId]}
+                      period="AllTime"
+                      sort={ImageSort.MostReactions}
                       limit={limit}
                     >
                       {!safe ? (

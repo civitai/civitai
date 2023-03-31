@@ -100,25 +100,6 @@ export function ImageDetail() {
                 </Group>
                 <CloseButton size="lg" variant="default" onClick={close} />
               </Group>
-              {/* {infinite && image.connections && (
-                <Link
-                  href={
-                    image.connections.reviewId
-                      ? `/models/${image.connections.modelId}?modal=reviewThread&reviewId=${image.connections.reviewId}`
-                      : `/models/${image.connections.modelId}`
-                  }
-                  passHref
-                >
-                  <Anchor size="xs" target="_blank">
-                    <Group spacing={4} align="center">
-                      <Text inherit>
-                        {image.connections.reviewId ? 'Go to review thread' : 'Go to model page'}
-                      </Text>
-                      <IconExternalLink size={14} />
-                    </Group>
-                  </Anchor>
-                </Link>
-              )} */}
             </Stack>
           </Card.Section>
           <Card.Section
@@ -171,8 +152,13 @@ export function ImageDetail() {
               </div>
               <Stack spacing="md" mt="auto">
                 <Divider label="Resources" labelPosition="center" />
+
                 <Box px="md">
-                  <ImageResources imageId={image.id} />
+                  {/* <ScrollArea.Autosize maxHeight={300}> */}
+                  <Box sx={{ maxHeight: 200, overflowY: 'auto' }}>
+                    <ImageResources imageId={image.id} />
+                  </Box>
+                  {/* </ScrollArea.Autosize> */}
                 </Box>
                 {image.meta && (
                   <>

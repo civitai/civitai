@@ -151,7 +151,7 @@ export default function ModelDetailsV2({
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
 
-  const { images: versionImages } = useQueryImages(
+  const { images: versionImages, isLoading: loadingImages } = useQueryImages(
     {
       modelVersionId: latestVersion?.id,
       prioritizedUserIds: model ? [model.user.id] : undefined,
@@ -611,7 +611,7 @@ export default function ModelDetailsV2({
               onFavoriteClick={handleToggleFavorite}
             />
           )}
-          {isClient && (
+          {isClient && !loadingModel && !loadingImages && (
             <>
               {!model.locked ? (
                 <Stack spacing="md">
