@@ -12,7 +12,6 @@ import { useEffect, useRef } from 'react';
 import { usePrevious } from '@mantine/hooks';
 import { useWindowSize } from '@react-hook/window-size';
 import { useInView } from 'react-intersection-observer';
-import { useIsMobile } from '~/hooks/useIsMobile';
 
 type Props<TData, TFilters extends Record<string, unknown>> = Omit<
   UseMasonryOptions<TData>,
@@ -74,7 +73,12 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
   // #region [base masonic settings]
   const containerRef = useRef(null);
   const [width, height] = useWindowSize();
-  const { offset, width: containerWidth } = useContainerPosition(containerRef, [width, height]);
+  const scrollHeight = document.documentElement.scrollHeight;
+  const { offset, width: containerWidth } = useContainerPosition(containerRef, [
+    width,
+    height,
+    scrollHeight,
+  ]);
   const positioner = usePositioner(
     {
       width: containerWidth,
@@ -128,7 +132,7 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
         ) : (
           <Center>
             <Button onClick={fetchNextPage} loading={isFetchingNextPage} variant="subtle" fullWidth>
-              Load More
+              {isFetchingNextPage ? 'Loading more...' : 'Load More'}
             </Button>
           </Center>
         ))}
