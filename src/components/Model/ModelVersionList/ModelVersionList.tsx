@@ -123,108 +123,114 @@ export function ModelVersionList({
           const missingPosts = !version.posts.length;
 
           return (
-            <Button
-              key={version.id}
-              variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
-              color={active ? 'blue' : 'gray'}
-              onClick={() => {
-                if (showExtraIcons) {
-                  if (missingFiles)
-                    return router.push(
-                      `/models/${version.modelId}/model-versions/${version.id}/wizard?step=2`
-                    );
-                  if (missingPosts)
-                    return router.push(
-                      `/models/${version.modelId}/model-versions/${version.id}/wizard?step=3`
-                    );
-                }
+            <Button.Group key={version.id}>
+              <Button
+                miw={40}
+                ta="center"
+                variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                color={active ? 'blue' : 'gray'}
+                onClick={() => {
+                  if (showExtraIcons) {
+                    if (missingFiles)
+                      return router.push(
+                        `/models/${version.modelId}/model-versions/${version.id}/wizard?step=2`
+                      );
+                    if (missingPosts)
+                      return router.push(
+                        `/models/${version.modelId}/model-versions/${version.id}/wizard?step=3`
+                      );
+                  }
 
-                return onVersionClick(version);
-              }}
-              compact
-            >
-              <Group spacing={0} noWrap>
-                {showExtraIcons && (missingFiles || missingPosts) ? (
-                  <ThemeIcon
-                    color="yellow"
-                    variant="light"
-                    radius="xl"
-                    size="sm"
-                    sx={{ backgroundColor: 'transparent' }}
-                  >
-                    <IconAlertTriangle size={14} />
-                  </ThemeIcon>
-                ) : undefined}
-                <Box miw={40} pr="xs" ta="center">
-                  {version.name}
-                </Box>
-                {showExtraIcons ? (
-                  <Menu withinPortal>
-                    <Menu.Target>
-                      <Box
-                        tabIndex={0}
+                  return onVersionClick(version);
+                }}
+                leftIcon={
+                  showExtraIcons && (missingFiles || missingPosts) ? (
+                    <ThemeIcon
+                      color="yellow"
+                      variant="light"
+                      radius="xl"
+                      size="sm"
+                      sx={{ backgroundColor: 'transparent' }}
+                    >
+                      <IconAlertTriangle size={14} />
+                    </ThemeIcon>
+                  ) : undefined
+                }
+                compact
+              >
+                {version.name}
+              </Button>
+              {showExtraIcons ? (
+                <Menu withinPortal>
+                  <Menu.Target>
+                    <Button
+                      variant={
+                        active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'
+                      }
+                      px={4}
+                      color={active ? 'blue' : 'gray'}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                      }}
+                      compact
+                    >
+                      <IconDotsVertical size={14} />
+                    </Button>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    {versions.length > 1 && (
+                      <Menu.Item
+                        color="red"
+                        icon={<IconTrash size={14} stroke={1.5} />}
                         onClick={(e) => {
                           e.stopPropagation();
                           e.preventDefault();
+                          onDeleteClick(version.id);
                         }}
                       >
-                        <IconDotsVertical size={14} />
-                      </Box>
-                    </Menu.Target>
-                    <Menu.Dropdown>
-                      {versions.length > 1 && (
-                        <Menu.Item
-                          color="red"
-                          icon={<IconTrash size={14} stroke={1.5} />}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            onDeleteClick(version.id);
-                          }}
-                        >
-                          Delete version
-                        </Menu.Item>
-                      )}
-                      <Menu.Item
-                        // component={NextLink}
-                        icon={<IconEdit size={14} stroke={1.5} />}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openRoutedContext('modelVersionEdit', {
-                            modelVersionId: version.id,
-                          });
-                        }}
-                        // href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
-                      >
-                        Edit details
+                        Delete version
                       </Menu.Item>
+                    )}
+                    <Menu.Item
+                      // component={NextLink}
+                      icon={<IconEdit size={14} stroke={1.5} />}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openRoutedContext('modelVersionEdit', {
+                          modelVersionId: version.id,
+                        });
+                      }}
+                      // href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
+                    >
+                      Edit details
+                    </Menu.Item>
+                    <Menu.Item
+                      icon={<IconFileSettings size={14} stroke={1.5} />}
+                      // TODO.manuel: link to files edit
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openRoutedContext('filesEdit', {
+                          modelVersionId: version.id,
+                        });
+                      }}
+                    >
+                      Manage files
+                    </Menu.Item>
+                    {version.posts.length > 0 && (
                       <Menu.Item
-                        icon={<IconFileSettings size={14} stroke={1.5} />}
-                        // TODO.manuel: link to files edit
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openRoutedContext('filesEdit', {
-                            modelVersionId: version.id,
-                          });
-                        }}
+                        component={NextLink}
+                        icon={<IconPhotoEdit size={14} stroke={1.5} />}
+                        onClick={(e) => e.stopPropagation()}
+                        href={`/posts/${version.posts[0].id}/edit`}
                       >
-                        Manage files
+                        Manage images
                       </Menu.Item>
-                      {version.posts.length > 0 && (
-                        <Menu.Item
-                          component={NextLink}
-                          icon={<IconPhotoEdit size={14} stroke={1.5} />}
-                          onClick={(e) => e.stopPropagation()}
-                          href={`/posts/${version.posts[0].id}/edit`}
-                        >
-                          Manage images
-                        </Menu.Item>
-                      )}
-                    </Menu.Dropdown>
-                  </Menu>
-                ) : undefined}
-              </Group>
-            </Button>
+                    )}
+                  </Menu.Dropdown>
+                </Menu>
+              ) : undefined}
+            </Button.Group>
           );
         })}
       </Group>
