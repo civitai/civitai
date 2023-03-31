@@ -311,7 +311,7 @@ export const addPostImage = async ({
     select: editPostImageSelect,
   });
 
-  const { image, tagComposites } = result;
+  const { ...image, tagComposites } = result;
   return { ...result, tags: tagComposites };
 };
 
@@ -333,7 +333,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
     select: editPostImageSelect,
   });
-  const { image, tagComposites } = result;
+  const { ...image, tagComposites } = result;
 
   return { ...image, tags: tagComposites };
 };
