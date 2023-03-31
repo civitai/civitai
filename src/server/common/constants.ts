@@ -64,5 +64,7 @@ export const constants = {
   },
 } as const;
 
+export const CAROUSEL_LIMIT = 20;
+
 export type BaseModel = (typeof constants.baseModels)[number];
 export type ModelFileType = (typeof constants.modelFileTypes)[number];

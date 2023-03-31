@@ -46,7 +46,7 @@ import { RunButton } from '~/components/RunStrategy/RunButton';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { ModelFileType } from '~/server/common/constants';
+import { CAROUSEL_LIMIT, ModelFileType } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { ModelById } from '~/types/router';
@@ -54,8 +54,6 @@ import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { removeTags, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-
-const CAROUSEL_LIMIT = 10;
 
 export function ModelVersionDetails({ model, version, user, isFavorite, onFavoriteClick }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();

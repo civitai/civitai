@@ -79,6 +79,7 @@ import { QS } from '~/utils/qs';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageSort } from '~/server/common/enums';
 import { useQueryImages } from '~/components/Image/image.utils';
+import { CAROUSEL_LIMIT } from '~/server/common/constants';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -96,7 +97,7 @@ export const getServerSideProps = createServerSideProps({
         prioritizedUserIds: [version.model.userId],
         period: 'AllTime',
         sort: ImageSort.MostReactions,
-        limit: 10,
+        limit: CAROUSEL_LIMIT,
       });
 
     await ssg?.model.getById.prefetch({ id });
@@ -157,7 +158,7 @@ export default function ModelDetailsV2({
       prioritizedUserIds: model ? [model.user.id] : undefined,
       period: 'AllTime',
       sort: ImageSort.MostReactions,
-      limit: 10,
+      limit: CAROUSEL_LIMIT,
     },
     {
       enabled: !!latestVersion,
