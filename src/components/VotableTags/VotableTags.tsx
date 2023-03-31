@@ -1,10 +1,12 @@
 import { ActionIcon, Center, Group, GroupProps, Loader, MantineProvider } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
+import { TagType } from '@prisma/client';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons';
 import produce from 'immer';
 import { useMemo } from 'react';
 import { useVotableTagStore, VotableTag } from '~/components/VotableTags/VotableTag';
 import { VotableTagAdd } from '~/components/VotableTags/VotableTagAdd';
+import { VotableTagMature } from '~/components/VotableTags/VotableTagMature';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { trpc } from '~/utils/trpc';
@@ -23,6 +25,8 @@ export function VotableTags({
   limit = 6,
   tags: initialTags,
   canAdd = false,
+  canAddModerated = false,
+  collapsible = false,
   ...props
 }: GalleryTagProps) {
   const currentUser = useCurrentUser();
@@ -33,18 +37,18 @@ export function VotableTags({
     { enabled: !initialTags }
   );
   canAdd = canAdd && !initialTags;
+  canAddModerated = canAddModerated && !initialTags;
 
-  const handleTagMutation = (changedTags: string[], vote: number) => {
+  const handleTagMutation = (changedTags: string[], vote: number, tagType: TagType) => {
     const preppedTags = changedTags.map(
       (tag) =>
         ({
           ...defaultVotable,
           name: tag,
-          type: 'UserGenerated',
+          type: tagType,
           vote,
         } as VotableTagModel)
     );
-    console.log(changedTags);
 
     queryUtils.tag.getVotableTags.setData(
       { id, type },
@@ -65,30 +69,33 @@ export function VotableTags({
     );
   };
 
-  const { mutate: addVotes } = trpc.tag.addTagVotes.useMutation({
-    onMutate: (x) => handleTagMutation(x.tags as string[], x.vote),
-  });
-  const { mutate: removeVotes } = trpc.tag.removeTagVotes.useMutation({
-    onMutate: (x) => handleTagMutation(x.tags as string[], 0),
-  });
+  const { mutate: addVotes } = trpc.tag.addTagVotes.useMutation();
+  const { mutate: removeVotes } = trpc.tag.removeTagVotes.useMutation();
+
+  const handleVote = ({ tag, tagType, vote }: { tag: string; tagType?: TagType; vote: number }) => {
+    tagType ??= 'UserGenerated';
+    if (vote == 0) removeVotes({ tags: [tag], type, id });
+    else addVotes({ tags: [tag], vote, type, id });
+    handleTagMutation([tag], vote, tagType);
+  };
 
   const [showAll, setShowAll] = useLocalStorage({ key: 'showAllTags', defaultValue: false });
   const displayedTags = useMemo(() => {
     if (!tags) return [];
-    let displayTags = tags;
-    if (currentUser?.isModerator) {
-      displayTags = tags.sort((a, b) => {
-        const aMod = a.type === 'Moderation';
-        const bMod = b.type === 'Moderation';
-        if (aMod && !bMod) return -1;
-        if (!aMod && bMod) return 1;
-        return 0;
-      });
-      console.log('sorted');
-    }
-    if (showAll) return displayTags;
+    const displayTags = tags.sort((a, b) => {
+      const aMod = a.type === 'Moderation';
+      const bMod = b.type === 'Moderation';
+      const aNew = a.id === 0;
+      const bNew = b.id === 0;
+      if (aNew && !bNew) return -1;
+      if (!aNew && bNew) return 1;
+      if (aMod && !bMod) return -1;
+      if (!aMod && bMod) return 1;
+      return 0;
+    });
+    if (!collapsible || showAll) return displayTags;
     return displayTags.slice(0, limit);
-  }, [tags, showAll, limit, currentUser?.isModerator]);
+  }, [tags, showAll, collapsible, limit, currentUser?.isModerator]);
 
   if (!initialTags && isLoading)
     return (
@@ -98,9 +105,17 @@ export function VotableTags({
     );
   if (!tags) return null;
 
+  const showAddibles = !collapsible || showAll;
   return (
     <MantineProvider theme={{ colorScheme: 'dark' }}>
       <Group spacing={4} {...props}>
+        {canAdd && (
+          <VotableTagAdd
+            addTag={(tag) => {
+              handleVote({ tag, vote: 1 });
+            }}
+          />
+        )}
         {displayedTags.map((tag) => (
           <VotableTag
             key={tag.name}
@@ -112,20 +127,24 @@ export function VotableTags({
             type={tag.type}
             score={tag.score}
             onChange={({ name, vote }) => {
-              if (vote === 0) removeVotes({ tags: [name], type, id });
-              else addVotes({ tags: [name], vote, type, id });
+              handleVote({ tag: name, vote });
             }}
           />
         ))}
-        {canAdd && (
-          <VotableTagAdd
-            addTag={(tag) => {
-              console.log('add tag', tag);
-              addVotes({ type, tags: [tag], vote: 1, id });
-            }}
-          />
+        {showAddibles && (
+          <>
+            {canAddModerated && (
+              <VotableTagMature
+                tags={tags}
+                addTag={(tag) => {
+                  const vote = tags.find((x) => x.name === tag && x.id === 0) ? 0 : 1;
+                  handleVote({ tag, vote, tagType: 'Moderation' });
+                }}
+              />
+            )}
+          </>
         )}
-        {tags.length > limit && (
+        {collapsible && tags.length > limit && (
           <ActionIcon variant="transparent" size="sm" onClick={() => setShowAll((prev) => !prev)}>
             {showAll ? <IconChevronUp strokeWidth={3} /> : <IconChevronDown strokeWidth={3} />}
           </ActionIcon>
@@ -141,4 +160,6 @@ type GalleryTagProps = {
   limit?: number;
   tags?: VotableTagModel[];
   canAdd?: boolean;
+  canAddModerated?: boolean;
+  collapsible?: boolean;
 } & Omit<GroupProps, 'id'>;

@@ -4,11 +4,12 @@ import { useState } from 'react';
 import { useGalleryDetailContext } from '../../Gallery/GalleryDetailProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { IconTrash, IconBan, IconLock } from '@tabler/icons';
+import { IconTrash, IconBan, IconLock, IconPencil } from '@tabler/icons';
 import { ToggleLockComments } from '~/components/CommentsV2';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { useRouter } from 'next/router';
+import { NextLink } from '@mantine/next';
 
 /*
 TODO.gallery
@@ -51,6 +52,15 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
     <Menu opened={opened} onChange={setOpened} closeOnClickOutside={!loading}>
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown>
+        {image.postId && (
+          <Menu.Item
+            component={NextLink}
+            icon={<IconPencil size={14} stroke={1.5} />}
+            href={`/posts/${image.postId}/edit`}
+          >
+            Edit Image Post
+          </Menu.Item>
+        )}
         <DeleteImage imageId={image.id} onSuccess={handleDeleteSuccess}>
           {({ onClick, isLoading }) => (
             <Menu.Item
