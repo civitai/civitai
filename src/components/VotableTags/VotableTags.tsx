@@ -48,7 +48,7 @@ export function VotableTags({
 
   return (
     <MantineProvider theme={{ colorScheme: 'dark' }}>
-      <Group spacing={4} px="md" {...props}>
+      <Group spacing={4} {...props}>
         {displayedTags.map((tag) => (
           <VotableTag
             key={tag.id}
