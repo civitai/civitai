@@ -15,7 +15,7 @@ import {
   Popover,
   Code,
   BadgeProps,
-  AspectRatio,
+  Box,
 } from '@mantine/core';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { Fragment, useState } from 'react';
@@ -31,11 +31,10 @@ import {
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { useCFUploadStore } from '~/store/cf-upload.store';
 import { EditImageDrawer } from '~/components/Post/Edit/EditImageDrawer';
-import { TagType } from '@prisma/client';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 
-export function EditPostImages({ max = 50 }: { max?: number }) {
+export function EditPostImages({ max = 10 }: { max?: number }) {
   const postId = useEditPostContext((state) => state.id);
   const modelVersionId = useEditPostContext((state) => state.modelVersionId);
   const upload = useEditPostContext((state) => state.upload);
@@ -74,7 +73,7 @@ function ImageController({
     generationProcess,
     needsReview,
     resourceHelper,
-    tags,
+    _count,
   },
 }: {
   image: PostEditImage;
@@ -93,10 +92,8 @@ function ImageController({
         width={width ?? 1200}
         onLoad={() => setWithBorder(true)}
       />
+      {!!_count.tags && <VotableTags entityType="image" entityId={id} p="xs" />}
       <>
-        <Group className={cx(classes.footer, classes.content)} spacing={6} p="xs" position="right">
-          {!!tags.length && <VotableTags entityType="image" entityId={id} tags={tags} />}
-        </Group>
         <Group className={classes.actions}>
           {meta ? (
             <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
@@ -291,15 +288,6 @@ const useStyles = createStyles((theme) => {
       color: 'white',
       backdropFilter: 'blur(7px)',
       boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
-    },
-    content: {
-      background: theme.fn.gradient({
-        from: 'rgba(37,38,43,0.8)',
-        to: 'rgba(37,38,43,0)',
-        deg: 0,
-      }),
-      backdropFilter: 'blur(13px) saturate(160%)',
-      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
     },
     footer: {
       position: 'absolute',

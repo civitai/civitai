@@ -32,6 +32,7 @@ import { TagType } from '@prisma/client';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { IconInfoCircle } from '@tabler/icons';
 import { sortAlphabeticallyBy } from '~/utils/array-helpers';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
 
 const matureLabel = 'Mature content may include content that is suggestive or provocative';
 const tooltipProps: Partial<TooltipProps> = {
@@ -42,7 +43,6 @@ const tooltipProps: Partial<TooltipProps> = {
 };
 
 const schema = z.object({
-  nsfw: z.boolean().default(false),
   hideMeta: z.boolean().default(false),
   meta: imageGenerationSchema.partial(),
 });
@@ -81,17 +81,10 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
     | PostEditImage
     | undefined;
 
-  const moderationTags = image?.tags.filter((x) => x.type === TagType.Moderation) ?? [];
-  const labelTags = image?.tags.filter((x) => x.type === TagType.Label) ?? [];
-  const tags = [
-    ...sortAlphabeticallyBy(moderationTags, (x) => x.name),
-    ...sortAlphabeticallyBy(labelTags, (x) => x.name),
-  ];
-  const hasModerationTags = !!moderationTags.length;
+  const hasTags = !!image?._count.tags;
   const meta: Record<string, unknown> = (image?.meta as Record<string, unknown>) ?? {};
   const defaultValues: z.infer<typeof schema> = {
     hideMeta: image?.hideMeta ?? false,
-    nsfw: hasModerationTags ? true : image?.nsfw ?? false,
     meta: {
       prompt: meta.prompt ?? '',
       negativePrompt: meta.negativePrompt ?? '',
@@ -167,12 +160,8 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
             </Stack> */}
             <Input.Wrapper label="Tags">
               <Group spacing={4}>
-                {!!tags.length ? (
-                  tags.map((tag) => (
-                    <Badge key={tag.id} color={tag.type === TagType.Moderation ? 'red' : undefined}>
-                      {tag.name}
-                    </Badge>
-                  ))
+                {hasTags ? (
+                  <VotableTags entityId={image.id} entityType="image" />
                 ) : (
                   <Alert color="yellow">
                     There are no tags associated with this image yet. Tags will be assigned to this
