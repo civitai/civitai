@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
-import { editPostSelect } from '~/server/selectors/post.selector';
 
 export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,

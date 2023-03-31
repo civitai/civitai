@@ -120,7 +120,7 @@ export function ImageDetail() {
                   {`This image won't be visible to other users until it's reviewed by our moderators.`}
                 </AlertWithIcon>
               )}
-              <VotableTags entityType="image" entityId={image.id} />
+              <VotableTags entityType="image" entityId={image.id} canAdd />
               <div>
                 <Divider
                   label="Discussion"

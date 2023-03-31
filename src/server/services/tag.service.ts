@@ -80,6 +80,12 @@ export const getTags = async ({
   }
 
   let orderBy = `t."name" ASC`;
+  if (!sort) {
+    if (entityType?.includes(TagTarget.Model)) sort = TagSort.MostModels;
+    else if (entityType?.includes(TagTarget.Image)) sort = TagSort.MostImages;
+    else if (entityType?.includes(TagTarget.Post)) sort = TagSort.MostPosts;
+  }
+
   if (query) {
     orderBy = `LENGTH(t."name")`;
     if (entityType?.includes(TagTarget.Model)) orderBy += `, r."modelCountAllTimeRank"`;
@@ -125,7 +131,6 @@ export const getTags = async ({
 };
 
 // #region [tag voting]
-
 export const getVotableTags = async ({
   userId,
   type,
