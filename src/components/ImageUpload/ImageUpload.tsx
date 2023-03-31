@@ -552,96 +552,96 @@ function ImageMetaPopover({
   );
 }
 
-function ImageTagTab({
-  imageTags = [],
-  imageNsfw,
-  onChange,
-}: {
-  imageTags: SimpleTag[];
-  imageNsfw: boolean;
-  onChange: (data: { tags: SimpleTag[]; nsfw: boolean }) => void;
-}) {
-  const [category, ...restTags] = imageTags.reduce((acc, tag) => {
-    if (tag.isCategory) acc.unshift(tag.id.toString());
-    else acc.push(tag.id.toString());
-    return acc;
-  }, [] as string[]);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(category);
-  const [selectedTags, setSelectedTags] = useState<string[]>(restTags);
-  const [nsfw, setNsfw] = useState<boolean>(imageNsfw);
+// function ImageTagTab({
+//   imageTags = [],
+//   imageNsfw,
+//   onChange,
+// }: {
+//   imageTags: SimpleTag[];
+//   imageNsfw: boolean;
+//   onChange: (data: { tags: SimpleTag[]; nsfw: boolean }) => void;
+// }) {
+//   const [category, ...restTags] = imageTags.reduce((acc, tag) => {
+//     if (tag.isCategory) acc.unshift(tag.id.toString());
+//     else acc.push(tag.id.toString());
+//     return acc;
+//   }, [] as string[]);
+//   const [selectedCategory, setSelectedCategory] = useState<string | null>(category);
+//   const [selectedTags, setSelectedTags] = useState<string[]>(restTags);
+//   const [nsfw, setNsfw] = useState<boolean>(imageNsfw);
 
-  const { data: { items: categories } = { items: [] }, isLoading: loadingCategories } =
-    trpc.tag.getAll.useQuery(
-      {
-        limit: 0,
-        entityType: [TagTarget.Image, TagTarget.Model],
-        categories: true,
-        sort: TagSort.MostImages,
-      },
-      { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
-    );
-  const { data: { items: tags } = { items: [] }, isLoading: loadingTags } =
-    trpc.tag.getAll.useQuery(
-      { limit: 0, entityType: [TagTarget.Image, TagTarget.Model], categories: false },
-      { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
-    );
+//   const { data: { items: categories } = { items: [] }, isLoading: loadingCategories } =
+//     trpc.tag.getAll.useQuery(
+//       {
+//         limit: 0,
+//         entityType: [TagTarget.Image, TagTarget.Model],
+//         categories: true,
+//         sort: TagSort.MostImages,
+//       },
+//       { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
+//     );
+//   const { data: { items: tags } = { items: [] }, isLoading: loadingTags } =
+//     trpc.tag.getAll.useQuery(
+//       { limit: 0, entityType: [TagTarget.Image, TagTarget.Model], categories: false },
+//       { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
+//     );
 
-  useEffect(() => {
-    const allTags = [selectedCategory, ...selectedTags];
-    if (!isEqual(imageTags, allTags) || imageNsfw !== nsfw) {
-      const tagsData = tags.filter((tag) => selectedTags.includes(tag.id.toString()));
-      const category = categories.find((cat) => cat.id.toString() === selectedCategory);
-      const tagsToSave = [...(category ? [{ ...category }] : []), ...tagsData];
+//   useEffect(() => {
+//     const allTags = [selectedCategory, ...selectedTags];
+//     if (!isEqual(imageTags, allTags) || imageNsfw !== nsfw) {
+//       const tagsData = tags.filter((tag) => selectedTags.includes(tag.id.toString()));
+//       const category = categories.find((cat) => cat.id.toString() === selectedCategory);
+//       const tagsToSave = [...(category ? [{ ...category }] : []), ...tagsData];
 
-      onChange({ tags: tagsToSave, nsfw });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categories, selectedCategory, selectedTags, tags, nsfw]);
+//       onChange({ tags: tagsToSave, nsfw });
+//     }
+//     // eslint-disable-next-line react-hooks/exhaustive-deps
+//   }, [categories, selectedCategory, selectedTags, tags, nsfw]);
 
-  const loading = loadingCategories || loadingTags;
+//   const loading = loadingCategories || loadingTags;
 
-  return (
-    <Stack sx={{ position: 'relative' }}>
-      <LoadingOverlay visible={loading} />
-      <DismissibleAlert
-        id="image-tagging"
-        title="What is image tagging?"
-        content="These tags are used to help showcase your work in the right communities. Good tags will help your image get more love!"
-      />
-      <Checkbox
-        label="This image is for an adult audience (NSFW)"
-        checked={nsfw}
-        onChange={(e) => setNsfw(e.currentTarget.checked)}
-      />
-      <Select
-        label="Main Category"
-        placeholder="Select a category"
-        value={selectedCategory}
-        onChange={setSelectedCategory}
-        data={categories.map((category) => ({
-          label: category.name,
-          value: category.id.toString(),
-        }))}
-        limit={50}
-        searchable
-        clearable
-      />
-      <MultiSelect
-        label="Tags"
-        placeholder="Select tags"
-        value={selectedTags}
-        onChange={setSelectedTags}
-        data={tags.map((tag) => ({
-          label: tag.name,
-          value: tag.id.toString(),
-        }))}
-        limit={50}
-        searchable
-        clearable
-      />
-    </Stack>
-  );
-}
+//   return (
+//     <Stack sx={{ position: 'relative' }}>
+//       <LoadingOverlay visible={loading} />
+//       <DismissibleAlert
+//         id="image-tagging"
+//         title="What is image tagging?"
+//         content="These tags are used to help showcase your work in the right communities. Good tags will help your image get more love!"
+//       />
+//       <Checkbox
+//         label="This image is for an adult audience (NSFW)"
+//         checked={nsfw}
+//         onChange={(e) => setNsfw(e.currentTarget.checked)}
+//       />
+//       <Select
+//         label="Main Category"
+//         placeholder="Select a category"
+//         value={selectedCategory}
+//         onChange={setSelectedCategory}
+//         data={categories.map((category) => ({
+//           label: category.name,
+//           value: category.id.toString(),
+//         }))}
+//         limit={50}
+//         searchable
+//         clearable
+//       />
+//       <MultiSelect
+//         label="Tags"
+//         placeholder="Select tags"
+//         value={selectedTags}
+//         onChange={setSelectedTags}
+//         data={tags.map((tag) => ({
+//           label: tag.name,
+//           value: tag.id.toString(),
+//         }))}
+//         limit={50}
+//         searchable
+//         clearable
+//       />
+//     </Stack>
+//   );
+// }
 
 const useStyles = createStyles((theme, _params) => ({
   sortItem: {

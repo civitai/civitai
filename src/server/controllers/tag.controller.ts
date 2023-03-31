@@ -41,19 +41,13 @@ export const getTagWithModelCountHandler = async ({
 
 export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => {
   try {
-    const { withModels = false, limit = DEFAULT_PAGE_SIZE, page } = input || {};
+    const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
     const { take, skip } = getPagination(limit, page);
 
     const results = await getTags({
       ...input,
       take,
       skip,
-      select: {
-        id: true,
-        name: true,
-        isCategory: true,
-        tagsOnModels: withModels ? { select: { modelId: true } } : false,
-      },
     });
 
     return getPagingData(results, take, page);
@@ -108,7 +102,6 @@ export const getTrendingTagsHandler = async ({ input }: { input: GetTrendingTags
   const { items } = await getTags({
     ...input,
     take: input.limit ?? constants.tagFilterDefaults.trendingTagsLimit,
-    select: { id: true, name: true },
   });
 
   return items;
