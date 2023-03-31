@@ -311,8 +311,8 @@ export const addPostImage = async ({
     select: editPostImageSelect,
   });
 
-  const { ...image, tagComposites } = result;
-  return { ...result, tags: tagComposites };
+  const { tagComposites, ...rest } = result;
+  return { ...rest, tags: tagComposites };
 };
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
@@ -333,9 +333,9 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
     select: editPostImageSelect,
   });
-  const { ...image, tagComposites } = result;
+  const { tagComposites, ...rest } = result;
 
-  return { ...image, tags: tagComposites };
+  return { ...rest, tags: tagComposites };
 };
 
 export const reorderPostImages = async ({ imageIds }: ReorderPostImagesInput) => {

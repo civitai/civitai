@@ -27,3 +27,5 @@ export const imageTagCompositeSelect = Prisma.validator<Prisma.ImageTagSelect>()
   ...modelTagCompositSelect,
   automated: true,
 });
+
+// export function mapTagComposites(composites: Tag)
