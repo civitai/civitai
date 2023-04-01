@@ -72,6 +72,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     allowDifferentLicense,
     allowDerivatives,
     allowCommercialUse,
+    browsingMode,
   },
   select,
   user: sessionUser,
@@ -169,10 +170,12 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     AND.push({ OR: TypeOr });
   }
 
+  const hideNSFWModels = browsingMode === BrowsingMode.SFW || !canViewNsfw;
   const where: Prisma.ModelWhereInput = {
     tagsOnModels: tagname ?? tag ? { some: { tag: { name: tagname ?? tag } } } : undefined,
     user: username || user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
+    nsfw: hideNSFWModels ? false : undefined,
     rank: rating
       ? {
           AND: [{ ratingAllTime: { gte: rating } }, { ratingAllTime: { lt: rating + 1 } }],
