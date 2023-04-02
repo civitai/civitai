@@ -103,7 +103,7 @@ export const upsertAnswerHandler = async ({
   input: UpsertAnswerInput;
 }) => {
   try {
-    return await upsertAnswer({ ...input, userId: ctx.user.id });
+    await upsertAnswer({ ...input, userId: ctx.user.id });
   } catch (error) {
     throw throwDbError(error);
   }

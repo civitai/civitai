@@ -14,6 +14,7 @@ import { env } from '~/env/server.mjs';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbWrite, dbRead } from '~/server/db/client';
+import { playfab } from '~/server/playfab/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAllModelsOutput, ModelInput, ModelUpsertInput } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
@@ -416,6 +417,13 @@ export const createModel = async ({
     });
   });
 
+  if (data.status === ModelStatus.Published)
+    await playfab.trackEvent(userId, {
+      eventName: 'user_publish_model',
+      type: data.type,
+      modelId: model.id,
+    });
+
   await ingestNewImages({ modelId: model.id });
 
   return model;
@@ -642,6 +650,19 @@ export const updateModel = async ({
 
   // Request scan for new images
   await ingestNewImages({ modelId: model.id });
+
+  if (currentModel.status !== ModelStatus.Published && data.status === ModelStatus.Published)
+    await playfab.trackEvent(userId, {
+      eventName: 'user_publish_model',
+      modelId: model.id,
+      type: data.type,
+    });
+  else if (hasNewVersions && data.status === ModelStatus.Published)
+    await playfab.trackEvent(userId, {
+      eventName: 'user_update_model',
+      modelId: model.id,
+      type: data.type,
+    });
 
   return model;
 };

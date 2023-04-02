@@ -60,6 +60,7 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getHiddenImagesForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
+import { getDownloadUrl } from '~/utils/delivery-worker';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -525,7 +526,7 @@ export const getDownloadCommandHandler = async ({
     });
 
     const fileName = getDownloadFilename({ model, modelVersion, file });
-    const { url } = await getGetUrl(file.url, { fileName });
+    const { url } = await getDownloadUrl(file.url, fileName);
 
     const commands: CommandResourcesAdd[] = [];
     commands.push({
