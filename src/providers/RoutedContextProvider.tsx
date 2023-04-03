@@ -251,23 +251,50 @@ export const useFreezeStore = create<{
   setFreeze: (freeze: boolean) =>
     set((state) => {
       if (state.freeze === freeze) return {};
-      let placeholder: React.ReactNode | undefined;
-      if (freeze) {
-        const placeholderContent = document.getElementById('freezeBlock')?.innerHTML;
-        placeholder = placeholderContent ? (
-          <div dangerouslySetInnerHTML={{ __html: placeholderContent }} />
-        ) : undefined;
-      }
+      // let placeholder: React.ReactNode | undefined;
+      // if (freeze) {
+      //   const placeholderContent = document.getElementById('freezeBlock')?.innerHTML;
+      //   placeholder = placeholderContent ? (
+      //     <div dangerouslySetInnerHTML={{ __html: placeholderContent }} />
+      //   ) : undefined;
+      // }
 
-      return { freeze, placeholder };
+      return { freeze };
     }),
 }));
 
+let observer: MutationObserver | undefined;
+
 export function FreezeProvider({ children }: { children: React.ReactElement }) {
   const freeze = useFreezeStore((state) => state.freeze);
-  const placeholder = useFreezeStore((state) => state.placeholder);
+  // const placeholder = useFreezeStore((state) => state.placeholder);
+  useEffect(() => {
+    if (observer) return;
+    observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type !== 'attributes' || mutation.attributeName !== 'style') continue;
+        const target = mutation.target as HTMLElement;
+        if (target.getAttribute('style')?.includes('display: none !important;'))
+          target.setAttribute('style', '');
+      }
+    });
+
+    const fetchFreezeBlockInterval = setInterval(() => {
+      const freezeBlockEl = document.getElementById('freezeBlock');
+      if (!freezeBlockEl || !observer) return;
+      observer.observe(freezeBlockEl, {
+        attributeFilter: ['style'],
+      });
+      clearInterval(fetchFreezeBlockInterval);
+    }, 1000);
+
+    // return () => {
+    //   observer?.disconnect(); // shouldn't need this due to the observer being set
+    // };
+  }, []);
+
   return (
-    <Freeze freeze={freeze} placeholder={placeholder}>
+    <Freeze freeze={freeze} placeholder={null}>
       <div id="freezeBlock">{children}</div>
     </Freeze>
   );
