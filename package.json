@@ -95,7 +95,7 @@
     "masonic": "^3.7.0",
     "micro": "^10.0.1",
     "next": "^12.3.4",
-    "next-auth": "^4.19.0",
+    "next-auth": "^4.21.0",
     "next-plausible": "^3.7.2",
     "nodemailer": "^6.8.0",
     "playfab-sdk": "^2.122.230320",
