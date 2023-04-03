@@ -1,7 +1,8 @@
 import { Popover, ThemeIcon } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons';
-import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { startCase } from 'lodash-es';
 
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelById } from '~/types/router';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -11,10 +12,11 @@ export function FileInfo({ file }: Props) {
 
   const items = [
     { label: 'Hashes', value: <ModelHash hashes={file.hashes} /> },
-    { label: 'Size', value: formatKBytes(file.sizeKB) },
+    { label: 'File Size', value: formatKBytes(file.sizeKB) },
   ];
   if (file.metadata?.fp) items.push({ label: 'Floating Point', value: file.metadata.fp });
-  if (file.metadata?.size) items.push({ label: 'Size', value: file.metadata.size });
+  if (file.metadata?.size)
+    items.push({ label: 'Model Size', value: startCase(file.metadata.size) });
 
   return (
     <Popover withinPortal withArrow>
