@@ -264,6 +264,7 @@ export const addPostImage = async ({
       ...image,
       meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
       generationProcess: meta ? getImageGenerationProcess(meta as Prisma.JsonObject) : null,
+    },
     select: { id: true },
   });
 
