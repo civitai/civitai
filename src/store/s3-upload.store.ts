@@ -338,7 +338,7 @@ export const useS3UploadStore = create<StoreProps>()(
           }
 
           // Complete the multipart upload
-          await completeUpload().catch((err) => {
+          const completeResult = await completeUpload().catch((err) => {
             console.error('Failed to complete upload');
             console.error(err);
             updateFile(pendingItem.uuid, {
@@ -348,8 +348,11 @@ export const useS3UploadStore = create<StoreProps>()(
               timeRemaining: 0,
               uploaded: 0,
             });
-            return;
+
+            return { ok: false };
           });
+          if (!completeResult.ok) return;
+
           updateFile(pendingItem.uuid, { status: 'success' });
 
           const url = urls[0].url.split('?')[0];
