@@ -103,20 +103,11 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
         </Stack>
       </Container>
       {data.user.username && (
-        <Box
-          mb="md"
-          sx={(theme) => ({
-            background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
-          })}
-        >
-          <Container py="md">
-            <ResourceReviewCarousel
-              username={data.user.username}
-              modelVersionId={data.modelVersion.id}
-              reviewId={reviewId}
-            />
-          </Container>
-        </Box>
+        <ResourceReviewCarousel
+          username={data.user.username}
+          modelVersionId={data.modelVersion.id}
+          reviewId={reviewId}
+        />
       )}
       <Container>
         <Stack>
