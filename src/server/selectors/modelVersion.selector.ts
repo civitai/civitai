@@ -19,7 +19,15 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
     },
     select: {
       image: {
-        select: imageSelectWithoutName,
+        select: {
+          id: true,
+          url: true,
+          nsfw: true,
+          width: true,
+          height: true,
+          hash: true,
+          meta: true,
+        },
       },
     },
     take: 20,
@@ -42,9 +50,6 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
         },
       },
     },
-  },
-  posts: {
-    select: editPostSelect,
   },
 });
 

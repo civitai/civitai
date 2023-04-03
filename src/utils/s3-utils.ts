@@ -107,7 +107,7 @@ interface MultipartUploadPart {
   ETag: string;
   PartNumber: number;
 }
-export async function completeMultipartUpload(
+export function completeMultipartUpload(
   bucket: string,
   key: string,
   uploadId: string,
@@ -115,7 +115,7 @@ export async function completeMultipartUpload(
   s3: S3Client | null = null
 ) {
   if (!s3) s3 = getS3Client();
-  await s3.send(
+  return s3.send(
     new CompleteMultipartUploadCommand({
       Bucket: bucket,
       Key: key,
