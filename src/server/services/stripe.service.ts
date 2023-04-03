@@ -8,6 +8,7 @@ import { Stripe } from 'stripe';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { env } from '~/env/server.mjs';
 import { createLogger } from '~/utils/logging';
+import { playfab } from '~/server/playfab/client';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
@@ -210,7 +211,7 @@ export const upsertSubscription = async (
       id: true,
       customerId: true,
       subscriptionId: true,
-      subscription: { select: { updatedAt: true } },
+      subscription: { select: { updatedAt: true, status: true } },
     },
   });
 
@@ -242,6 +243,13 @@ export const upsertSubscription = async (
     dbWrite.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
     dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
   ]);
+
+  if (user.subscription?.status !== data.status && ['active', 'canceled'].includes(data.status)) {
+    await playfab.trackEvent(user.id, {
+      eventName: data.status === 'active' ? 'user_start_membership' : 'user_cancel_membership',
+      productId: data.productId,
+    });
+  }
 
   invalidateSession(user.id);
 };

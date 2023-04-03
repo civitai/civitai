@@ -17,6 +17,7 @@ import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 import { getAllReviewsSelect } from '~/server/selectors/review.selector';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { ingestNewImages } from '~/server/services/image.service';
+import { playfab } from '~/server/playfab/client';
 
 export const getReviews = <TSelect extends Prisma.ReviewSelect>({
   input: { limit = DEFAULT_PAGE_SIZE, page, cursor, modelId, modelVersionId, userId, sort },
@@ -178,6 +179,12 @@ export const createOrUpdateReview = async ({
   });
 
   await ingestNewImages({ reviewId: review.id });
+  await playfab.trackEvent(ownerId, {
+    eventName: 'user_rate_model',
+    modelId: review.modelId,
+    modelVersionId: input.modelVersionId,
+    rating: input.rating,
+  });
 };
 
 export const deleteReviewById = async ({ id }: GetByIdInput) => {

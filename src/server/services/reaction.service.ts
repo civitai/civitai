@@ -2,6 +2,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { ToggleReactionInput, ReactionEntityType } from './../schema/reaction.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { queueMetricUpdate } from '~/server/jobs/update-metrics';
+import { playfab } from '~/server/playfab/client';
 
 export const toggleReaction = async ({
   entityType,
@@ -11,7 +12,15 @@ export const toggleReaction = async ({
 }: ToggleReactionInput & { userId: number }) => {
   const existing = await getReaction({ entityType, entityId, userId, reaction });
   if (existing) return await deleteReaction({ entityType, id: existing.id, entityId });
-  else return await createReaction({ entityType, entityId, userId, reaction });
+  else {
+    await createReaction({ entityType, entityId, userId, reaction });
+    await playfab.trackEvent(userId, {
+      eventName: `user_react_${entityType}`,
+      entityId,
+      reaction,
+    });
+    return;
+  }
 };
 
 const getReaction = async ({

@@ -89,6 +89,7 @@ const checkFilesExistence = middleware(async ({ input, ctx, next }) => {
 const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
   if (ctx.browsingMode !== BrowsingMode.All) {
     const _input = input as GetAllModelsOutput;
+    _input.browsingMode = ctx.browsingMode;
     const hidden = await getAllHiddenForUser({ userId: ctx.user?.id });
     _input.excludedImageTagIds = [
       ...hidden.tags.moderatedTags,
