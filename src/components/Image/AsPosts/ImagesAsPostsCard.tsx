@@ -29,6 +29,8 @@ import { trpc } from '~/utils/trpc';
 import { NextLink } from '@mantine/next';
 import { useImageFilters } from '~/providers/FiltersProvider';
 import { useRouter } from 'next/router';
+import { removeEmpty } from '~/utils/object-helpers';
+import { parseImagesQuery } from '~/components/Image/image.utils';
 
 export function ImagesAsPostsCard({
   data,
@@ -62,7 +64,10 @@ export function ImagesAsPostsCard({
   const cardHeight = imageHeight + 60 + (data.images.length > 1 ? 8 : 0);
 
   const handleClick = () => {
-    queryUtils.image.getInfinite.setInfiniteData({ postId, modelId, ...imageFilters }, () => {
+    const filters = removeEmpty(
+      parseImagesQuery({ postId, modelId, ...imageFilters, ...router.query })
+    );
+    queryUtils.image.getInfinite.setInfiniteData(filters, () => {
       return {
         pages: [{ items: data.images, nextCursor: undefined }],
         pageParams: [],
