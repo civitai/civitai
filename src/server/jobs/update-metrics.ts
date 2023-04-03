@@ -12,7 +12,7 @@ const RANK_UPDATE_DELAY = 1000 * 60 * 60; // 60 minutes
 
 export const updateMetricsJob = createJob(
   'update-metrics',
-  '*/1 * * * *',
+  '*/3 * * * *',
   async () => {
     // Get the last time this ran from the KeyValue store
     // --------------------------------------
