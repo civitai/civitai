@@ -3,6 +3,7 @@ import { IconArrowLeft } from '@tabler/icons';
 import Link from 'next/link';
 import { z } from 'zod';
 
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { Files } from '~/components/Resource/Files';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { closeRoutedContext } from '~/providers/RoutedContextProvider';
@@ -32,7 +33,7 @@ export default createRoutedContext({
             <Center>
               <Loader size="lg" />
             </Center>
-          ) : (
+          ) : modelVersion ? (
             <Stack spacing="xl">
               <Link href={`/models/${modelVersion?.model.id}`} passHref shallow>
                 <Anchor size="xs">
@@ -45,6 +46,8 @@ export default createRoutedContext({
               <Title order={1}>Manage Files</Title>
               <Files model={modelVersion?.model} version={modelVersion} />
             </Stack>
+          ) : (
+            <NotFound />
           )}
         </Container>
       </Modal>

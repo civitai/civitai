@@ -14,6 +14,7 @@ import { IconArrowLeft } from '@tabler/icons';
 import Link from 'next/link';
 import { z } from 'zod';
 
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { closeRoutedContext } from '~/providers/RoutedContextProvider';
@@ -42,7 +43,7 @@ export default createRoutedContext({
             <Center>
               <Loader size="lg" />
             </Center>
-          ) : (
+          ) : modelVersion ? (
             <Stack spacing="xl">
               <Link href={`/models/${modelVersion?.model.id}`} passHref shallow>
                 <Anchor size="sm">
@@ -70,6 +71,8 @@ export default createRoutedContext({
                 )}
               </ModelVersionUpsertForm>
             </Stack>
+          ) : (
+            <NotFound />
           )}
         </Container>
       </Modal>
