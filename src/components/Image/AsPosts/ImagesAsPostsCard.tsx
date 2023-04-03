@@ -8,6 +8,7 @@ import {
   Rating,
   Center,
   Tooltip,
+  Box,
 } from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons';
 import { useMemo } from 'react';
@@ -47,21 +48,22 @@ export function ImagesAsPostsCard({
   const postId = data.postId ?? undefined;
   const imageFilters = useImageFilters();
 
-  const cover = data.images.sort((a, b) => {
+  const cover = data.images[0];
+  const tallestImage = data.images.sort((a, b) => {
     const aHeight = a.height ?? 0;
     const bHeight = b.height ?? 0;
     return aHeight > bHeight ? aHeight : bHeight;
   })[0];
 
   const imageHeight = useMemo(() => {
-    if (!cover.width || !cover.height) return 300;
+    if (!tallestImage.width || !tallestImage.height) return 300;
     const width = cardWidth > 0 ? cardWidth : 300;
-    const aspectRatio = cover.width / cover.height;
+    const aspectRatio = tallestImage.width / tallestImage.height;
     const imageHeight = Math.floor(width / aspectRatio);
     return Math.min(imageHeight, 600);
-  }, [cardWidth, cover.width, cover.height]);
+  }, [cardWidth, tallestImage.width, tallestImage.height]);
 
-  const cardHeight = imageHeight + 60 + (data.images.length > 1 ? 8 : 0);
+  const cardHeight = imageHeight + 57 + (data.images.length > 1 ? 8 : 0);
 
   const handleClick = () => {
     const filters = removeEmpty(
@@ -74,6 +76,9 @@ export function ImagesAsPostsCard({
       };
     });
   };
+
+  const imageIdsString = data.images.map((x) => x.id).join('_');
+  const carouselKey = useMemo(() => `${imageIdsString}_${cardWidth}`, [imageIdsString, cardWidth]);
 
   return (
     <InView>
@@ -167,24 +172,23 @@ export function ImagesAsPostsCard({
                               className={classes.link}
                               {...router.query}
                             >
-                              {!safe ? (
-                                <AspectRatio
-                                  ratio={(image?.width ?? 1) / (image?.height ?? 1)}
-                                  sx={{ width: '100%' }}
-                                >
+                              <>
+                                <Box className={classes.blur}>
                                   <MediaHash {...image} />
-                                </AspectRatio>
-                              ) : (
-                                <EdgeImage
-                                  src={image.url}
-                                  name={image.name ?? image.id.toString()}
-                                  alt={image.name ?? undefined}
-                                  width={450}
-                                  placeholder="empty"
-                                  style={{ width: '100%', position: 'relative' }}
-                                />
-                              )}
+                                </Box>
+                                {safe && (
+                                  <EdgeImage
+                                    src={image.url}
+                                    name={image.name ?? image.id.toString()}
+                                    alt={image.name ?? undefined}
+                                    width={450}
+                                    placeholder="empty"
+                                    className={classes.image}
+                                  />
+                                )}
+                              </>
                             </RoutedContextLink>
+
                             <Reactions
                               entityId={image.id}
                               entityType="image"
@@ -228,7 +232,7 @@ export function ImagesAsPostsCard({
                 />
               ) : (
                 <Carousel
-                  key={`${data.images.map((x) => x.id).join('_')}_${cardWidth}`}
+                  key={carouselKey}
                   withControls
                   draggable
                   loop
@@ -237,7 +241,7 @@ export function ImagesAsPostsCard({
                   controlSize={32}
                   styles={{
                     indicators: {
-                      bottom: -7,
+                      bottom: -8,
                       zIndex: 5,
                       display: 'flex',
                       gap: 1,
@@ -281,25 +285,22 @@ export function ImagesAsPostsCard({
                                   {...router.query}
                                 >
                                   <>
-                                    {!safe ? (
-                                      <AspectRatio
-                                        ratio={(image?.width ?? 1) / (image?.height ?? 1)}
-                                        sx={{ width: '100%' }}
-                                      >
-                                        <MediaHash {...image} />
-                                      </AspectRatio>
-                                    ) : (
+                                    <Box className={classes.blur}>
+                                      <MediaHash {...image} />
+                                    </Box>
+                                    {safe && (
                                       <EdgeImage
                                         src={image.url}
                                         name={image.name ?? image.id.toString()}
                                         alt={image.name ?? undefined}
                                         width={450}
                                         placeholder="empty"
-                                        style={{ width: '100%' }}
+                                        className={classes.image}
                                       />
                                     )}
                                   </>
                                 </RoutedContextLink>
+                                <Box sx={{ height: 8, width: '100%' }}></Box>
                                 <Reactions
                                   entityId={image.id}
                                   entityType="image"
@@ -380,37 +381,8 @@ const useStyles = createStyles((theme) => ({
     alignItems: 'center',
     justifyContent: 'center',
     // paddingBottom: 42,
-    background: theme.colors.dark[9],
+    // background: theme.colors.dark[9],
     flexDirection: 'column',
-  },
-  footer: {
-    display: 'flex',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    background: theme.fn.gradient({
-      from: 'rgba(37,38,43,0.8)',
-      to: 'rgba(37,38,43,0)',
-      deg: 0,
-    }),
-    backdropFilter: 'blur(13px) saturate(160%)',
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    zIndex: 10,
-    gap: 6,
-    padding: theme.spacing.xs,
-  },
-  basicIndicator: {
-    position: 'absolute',
-    top: theme.spacing.xs,
-    right: theme.spacing.xs,
-    zIndex: 10,
-    background: theme.fn.rgba(theme.colorScheme === 'dark' ? '#000' : '#fff', 0.75),
-    padding: `0 ${theme.spacing.xs}px`,
-    borderRadius: theme.radius.sm,
   },
   reactions: {
     position: 'absolute',
@@ -424,15 +396,32 @@ const useStyles = createStyles((theme) => ({
     backdropFilter: 'blur(13px) saturate(160%)',
     boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
     padding: 4,
+    zIndex: 1,
   },
   info: {
     position: 'absolute',
     bottom: 5,
     right: 5,
+    zIndex: 1,
   },
   statBadge: {
     background: 'rgba(212,212,212,0.2)',
     backdropFilter: 'blur(7px)',
     cursor: 'pointer',
+  },
+  blur: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  image: {
+    width: '100%',
+    zIndex: 1,
+    // position: 'absolute',
+    // top: '50%',
+    // left: 0,
+    // transform: 'translateY(-50%)',
   },
 }));
