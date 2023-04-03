@@ -16,13 +16,12 @@ import {
   useForm,
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { BaseModel, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import {
   ModelVersionUpsertInput,
   modelVersionUpsertSchema2,
 } from '~/server/schema/model-version.schema';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
-import { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -45,24 +44,35 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const features = useFeatureFlags();
   const queryUtils = trpc.useContext();
 
-  const acceptsTrainedWords = ['Checkpoint', 'TextualInversion', 'LORA'].includes(
-    model?.type ?? ''
-  );
+  const acceptsTrainedWords = [
+    'Checkpoint',
+    'TextualInversion',
+    'LORA',
+    'LoCon',
+    'Wildcards',
+  ].includes(model?.type ?? '');
   const isTextualInversion = model?.type === 'TextualInversion';
 
   const defaultValues: Schema = {
     ...version,
-    name: version?.name ?? '',
-    baseModel: (version?.baseModel as BaseModel) ?? 'SD 1.5',
+    name: version?.name ?? 'v1.0',
+    baseModel: version?.baseModel ?? 'SD 1.5',
     trainedWords: version?.trainedWords ?? [],
-    skipTrainedWords: version?.trainedWords ? !version.trainedWords.length : !acceptsTrainedWords,
+    skipTrainedWords: acceptsTrainedWords
+      ? version?.trainedWords
+        ? !version.trainedWords.length
+        : false
+      : true,
     earlyAccessTimeFrame:
       version?.earlyAccessTimeFrame && features.earlyAccessModel
         ? String(version.earlyAccessTimeFrame)
         : '0',
     modelId: model?.id ?? -1,
+    description: version?.description ?? null,
+    epochs: version?.epochs ?? null,
+    steps: version?.steps ?? null,
   };
-  const form = useForm({ schema, defaultValues, shouldUnregister: false });
+  const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
 
   const skipTrainedWords = !isTextualInversion && (form.watch('skipTrainedWords') ?? false);
   const trainedWords = form.watch('trainedWords') ?? [];
@@ -80,35 +90,50 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     if (isDirty) {
       const result = await upsertVersionMutation.mutateAsync({
         ...data,
+        modelId: model?.id ?? -1,
         earlyAccessTimeFrame: Number(data.earlyAccessTimeFrame),
         trainedWords: skipTrainedWords ? [] : trainedWords,
       });
-      await queryUtils.model.getById.invalidate({ id: result.modelId });
+      await queryUtils.modelVersion.getById.invalidate({ id: result.id, withFiles: true });
+      if (model) await queryUtils.model.getById.invalidate({ id: model.id });
       onSubmit(result as ModelVersionUpsertInput);
-    } else onSubmit(version as ModelVersionUpsertInput);
+    } else {
+      onSubmit(version as ModelVersionUpsertInput);
+    }
   };
 
   useEffect(() => {
     if (version)
       form.reset({
         ...version,
-        baseModel: version.baseModel as BaseModel,
-        skipTrainedWords: version.trainedWords
-          ? !version.trainedWords.length
-          : !acceptsTrainedWords,
+        modelId: version.modelId ?? model?.id ?? -1,
+        baseModel: version.baseModel,
+        skipTrainedWords: isTextualInversion
+          ? false
+          : acceptsTrainedWords
+          ? version?.trainedWords
+            ? !version.trainedWords.length
+            : false
+          : true,
         earlyAccessTimeFrame:
           version.earlyAccessTimeFrame && features.earlyAccessModel
             ? String(version.earlyAccessTimeFrame)
             : '0',
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version]);
+  }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
 
   return (
     <>
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
-          <InputText name="name" label="Name" placeholder="e.g.: v1.0" withAsterisk />
+          <InputText
+            name="name"
+            label="Name"
+            placeholder="e.g.: v1.0"
+            withAsterisk
+            maxLength={10}
+          />
           <Input.Wrapper
             label="Early Access"
             description={
@@ -229,6 +254,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
 type Props = {
   onSubmit: (version?: ModelVersionUpsertInput) => void;
   children: (data: { loading: boolean }) => React.ReactNode;
-  model?: ModelUpsertInput;
-  version?: ModelById['modelVersions'][number];
+  model?: Partial<ModelUpsertInput>;
+  version?: Partial<ModelVersionUpsertInput>;
 };

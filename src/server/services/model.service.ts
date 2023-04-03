@@ -15,8 +15,13 @@ import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { playfab } from '~/server/playfab/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetAllModelsOutput, ModelInput, ModelUpsertInput } from '~/server/schema/model.schema';
+import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import {
+  GetAllModelsOutput,
+  ModelInput,
+  ModelUpsertInput,
+  PublishModelSchema,
+} from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import {
   imageSelect,
@@ -25,6 +30,7 @@ import {
 } from '~/server/selectors/image.selector';
 import { modelWithDetailsSelect } from '~/server/selectors/model.selector';
 import { ingestNewImages } from '~/server/services/image.service';
+import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
@@ -100,7 +106,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
 
     AND.push({ OR: statusVisibleOr });
   }
-  if (sessionUser?.isModerator && !(username || user)) {
+  if (sessionUser?.isModerator) {
     AND.push({ status: status && status.length > 0 ? { in: status } : ModelStatus.Published });
   }
 
@@ -220,7 +226,7 @@ export const getModelVersionsMicro = ({ id }: { id: number }) => {
   return dbRead.modelVersion.findMany({
     where: { modelId: id },
     orderBy: { index: 'asc' },
-    select: { id: true, name: true },
+    select: { id: true, name: true, index: true },
   });
 };
 
@@ -257,13 +263,21 @@ const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
       ...version,
       files: files.map((file) => {
         const preparedFile = prepareFile(file);
+        const {
+          type,
+          metadata: { format, size },
+        } = preparedFile;
+        const key = [size, type, format].filter(Boolean).join('-');
 
-        if (fileConflicts[`${preparedFile.type}-${preparedFile.format}`])
+        if (fileConflicts[key])
           throw new TRPCError({
             code: 'CONFLICT',
-            message: `Only 1 ${preparedFile.format} ${preparedFile.type} file can be attached to a version, please review your uploads and try again`,
+            message: `Only 1 ${key.replace(
+              '-',
+              ' '
+            )} file can be attached to a version, please review your uploads and try again`,
           });
-        else fileConflicts[`${preparedFile.type}-${preparedFile.format}`] = true;
+        else fileConflicts[key] = true;
 
         return preparedFile;
       }),
@@ -274,15 +288,15 @@ const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
 export const upsertModel = ({
   id,
   tagsOnModels,
+  userId,
   ...data
 }: ModelUpsertInput & { userId: number }) => {
-  const select = modelWithDetailsSelect;
-
   if (!id)
     return dbWrite.model.create({
-      select,
+      select: modelWithDetailsSelect,
       data: {
         ...data,
+        userId,
         tagsOnModels: tagsOnModels
           ? {
               create: tagsOnModels.map((tag) => {
@@ -302,7 +316,7 @@ export const upsertModel = ({
     });
   else
     return dbWrite.model.update({
-      select,
+      select: modelWithDetailsSelect,
       where: { id },
       data: {
         ...data,
@@ -665,4 +679,81 @@ export const updateModel = async ({
     });
 
   return model;
+};
+
+export const publishModelById = async ({ id, versionIds }: PublishModelSchema) => {
+  const model = await dbWrite.$transaction(
+    async (tx) => {
+      const includeVersions = versionIds && versionIds.length > 0;
+      const publishedAt = new Date();
+
+      const model = await dbWrite.model.update({
+        where: { id },
+        data: {
+          status: ModelStatus.Published,
+          publishedAt,
+          modelVersions: includeVersions
+            ? {
+                updateMany: {
+                  where: { id: { in: versionIds } },
+                  data: { status: ModelStatus.Published },
+                },
+              }
+            : undefined,
+        },
+        select: { id: true, type: true, userId: true },
+      });
+
+      if (includeVersions) {
+        await tx.post.updateMany({
+          where: { modelVersionId: { in: versionIds } },
+          data: { publishedAt },
+        });
+      }
+
+      return model;
+    },
+    { timeout: 10000 }
+  );
+
+  // await playfab.trackEvent(model.userId, {
+  //   eventName: 'user_publish_model',
+  //   modelId: model.id,
+  //   type: model.type,
+  // });
+
+  // await playfab.trackEvent(model.userId, {
+  //   eventName: 'user_update_model',
+  //   modelId: model.id,
+  //   type: model.type,
+  // });
+
+  return model;
+};
+
+export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>({
+  userId,
+  select,
+  page,
+  limit = DEFAULT_PAGE_SIZE,
+}: GetAllSchema & {
+  userId: number;
+  select: TSelect;
+}) => {
+  const { take, skip } = getPagination(limit, page);
+  const where: Prisma.ModelFindManyArgs['where'] = {
+    userId,
+    status: ModelStatus.Draft,
+  };
+
+  const items = await dbRead.model.findMany({
+    select,
+    skip,
+    take,
+    where,
+    orderBy: { updatedAt: 'desc' },
+  });
+  const count = await dbRead.model.count({ where });
+
+  return getPagingData({ items, count }, take, page);
 };

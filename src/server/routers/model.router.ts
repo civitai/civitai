@@ -12,13 +12,16 @@ import {
   getModelsPagedSimpleHandler,
   getModelsWithVersionsHandler,
   getModelVersionsHandler,
+  getMyDraftModelsHandler,
+  publishModelHandler,
+  reorderModelVersionsHandler,
   restoreModelHandler,
   unpublishModelHandler,
   updateModelHandler,
   upsertModelHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
-import { getByIdSchema } from '~/server/schema/base.schema';
+import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteModelSchema,
   GetAllModelsOutput,
@@ -27,6 +30,8 @@ import {
   ModelInput,
   modelSchema,
   modelUpsertSchema,
+  publishModelSchema,
+  reorderModelVersionsSchema,
 } from '~/server/schema/model.schema';
 import {
   guardedProcedure,
@@ -127,6 +132,7 @@ export const modelRouter = router({
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
     .query(getModelsWithVersionsHandler),
   getVersions: publicProcedure.input(getByIdSchema).query(getModelVersionsHandler),
+  getMyDraftModels: protectedProcedure.input(getAllQuerySchema).query(getMyDraftModelsHandler),
   add: guardedProcedure.input(modelSchema).use(checkFilesExistence).mutation(createModelHandler),
   upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
   update: protectedProcedure
@@ -138,6 +144,10 @@ export const modelRouter = router({
     .input(deleteModelSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteModelHandler),
+  publish: protectedProcedure
+    .input(publishModelSchema)
+    .use(isOwnerOrModerator)
+    .mutation(publishModelHandler),
   unpublish: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
@@ -149,4 +159,8 @@ export const modelRouter = router({
     .query(getModelDetailsForReviewHandler),
   restore: protectedProcedure.input(getByIdSchema).mutation(restoreModelHandler),
   getDownloadCommand: protectedProcedure.input(getDownloadSchema).query(getDownloadCommandHandler),
+  reorderVersions: protectedProcedure
+    .input(reorderModelVersionsSchema)
+    .use(isOwnerOrModerator)
+    .mutation(reorderModelVersionsHandler),
 });

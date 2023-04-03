@@ -42,6 +42,7 @@ export async function getUploadUrl(
     }
   );
 
+  if (!response.ok) throw new Error(response.statusText);
   const result = (await response.json()) as DirectUploadResponse;
   if (!result.success) throw new Error(result.errors.join('\n'));
 

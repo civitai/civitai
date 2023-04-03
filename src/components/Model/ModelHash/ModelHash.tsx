@@ -31,7 +31,7 @@ export const ModelHash = ({ hashes, initialType = 'AutoV2', color = 'gray' }: Pr
         color={color}
         px={6}
         sx={{
-          width: 60,
+          // width: 60,
           borderTopRightRadius: 0,
           borderBottomRightRadius: 0,
           borderRight: 0,
@@ -56,7 +56,10 @@ export const ModelHash = ({ hashes, initialType = 'AutoV2', color = 'gray' }: Pr
                 borderTopRightRadius: hasMore ? 0 : undefined,
                 borderBottomRightRadius: hasMore ? 0 : undefined,
               }}
-              onClick={copy}
+              onClick={(e) => {
+                e.stopPropagation();
+                copy();
+              }}
             >
               {copied ? 'Copied' : hash}
             </Badge>
@@ -75,7 +78,10 @@ export const ModelHash = ({ hashes, initialType = 'AutoV2', color = 'gray' }: Pr
             borderLeft: 0,
             cursor: 'pointer',
           }}
-          onClick={handleNext}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleNext();
+          }}
         >
           <IconChevronRight />
         </ActionIcon>

@@ -7,6 +7,11 @@ export type RouterInput = inferRouterInputs<AppRouter>;
 type ModelRouter = RouterOutput['model'];
 export type ModelById = ModelRouter['getById'];
 export type ModelGetAll = ModelRouter['getAll'];
+export type ModelGetVersions = ModelRouter['getVersions'];
+export type MyDraftModelGetAll = ModelRouter['getMyDraftModels'];
+
+type ModelVersionRouter = RouterOutput['modelVersion'];
+export type ModelVersionById = ModelVersionRouter['getById'];
 
 type ReviewRouter = RouterOutput['review'];
 export type ReviewGetAll = ReviewRouter['getAll'];
@@ -36,4 +41,9 @@ export type UsersGetAll = UserRouter['getAll'];
 export type UsersGetCosmetics = UserRouter['getCosmetics'];
 
 type ImageRouter = RouterOutput['image'];
-export type ImageGetAllInfinite = ImageRouter['getGalleryImagesInfinite']['items'];
+export type ImageGetGalleryInfinite = ImageRouter['getGalleryImagesInfinite']['items'];
+export type ImageGetInfinite = ImageRouter['getInfinite']['items'];
+
+type TagRouter = RouterOutput['tag'];
+export type TagGetAll = TagRouter['getAll']['items'];
+export type TagGetVotableTags = TagRouter['getVotableTags'];

@@ -201,13 +201,13 @@ const createEditPostStore = ({
                         state.images[index].data = { ...result.data, uuid: data.uuid };
                       });
                     } else if (result.type === 'success') {
-                      const imageTags = result.data.tags;
+                      const { count } = result.data;
                       set((state) => {
                         const index = state.images.findIndex(
                           (x) => x.type === 'image' && x.data.id === created.id
                         );
                         if (index === -1) throw new Error('index out of bounds');
-                        (state.images[index].data as PostEditImage).tags = imageTags;
+                        (state.images[index].data as PostEditImage)._count = { tags: count };
                       });
                     }
                   } catch (error) {

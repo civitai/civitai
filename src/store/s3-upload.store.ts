@@ -51,7 +51,7 @@ type StoreProps = {
   items: TrackedFile[];
   setItems: (dispatch: (items: TrackedFile[]) => TrackedFile[]) => void;
   clear: (predicate?: (item: TrackedFile) => boolean) => void;
-  getStatus: () => {
+  getStatus: (predicate?: (item: TrackedFile) => boolean) => {
     pending: number;
     error: number;
     uploading: number;
@@ -129,8 +129,8 @@ export const useS3UploadStore = create<StoreProps>()(
           if (state.items.length === 0) deregisterCatchNavigation();
         });
       },
-      getStatus: () => {
-        const items = get().items;
+      getStatus: (predicate) => {
+        const items = predicate ? get().items.filter(predicate) : get().items;
         return {
           pending: items.filter((x) => x.status === 'pending').length,
           error: items.filter((x) => x.status === 'error').length,
@@ -150,13 +150,13 @@ export const useS3UploadStore = create<StoreProps>()(
         });
       },
       abort: (uuid) => {
-        // TODO.posts - check with justin
         const item = get().items.find((x) => x.uuid === uuid);
         item?.abort();
       },
       upload: async ({ file, type, options, meta }, cb) => {
         // register catch navigation if beginning upload queue
-        if (get().items.length === 0) registerCatchNavigation();
+        if (get().items.filter((item) => item.status === 'uploading').length === 0)
+          registerCatchNavigation();
         const filename = encodeURIComponent(file.name);
 
         const requestExtras = options?.endpoint?.request ?? {
@@ -192,10 +192,11 @@ export const useS3UploadStore = create<StoreProps>()(
           const { bucket, key, uploadId, urls } = data;
           const uuid = uuidv4();
 
-          let currentXhr: XMLHttpRequest;
-          const abort = () => {
-            if (currentXhr) currentXhr.abort();
-          };
+          // let currentXhr: XMLHttpRequest;
+          // const abort = () => {
+          //   console.log({ currentXhr });
+          //   if (currentXhr) currentXhr.abort();
+          // };
 
           let index = -1;
           const trackedFile = {
@@ -214,7 +215,7 @@ export const useS3UploadStore = create<StoreProps>()(
 
             return false;
           });
-          const pendingItem = { ...trackedFile, ...existingItem, abort };
+          const pendingItem = { ...trackedFile, ...existingItem };
 
           set((state) => {
             if (index !== -1) state.items[index] = pendingItem;
@@ -294,7 +295,13 @@ export const useS3UploadStore = create<StoreProps>()(
               xhr.open('PUT', url);
               xhr.setRequestHeader('Content-Type', 'application/octet-stream');
               xhr.send(part);
-              currentXhr = xhr;
+              // currentXhr = xhr;
+
+              updateFile(pendingItem.uuid, {
+                abort: () => {
+                  if (xhr) xhr.abort();
+                },
+              });
             });
 
           // Make part requests
@@ -322,9 +329,6 @@ export const useS3UploadStore = create<StoreProps>()(
               });
               await abortUpload();
               return;
-              // const payload = preparePayload(uuid, { url: null, bucket, key });
-              // cb?.(payload);
-              // return payload;
             }
           }
 
@@ -362,7 +366,7 @@ const registerCatchNavigation = () => {
     register({
       name: 'file-upload',
       message: 'Files are still uploading. Upload progress will be lost',
-      predicate: () => useS3UploadStore.getState().getStatus().uploading === 0,
+      predicate: () => useS3UploadStore.getState().getStatus().uploading > 0,
       event: 'beforeunload',
     });
 };

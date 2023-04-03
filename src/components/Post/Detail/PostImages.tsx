@@ -18,14 +18,14 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { trpc } from '~/utils/trpc';
 import { useState, useMemo } from 'react';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { useQueryImages } from '~/components/Image/image.utils';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
 export function PostImages({ postId }: { postId: number }) {
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
   const [showMore, setShowMore] = useState(false);
-  const { data, isLoading } = trpc.image.getInfinite.useInfiniteQuery({ postId });
-  const images = useMemo(() => data?.pages.flatMap((x) => x.items), [data]);
+  const { images, isLoading } = useQueryImages({ postId });
 
   if (isLoading)
     return (
@@ -58,39 +58,34 @@ export function PostImages({ postId }: { postId: number }) {
                     boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
                   })}
                 />
-                <ImageGuard.Unsafe>
-                  <div className={classes.imageContainer}>
-                    <EdgeImage
-                      src={image.url}
-                      name={image.name}
-                      alt={image.name ?? undefined}
-                      width={width < maxWidth ? width : maxWidth}
-                      className={classes.blur}
-                    />
-                  </div>
-                </ImageGuard.Unsafe>
-                <ImageGuard.Safe>
-                  <EdgeImage
-                    src={image.url}
-                    name={image.name}
-                    alt={image.name ?? undefined}
-                    width={width < maxWidth ? width : maxWidth}
-                  />
-                  <Reactions
-                    p={4}
-                    className={classes.reactions}
-                    entityId={image.id}
-                    entityType="image"
-                    reactions={image.reactions}
-                    metrics={{
-                      likeCount: image.stats?.likeCountAllTime,
-                      dislikeCount: image.stats?.dislikeCountAllTime,
-                      heartCount: image.stats?.heartCountAllTime,
-                      laughCount: image.stats?.laughCountAllTime,
-                      cryCount: image.stats?.cryCountAllTime,
-                    }}
-                  />
-                </ImageGuard.Safe>
+                <ImageGuard.Content>
+                  {({ safe }) => (
+                    <>
+                      <EdgeImage
+                        src={image.url}
+                        name={image.name}
+                        alt={image.name ?? undefined}
+                        width={width < maxWidth ? width : maxWidth}
+                        className={cx({ [classes.blur]: !safe })}
+                      />
+                      <Reactions
+                        p={4}
+                        className={classes.reactions}
+                        entityId={image.id}
+                        entityType="image"
+                        reactions={image.reactions}
+                        metrics={{
+                          likeCount: image.stats?.likeCountAllTime,
+                          dislikeCount: image.stats?.dislikeCountAllTime,
+                          heartCount: image.stats?.heartCountAllTime,
+                          laughCount: image.stats?.laughCountAllTime,
+                          cryCount: image.stats?.cryCountAllTime,
+                        }}
+                      />
+                    </>
+                  )}
+                </ImageGuard.Content>
+
                 {image.meta && !image.hideMeta && (
                   <ImageMetaPopover
                     meta={image.meta as ImageMetaProps}
@@ -127,7 +122,7 @@ const useStyles = createStyles((theme) => ({
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
-    minHeight: 100,
+    minHeight: 200,
   },
   imageContainer: {
     display: 'inline',

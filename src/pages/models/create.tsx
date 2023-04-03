@@ -1,27 +1,28 @@
-import { GetServerSideProps } from 'next';
-import { ModelForm } from '~/components/Model/ModelForm/ModelForm';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { ModelWizard } from '~/components/Resource/Wizard/ModelWizard';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
-export default function Create() {
-  return <ModelForm />;
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ session }) => {
+    if (!session) {
+      return {
+        redirect: {
+          destination: '/login',
+          permanent: false,
+        },
+      };
+    }
+
+    if (session.user?.bannedAt)
+      return {
+        redirect: { destination: '/', permanent: false },
+      };
+
+    return { props: { session } };
+  },
+});
+
+export default function ModelNew() {
+  return <ModelWizard />;
 }
 
-export const getServerSideProps: GetServerSideProps = async (ctx) => {
-  const session = await getServerAuthSession(ctx);
-
-  if (!session) {
-    return {
-      redirect: {
-        destination: '/login',
-        permanent: false,
-      },
-    };
-  }
-
-  if (session.user?.bannedAt)
-    return {
-      redirect: { destination: '/', permanent: false },
-    };
-
-  return { props: { session } };
-};
+ModelNew.getLayout = (page: React.ReactElement) => <>{page}</>;

@@ -12,30 +12,30 @@ import { mergeWith, isArray } from 'lodash-es';
 export const modelFilterSchema = z
   .object({
     sort: z.nativeEnum(ModelSort).default(ModelSort.HighestRated),
-    tags: z.number().array().optional(),
+    tags: z.number().array().nullish(),
   })
   .default({});
 
 export const postFilterSchema = z
   .object({
     sort: z.nativeEnum(PostSort).default(PostSort.MostReactions),
-    tags: z.number().array().optional(),
+    tags: z.number().array().nullish(),
   })
   .default({});
 
 export const imageFilterSchema = z
   .object({
     sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
-    tags: z.number().array().optional(),
+    // tags: z.number().array().nullish(),
     generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
-    excludedTags: z.number().array().optional(),
+    // excludedTags: z.number().array().nullish(),
   })
   .default({});
 
 export const questionFilterSchema = z
   .object({
     sort: z.nativeEnum(QuestionSort).default(QuestionSort.Newest),
-    tags: z.number().array().optional(),
+    tags: z.number().array().nullish(),
   })
   .default({});
 
@@ -75,7 +75,7 @@ const createFilterStore = ({ initialValues }: { initialValues: FiltersInput }) =
         ...initialValues,
         setFilters(filters) {
           set((state) => {
-            const updatedFilters = mergeWith(state, filters, customizer);
+            const updatedFilters = filtersSchema.parse(mergeWith(state, filters, customizer));
             setCookie('filters', updatedFilters);
             return { ...updatedFilters };
           });
@@ -131,10 +131,10 @@ export const usePostFilters = () => {
 export const useImageFilters = () => {
   const shared = useSharedFilters('image');
   const sort = useFiltersContext((state) => state.image.sort);
-  const tags = useFiltersContext((state) => state.image.tags);
-  const excludedTags = useFiltersContext((state) => state.image.excludedTags);
+  // const tags = useFiltersContext((state) => state.image.tags);
+  // const excludedTags = useFiltersContext((state) => state.image.excludedTags);
   const generation = useFiltersContext((state) => state.image.generation);
-  return { ...shared, sort, tags, excludedTags, generation };
+  return { ...shared, sort, generation };
 };
 
 export const useQuestionFilters = () => {

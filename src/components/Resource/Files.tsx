@@ -9,9 +9,10 @@ import {
   Text,
   Tooltip,
   useMantineTheme,
+  Divider,
 } from '@mantine/core';
-import { Dropzone, FileWithPath } from '@mantine/dropzone';
-import { randomId, useViewportSize } from '@mantine/hooks';
+import { Dropzone } from '@mantine/dropzone';
+import { useViewportSize } from '@mantine/hooks';
 import { ModelType } from '@prisma/client';
 import {
   IconBan,
@@ -23,96 +24,36 @@ import {
   IconUpload,
   IconX,
 } from '@tabler/icons';
+import { isEqual, startCase } from 'lodash-es';
 import { MasonryScroller, useContainerPosition, usePositioner, useResizeObserver } from 'masonic';
-import { useEffect, useRef, useState } from 'react';
-import { z } from 'zod';
+import { useRef, useState, useEffect } from 'react';
 
 import { constants, ModelFileType } from '~/server/common/constants';
-import { UploadType } from '~/server/common/enums';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { useS3UploadStore } from '~/store/s3-upload.store';
-import { ModelById } from '~/types/router';
+import { ModelVersionById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
-import { getFileExtension } from '~/utils/string-helpers';
+import { getDisplayName, getFileExtension } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-
-type ZodErrorSchema = { _errors: string[] };
-type SchemaError = {
-  type?: ZodErrorSchema;
-  modelSize?: ZodErrorSchema;
-  floatingPoint?: ZodErrorSchema;
-};
-
-type DropzoneOptions = {
-  acceptedFileTypes: string[];
-  acceptedModelFiles: ModelFileType[];
-  maxFiles: number;
-};
-
-const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
-  Checkpoint: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml'],
-    acceptedModelFiles: ['Model', 'Config', 'VAE', 'Training Data'],
-    maxFiles: 11,
-  },
-  LORA: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
-    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
-    maxFiles: 3,
-  },
-  LoCon: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
-    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
-    maxFiles: 3,
-  },
-  TextualInversion: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
-    acceptedModelFiles: ['Model', 'Negative', 'Training Data'],
-    maxFiles: 3,
-  },
-  Hypernetwork: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
-    acceptedModelFiles: ['Model', 'Training Data'],
-    maxFiles: 2,
-  },
-  AestheticGradient: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
-    acceptedModelFiles: ['Model', 'Training Data'],
-    maxFiles: 2,
-  },
-  Controlnet: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin'],
-    acceptedModelFiles: ['Model'],
-    maxFiles: 2,
-  },
-  Poses: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
-  Other: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
-  Wildcards: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
-};
-
-const metadataSchema = z
-  .object({
-    versionId: z.number(),
-    type: z.enum(constants.modelFileTypes),
-    modelSize: z.enum(['Full', 'Pruned']).nullish(),
-    floatingPoint: z.enum(['fp16', 'fp32']).nullish(),
-  })
-  .refine((data) => (data.type === 'Model' ? !!data.modelSize : true), {
-    message: 'Model size is required for model files',
-    path: ['modelSize'],
-  })
-  .refine((data) => (data.type === 'Model' ? !!data.floatingPoint : true), {
-    message: 'Floating point is required for model files',
-    path: ['floatingPoint'],
-  })
-  .array();
+import {
+  FileFromContextProps,
+  FilesProvider,
+  useFilesContext,
+} from '~/components/Resource/FilesProvider';
 
 export function Files({ model, version }: Props) {
-  const theme = useMantineTheme();
-  const { items, upload, setItems } = useS3UploadStore();
+  return (
+    <FilesProvider model={model} version={version}>
+      <FilesComponent model={model} version={version} />
+    </FilesProvider>
+  );
+}
 
-  const versionFiles = items.filter((item) => item.meta?.versionId === version?.id);
+function FilesComponent({ model }: Props) {
+  const theme = useMantineTheme();
+
+  const { files, onDrop, startUpload, hasPending, fileExtensions, maxFiles } = useFilesContext();
 
   const masonryRef = useRef(null);
   const { width, height } = useViewportSize();
@@ -123,105 +64,13 @@ export function Files({ model, version }: Props) {
       maxColumnCount: 2,
       columnGutter: theme.spacing.md,
     },
-    [versionFiles.length]
+    [files.length]
   );
   const resizeObserver = useResizeObserver(positioner);
 
-  const [error, setError] = useState<SchemaError[] | null>(null);
-
-  const createFileMutation = trpc.modelFile.create.useMutation({
-    onSuccess(result) {
-      setItems((items) =>
-        items.map((item) => (item.id === result.id ? { ...item, id: result.id } : item))
-      );
-    },
-    onError(error) {
-      showErrorNotification({
-        title: 'Failed to create file',
-        reason: 'Could not upload file, please try again.',
-        error: new Error(error.message),
-      });
-    },
-  });
-  const handleStartUpload = async (files: TrackedFile[]) => {
-    const validation = metadataSchema.safeParse(versionFiles.map((item) => item.meta));
-
-    if (!validation.success) {
-      const errors = validation.error.format() as unknown as Array<{ [k: string]: ZodErrorSchema }>;
-      setError(errors);
-      return showErrorNotification({ error: validation.error });
-    }
-
-    await Promise.all(
-      files.map(({ file, meta }) => {
-        const type = meta?.type === 'Model' ? UploadType.Model : UploadType.Default;
-
-        return upload({ file, type, meta }, ({ meta, size, ...result }) => {
-          const { versionId, type } = meta as { versionId: number; type: ModelFileType };
-          if (versionId)
-            createFileMutation.mutate({
-              ...result,
-              sizeKB: size,
-              modelVersionId: versionId,
-              type,
-            });
-        });
-      })
-    );
-  };
-
-  const handleDrop = async (droppedFiles: FileWithPath[]) => {
-    setError(null);
-    setItems((current) => [
-      ...current,
-      ...droppedFiles.map((file) => ({
-        file,
-        name: file.name,
-        size: file.size ?? 0,
-        status: 'pending' as const,
-        uploaded: 0,
-        progress: 0,
-        speed: 0,
-        timeRemaining: 0,
-        abort: () => undefined,
-        uuid: randomId(),
-        meta: { versionId: version?.id },
-      })),
-    ]);
-  };
-
-  useEffect(() => {
-    if (version?.files && version.files.length > 0)
-      setItems(
-        () =>
-          version?.files.map(({ id, sizeKB, name, type }) => ({
-            id,
-            name,
-            size: sizeKB,
-            uuid: randomId(),
-            progress: 0,
-            uploaded: 0,
-            timeRemaining: 0,
-            speed: 0,
-            status: 'success' as const,
-            abort: () => undefined,
-            meta: { versionId: version?.id, type },
-            file: new File([], name),
-          })) ?? []
-      );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version?.files]);
-
-  const { acceptedModelFiles, acceptedFileTypes, maxFiles } =
-    dropzoneOptionsByModelType[model?.type ?? 'Checkpoint'];
-
   return (
     <Stack>
-      <Dropzone
-        accept={{ 'application/octet-stream': acceptedFileTypes }}
-        onDrop={handleDrop}
-        maxFiles={maxFiles}
-      >
+      <Dropzone accept={{ 'mime/type': fileExtensions }} onDrop={onDrop} maxFiles={maxFiles}>
         <Group position="center" spacing="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
           <Dropzone.Accept>
             <IconUpload
@@ -246,21 +95,13 @@ export function Files({ model, version }: Props) {
               Drop your files here or click to select
             </Text>
             <Text size="sm" color="dimmed" inline>
-              {`Attach up to ${maxFiles} files. Accepted file types: ${acceptedFileTypes.join(
-                ', '
-              )}`}
+              {`Attach up to ${maxFiles} files. Accepted file types: ${fileExtensions.join(', ')}`}
             </Text>
           </Stack>
         </Group>
       </Dropzone>
-      {versionFiles.length > 0 ? (
-        <Button
-          onClick={() =>
-            handleStartUpload(versionFiles.filter((item) => item.status === 'pending'))
-          }
-          size="lg"
-          fullWidth
-        >
+      {files.length > 0 ? (
+        <Button onClick={startUpload} size="lg" disabled={!hasPending} fullWidth>
           Start Upload
         </Button>
       ) : null}
@@ -270,74 +111,30 @@ export function Files({ model, version }: Props) {
         resizeObserver={resizeObserver}
         offset={offset}
         height={height}
-        items={versionFiles}
-        render={({ data, index }) => (
-          <FileCard
-            key={data.uuid}
-            file={data}
-            fileTypes={acceptedModelFiles}
-            modelId={model?.id}
-            error={error?.[index]}
-            onRetry={handleStartUpload}
-          />
-        )}
+        items={files}
+        render={FileCard}
       />
     </Stack>
   );
 }
 
 type Props = {
-  model?: ModelUpsertInput;
-  version?: ModelById['modelVersions'][number];
+  model?: Partial<ModelUpsertInput>;
+  version?: Partial<ModelVersionById>;
+  onStartUploadClick?: VoidFunction;
 };
 
-type FileStatus = 'success' | 'pending' | 'error' | 'aborted';
-const mapStatusLabel: Record<FileStatus, React.ReactNode> = {
-  pending: (
-    <>
-      <IconCloudUpload />
-      <Text size="sm">Pending upload</Text>
-    </>
-  ),
-  error: (
-    <>
-      <IconBan color="red" />
-      <Text size="sm">Failed to upload</Text>
-    </>
-  ),
-  aborted: (
-    <>
-      <IconBan color="red" />
-      <Text size="sm">Aborted upload</Text>
-    </>
-  ),
-  success: (
-    <>
-      <IconCircleCheck color="green" />
-      <Text size="sm">Success</Text>
-    </>
-  ),
-};
-
-function FileCard({ file, fileTypes, error, modelId, onRetry }: FileCardProps) {
-  const theme = useMantineTheme();
+function FileCard({ data: versionFile, index }: { data: FileFromContextProps; index: number }) {
+  const { removeFile, fileTypes, modelId } = useFilesContext();
   const queryUtils = trpc.useContext();
-  const clear = useS3UploadStore((state) => state.clear);
-  const abort = useS3UploadStore((state) => state.abort);
-  const updateMeta = useS3UploadStore((state) => state.updateMeta);
 
-  const { uuid, status, name, progress, timeRemaining, speed, meta } = file;
-  const { type, modelSize, floatingPoint } = meta as {
-    versionId: number;
-    type: ModelFileType;
-    modelSize?: 'Full' | 'Pruned';
-    floatingPoint?: 'fp16' | 'fp32';
-  };
   const failedUpload = status === 'error' || status === 'aborted';
 
   const deleteFileMutation = trpc.modelFile.delete.useMutation({
-    async onSuccess() {
+    async onSuccess(response, request) {
+      await queryUtils.modelVersion.getById.invalidate({ id: versionFile.versionId });
       if (modelId) await queryUtils.model.getById.invalidate({ id: modelId });
+      removeFile(versionFile.uuid);
     },
     onError() {
       showErrorNotification({
@@ -345,13 +142,236 @@ function FileCard({ file, fileTypes, error, modelId, onRetry }: FileCardProps) {
       });
     },
   });
-  const handleRemoveFile = async (file: TrackedFile) => {
-    if (file.id) await deleteFileMutation.mutateAsync({ id: file.id });
-    clear((item) => item.uuid === file.uuid);
+  const handleRemoveFile = async (uuid?: string) => {
+    if (versionFile.id) await deleteFileMutation.mutateAsync({ id: versionFile.id });
+    else if (uuid) removeFile(uuid);
+  };
+
+  return (
+    <Card sx={{ opacity: deleteFileMutation.isLoading ? 0.2 : undefined }} withBorder>
+      <Stack spacing={4} pb="xs">
+        <Group position="apart" spacing={4} noWrap>
+          <Text
+            lineClamp={1}
+            color={failedUpload ? 'red' : undefined}
+            sx={{ display: 'inline-block' }}
+          >
+            {versionFile.name}
+          </Text>
+          {!versionFile.isUploading && (
+            <Tooltip label="Remove file" position="left">
+              <ActionIcon
+                color="red"
+                onClick={() => handleRemoveFile(versionFile.uuid)}
+                loading={deleteFileMutation.isLoading}
+              >
+                <IconTrash />
+              </ActionIcon>
+            </Tooltip>
+          )}
+        </Group>
+        {versionFile.isUploading ? (
+          <>
+            <Stack spacing={0}>
+              <Text size="sm" weight="bold">
+                File Type
+              </Text>
+              <Text size="sm" color="dimmed">
+                {getDisplayName(
+                  versionFile.type === 'Model'
+                    ? versionFile.modelType ?? versionFile.type ?? 'undefined'
+                    : versionFile.type ?? 'undefined'
+                )}
+              </Text>
+            </Stack>
+            {versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint' ? (
+              <>
+                <Stack spacing={0}>
+                  <Text size="sm" weight="bold">
+                    Model size
+                  </Text>
+                  <Text size="sm" color="dimmed">
+                    {versionFile.size ?? 'undefined'}
+                  </Text>
+                </Stack>
+                <Stack spacing={0}>
+                  <Text size="sm" weight="bold">
+                    Floating point
+                  </Text>
+                  <Text size="sm" color="dimmed">
+                    {versionFile.fp ?? 'undefined'}
+                  </Text>
+                </Stack>
+              </>
+            ) : null}
+          </>
+        ) : (
+          <FileEditForm file={versionFile} fileTypes={fileTypes} index={index} />
+        )}
+      </Stack>
+      <Card.Section>
+        <TrackedFile uuid={versionFile.uuid} />
+      </Card.Section>
+    </Card>
+  );
+}
+
+function TrackedFile({ uuid: versionFileUuid }: { uuid: string }) {
+  const items = useS3UploadStore((state) => state.items);
+  const trackedFile = items.find((x) => x.meta?.uuid === versionFileUuid);
+
+  if (!trackedFile) return null;
+
+  return (
+    <>
+      <Divider />
+      <Group spacing="xs" py="md" px="sm" sx={{ width: '100%' }}>
+        <TrackedFileStatus trackedFile={trackedFile} versionFileUuid={versionFileUuid} />
+      </Group>
+    </>
+  );
+}
+
+function TrackedFileStatus({
+  trackedFile,
+  versionFileUuid,
+}: {
+  trackedFile: TrackedFile;
+  versionFileUuid: string;
+}) {
+  const theme = useMantineTheme();
+  const clear = useS3UploadStore((state) => state.clear);
+  const abort = useS3UploadStore((state) => state.abort);
+  const { retry, removeFile } = useFilesContext();
+
+  const { uuid, status, progress, timeRemaining, speed } = trackedFile;
+
+  const handleRemoveFile = () => {
+    clear((x) => x.uuid === trackedFile.uuid);
+    removeFile(versionFileUuid);
+  };
+
+  switch (status) {
+    case 'uploading':
+      return (
+        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
+          <IconCloudUpload color={theme.colors.blue[theme.fn.primaryShade()]} />
+          <Stack spacing={4} sx={{ flex: '1 !important' }}>
+            <Group spacing={4}>
+              <Progress
+                size="xl"
+                radius="xs"
+                value={progress}
+                label={`${Math.floor(progress)}%`}
+                color={progress < 100 ? 'blue' : 'green'}
+                striped
+                animate
+                sx={{ flex: 1 }}
+              />
+              <Tooltip label="Cancel upload" position="left">
+                <ActionIcon color="red" onClick={() => abort(uuid)}>
+                  <IconX />
+                </ActionIcon>
+              </Tooltip>
+            </Group>
+            <Group position="apart" noWrap>
+              <Text color="dimmed" size="xs">{`${formatBytes(speed)}/s`}</Text>
+              <Text color="dimmed" size="xs">{`${formatSeconds(timeRemaining)} remaining`}</Text>
+            </Group>
+          </Stack>
+        </Group>
+      );
+    case 'aborted':
+      return (
+        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
+          <Group spacing="xs">
+            <IconBan color="red" />
+            <Text size="sm">Aborted upload</Text>
+          </Group>
+          <Tooltip label="Remove file" position="left">
+            <ActionIcon color="red" onClick={handleRemoveFile}>
+              <IconTrash />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
+      );
+    case 'error':
+      return (
+        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
+          <Group spacing="xs">
+            <IconBan color="red" />
+            <Text size="sm">Failed to upload</Text>
+          </Group>
+          <Tooltip label="Retry upload" position="left">
+            <ActionIcon color="blue" onClick={() => retry(versionFileUuid)}>
+              <IconRefresh />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
+      );
+    case 'success':
+      return (
+        <>
+          <IconCircleCheck color="green" />
+          <Text size="sm">Upload completed</Text>
+        </>
+      );
+    case 'pending':
+      return (
+        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
+          <Group spacing="xs">
+            <IconCloudUpload />
+            <Text size="sm">Pending upload</Text>
+          </Group>
+          <Tooltip label="Remove file" position="left">
+            <ActionIcon color="red" onClick={handleRemoveFile}>
+              <IconTrash />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
+      );
+    default:
+      return null;
+  }
+}
+
+function FileEditForm({
+  file: versionFile,
+  index,
+  fileTypes,
+}: {
+  file: FileFromContextProps;
+  index: number;
+  fileTypes: ModelFileType[];
+}) {
+  const [initialFile, setInitialFile] = useState({ ...versionFile });
+  const { errors, updateFile, validationCheck } = useFilesContext();
+  const error = errors?.[index];
+
+  const { mutate, isLoading } = trpc.modelFile.update.useMutation({
+    onSuccess: () => {
+      setInitialFile(versionFile);
+    },
+  });
+
+  const handleSave = () => {
+    const valid = validationCheck();
+    if (valid) {
+      mutate({
+        id: versionFile.id,
+        type: versionFile.type ?? undefined,
+        metadata: {
+          fp: versionFile.fp ?? undefined,
+          size: versionFile.size ?? undefined,
+        },
+      });
+    }
   };
 
   const filterByFileExtension = (value: ModelFileType) => {
-    const extension = getFileExtension(file.name);
+    // const file = versionFile.file;
+    // if (!file) return false;
+    const extension = getFileExtension(versionFile.name);
 
     switch (extension) {
       case 'ckpt':
@@ -371,161 +391,75 @@ function FileCard({ file, fileTypes, error, modelId, onRetry }: FileCardProps) {
     }
   };
 
-  return (
-    <Card sx={{ opacity: deleteFileMutation.isLoading ? 0.2 : undefined }} withBorder>
-      <Stack spacing={4} pb="xs">
-        <Group position="apart" spacing={0} noWrap>
-          <Text
-            lineClamp={1}
-            color={failedUpload ? 'red' : undefined}
-            sx={{ display: 'inline-block' }}
-          >
-            {name}
-          </Text>
-          {status === 'uploading' && (
-            <Tooltip label="Cancel upload" position="left">
-              <ActionIcon color="red" onClick={() => abort(uuid)}>
-                <IconX />
-              </ActionIcon>
-            </Tooltip>
-          )}
-          {(status === 'success' || status === 'pending') && (
-            <Tooltip label="Remove file" position="left">
-              <ActionIcon
-                color="red"
-                onClick={() => handleRemoveFile(file)}
-                loading={deleteFileMutation.isLoading}
-              >
-                <IconTrash />
-              </ActionIcon>
-            </Tooltip>
-          )}
-          {failedUpload && (
-            <Tooltip label="Retry upload" position="left">
-              <ActionIcon color="blue" onClick={() => onRetry([file])}>
-                <IconRefresh />
-              </ActionIcon>
-            </Tooltip>
-          )}
-        </Group>
-        {['success', 'uploading'].includes(status) ? (
-          <>
-            <Stack spacing={0}>
-              <Text size="sm" weight="bold">
-                File Type
-              </Text>
-              <Text size="sm" color="dimmed">
-                {type ?? 'undefined'}
-              </Text>
-            </Stack>
-            {type === 'Model' ? (
-              <>
-                <Stack spacing={0}>
-                  <Text size="sm" weight="bold">
-                    Model size
-                  </Text>
-                  <Text size="sm" color="dimmed">
-                    {modelSize ?? 'undefined'}
-                  </Text>
-                </Stack>
-                <Stack spacing={0}>
-                  <Text size="sm" weight="bold">
-                    Floating point
-                  </Text>
-                  <Text size="sm" color="dimmed">
-                    {floatingPoint ?? 'undefined'}
-                  </Text>
-                </Stack>
-              </>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <Select
-              label="File Type"
-              placeholder="Select a type"
-              error={error?.type?._errors[0]}
-              data={fileTypes.filter(filterByFileExtension)}
-              value={type ?? null}
-              onChange={(value: ModelFileType | null) => {
-                updateMeta(file.uuid, (meta) => ({
-                  ...meta,
-                  type: value,
-                  modelSize: null,
-                  floatingPoint: null,
-                }));
-              }}
-              withAsterisk
-              withinPortal
-            />
-            {type === 'Model' && (
-              <>
-                <Select
-                  label="Model Size"
-                  placeholder="Pruned or Full"
-                  data={['Full', 'Pruned']}
-                  error={error?.modelSize?._errors[0]}
-                  value={modelSize ?? null}
-                  onChange={(value: 'Full' | 'Pruned' | null) => {
-                    updateMeta(file.uuid, (meta) => ({ ...meta, modelSize: value }));
-                  }}
-                  withAsterisk
-                  withinPortal
-                />
+  const handleReset = () => {
+    updateFile(versionFile.uuid, {
+      type: initialFile.type,
+      size: initialFile.size,
+      fp: initialFile.fp,
+    });
+  };
 
-                <Select
-                  label="Floating Point"
-                  placeholder="fp16 or fp32"
-                  data={['fp16', 'fp32']}
-                  error={error?.floatingPoint?._errors[0]}
-                  value={floatingPoint ?? null}
-                  onChange={(value: 'fp16' | 'fp32' | null) => {
-                    updateMeta(file.uuid, (meta) => ({ ...meta, floatingPoint: value }));
-                  }}
-                  withAsterisk
-                  withinPortal
-                />
-              </>
-            )}
-          </>
-        )}
-      </Stack>
-      <Card.Section sx={{ display: 'flex' }} inheritPadding withBorder>
-        <Group spacing="xs" py="md" sx={{ flex: 1 }}>
-          {status === 'uploading' ? (
-            <>
-              <IconCloudUpload color={theme.colors.blue[theme.fn.primaryShade()]} />
-              <Stack spacing={4} sx={{ flex: 1 }}>
-                <Progress
-                  size="xl"
-                  radius="xs"
-                  value={progress}
-                  label={`${Math.floor(progress)}%`}
-                  color={progress < 100 ? 'blue' : 'green'}
-                  striped
-                  animate
-                />
-                <Group position="apart" noWrap>
-                  <Text color="dimmed" size="xs">{`${formatBytes(speed)}/s`}</Text>
-                  <Text color="dimmed" size="xs">{`${formatSeconds(
-                    timeRemaining
-                  )} remaining`}</Text>
-                </Group>
-              </Stack>
-            </>
-          ) : (
-            mapStatusLabel[status]
-          )}
+  const canManualSave = !!versionFile.id && !isEqual(versionFile, initialFile);
+
+  return (
+    <Stack>
+      <Select
+        label="File Type"
+        placeholder="Select a type"
+        error={error?.type?._errors[0]}
+        data={fileTypes.filter(filterByFileExtension).map((x) => ({
+          label: getDisplayName(x === 'Model' ? versionFile.modelType ?? x : x),
+          value: x,
+        }))}
+        value={versionFile.type ?? null}
+        onChange={(value: ModelFileType | null) =>
+          updateFile(versionFile.uuid, { type: value, size: null, fp: null })
+        }
+        withAsterisk
+        withinPortal
+      />
+      {versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint' && (
+        <>
+          <Select
+            label="Model Size"
+            placeholder="Pruned or Full"
+            data={constants.modelFileSizes.map((size) => ({
+              label: startCase(size),
+              value: size,
+            }))}
+            error={error?.size?._errors[0]}
+            value={versionFile.size ?? null}
+            onChange={(value: 'full' | 'pruned' | null) => {
+              updateFile(versionFile.uuid, { size: value });
+            }}
+            withAsterisk
+            withinPortal
+          />
+
+          <Select
+            label="Floating Point"
+            placeholder="fp16 or fp32"
+            data={constants.modelFileFp}
+            error={error?.fp?._errors[0]}
+            value={versionFile.fp ?? null}
+            onChange={(value: 'fp16' | 'fp32' | null) => {
+              updateFile(versionFile.uuid, { fp: value });
+            }}
+            withAsterisk
+            withinPortal
+          />
+        </>
+      )}
+      {canManualSave && (
+        <Group grow>
+          <Button onClick={handleReset} variant="default" disabled={isLoading}>
+            Reset
+          </Button>
+          <Button loading={isLoading} variant="filled" onClick={handleSave}>
+            Save
+          </Button>
         </Group>
-      </Card.Section>
-    </Card>
+      )}
+    </Stack>
   );
 }
-
-type FileCardProps = {
-  file: TrackedFile;
-  fileTypes: ModelFileType[];
-  onRetry: (files: TrackedFile[]) => void;
-  modelId?: number;
-  error?: SchemaError;
-};

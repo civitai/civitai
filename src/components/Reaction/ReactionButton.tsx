@@ -1,8 +1,9 @@
 import { ReviewReactions } from '@prisma/client';
-import { cloneElement, useMemo, useState } from 'react';
+import { cloneElement, useCallback, useMemo, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
+import { devtools } from 'zustand/middleware';
 import { trpc } from '~/utils/trpc';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -12,7 +13,7 @@ import { immer } from 'zustand/middleware/immer';
     - When a user adds a reaction, we're not going to invalidate the react-query cache of parent data. This means that, if a user were to navigate to another page and then come back, the reaction data from the react-query cache would not be accurate.
 */
 type ReactionStore = {
-  reactions: Record<string, Partial<Record<ReviewReactions, boolean>>>;
+  reactions: Record<string, Partial<Record<string, boolean>>>;
   toggleReaction: ({
     entityType,
     entityId,
@@ -25,17 +26,27 @@ const getReactionKey = ({ entityType, entityId }: Omit<ToggleReactionInput, 'rea
   `${entityType}_${entityId}`;
 
 const useStore = create<ReactionStore>()(
-  immer((set) => ({
-    reactions: {},
-    toggleReaction: ({ entityType, entityId, reaction, value }) => {
-      const key = getReactionKey({ entityType, entityId });
-      set((state) => {
-        if (!state.reactions[key]) state.reactions[key] = { [reaction]: value };
-        else state.reactions[key][reaction] = value;
-      });
-    },
-  }))
+  devtools(
+    immer((set) => ({
+      reactions: {},
+      toggleReaction: ({ entityType, entityId, reaction, value }) => {
+        const key = getReactionKey({ entityType, entityId });
+        set((state) => {
+          if (!state.reactions[key]) state.reactions[key] = { [reaction]: value };
+          else state.reactions[key][reaction] = value;
+        });
+      },
+    }))
+  )
 );
+
+export const useReactionsStore = ({
+  entityType,
+  entityId,
+}: Omit<ToggleReactionInput, 'reaction'>) => {
+  const key = getReactionKey({ entityType, entityId });
+  return useStore(useCallback((state) => state.reactions[key], [key]));
+};
 
 export type ReactionButtonProps = ToggleReactionInput & {
   userReaction?: { userId: number; reaction: ReviewReactions };

@@ -1,7 +1,9 @@
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { getReactionsSelect } from './../selectors/reaction.selector';
 import {
   GetResourceReviewsInfiniteInput,
   GetRatingTotalsInput,
+  UpdateResourceReviewInput,
 } from './../schema/resourceReview.schema';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
@@ -9,6 +11,30 @@ import { dbWrite, dbRead } from '~/server/db/client';
 import { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
 import { Prisma } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+
+export type ResourceReviewDetailModel = AsyncReturnType<typeof getResourceReview>;
+export const getResourceReview = async ({ id }: GetByIdInput) => {
+  const result = await dbRead.resourceReview.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      thread: {
+        select: {
+          _count: { select: { comments: true } },
+        },
+      },
+      model: { select: { name: true, id: true, userId: true } },
+      modelVersion: { select: { name: true, id: true } },
+      details: true,
+      createdAt: true,
+      rating: true,
+      user: { select: userWithCosmeticsSelect },
+      helper: { select: { imageCount: true } },
+    },
+  });
+  if (!result) throw throwNotFoundError();
+  return result;
+};
 
 export const getResourceReviews = async ({ resourceIds }: GetResourceReviewsInput) => {
   return await dbWrite.resourceReview.findMany({
@@ -55,7 +81,6 @@ export const getResourceReviewsInfinite = async ({
       createdAt: true,
       rating: true,
       user: { select: userWithCosmeticsSelect },
-      reactions: { select: getReactionsSelect },
       helper: { select: { imageCount: true } },
     },
   });
@@ -73,20 +98,20 @@ export const getResourceReviewsInfinite = async ({
 };
 
 export type RatingTotalsModel = { '1': number; '2': number; '3': number; '4': number; '5': number };
-export const getRatingTotals = async ({ modelId }: GetRatingTotalsInput) => {
+export const getRatingTotals = async ({ modelVersionId }: GetRatingTotalsInput) => {
   const result = await dbRead.$queryRaw<{ rating: number; count: number }[]>`
     SELECT
       rr.rating,
-      COUNT(*) count
+      COUNT(*)::int count
     FROM "ResourceReview" rr
-    WHERE rr."modelId" = ${modelId}
+    WHERE rr."modelVersionId" = ${modelVersionId}
     GROUP BY rr.rating
   `;
 
   const transformed = result.reduce(
     (acc, { rating, count }) => {
       const key = rating.toString() as keyof RatingTotalsModel;
-      if (acc[key]) acc[key] = count;
+      if (acc[key] !== undefined) acc[key] = count;
       return acc;
     },
     { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 }
@@ -94,22 +119,28 @@ export const getRatingTotals = async ({ modelId }: GetRatingTotalsInput) => {
   return transformed;
 };
 
-export const upsertResourceReview = async (
-  data: UpsertResourceReviewInput & { userId: number }
-) => {
+export const upsertResourceReview = (data: UpsertResourceReviewInput & { userId: number }) => {
   if (!data.id)
-    return await dbWrite.resourceReview.create({
+    return dbWrite.resourceReview.create({
       data: { ...data, thread: { create: {} } },
       select: { id: true },
     });
   else
-    return await dbWrite.resourceReview.update({
+    return dbWrite.resourceReview.update({
       where: { id: data.id },
       data,
       select: { id: true },
     });
 };
 
-export const deleteResourceReview = async ({ id }: GetByIdInput) => {
-  return await dbWrite.resourceReview.delete({ where: { id } });
+export const deleteResourceReview = ({ id }: GetByIdInput) => {
+  return dbWrite.resourceReview.delete({ where: { id } });
+};
+
+export const updateResourceReview = ({ id, rating, details }: UpdateResourceReviewInput) => {
+  return dbWrite.resourceReview.update({
+    where: { id },
+    data: { rating, details },
+    select: { id: true },
+  });
 };

@@ -1,25 +1,19 @@
 import { modelHashSelect } from './../selectors/modelHash.selector';
-import {
-  ModelStatus,
-  ModelHashType,
-  Prisma,
-  UserActivityType,
-  ModelType,
-  ModelEngagementType,
-} from '@prisma/client';
+import { ModelStatus, ModelHashType, Prisma, UserActivityType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { dbWrite, dbRead } from '~/server/db/client';
 import { Context } from '~/server/createContext';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   DeleteModelSchema,
   GetAllModelsOutput,
+  GetDownloadSchema,
   ModelInput,
   ModelUpsertInput,
-  GetDownloadSchema,
+  PublishModelSchema,
+  ReorderModelVersionsSchema,
 } from '~/server/schema/model.schema';
-import { imageSelect } from '~/server/selectors/image.selector';
 import {
   getAllModelsWithVersionsSelect,
   modelWithDetailsSelect,
@@ -28,10 +22,12 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import {
   createModel,
   deleteModelById,
+  getDraftModelsByUserId,
   getModel,
   getModels,
   getModelVersionsMicro,
   permaDeleteModelById,
+  publishModelById,
   restoreModelById,
   updateModel,
   updateModelById,
@@ -44,28 +40,22 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { env } from '~/env/server.mjs';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
-import { constants, ModelFileType } from '~/server/common/constants';
-import { BrowsingMode, ModelSort } from '~/server/common/enums';
+import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { getGetUrl } from '~/utils/s3-utils';
-import {
-  CommandResourcesAdd,
-  ResourceType,
-  ResponseResourcesAdd,
-} from '~/components/CivitaiLink/shared-types';
+import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { getHiddenImagesForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
+import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
-  const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
-  const userId = ctx.user?.id;
+  // const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
+  // const userId = ctx.user?.id;
   try {
     const model = await getModel({
       input,
@@ -76,34 +66,27 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       throw throwNotFoundError(`No model with id ${input.id}`);
     }
 
-    const isOwnerOrModerator = model.user.id === ctx.user?.id || ctx.user?.isModerator;
-    const hiddenTags = await getHiddenTagsForUser({ userId });
-    const hiddenImages = await getHiddenImagesForUser({ userId });
+    // const isOwnerOrModerator = model.user.id === ctx.user?.id || ctx.user?.isModerator;
+    // const hiddenTags = await getHiddenTagsForUser({ userId });
+    // const hiddenImages = await getHiddenImagesForUser({ userId });
     const features = getFeatureFlags({ user: ctx.user });
 
     return {
       ...model,
       modelVersions: model.modelVersions.map((version) => {
-        let images = version.images.flatMap((x) => ({
-          ...x.image,
-          tags: x.image.tags.map(({ tag }) => tag),
-        }));
-        if (!isOwnerOrModerator) {
-          images = images.filter(
-            ({ id, tags, scannedAt, needsReview }) =>
-              !needsReview &&
-              scannedAt &&
-              !hiddenImages.includes(id) &&
-              !tags.some(
-                (tag) =>
-                  hiddenTags.moderatedTags.includes(tag.id) ||
-                  hiddenTags.hiddenTags.includes(tag.id)
-              )
-          );
+        // let images = version.images.flatMap((x) => ({
+        //   ...x.image,
+        //   tags: x.image.tags.map(({ tag }) => tag),
+        // }));
+        // if (!isOwnerOrModerator) {
+        //   images = images.filter(
+        //     ({ id, tags }) =>
+        //       !hiddenImages.includes(id) && !tags.some((tag) => hiddenTags.includes(tag.id))
+        //   );
 
-          if (prioritizeSafeImages)
-            images = images.sort((a, b) => (a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1));
-        }
+        //   if (prioritizeSafeImages)
+        //     images = images.sort((a, b) => (a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1));
+        // }
 
         let earlyAccessDeadline = features.earlyAccessModel
           ? getEarlyAccessDeadline({
@@ -138,10 +121,13 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         return {
           ...version,
           hashes,
-          images: images.map(({ tags, ...image }) => image),
+          // images,
           earlyAccessDeadline,
           canDownload,
-          files,
+          files: files as Array<
+            Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
+          >,
+          baseModel: version.baseModel as BaseModel,
         };
       }),
     };
@@ -211,6 +197,7 @@ export const getModelsInfiniteHandler = async ({
         excludedTagIds: input.excludedImageTagIds,
         excludedIds: await getHiddenImagesForUser({ userId: ctx.user?.id }),
         excludedUserIds: input.excludedUserIds,
+        currentUserId: ctx.user?.id,
       })
     : [];
 
@@ -285,7 +272,7 @@ export const getModelVersionsHandler = async ({ input }: { input: GetByIdInput }
     const modelVersions = await getModelVersionsMicro(input);
     return modelVersions;
   } catch (error) {
-    throwDbError(error);
+    throw throwDbError(error);
   }
 };
 
@@ -359,13 +346,33 @@ export const updateModelHandler = async ({
   }
 };
 
+export const publishModelHandler = async ({ input }: { input: PublishModelSchema }) => {
+  try {
+    const model = await publishModelById({ ...input });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    return model;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+};
+
 export const unpublishModelHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
-    const model = await updateModelById({ ...input, data: { status: ModelStatus.Unpublished } });
-
-    if (!model) {
-      throw throwNotFoundError(`No model with id ${input.id}`);
-    }
+    const model = await updateModelById({
+      ...input,
+      data: {
+        status: ModelStatus.Unpublished,
+        modelVersions: {
+          updateMany: {
+            where: { status: ModelStatus.Published },
+            data: { status: ModelStatus.Draft },
+          },
+        },
+      },
+    });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     return model;
   } catch (error) {
@@ -459,11 +466,11 @@ export const getDownloadCommandHandler = async ({
   try {
     const fileWhere: Prisma.ModelFileWhereInput = {};
     if (type) fileWhere.type = type;
-    if (format) fileWhere.format = format;
+    if (format) fileWhere.metadata = { path: ['format'], equals: format };
 
     const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
 
-    const modelVersion = await dbWrite.modelVersion.findFirst({
+    const modelVersion = await dbRead.modelVersion.findFirst({
       where: { modelId, id: modelVersionId },
       select: {
         id: true,
@@ -488,7 +495,7 @@ export const getDownloadCommandHandler = async ({
             url: true,
             name: true,
             type: true,
-            format: true,
+            metadata: true,
             hashes: { select: { hash: true }, where: { type: 'SHA256' } },
           },
         },
@@ -498,13 +505,15 @@ export const getDownloadCommandHandler = async ({
 
     if (!modelVersion) throw throwNotFoundError();
     const { model, files } = modelVersion;
+    const castedFiles = files as Array<
+      Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
+    >;
 
     const file =
       type != null || format != null
-        ? files[0]
-        : getPrimaryFile(files, {
-            type: ctx.user?.preferredPrunedModel ? 'Pruned Model' : undefined,
-            format: ctx.user?.preferredModelFormat,
+        ? castedFiles[0]
+        : getPrimaryFile(castedFiles, {
+            metadata: ctx.user?.filePreferences,
           });
     if (!file) throw throwNotFoundError();
 
@@ -588,7 +597,8 @@ export const getModelDetailsForReviewHandler = async ({
     if (!model) throw throwNotFoundError();
     return model;
   } catch (error) {
-    throw throwDbError(error);
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };
 
@@ -608,6 +618,67 @@ export const restoreModelHandler = async ({
     return model;
   } catch (error) {
     if (error instanceof TRPCError) error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getMyDraftModelsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetAllSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const results = await getDraftModelsByUserId({
+      ...input,
+      userId,
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        createdAt: true,
+        updatedAt: true,
+        modelVersions: {
+          select: {
+            _count: {
+              select: { files: true, posts: { where: { userId, publishedAt: { not: null } } } },
+            },
+          },
+        },
+        _count: { select: { modelVersions: true } },
+      },
+    });
+
+    return results;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const reorderModelVersionsHandler = async ({
+  input,
+}: {
+  input: ReorderModelVersionsSchema;
+}) => {
+  try {
+    const model = await updateModelById({
+      id: input.id,
+      data: {
+        modelVersions: {
+          update: input.modelVersions.map((modelVersion, index) => ({
+            where: { id: modelVersion.id },
+            data: { index },
+          })),
+        },
+      },
+    });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    return model;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };

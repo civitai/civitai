@@ -29,7 +29,7 @@ type ImagePreviewProps = {
   nsfw?: boolean;
   aspectRatio?: number;
   // lightboxImages?: ImageModel[];
-  image: Omit<ImageModel, 'tags' | 'scannedAt' | 'userId'>;
+  image: Omit<ImageModel, 'tags' | 'scannedAt' | 'userId' | 'postId'>;
   edgeImageProps?: Omit<EdgeImageProps, 'src'>;
   withMeta?: boolean;
   onClick?: React.MouseEventHandler<HTMLImageElement>;
@@ -155,7 +155,7 @@ export function ImagePreview({
     maxHeight: '100%',
     maxWidth: '100%',
   };
-  if (onClick) edgeImageStyle.cursor = 'pointer';
+  // if (onClick) edgeImageStyle.cursor = 'pointer'; // !important - this line was causing hydration errors
   if (style?.height || style?.maxHeight) edgeImageStyle.maxHeight = '100%';
   const Image = nsfw ? (
     <Center style={{ width: cw, height: ch, maxWidth: '100%' }}>

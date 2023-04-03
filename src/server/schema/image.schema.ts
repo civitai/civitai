@@ -83,10 +83,10 @@ export const imageSchema = z.object({
   analysis: imageAnalysisSchema.optional(),
   // tags: z.array(tagSchema).optional(),
   needsReview: z.boolean().optional(),
-  postId: z.number().optional(),
-  resources: z.array(imageResourceUpsertSchema).optional(),
   mimeType: z.string().optional(),
   sizeKB: z.number().optional(),
+  postId: z.number().optional(),
+  resources: z.array(imageResourceUpsertSchema).optional(),
 });
 
 export type ImageUploadProps = z.infer<typeof imageSchema>;
@@ -195,6 +195,7 @@ export const getInfiniteImagesSchema = z.object({
   tags: z.array(z.number()).optional(),
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
   withTags: z.boolean().optional(),
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
 });
 
 export type GetImageInput = z.infer<typeof getImageSchema>;

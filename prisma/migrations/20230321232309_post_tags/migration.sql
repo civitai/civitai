@@ -29,10 +29,10 @@ ALTER TABLE "TagsOnPostVote" ADD CONSTRAINT "TagsOnPostVote_tagId_fkey" FOREIGN 
 -- AddForeignKey
 ALTER TABLE "TagsOnPostVote" ADD CONSTRAINT "TagsOnPostVote_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
-CREATE VIEW "PostImageTag" AS
+CREATE OR REPLACE VIEW "PostImageTag" AS
 SELECT DISTINCT
-  i."postId" post_id,
-  toi."tagId" tag_id
+  i."postId" "postId",
+  toi."tagId" "tagId"
 FROM "TagsOnImage" toi
 JOIN "Image" i ON i.id = toi."imageId";
 

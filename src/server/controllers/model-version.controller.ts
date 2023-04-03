@@ -1,13 +1,20 @@
+import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { BaseModel } from '~/server/common/constants';
 
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
+import {
+  GetModelVersionSchema,
+  ModelVersionUpsertInput,
+} from '~/server/schema/model-version.schema';
 import {
   toggleNotifyModelVersion,
   getModelVersionRunStrategies,
   getVersionById,
   upsertModelVersion,
+  deleteVersionById,
+  updateModelVersionById,
 } from '~/server/services/model-version.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
@@ -19,25 +26,66 @@ export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: 
   }
 };
 
-export const getModelVersionHandler = async ({ input }: { input: GetByIdInput }) => {
+export const getModelVersionHandler = async ({ input }: { input: GetModelVersionSchema }) => {
+  const { id, withFiles } = input;
+
   try {
     const version = await getVersionById({
-      ...input,
+      id,
       select: {
         id: true,
         name: true,
+        description: true,
+        baseModel: true,
+        earlyAccessTimeFrame: true,
+        trainedWords: true,
+        epochs: true,
+        steps: true,
         model: {
           select: {
             id: true,
             name: true,
+            type: true,
+            status: true,
+            user: { select: { id: true } },
           },
         },
+        files: withFiles
+          ? {
+              select: {
+                name: true,
+                id: true,
+                sizeKB: true,
+                type: true,
+                metadata: true,
+                pickleScanResult: true,
+                pickleScanMessage: true,
+                virusScanResult: true,
+                scannedAt: true,
+                hashes: {
+                  select: {
+                    type: true,
+                    hash: true,
+                  },
+                },
+              },
+            }
+          : false,
+        posts: withFiles ? { select: { id: true } } : false,
       },
     });
-    if (!version) throw throwNotFoundError(`Model version could not be found`);
-    return version;
+    if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
+
+    return {
+      ...version,
+      baseModel: version.baseModel as BaseModel,
+      files: version.files as Array<
+        Omit<(typeof version.files)[number], 'metadata'> & { metadata: FileMetadata }
+      >,
+    };
   } catch (e) {
-    throw throwDbError(e);
+    if (e instanceof TRPCError) throw e;
+    else throw throwDbError(e);
   }
 };
 
@@ -60,13 +108,7 @@ export const toggleNotifyEarlyAccessHandler = async ({
   }
 };
 
-export const upsertModelVersionHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ModelVersionUpsertInput;
-  ctx: DeepNonNullable<Context>;
-}) => {
+export const upsertModelVersionHandler = async ({ input }: { input: ModelVersionUpsertInput }) => {
   try {
     const version = await upsertModelVersion({ ...input });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
@@ -75,5 +117,35 @@ export const upsertModelVersionHandler = async ({
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
+  }
+};
+
+export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const version = await deleteVersionById(input);
+    if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
+
+    return version;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const publishModelVersionHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const version = await updateModelVersionById({
+      ...input,
+      data: {
+        status: ModelStatus.Published,
+        posts: { updateMany: { where: { publishedAt: null }, data: { publishedAt: new Date() } } },
+      },
+    });
+    if (!version) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    return version;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
   }
 };

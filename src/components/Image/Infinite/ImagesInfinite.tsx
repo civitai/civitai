@@ -1,11 +1,14 @@
+import { Paper, Stack, Text, LoadingOverlay } from '@mantine/core';
+import { createContext, useContext, useMemo } from 'react';
+
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { trpc } from '~/utils/trpc';
-import { createContext, useContext, useMemo } from 'react';
 import { useImageFilters } from '~/providers/FiltersProvider';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
-import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
-import { ImageSort } from '~/server/common/enums';
+import { BrowsingMode } from '~/server/common/enums';
+import { useRouter } from 'next/router';
+import { useQueryImages, parseImagesQuery } from '~/components/Image/image.utils';
 
 type ImagesInfiniteState = {
   modelId?: number;
@@ -13,7 +16,9 @@ type ImagesInfiniteState = {
   postId?: number;
   username?: string;
   reviewId?: number;
-  withTags?: boolean;
+
+  prioritizedUserIds?: number[];
+  browsingMode?: BrowsingMode;
 };
 const ImagesInfiniteContext = createContext<ImagesInfiniteState | null>(null);
 export const useImagesInfiniteContext = () => {
@@ -22,37 +27,28 @@ export const useImagesInfiniteContext = () => {
   return context;
 };
 
-type ImagesInfiniteProps = ImagesInfiniteState & { columnWidth?: number };
+type ImagesInfiniteProps = {
+  columnWidth?: number;
+  withTags?: boolean;
+  filters?: ImagesInfiniteState;
+};
 
 export default function ImagesInfinite({
   columnWidth = 300,
-  modelId,
-  modelVersionId,
-  postId,
-  username,
-  reviewId,
   withTags,
+  filters: filterOverrides = {},
 }: ImagesInfiniteProps) {
+  const router = useRouter();
   const globalFilters = useImageFilters();
-  const filters = useMemo(() => {
-    const baseFilters = { postId, modelId, modelVersionId, username, withTags };
-    return removeEmpty(
-      !postId && !modelVersionId && !reviewId ? { ...baseFilters, ...globalFilters } : baseFilters
-    );
-  }, [globalFilters, postId, modelId, modelVersionId, username, reviewId, withTags]);
+  const parsedParams = parseImagesQuery(router.query);
+  const baseFilters = { ...parsedParams, ...filterOverrides };
+  const filters = removeEmpty({ ...baseFilters, ...globalFilters, withTags });
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
-    trpc.image.getInfinite.useInfiniteQuery(filters, {
-      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
-      trpc: { context: { skipBatch: true } },
-      keepPreviousData: true,
-    });
-
-  const images = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
+  const { images, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
+    useQueryImages(filters, { keepPreviousData: true });
 
   return (
-    <ImagesInfiniteContext.Provider value={{ modelId, modelVersionId, postId, username }}>
+    <ImagesInfiniteContext.Provider value={baseFilters}>
       <MasonryGrid2
         data={images}
         hasNextPage={hasNextPage}
@@ -63,6 +59,18 @@ export default function ImagesInfinite({
         render={ImagesCard}
         filters={filters}
       />
+      {isLoading && (
+        <Paper style={{ minHeight: 200, position: 'relative' }}>
+          <LoadingOverlay visible zIndex={10} />
+        </Paper>
+      )}
+      {!isLoading && !images.length && (
+        <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Stack>
+            <Text size="xl">There are no images to display</Text>
+          </Stack>
+        </Paper>
+      )}
     </ImagesInfiniteContext.Provider>
   );
 }

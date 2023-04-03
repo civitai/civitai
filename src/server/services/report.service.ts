@@ -9,7 +9,6 @@ import {
   ReportEntity,
 } from '~/server/schema/report.schema';
 import { addTagVotes } from '~/server/services/tag.service';
-import { userCache } from '~/server/services/user-cache.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
@@ -27,7 +26,7 @@ const validateReportCreation = async ({
   reason,
 }: {
   userId: number;
-  reportType: 'model' | 'review' | 'comment' | 'image' | 'commentV2';
+  reportType: ReportEntity;
   entityReportId: number;
   reason: ReportReason;
 }): Promise<Report | null> => {

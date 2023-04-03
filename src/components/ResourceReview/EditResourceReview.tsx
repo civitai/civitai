@@ -75,7 +75,7 @@ export function EditResourceReview({
       <Stack spacing="xs">
         {modelVersionId ? (
           <Stack spacing={4}>
-            <Group align="center" position="apart" noWrap>
+            <Group align="center" position="apart">
               <Stack spacing={0}>
                 {modelName && <Text lineClamp={1}>{modelName}</Text>}
                 {modelVersionName && (
@@ -103,7 +103,7 @@ export function EditResourceReview({
             <Stack>
               {!editDetail ? (
                 <Text variant="link" onClick={toggleEditDetail} size="sm">
-                  <Group spacing={4}>
+                  <Group spacing={4} sx={{ cursor: 'pointer' }}>
                     <IconChevronDown size={16} />{' '}
                     <span>{!details ? 'Add' : 'Edit'} Review Comments</span>
                   </Group>

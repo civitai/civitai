@@ -1,5 +1,5 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { getDisplayName } from '~/utils/string-helpers';
+import { getDisplayName, slugit } from '~/utils/string-helpers';
 
 const modelDownloadMilestones = [5, 10, 20, 50, 100, 500] as const;
 const modelLikeMilestones = [100, 500, 1000, 10000, 50000] as const;
@@ -219,6 +219,35 @@ export const modelNotifications = createNotificationProcessor({
         'early-access-complete',
         details
       FROM early_access_complete;
+    `,
+  },
+  'model-old-draft': {
+    displayName: 'Old Model Draft Deletion Reminder',
+    toggleable: false,
+    prepareMessage: ({ details }) => ({
+      message: `Your ${details.modelName} model that is in draft mode will be deleted in 1 week.`,
+      url: `/models/${details.modelId}/${slugit(details.modelName)}`,
+    }),
+    prepareQuery: () => `
+      with to_add AS (
+        SELECT DISTINCT
+          m."userId",
+          jsonb_build_object(
+            'modelId', m.id,
+            'modelName', m.name,
+            'updatedAt', m."updatedAt"
+          ) details
+        FROM "Model" m
+        WHERE m.status IN ('Draft')
+        AND m."updatedAt" < now() - INTERVAL '23 days'
+      )
+      INSERT INTO "Notification"("id", "userId", "type", "details")
+      SELECT
+        REPLACE(gen_random_uuid()::text, '-', ''),
+        "userId",
+        'old-draft',
+        details
+      FROM to_add;
     `,
   },
 });

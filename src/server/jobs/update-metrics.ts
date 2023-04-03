@@ -17,7 +17,9 @@ export const updateMetricsJob = createJob(
     // Get the last time this ran from the KeyValue store
     // --------------------------------------
     const dates = await dbWrite.keyValue.findMany({
-      where: { key: { in: [METRIC_LAST_UPDATED_KEY, RANK_LAST_UPDATED_KEY, RANK_FAST_LAST_UPDATED_KEY] } },
+      where: {
+        key: { in: [METRIC_LAST_UPDATED_KEY, RANK_LAST_UPDATED_KEY, RANK_FAST_LAST_UPDATED_KEY] },
+      },
     });
     const lastUpdateDate = new Date(
       (dates.find((d) => d.key === METRIC_LAST_UPDATED_KEY)?.value as number) ?? 0
@@ -60,7 +62,7 @@ export const updateMetricsJob = createJob(
           SELECT
             r."modelId" AS model_id,
             r."modelVersionId" AS model_version_id
-          FROM "Review" r
+          FROM "ResourceReview" r
           WHERE (r."createdAt" > '${lastUpdate}' OR r."updatedAt" > '${lastUpdate}')
         ),
         -- Get all favorites that have been created since then
@@ -75,9 +77,20 @@ export const updateMetricsJob = createJob(
         recent_comments AS
         (
           SELECT
-            "modelId" AS model_id
-          FROM "Comment"
-          WHERE ("createdAt" > '${lastUpdate}')
+            t."modelId" AS model_id
+          FROM "CommentV2" c
+          JOIN "Thread" ct ON ct.id = c."threadId" AND ct."commentId" IS NOT NULL
+          JOIN "CommentV2" p ON p.id = ct."commentId"
+          JOIN "Thread" t ON t.id = p."threadId"
+          WHERE (c."createdAt" > '${lastUpdate}')
+
+          UNION ALL
+
+          SELECT
+            t."modelId" AS model_id
+          FROM "CommentV2" c
+          JOIN "Thread" t ON t.id = c."threadId" AND t."modelId" IS NOT NULL
+          WHERE (c."createdAt" > '${lastUpdate}')
         ),
         -- Get all affected models
         affected_models AS
@@ -96,7 +109,7 @@ export const updateMetricsJob = createJob(
             UNION
 
             SELECT DISTINCT
-                c.model_id
+                model_id
             FROM recent_comments c
 
             UNION
@@ -245,7 +258,7 @@ export const updateMetricsJob = createJob(
                 r."${tableId}" AS ${viewId},
                 MAX(r.rating) rating,
                 MAX(r."createdAt") AS created_at
-              FROM "Review" r
+              FROM "ResourceReview" r
               JOIN "Model" m ON m.id = r."modelId" AND m."userId" != r."userId"
               WHERE r.exclude = FALSE AND r."tosViolation" = FALSE
               GROUP BY r."userId", r."${tableId}"
@@ -266,15 +279,32 @@ export const updateMetricsJob = createJob(
           ) fs ON m.model_id = fs.model_id
           LEFT JOIN (
             SELECT
-              "modelId" AS model_id,
-              COUNT("modelId") AS comment_count,
-              SUM(CASE WHEN "createdAt" >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_comment_count,
-              SUM(CASE WHEN "createdAt" >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_comment_count,
-              SUM(CASE WHEN "createdAt" >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_comment_count,
-              SUM(CASE WHEN "createdAt" >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_comment_count
-            FROM "Comment"
-            WHERE "tosViolation" = FALSE
-            GROUP BY "modelId"
+              c."modelId" AS model_id,
+              COUNT(c.id) AS comment_count,
+              SUM(CASE WHEN c."createdAt" >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_comment_count,
+              SUM(CASE WHEN c."createdAt" >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_comment_count,
+              SUM(CASE WHEN c."createdAt" >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_comment_count,
+              SUM(CASE WHEN c."createdAt" >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_comment_count
+            FROM (
+              SELECT
+                t."modelId",
+                c.id,
+                c."createdAt"
+              FROM "CommentV2" c
+              JOIN "Thread" t ON t.id = c."threadId" AND t."modelId" IS NOT NULL
+              WHERE c."tosViolation" = FALSE
+              UNION
+              SELECT
+                t."modelId",
+                c.id,
+                c."createdAt"
+              FROM "CommentV2" p
+              JOIN "Thread" t ON t.id = p."threadId" AND t."modelId" IS NOT NULL
+              JOIN "Thread" ct ON ct."commentId" = p.id
+              JOIN "CommentV2" c ON c."threadId" = ct.id
+              WHERE c."tosViolation" = FALSE
+            ) c
+            GROUP BY c."modelId"
           ) cs ON m.model_id = cs.model_id
         ) m
         CROSS JOIN (
@@ -316,7 +346,7 @@ export const updateMetricsJob = createJob(
 
         SELECT
           "userId"
-        FROM "Review" r
+        FROM "ResourceReview" r
         WHERE (r."createdAt" > '${lastUpdate}')
 
         UNION
@@ -494,18 +524,18 @@ export const updateMetricsJob = createJob(
             SUM(IIF("createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_review_count,
             SUM(IIF("createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_review_count,
             SUM(IIF("createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_review_count
-          FROM "Review"
+          FROM "ResourceReview"
           GROUP BY "userId"
         ) r ON r.user_id = a.user_id
         LEFT JOIN (
           SELECT
-            ue."targetUserId"                                                                      AS user_id,
-            SUM(IIF(ue.type = 'Follow', 1, 0))                                                     AS follower_count,
+            ue."targetUserId" AS user_id,
+            SUM(IIF(ue.type = 'Follow', 1, 0)) AS follower_count,
             SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_follower_count,
             SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '30 days'), 1, 0))  AS month_follower_count,
             SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '7 days'), 1, 0))   AS week_follower_count,
             SUM(IIF(ue.type = 'Follow' AND ue."createdAt" >= (NOW() - interval '1 days'), 1, 0))   AS day_follower_count,
-            SUM(IIF(ue.type = 'Hide', 1, 0))                                                       AS hidden_count,
+            SUM(IIF(ue.type = 'Hide', 1, 0)) AS hidden_count,
             SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '365 days'), 1, 0))   AS year_hidden_count,
             SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '30 days'), 1, 0))    AS month_hidden_count,
             SUM(IIF(ue.type = 'Hide' AND ue."createdAt" >= (NOW() - interval '7 days'), 1, 0))     AS week_hidden_count,
@@ -1005,6 +1035,14 @@ export const updateMetricsJob = createJob(
           UNION
 
           SELECT
+            i."postId" AS id
+          FROM "ImageReaction" ir
+          JOIN "Image" i ON ir."imageId" = i.id
+          WHERE ir."createdAt" > '${lastUpdate}'
+
+          UNION
+
+          SELECT
             "id"
           FROM "MetricUpdateQueue"
           WHERE type = 'Post'
@@ -1070,31 +1108,31 @@ export const updateMetricsJob = createJob(
         (
           SELECT
             q.id,
-            COALESCE(r.heart_count, 0) AS heart_count,
-            COALESCE(r.year_heart_count, 0) AS year_heart_count,
-            COALESCE(r.month_heart_count, 0) AS month_heart_count,
-            COALESCE(r.week_heart_count, 0) AS week_heart_count,
-            COALESCE(r.day_heart_count, 0) AS day_heart_count,
-            COALESCE(r.laugh_count, 0) AS laugh_count,
-            COALESCE(r.year_laugh_count, 0) AS year_laugh_count,
-            COALESCE(r.month_laugh_count, 0) AS month_laugh_count,
-            COALESCE(r.week_laugh_count, 0) AS week_laugh_count,
-            COALESCE(r.day_laugh_count, 0) AS day_laugh_count,
-            COALESCE(r.cry_count, 0) AS cry_count,
-            COALESCE(r.year_cry_count, 0) AS year_cry_count,
-            COALESCE(r.month_cry_count, 0) AS month_cry_count,
-            COALESCE(r.week_cry_count, 0) AS week_cry_count,
-            COALESCE(r.day_cry_count, 0) AS day_cry_count,
-            COALESCE(r.dislike_count, 0) AS dislike_count,
-            COALESCE(r.year_dislike_count, 0) AS year_dislike_count,
-            COALESCE(r.month_dislike_count, 0) AS month_dislike_count,
-            COALESCE(r.week_dislike_count, 0) AS week_dislike_count,
-            COALESCE(r.day_dislike_count, 0) AS day_dislike_count,
-            COALESCE(r.like_count, 0) AS like_count,
-            COALESCE(r.year_like_count, 0) AS year_like_count,
-            COALESCE(r.month_like_count, 0) AS month_like_count,
-            COALESCE(r.week_like_count, 0) AS week_like_count,
-            COALESCE(r.day_like_count, 0) AS day_like_count,
+            COALESCE(r.heart_count,0) + COALESCE(ir.heart_count,0) AS heart_count,
+            COALESCE(r.year_heart_count,0) + COALESCE(ir.year_heart_count,0) AS year_heart_count,
+            COALESCE(r.month_heart_count,0) + COALESCE(ir.month_heart_count,0) AS month_heart_count,
+            COALESCE(r.week_heart_count,0) + COALESCE(ir.week_heart_count,0) AS week_heart_count,
+            COALESCE(r.day_heart_count,0) + COALESCE(ir.day_heart_count,0) AS day_heart_count,
+            COALESCE(r.laugh_count,0) + COALESCE(ir.laugh_count,0) AS laugh_count,
+            COALESCE(r.year_laugh_count,0) + COALESCE(ir.year_laugh_count,0) AS year_laugh_count,
+            COALESCE(r.month_laugh_count,0) + COALESCE(ir.month_laugh_count,0) AS month_laugh_count,
+            COALESCE(r.week_laugh_count,0) + COALESCE(ir.week_laugh_count,0) AS week_laugh_count,
+            COALESCE(r.day_laugh_count,0) + COALESCE(ir.day_laugh_count,0) AS day_laugh_count,
+            COALESCE(r.cry_count,0) + COALESCE(ir.cry_count,0) AS cry_count,
+            COALESCE(r.year_cry_count,0) + COALESCE(ir.year_cry_count,0) AS year_cry_count,
+            COALESCE(r.month_cry_count,0) + COALESCE(ir.month_cry_count,0) AS month_cry_count,
+            COALESCE(r.week_cry_count,0) + COALESCE(ir.week_cry_count,0) AS week_cry_count,
+            COALESCE(r.day_cry_count,0) + COALESCE(ir.day_cry_count,0) AS day_cry_count,
+            COALESCE(r.dislike_count,0) + COALESCE(ir.dislike_count,0) AS dislike_count,
+            COALESCE(r.year_dislike_count,0) + COALESCE(ir.year_dislike_count,0) AS year_dislike_count,
+            COALESCE(r.month_dislike_count,0) + COALESCE(ir.month_dislike_count,0) AS month_dislike_count,
+            COALESCE(r.week_dislike_count,0) + COALESCE(ir.week_dislike_count,0) AS week_dislike_count,
+            COALESCE(r.day_dislike_count,0) + COALESCE(ir.day_dislike_count,0) AS day_dislike_count,
+            COALESCE(r.like_count,0) + COALESCE(ir.like_count,0) AS like_count,
+            COALESCE(r.year_like_count,0) + COALESCE(ir.year_like_count,0) AS year_like_count,
+            COALESCE(r.month_like_count,0) + COALESCE(ir.month_like_count,0) AS month_like_count,
+            COALESCE(r.week_like_count,0) + COALESCE(ir.week_like_count,0) AS week_like_count,
+            COALESCE(r.day_like_count,0) + COALESCE(ir.day_like_count,0) AS day_like_count,
             COALESCE(c.comment_count, 0) AS comment_count,
             COALESCE(c.year_comment_count, 0) AS year_comment_count,
             COALESCE(c.month_comment_count, 0) AS month_comment_count,
@@ -1145,6 +1183,38 @@ export const updateMetricsJob = createJob(
             FROM "PostReaction" pr
             GROUP BY pr."postId"
           ) r ON q.id = r.id
+          LEFT JOIN (
+            SELECT
+              i."postId" AS id,
+              SUM(IIF(ir.reaction = 'Heart', 1, 0)) AS heart_count,
+              SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_heart_count,
+              SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_heart_count,
+              SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_heart_count,
+              SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_heart_count,
+              SUM(IIF(ir.reaction = 'Like', 1, 0)) AS like_count,
+              SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_like_count,
+              SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_like_count,
+              SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_like_count,
+              SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_like_count,
+              SUM(IIF(ir.reaction = 'Dislike', 1, 0)) AS dislike_count,
+              SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_dislike_count,
+              SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_dislike_count,
+              SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_dislike_count,
+              SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_dislike_count,
+              SUM(IIF(ir.reaction = 'Cry', 1, 0)) AS cry_count,
+              SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_cry_count,
+              SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_cry_count,
+              SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_cry_count,
+              SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_cry_count,
+              SUM(IIF(ir.reaction = 'Laugh', 1, 0)) AS laugh_count,
+              SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_laugh_count,
+              SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_laugh_count,
+              SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_laugh_count,
+              SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_laugh_count
+            FROM "ImageReaction" ir
+            JOIN "Image" i ON i.id = ir."imageId"
+            GROUP BY i."postId"
+          ) ir ON q.id = ir.id
         ) m
         CROSS JOIN (
           SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
@@ -1384,7 +1454,8 @@ export const updateMetricsJob = createJob(
 
     // Check if we need to update the fast ranks
     // --------------------------------------------
-    const shouldUpdateFastRanks = lastRankFastDate.getTime() + RANK_FAST_UPDATE_DELAY <= new Date().getTime();
+    const shouldUpdateFastRanks =
+      lastRankFastDate.getTime() + RANK_FAST_UPDATE_DELAY <= new Date().getTime();
     if (shouldUpdateFastRanks) {
       await refreshModelRank();
       await refreshVersionModelRank();

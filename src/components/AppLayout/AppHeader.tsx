@@ -40,8 +40,8 @@ import {
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { useMemo, useState } from 'react';
+import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
 
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -207,7 +207,7 @@ export function AppHeader() {
       },
       {
         href: `/user/${currentUser?.username}/posts`,
-        visible: !!currentUser && features.posts,
+        visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
             <IconAlbum stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />

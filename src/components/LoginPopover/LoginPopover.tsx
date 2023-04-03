@@ -1,4 +1,4 @@
-import { Popover, Stack, Group, ThemeIcon, Button, Text } from '@mantine/core';
+import { Popover, Stack, Group, ThemeIcon, Button, Text, PopoverProps } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons';
 import { useRouter } from 'next/router';
@@ -26,11 +26,12 @@ export function LoginPopover({
   children,
   message,
   dependency = true,
+  ...props
 }: {
   children: React.ReactElement;
   message?: React.ReactNode;
   dependency?: boolean;
-}) {
+} & PopoverProps) {
   const [uuid] = useState(uuidv4());
   const user = useCurrentUser();
   const isAuthenticated = !!user;
@@ -55,11 +56,12 @@ export function LoginPopover({
         withArrow
         closeOnClickOutside
         withinPortal
+        {...props}
       >
         <Popover.Target>{cloneElement(children, { onClick: handleClick })}</Popover.Target>
         <Popover.Dropdown>
           <Stack spacing="xs">
-            <Group>
+            <Group noWrap>
               <ThemeIcon color="red" size="xl" variant="outline">
                 <IconLock />
               </ThemeIcon>
@@ -83,7 +85,7 @@ export function LoginPopover({
       e.stopPropagation();
       e.preventDefault();
       e.nativeEvent.stopImmediatePropagation();
-      children.props.onClick?.();
+      children.props.onClick?.(e);
     },
   });
 }

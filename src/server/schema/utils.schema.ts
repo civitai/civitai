@@ -1,12 +1,11 @@
-import sanitize from 'sanitize-html';
 import { z } from 'zod';
+import { sanitizeHtml, santizeHtmlOptions } from '~/utils/html-helpers';
 
-import { sanitizeHtml } from '~/utils/html-helpers';
-
-export const getSanitizedStringSchema = (options?: sanitize.IOptions) =>
+export const getSanitizedStringSchema = (options?: santizeHtmlOptions) =>
   z.preprocess((val) => {
     if (!val) return null;
 
     const str = String(val);
-    return sanitizeHtml(str, options);
+    const result = sanitizeHtml(str, options);
+    return result;
   }, z.string());

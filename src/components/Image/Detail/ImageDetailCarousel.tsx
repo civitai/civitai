@@ -108,7 +108,9 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
           );
         }}
       />
-      {images.length <= maxIndicators && <div className={classes.indicators}>{indicators}</div>}
+      {images.length <= maxIndicators && images.length > 1 && (
+        <div className={classes.indicators}>{indicators}</div>
+      )}
     </div>
   );
 }

@@ -36,13 +36,16 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
 export function prepareModelVersionResponse(modelVersion: ModelVersionApiReturn, baseUrl: URL) {
   const { images, files, model, ...version } = modelVersion;
-  const primaryFile = getPrimaryFile(files);
+  const castedFiles = files as Array<
+    Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
+  >;
+  const primaryFile = getPrimaryFile(castedFiles);
   if (!primaryFile) return null;
 
   return {
     ...version,
     model,
-    files: files.map(({ hashes, ...file }) => ({
+    files: castedFiles.map(({ hashes, ...file }) => ({
       ...file,
       hashes: hashesAsObject(hashes),
       name: getDownloadFilename({ model, modelVersion: version, file }),
@@ -50,7 +53,7 @@ export function prepareModelVersionResponse(modelVersion: ModelVersionApiReturn,
       downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
         versionId: version.id,
         type: file.type,
-        format: file.format,
+        format: file.metadata.format,
         primary: primaryFile.id === file.id,
       })}`,
     })),

@@ -3,22 +3,31 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 export const reviewNotifications = createNotificationProcessor({
   'new-review': {
     displayName: 'New reviews',
-    prepareMessage: ({ details }) => ({
-      message: `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`,
-      url: `/models/${details.modelId}?modal=reviewThread&reviewId=${details.reviewId}`,
-    }),
+    prepareMessage: ({ details }) => {
+      if (details.version === 2) {
+        return {
+          message: `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`,
+          url: `/reviews/${details.reviewId}`,
+        };
+      }
+      return {
+        message: `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`,
+        url: `/redirect?to=review&reviewId=${details.reviewId}`,
+      };
+    },
     prepareQuery: ({ lastSent }) => `
       WITH new_reviews AS (
         SELECT DISTINCT
           m."userId" "ownerId",
           jsonb_build_object(
+            'version', 2,
             'modelId', r."modelId",
             'reviewId', r.id,
             'modelName', m.name,
             'modelVersionName', mv.name,
             'username', u.username
           ) "details"
-        FROM "Review" r
+        FROM "ResourceReview" r
         JOIN "User" u ON r."userId" = u.id
         JOIN "ModelVersion" mv ON mv.id = r."modelVersionId"
         JOIN "Model" m ON m.id = mv."modelId"
@@ -40,7 +49,7 @@ export const reviewNotifications = createNotificationProcessor({
     displayName: 'Review reminders',
     prepareMessage: ({ details }) => ({
       message: `Remember to review "${details.modelName}"`,
-      url: `/models/${details.modelId}?modal=reviewEdit`,
+      url: `/models/${details.modelId}`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH pending_reviews AS (
@@ -56,7 +65,7 @@ export const reviewNotifications = createNotificationProcessor({
       WHERE ua."userId" IS NOT NULL
         AND ua."createdAt" >= CURRENT_DATE-INTERVAL '72 hour'
         AND ua."createdAt" <= CURRENT_DATE-INTERVAL '71.75 hour'
-        AND NOT EXISTS (SELECT 1 FROM "Review" r WHERE "modelId" = m.id AND r."userId" = ua."userId")
+        AND NOT EXISTS (SELECT 1 FROM "ResourceReview" r WHERE "modelId" = m.id AND r."userId" = ua."userId")
       ), de_duped AS (
         SELECT
           *

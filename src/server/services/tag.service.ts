@@ -1,4 +1,4 @@
-import { ModelStatus, Prisma } from '@prisma/client';
+import { ModelStatus, Prisma, TagTarget } from '@prisma/client';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
 
@@ -10,6 +10,7 @@ import {
   GetVotableTagsSchema,
   ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
+import { imageTagCompositeSelect, modelTagCompositSelect } from '~/server/selectors/tag.selector';
 import { getSystemTags } from '~/server/services/system-cache';
 import { userCache } from '~/server/services/user-cache.service';
 
@@ -37,6 +38,7 @@ export const getTagWithModelCount = async ({ name }: { name: string }) => {
 export const getTags = async ({
   take,
   skip,
+  types,
   entityType,
   query,
   modelId,
@@ -52,13 +54,14 @@ export const getTags = async ({
   const AND = [Prisma.sql`t."unlisted" = ${unlisted}`];
 
   if (query) AND.push(Prisma.sql`t."name" LIKE ${query + '%'}`);
+  if (types?.length) AND.push(Prisma.sql`t."type"::text IN (${Prisma.join(types)})`);
   if (entityType)
     AND.push(Prisma.sql`t."target" && (ARRAY[${Prisma.join(entityType)}]::"TagTarget"[])`);
   if (modelId)
     AND.push(
       Prisma.sql`EXISTS (SELECT 1 FROM "TagsOnModels" tom WHERE tom."tagId" = t."id" AND tom."modelId" = ${modelId})`
     );
-  if (not) {
+  if (not && !query) {
     AND.push(Prisma.sql`t."id" NOT IN (${Prisma.join(not)})`);
     AND.push(Prisma.sql`NOT EXISTS (
       SELECT 1 FROM "TagsOnTags" tot
@@ -79,7 +82,18 @@ export const getTags = async ({
   }
 
   let orderBy = `t."name" ASC`;
-  if (sort === TagSort.MostImages) orderBy = `r."imageCountAllTimeRank"`;
+  if (!sort) {
+    if (entityType?.includes(TagTarget.Model)) sort = TagSort.MostModels;
+    else if (entityType?.includes(TagTarget.Image)) sort = TagSort.MostImages;
+    else if (entityType?.includes(TagTarget.Post)) sort = TagSort.MostPosts;
+  }
+
+  if (query) {
+    orderBy = `LENGTH(t."name")`;
+    if (entityType?.includes(TagTarget.Model)) orderBy += `, r."modelCountAllTimeRank"`;
+    if (entityType?.includes(TagTarget.Image)) orderBy += `, r."imageCountAllTimeRank"`;
+    if (entityType?.includes(TagTarget.Post)) orderBy += `, r."postCountAllTimeRank"`;
+  } else if (sort === TagSort.MostImages) orderBy = `r."imageCountAllTimeRank"`;
   else if (sort === TagSort.MostModels) orderBy = `r."modelCountAllTimeRank"`;
   else if (sort === TagSort.MostPosts) orderBy = `r."postCountAllTimeRank"`;
 
@@ -88,7 +102,7 @@ export const getTags = async ({
       t."id",
       t."name"
     FROM "Tag" t
-    ${Prisma.raw(orderBy.startsWith('r.') ? `JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
+    ${Prisma.raw(orderBy.includes('r.') ? `JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${take} OFFSET ${skip}
@@ -119,7 +133,6 @@ export const getTags = async ({
 };
 
 // #region [tag voting]
-
 export const getVotableTags = async ({
   userId,
   type,
@@ -130,14 +143,7 @@ export const getVotableTags = async ({
   if (type === 'model') {
     const tags = await dbRead.modelTag.findMany({
       where: { modelId: id, score: { gt: 0 } },
-      select: {
-        tagId: true,
-        tagName: true,
-        tagType: true,
-        score: true,
-        upVotes: true,
-        downVotes: true,
-      },
+      select: modelTagCompositSelect,
       orderBy: { score: 'desc' },
       // take,
     });
@@ -163,15 +169,7 @@ export const getVotableTags = async ({
   } else if (type === 'image') {
     const tags = await dbRead.imageTag.findMany({
       where: { imageId: id, OR: [{ score: { gt: 0 } }, { tagType: 'Moderation' }] },
-      select: {
-        tagId: true,
-        tagName: true,
-        tagType: true,
-        score: true,
-        automated: true,
-        upVotes: true,
-        downVotes: true,
-      },
+      select: imageTagCompositeSelect,
       orderBy: { score: 'desc' },
       // take,
     });
@@ -230,6 +228,7 @@ export const removeTagVotes = async ({ userId, type, id, tags }: TagVotingInput)
 };
 
 const MODERATOR_VOTE_WEIGHT = 10;
+const CREATOR_VOTE_WEIGHT = 3;
 export const addTagVotes = async ({
   userId,
   type,
@@ -238,7 +237,20 @@ export const addTagVotes = async ({
   isModerator,
   vote,
 }: TagVotingInput & { vote: number }) => {
-  vote *= isModerator ? MODERATOR_VOTE_WEIGHT : 1;
+  // Determine vote weight
+  let isCreator = false;
+  if (type === 'model') {
+    const creator = await dbRead.model.findFirst({ where: { id }, select: { userId: true } });
+    isCreator = creator?.userId === userId;
+  } else if (type === 'image') {
+    const creator = await dbRead.image.findFirst({ where: { id }, select: { userId: true } });
+    isCreator = creator?.userId === userId;
+  }
+  let voteWeight = 1;
+  if (isCreator) voteWeight = CREATOR_VOTE_WEIGHT;
+  else if (isModerator) voteWeight = MODERATOR_VOTE_WEIGHT;
+
+  vote *= voteWeight;
   const isTagIds = typeof tags[0] === 'number';
   const tagSelector = isTagIds ? 'id' : 'name';
   const tagIn = (isTagIds ? tags : tags.map((tag) => `'${tag}'`)).join(', ');

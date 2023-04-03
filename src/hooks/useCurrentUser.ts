@@ -4,7 +4,7 @@ export function useCurrentUser() {
   const { data } = useSession();
   if (!data || !data.user) return null;
 
-  return  {
+  return {
     ...data.user,
     isMember: data.user.tier != null,
   };

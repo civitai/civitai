@@ -1,5 +1,5 @@
 import { ImageSort, PostSort, QuestionSort, BrowsingMode } from './enums';
-import { MetricTimeframe, ModelType } from '@prisma/client';
+import { MetricTimeframe } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 
 export const constants = {
@@ -43,6 +43,9 @@ export const constants = {
     'Config',
     'Archive',
   ],
+  modelFileFormats: ['SafeTensor', 'PickleTensor', 'Other'],
+  modelFileSizes: ['full', 'pruned'],
+  modelFileFp: ['fp16', 'fp32'],
   tagFilterDefaults: {
     trendingTagsLimit: 20,
   },
@@ -60,6 +63,8 @@ export const constants = {
     Archive: 7,
   },
 } as const;
+
+export const CAROUSEL_LIMIT = 20;
 
 export type BaseModel = (typeof constants.baseModels)[number];
 export type ModelFileType = (typeof constants.modelFileTypes)[number];

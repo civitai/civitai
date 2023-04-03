@@ -55,7 +55,7 @@ export default createRoutedContext({
       },
     });
     const handleSaveComment = (values: z.infer<typeof commentUpsertInput>) => {
-      values.content = values.content.trim();
+      values.content = values.content?.trim() ?? '';
       if (values.content) saveCommentMutation.mutate(values);
       else context.close();
     };

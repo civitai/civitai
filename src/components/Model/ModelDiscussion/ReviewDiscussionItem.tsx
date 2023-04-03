@@ -246,7 +246,7 @@ function ReviewCarousel({
               {inView && renderIndexes.includes(index) && (
                 <ImagePreview
                   image={image}
-                  edgeImageProps={{ width: 400 }}
+                  edgeImageProps={{ width: 450 }}
                   aspectRatio={1}
                   onClick={() => handleNavigate(image.id)}
                   cropFocus="top"
@@ -309,7 +309,7 @@ function ReviewCarousel({
                   >
                     <ImagePreview
                       image={image}
-                      edgeImageProps={{ width: 400 }}
+                      edgeImageProps={{ width: 450 }}
                       aspectRatio={1}
                       onClick={() => handleNavigate(image.id)}
                       cropFocus="top"
