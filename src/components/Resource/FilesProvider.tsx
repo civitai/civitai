@@ -118,33 +118,9 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   const publishModelMutation = trpc.model.publish.useMutation({
     async onSuccess(_, variables) {
       hideNotification('publishing-version');
-
+      const modelId = variables.id;
       const modelVersionId = variables.versionIds?.[0];
-      const pubNotificationId = `version-published-${modelVersionId}`;
-      showNotification({
-        id: pubNotificationId,
-        title: 'Version published',
-        color: 'green',
-        styles: { root: { alignItems: 'flex-start' } },
-        message: (
-          <Stack spacing={4}>
-            <Text size="sm" color="dimmed">
-              Your version has been published and is now available to the public.
-            </Text>
-            <Link href={`/models/${variables.id}?modelVersionId=${modelVersionId}`} passHref>
-              <Anchor size="sm" onClick={() => hideNotification(pubNotificationId)}>
-                Go to model
-              </Anchor>
-            </Link>
-          </Stack>
-        ),
-      });
-
-      await queryUtils.model.getById.invalidate({ id: variables.id });
-      if (modelVersionId)
-        await queryUtils.modelVersion.getById.invalidate({
-          id: modelVersionId,
-        });
+      showPublishedNotification(modelId, modelVersionId);
     },
     onError(error) {
       hideNotification('publishing-version');
@@ -154,6 +130,47 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       });
     },
   });
+  const publishVersionMutation = trpc.modelVersion.publish.useMutation({
+    async onSuccess(results) {
+      hideNotification('publishing-version');
+      if (results) showPublishedNotification(results.modelId, results.id);
+    },
+    onError(error) {
+      hideNotification('publishing-version');
+      showErrorNotification({
+        title: 'Failed to publish version',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const showPublishedNotification = async (modelId: number, modelVersionId?: number) => {
+    const pubNotificationId = `version-published-${modelVersionId}`;
+    showNotification({
+      id: pubNotificationId,
+      title: 'Version published',
+      color: 'green',
+      styles: { root: { alignItems: 'flex-start' } },
+      message: (
+        <Stack spacing={4}>
+          <Text size="sm" color="dimmed">
+            Your version has been published and is now available to the public.
+          </Text>
+          <Link href={`/models/${modelId}?modelVersionId=${modelVersionId}`} passHref>
+            <Anchor size="sm" onClick={() => hideNotification(pubNotificationId)}>
+              Go to model
+            </Anchor>
+          </Link>
+        </Stack>
+      ),
+    });
+
+    await queryUtils.model.getById.invalidate({ id: modelId });
+    if (modelVersionId)
+      await queryUtils.modelVersion.getById.invalidate({
+        id: modelVersionId,
+      });
+  };
 
   const checkValidation = () => {
     setErrors(null);
@@ -230,10 +247,12 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
                       loading: true,
                     });
 
-                    publishModelMutation.mutate({
-                      id: model?.id as number,
-                      versionIds: [result.modelVersion.id],
-                    });
+                    if (model?.status !== ModelStatus.Published)
+                      publishModelMutation.mutate({
+                        id: model?.id as number,
+                        versionIds: [result.modelVersion.id],
+                      });
+                    else publishVersionMutation.mutate({ id: result.modelVersion.id });
                   }}
                 >
                   Publish it

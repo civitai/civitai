@@ -46,6 +46,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
             id: true,
             name: true,
             type: true,
+            status: true,
             user: { select: { id: true } },
           },
         },
