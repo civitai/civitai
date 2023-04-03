@@ -9,6 +9,13 @@ export function numericStringArray() {
   return z.preprocess((value) => parseNumericStringArray(value), z.number().array());
 }
 
+export function stringArray() {
+  return z.preprocess((value) => {
+    const str = String(value);
+    return str.split(',');
+  }, z.array(z.string()));
+}
+
 export function booleanString() {
   return z.preprocess(
     (value) =>

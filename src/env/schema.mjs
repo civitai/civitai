@@ -1,6 +1,7 @@
 // @ts-check
 import { z } from 'zod';
 import { zc } from '~/utils/schema-helpers';
+import {stringArray} from '~/utils/zod-helpers';
 
 /**
  * Specify your server-side environment variables schema here.
@@ -63,16 +64,14 @@ export const serverSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.string(),
   STRIPE_DONATE_ID: z.string(),
   STRIPE_METADATA_KEY: z.string(),
-  LOGGING: z.preprocess((value) => {
-    const str = String(value);
-    return str.split(',');
-  }, z.array(z.string())),
+  LOGGING: stringArray(),
   IMAGE_SCANNING_ENDPOINT: z.string().optional(),
   IMAGE_SCANNING_CALLBACK: z.string().optional(),
   DELIVERY_WORKER_ENDPOINT: z.string().optional(),
   DELIVERY_WORKER_TOKEN: z.string().optional(),
   PLAYFAB_TITLE_ID: z.string().optional(),
   PLAYFAB_SECRET_KEY: z.string().optional(),
+  TRPC_ORIGINS: stringArray().optional(),
 });
 
 /**

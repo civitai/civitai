@@ -17,6 +17,7 @@ export const parseBrowsingMode = (
   return browsingMode ?? BrowsingMode.NSFW; // NSFW = "My Filters" and should be the default if a user is authed
 };
 
+const origins = [env.NEXTAUTH_URL, ...(env.TRPC_ORIGINS ?? [])];
 export const createContext = async ({
   req,
   res,
@@ -25,7 +26,7 @@ export const createContext = async ({
   res: NextApiResponse;
 }) => {
   const session = await getServerAuthSession({ req, res });
-  const acceptableOrigin = req.headers.referer?.startsWith(env.NEXTAUTH_URL) ?? false;
+  const acceptableOrigin = origins.some((o) => req.headers.referer?.startsWith(o)) ?? false;
   const browsingMode = parseBrowsingMode(req.cookies, session);
 
   return {
