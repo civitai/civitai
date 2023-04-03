@@ -1,4 +1,5 @@
 import { Button, Group, Popover, Text, PopoverProps, GroupProps } from '@mantine/core';
+import { useSessionStorage } from '@mantine/hooks';
 import { ReviewReactions } from '@prisma/client';
 import { IconMoodSmile, IconPlus } from '@tabler/icons';
 import { capitalize } from 'lodash-es';
@@ -43,7 +44,10 @@ export function Reactions({
   ...groupProps
 }: ReactionsProps & Omit<GroupProps, 'children' | 'onClick'>) {
   const storedReactions = useReactionsStore({ entityType, entityId }) ?? {};
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useSessionStorage<boolean>({
+    key: 'showAllReactions',
+    defaultValue: false,
+  });
 
   const hasAllReactions = Object.entries(metrics).every(([key, value]) => {
     // ie. converts the key `likeCount` to `Like`
