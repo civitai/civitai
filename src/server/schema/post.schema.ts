@@ -64,7 +64,6 @@ export const addPostImageSchema = z.object({
   height: z.number().nullish(),
   width: z.number().nullish(),
   nsfw: z.boolean().optional(),
-  resources: z.array(z.string()).optional(),
   postId: z.number(),
   modelVersionId: z.number().optional(),
   index: z.number(),
