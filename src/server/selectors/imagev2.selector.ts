@@ -59,7 +59,7 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
         reaction: true,
       },
     },
-    user: { select: simpleUserSelect },
+    user: { select: userWithCosmeticsSelect },
     needsReview: true,
   });
 
