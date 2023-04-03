@@ -14,6 +14,7 @@ import { getJoinLink } from '~/utils/join-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
 import { getDownloadUrl } from '~/utils/delivery-worker';
+import { playfab } from '~/server/playfab/client';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -167,6 +168,13 @@ export default RateLimitedEndpoint(
           },
         },
       });
+
+      if (userId)
+        await playfab.trackEvent(userId, {
+          eventName: 'user_download_model',
+          modelId: modelVersion.model.id,
+          modelVersionId: modelVersion.id,
+        });
     } catch (error) {
       return res.status(500).json({ error: 'Invalid database operation', cause: error });
     }

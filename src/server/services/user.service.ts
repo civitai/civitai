@@ -18,6 +18,7 @@ import {
   refreshHiddenUsersForUser,
 } from '~/server/services/user-cache.service';
 import { cancelSubscription } from '~/server/services/stripe.service';
+import { playfab } from '~/server/playfab/client';
 
 // const xprisma = prisma.$extends({
 //   result: {
@@ -240,7 +241,11 @@ export const toggleModelEngagement = async ({
   }
 
   await dbWrite.modelEngagement.create({ data: { type, modelId, userId } });
-  if (type === 'Hide') await refreshHiddenModelsForUser({ userId });
+  if (type === 'Hide') {
+    await refreshHiddenModelsForUser({ userId });
+    await playfab.trackEvent(userId, { eventName: 'user_hide_model', modelId });
+  } else if (type === 'Favorite')
+    await playfab.trackEvent(userId, { eventName: 'user_favorite_model', modelId });
   return;
 };
 
@@ -282,6 +287,7 @@ export const toggleFollowUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Follow', targetUserId, userId } });
+  await playfab.trackEvent(userId, { eventName: 'user_follow_user', userId: targetUserId });
   return;
 };
 
@@ -312,6 +318,7 @@ export const toggleHideUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
+  await playfab.trackEvent(userId, { eventName: 'user_hide_user', userId: targetUserId });
   await refreshHiddenUsersForUser({ userId });
   return;
 };

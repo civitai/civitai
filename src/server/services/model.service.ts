@@ -11,9 +11,10 @@ import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
-import { ModelSort } from '~/server/common/enums';
+import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbWrite, dbRead } from '~/server/db/client';
+import { playfab } from '~/server/playfab/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllModelsOutput,
@@ -78,6 +79,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     allowDifferentLicense,
     allowDerivatives,
     allowCommercialUse,
+    browsingMode,
   },
   select,
   user: sessionUser,
@@ -175,10 +177,12 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     AND.push({ OR: TypeOr });
   }
 
+  const hideNSFWModels = browsingMode === BrowsingMode.SFW || !canViewNsfw;
   const where: Prisma.ModelWhereInput = {
     tagsOnModels: tagname ?? tag ? { some: { tag: { name: tagname ?? tag } } } : undefined,
     user: username || user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
+    nsfw: hideNSFWModels ? false : undefined,
     rank: rating
       ? {
           AND: [{ ratingAllTime: { gte: rating } }, { ratingAllTime: { lt: rating + 1 } }],
@@ -427,6 +431,13 @@ export const createModel = async ({
     });
   });
 
+  if (data.status === ModelStatus.Published)
+    await playfab.trackEvent(userId, {
+      eventName: 'user_publish_model',
+      type: data.type,
+      modelId: model.id,
+    });
+
   await ingestNewImages({ modelId: model.id });
 
   return model;
@@ -654,6 +665,69 @@ export const updateModel = async ({
   // Request scan for new images
   await ingestNewImages({ modelId: model.id });
 
+  if (currentModel.status !== ModelStatus.Published && data.status === ModelStatus.Published)
+    await playfab.trackEvent(userId, {
+      eventName: 'user_publish_model',
+      modelId: model.id,
+      type: data.type,
+    });
+  else if (hasNewVersions && data.status === ModelStatus.Published)
+    await playfab.trackEvent(userId, {
+      eventName: 'user_update_model',
+      modelId: model.id,
+      type: data.type,
+    });
+
+  return model;
+};
+
+export const publishModelById = async ({ id, versionIds }: PublishModelSchema) => {
+  const model = await dbWrite.$transaction(
+    async (tx) => {
+      const includeVersions = versionIds && versionIds.length > 0;
+      const publishedAt = new Date();
+
+      const model = await dbWrite.model.update({
+        where: { id },
+        data: {
+          status: ModelStatus.Published,
+          publishedAt,
+          modelVersions: includeVersions
+            ? {
+                updateMany: {
+                  where: { id: { in: versionIds } },
+                  data: { status: ModelStatus.Published },
+                },
+              }
+            : undefined,
+        },
+        select: { id: true, type: true, userId: true },
+      });
+
+      if (includeVersions) {
+        await tx.post.updateMany({
+          where: { modelVersionId: { in: versionIds } },
+          data: { publishedAt },
+        });
+      }
+
+      return model;
+    },
+    { timeout: 10000 }
+  );
+
+  // await playfab.trackEvent(model.userId, {
+  //   eventName: 'user_publish_model',
+  //   modelId: model.id,
+  //   type: model.type,
+  // });
+
+  // await playfab.trackEvent(model.userId, {
+  //   eventName: 'user_update_model',
+  //   modelId: model.id,
+  //   type: model.type,
+  // });
+
   return model;
 };
 
@@ -682,41 +756,4 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
   const count = await dbRead.model.count({ where });
 
   return getPagingData({ items, count }, take, page);
-};
-
-export const publishModelById = async ({ id, versionIds }: PublishModelSchema) => {
-  const model = await dbWrite.$transaction(
-    async (tx) => {
-      const includeVersions = versionIds && versionIds.length > 0;
-      const publishedAt = new Date();
-
-      const model = await dbWrite.model.update({
-        where: { id },
-        data: {
-          status: ModelStatus.Published,
-          publishedAt,
-          modelVersions: includeVersions
-            ? {
-                updateMany: {
-                  where: { id: { in: versionIds } },
-                  data: { status: ModelStatus.Published },
-                },
-              }
-            : undefined,
-        },
-      });
-
-      if (includeVersions) {
-        await tx.post.updateMany({
-          where: { modelVersionId: { in: versionIds } },
-          data: { publishedAt },
-        });
-      }
-
-      return model;
-    },
-    { timeout: 10000 }
-  );
-
-  return model;
 };

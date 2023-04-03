@@ -10,6 +10,7 @@ import {
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { isTag } from '~/server/schema/tag.schema';
 import { QuestionSort, QuestionStatus } from '~/server/common/enums';
+import { playfab } from '~/server/playfab/client';
 
 export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
   limit = 20,
@@ -68,7 +69,7 @@ export const upsertQuestion = async ({
   const tagsToCreate = tags?.filter(isNotTag) ?? [];
   const tagsToUpdate = tags?.filter(isTag) ?? [];
 
-  return await dbWrite.$transaction(async (tx) => {
+  const result = await dbWrite.$transaction(async (tx) => {
     if (tags)
       await tx.tag.updateMany({
         where: {
@@ -135,6 +136,11 @@ export const upsertQuestion = async ({
           select: { id: true, title: true },
         });
   });
+
+  if (result)
+    await playfab.trackEvent(userId, { eventName: 'user_ask_question', questionId: result.id });
+
+  return result;
 };
 
 export const deleteQuestion = async ({ id }: GetByIdInput) => {

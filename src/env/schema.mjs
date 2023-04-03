@@ -70,7 +70,9 @@ export const serverSchema = z.object({
   IMAGE_SCANNING_ENDPOINT: z.string().optional(),
   IMAGE_SCANNING_CALLBACK: z.string().optional(),
   DELIVERY_WORKER_ENDPOINT: z.string().optional(),
-  DELIVERY_WORKER_TOKEN: z.string().optional()
+  DELIVERY_WORKER_TOKEN: z.string().optional(),
+  PLAYFAB_TITLE_ID: z.string().optional(),
+  PLAYFAB_SECRET_KEY: z.string().optional(),
 });
 
 /**
