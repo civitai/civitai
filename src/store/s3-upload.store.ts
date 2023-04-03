@@ -249,6 +249,7 @@ export const useS3UploadStore = create<StoreProps>()(
               method: 'POST',
               headers,
               body: JSON.stringify({
+                bucket,
                 key,
                 type,
                 uploadId,
@@ -260,6 +261,7 @@ export const useS3UploadStore = create<StoreProps>()(
               method: 'POST',
               headers,
               body: JSON.stringify({
+                bucket,
                 key,
                 type,
                 uploadId,
@@ -327,13 +329,27 @@ export const useS3UploadStore = create<StoreProps>()(
                 timeRemaining: 0,
                 uploaded: 0,
               });
-              await abortUpload();
+              await abortUpload().catch((err) => {
+                console.error('Failed to abort upload');
+                console.error(err);
+              });
               return;
             }
           }
 
           // Complete the multipart upload
-          await completeUpload();
+          await completeUpload().catch((err) => {
+            console.error('Failed to complete upload');
+            console.error(err);
+            updateFile(pendingItem.uuid, {
+              status: 'error',
+              progress: 0,
+              speed: 0,
+              timeRemaining: 0,
+              uploaded: 0,
+            });
+            return;
+          });
           updateFile(pendingItem.uuid, { status: 'success' });
 
           const url = urls[0].url.split('?')[0];
