@@ -7,6 +7,7 @@ import {
   Center,
   createStyles,
   Group,
+  Indicator,
   Loader,
   Paper,
   Stack,
@@ -14,8 +15,8 @@ import {
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons';
 import { useRouter } from 'next/router';
-import { useQueryImages } from '~/components/Image/image.utils';
 
+import { useQueryImages } from '~/components/Image/image.utils';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
@@ -88,6 +89,10 @@ const useStyles = createStyles((theme) => ({
     position: 'absolute',
     bottom: 5,
     right: 5,
+  },
+  viewport: {
+    overflowX: 'clip',
+    overflowY: 'visible',
   },
 }));
 
@@ -197,81 +202,94 @@ export function ModelCarousel({
         images={images}
         nsfw={nsfw}
         connect={{ entityId: modelId, entityType: 'model' }}
-        render={(image) => (
-          <Carousel.Slide>
-            <ImageGuard.Content>
-              {({ safe }) => (
-                <Center style={{ height: '100%', width: '100%' }}>
-                  <div style={{ width: '100%', position: 'relative' }}>
-                    <ImageGuard.ToggleConnect />
-                    <ImageGuard.Report />
-                    <RoutedContextLink
-                      modal="imageDetailModal"
-                      imageId={image.id}
-                      modelVersionId={modelVersionId}
-                      prioritizedUserIds={[modelUserId]}
-                      period="AllTime"
-                      sort={ImageSort.MostReactions}
-                      limit={limit}
-                      tags={[]}
-                    >
-                      {!safe ? (
-                        <AspectRatio
-                          ratio={(image.width ?? 1) / (image.height ?? 1)}
-                          sx={(theme) => ({
-                            width: '100%',
-                            borderRadius: theme.radius.md,
-                            overflow: 'hidden',
-                          })}
-                        >
-                          <MediaHash {...image} />
-                        </AspectRatio>
-                      ) : (
-                        <ImagePreview
-                          image={image}
-                          edgeImageProps={{ width: 450 }}
-                          radius="md"
-                          style={{ width: '100%' }}
-                        />
-                      )}
-                    </RoutedContextLink>
-                    <Reactions
-                      entityId={image.id}
-                      entityType="image"
-                      reactions={image.reactions}
-                      metrics={{
-                        likeCount: image.stats?.likeCountAllTime,
-                        dislikeCount: image.stats?.dislikeCountAllTime,
-                        heartCount: image.stats?.heartCountAllTime,
-                        laughCount: image.stats?.laughCountAllTime,
-                        cryCount: image.stats?.cryCountAllTime,
-                      }}
-                      readonly={!safe}
-                      withinPortal
-                      className={classes.reactions}
-                    />
-                    {!image.hideMeta && image.meta && (
-                      <ImageMetaPopover
-                        meta={image.meta as ImageMetaProps}
-                        generationProcess={image.generationProcess ?? undefined}
+        render={(image) => {
+          const fromCommunity = image.user.id !== modelUserId;
+
+          return (
+            <Carousel.Slide>
+              <ImageGuard.Content>
+                {({ safe }) => (
+                  <Center style={{ height: '100%', width: '100%' }}>
+                    <div style={{ width: '100%', position: 'relative' }}>
+                      <ImageGuard.ToggleConnect />
+                      <ImageGuard.Report />
+                      <RoutedContextLink
+                        modal="imageDetailModal"
+                        imageId={image.id}
+                        modelVersionId={modelVersionId}
+                        prioritizedUserIds={[modelUserId]}
+                        period="AllTime"
+                        sort={ImageSort.MostReactions}
+                        limit={limit}
+                        tags={[]}
                       >
-                        <ActionIcon className={classes.info} variant="transparent" size="lg">
-                          <IconInfoCircle
-                            color="white"
-                            filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                            opacity={0.8}
-                            strokeWidth={2.5}
-                            size={26}
-                          />
-                        </ActionIcon>
-                      </ImageMetaPopover>
-                    )}
-                  </div>
-                </Center>
-              )}
-            </ImageGuard.Content>
-          </Carousel.Slide>
-        )}
+                        {!safe ? (
+                          <AspectRatio
+                            ratio={(image.width ?? 1) / (image.height ?? 1)}
+                            sx={(theme) => ({
+                              width: '100%',
+                              borderRadius: theme.radius.md,
+                              overflow: 'hidden',
+                            })}
+                          >
+                            <MediaHash {...image} />
+                          </AspectRatio>
+                        ) : (
+                          <Indicator
+                            label="From Community"
+                            radius="sm"
+                            position="top-center"
+                            size={24}
+                            disabled={!fromCommunity}
+                            withBorder
+                          >
+                            <ImagePreview
+                              image={image}
+                              edgeImageProps={{ width: 450 }}
+                              radius="md"
+                              style={{ width: '100%' }}
+                            />
+                          </Indicator>
+                        )}
+                      </RoutedContextLink>
+                      <Reactions
+                        entityId={image.id}
+                        entityType="image"
+                        reactions={image.reactions}
+                        metrics={{
+                          likeCount: image.stats?.likeCountAllTime,
+                          dislikeCount: image.stats?.dislikeCountAllTime,
+                          heartCount: image.stats?.heartCountAllTime,
+                          laughCount: image.stats?.laughCountAllTime,
+                          cryCount: image.stats?.cryCountAllTime,
+                        }}
+                        readonly={!safe}
+                        withinPortal
+                        className={classes.reactions}
+                      />
+                      {!image.hideMeta && image.meta && (
+                        <ImageMetaPopover
+                          meta={image.meta as ImageMetaProps}
+                          generationProcess={image.generationProcess ?? undefined}
+                        >
+                          <ActionIcon className={classes.info} variant="transparent" size="lg">
+                            <IconInfoCircle
+                              color="white"
+                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                              opacity={0.8}
+                              strokeWidth={2.5}
+                              size={26}
+                            />
+                          </ActionIcon>
+                        </ImageMetaPopover>
+                      )}
+                    </div>
+                  </Center>
+                )}
+              </ImageGuard.Content>
+            </Carousel.Slide>
+          );
+        }}
       />
     </Carousel>
   );

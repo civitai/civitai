@@ -27,11 +27,11 @@ import {
 import dayjs from 'dayjs';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
+
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
-
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
