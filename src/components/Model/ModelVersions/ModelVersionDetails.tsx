@@ -11,13 +11,13 @@ import {
   Modal,
   Stack,
   Text,
-  Title,
   Tooltip,
-  createStyles,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { ModelStatus } from '@prisma/client';
 import { IconDownload, IconHeart, IconLicense, IconMessageCircle2 } from '@tabler/icons';
+import { TRPCClientErrorBase } from '@trpc/client';
+import { DefaultErrorShape } from '@trpc/server';
 import { startCase } from 'lodash';
 import { SessionUser } from 'next-auth';
 import { useRef } from 'react';
@@ -51,6 +51,7 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { removeTags, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -75,11 +76,20 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
   const publishModelMutation = trpc.model.publish.useMutation();
 
   const handlePublishClick = async () => {
-    if (model.status !== ModelStatus.Published)
-      // Publish model, version and all of its posts
-      await publishModelMutation.mutateAsync({ id: model.id, versionIds: [version.id] });
-    // Just publish the version and its posts
-    else await publishVersionMutation.mutateAsync({ id: version.id });
+    try {
+      if (model.status !== ModelStatus.Published)
+        // Publish model, version and all of its posts
+        await publishModelMutation.mutateAsync({ id: model.id, versionIds: [version.id] });
+      // Just publish the version and its posts
+      else await publishVersionMutation.mutateAsync({ id: version.id });
+    } catch (e) {
+      const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Error publishing model',
+        reason: 'Something went wrong while publishing your model. Please try again later.',
+      });
+    }
 
     await queryUtils.model.getById.invalidate({ id: model.id });
     await queryUtils.modelVersion.getById.invalidate({ id: version.id });

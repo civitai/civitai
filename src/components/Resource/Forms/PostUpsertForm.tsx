@@ -1,6 +1,9 @@
 import { Button, Grid, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
+import { ModelStatus } from '@prisma/client';
 import { IconAlertTriangle, IconArrowsSort } from '@tabler/icons';
+import { TRPCClientErrorBase } from '@trpc/client';
+import { DefaultErrorShape } from '@trpc/server';
 import { useRouter } from 'next/router';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -13,6 +16,7 @@ import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
 import { ReorderImages, ReorderImagesButton } from '~/components/Post/Edit/ReorderImages';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useS3UploadStore } from '~/store/s3-upload.store';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function PostUpsertForm({ modelVersionId, modelId }: Props) {
@@ -107,25 +111,37 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
 
   const { mutate, isLoading } = trpc.post.update.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
+  const publishVersionMutation = trpc.modelVersion.publish.useMutation();
 
   const canSave =
     tags.filter((x) => !!x.id).length > 0 && images.filter((x) => x.type === 'image').length > 0;
   const canPublish = !isUploading && !!modelVersion?.files?.length;
 
   const handlePublish = () => {
-    if (!currentUser) return;
-    publishModelMutation.mutate(
-      { id: modelId, versionIds: [modelVersionId] },
-      {
-        async onSuccess() {
-          setPublishedAt(new Date());
-          await queryUtils.model.getById.invalidate({ id: modelId });
-          await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId });
-          await queryUtils.image.getInfinite.invalidate();
-          await router.replace(`/models/${modelId}?modelVersionId=${modelVersionId}`);
-        },
-      }
-    );
+    if (!currentUser || !modelVersion) return;
+
+    async function onSuccess() {
+      setPublishedAt(new Date());
+      await queryUtils.model.getById.invalidate({ id: modelId });
+      await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId });
+      await queryUtils.image.getInfinite.invalidate();
+      await router.replace(`/models/${modelId}?modelVersionId=${modelVersionId}`);
+    }
+
+    function onError(error: TRPCClientErrorBase<DefaultErrorShape>) {
+      showErrorNotification({
+        title: 'Failed to publish',
+        error: new Error(error.message),
+        reason: 'Something went wrong while publishing your model. Please try again later.',
+      });
+    }
+
+    if (modelVersion.model.status !== ModelStatus.Published)
+      publishModelMutation.mutate(
+        { id: modelId, versionIds: [modelVersionId] },
+        { onSuccess, onError }
+      );
+    else publishVersionMutation.mutate({ id: modelVersionId }, { onSuccess, onError });
   };
 
   const handleSave = () => {
