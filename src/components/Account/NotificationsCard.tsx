@@ -8,7 +8,6 @@ import { trpc } from '~/utils/trpc';
 const settings = Object.entries(getNotificationTypes()).map(([type, label]) => ({ type, label }));
 
 export function NotificationsCard() {
-  return null;
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
 

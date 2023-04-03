@@ -28,6 +28,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
+  const inModal = !!router.query.modal;
   const { data, isLoading } = trpc.resourceReview.get.useQuery({ id: reviewId });
 
   const getModelUrl = (data: ResourceReviewDetailModel) =>
@@ -58,7 +59,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
                 variant="link"
                 lineClamp={1}
                 sx={{ cursor: 'pointer' }}
-                shallow
+                shallow={inModal}
               >
                 {data.model.name} - {data.modelVersion.name}
               </Text>
@@ -66,9 +67,11 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
 
             <Group spacing={4} noWrap>
               <ResourceReviewMenu reviewId={reviewId} userId={data.user.id} />
-              <NavigateBack url={getModelWithVersionUrl(data)}>
-                {({ onClick }) => <CloseButton onClick={onClick} size="lg" />}
-              </NavigateBack>
+              {inModal && (
+                <NavigateBack url={getModelWithVersionUrl(data)}>
+                  {({ onClick }) => <CloseButton onClick={onClick} size="lg" />}
+                </NavigateBack>
+              )}
             </Group>
           </Group>
           <Group spacing="xs" align="center">

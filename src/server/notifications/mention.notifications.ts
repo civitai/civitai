@@ -16,11 +16,19 @@ export const mentionNotifications = createNotificationProcessor({
     displayName: 'New @mentions',
     priority: -1,
     prepareMessage: ({ details }) => {
-      if (details.mentionedIn === 'comment') {
+      const isCommentV2 = details.mentionedIn === 'comment' && details.threadId !== undefined;
+      if (isCommentV2) {
         const url = threadUrlMap(details);
         return {
           message: `${details.username} mentioned you in a comment on a ${details.threadType}`,
           url,
+        };
+      } else if (details.mentionedIn === 'comment') {
+        if (details.parentType === 'review') return;
+
+        return {
+          message: `${details.username} mentioned you in a ${details.parentType} on ${details.modelName}`,
+          url: `/models/${details.modelId}?modal=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
         };
       }
       return {
@@ -58,6 +66,26 @@ export const mentionNotifications = createNotificationProcessor({
           AND t."questionId" IS NULL
           AND t."answerId" IS NULL
           AND t."reviewId" IS NULL
+
+        UNION
+
+        SELECT DISTINCT
+          CAST(unnest(regexp_matches(content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
+          JSONB_BUILD_OBJECT(
+            'mentionedIn', 'comment',
+            'modelId', c."modelId",
+            'commentId', c.id,
+            'parentId', COALESCE(c."parentId", c."reviewId"),
+            'parentType', CASE WHEN c."parentId" IS NOT NULL THEN 'comment' ELSE 'review' END,
+            'modelName', m.name,
+            'username', u.username
+          ) "details"
+        FROM "Comment" c
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Model" m ON m.id = c."modelId"
+        WHERE m."userId" > 0
+          AND (c."createdAt" > '${lastSent}')
+          AND c.content LIKE '%"mention:%'
 
         UNION
 

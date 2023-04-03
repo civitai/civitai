@@ -21,36 +21,36 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
 export function NotificationBell() {
-  // const currentUser = useCurrentUser();
-  // const queryUtils = trpc.useContext();
+  const currentUser = useCurrentUser();
+  const queryUtils = trpc.useContext();
 
   const [opened, setOpened] = useState(false);
 
-  // const { data: checkData, isLoading: loadingCheck } = trpc.user.checkNotifications.useQuery();
-  // const { data: notifications, isLoading: loadingNotifications } =
-  //   trpc.notification.getAllByUser.useQuery({ limit: 10 }, { enabled: opened });
+  const { data: checkData, isLoading: loadingCheck } = trpc.user.checkNotifications.useQuery();
+  const { data: notifications, isLoading: loadingNotifications } =
+    trpc.notification.getAllByUser.useQuery({ limit: 10 }, { enabled: opened });
 
-  // const readNotificationMutation = trpc.notification.markRead.useMutation({
-  //   async onSuccess() {
-  //     await queryUtils.user.checkNotifications.invalidate();
-  //     await queryUtils.notification.getAllByUser.invalidate();
-  //   },
-  // });
-  // const handleMarkAsRead = ({ id, all }: { id?: string; all?: boolean }) => {
-  //   if (currentUser) readNotificationMutation.mutate({ id, all, userId: currentUser.id });
-  // };
+  const readNotificationMutation = trpc.notification.markRead.useMutation({
+    async onSuccess() {
+      await queryUtils.user.checkNotifications.invalidate();
+      await queryUtils.notification.getAllByUser.invalidate();
+    },
+  });
+  const handleMarkAsRead = ({ id, all }: { id?: string; all?: boolean }) => {
+    if (currentUser) readNotificationMutation.mutate({ id, all, userId: currentUser.id });
+  };
 
   return (
     <Popover position="bottom-end" width={300} opened={opened} onChange={setOpened}>
       <Popover.Target>
-        {/* <Indicator color="red" disabled={loadingCheck || !checkData?.count}> */}
-        <ActionIcon
-          variant={opened ? 'filled' : undefined}
-          onClick={() => setOpened((val) => !val)}
-        >
-          <IconBell />
-        </ActionIcon>
-        {/* </Indicator> */}
+        <Indicator color="red" disabled={loadingCheck || !checkData?.count}>
+          <ActionIcon
+            variant={opened ? 'filled' : undefined}
+            onClick={() => setOpened((val) => !val)}
+          >
+            <IconBell />
+          </ActionIcon>
+        </Indicator>
       </Popover.Target>
 
       <Popover.Dropdown p={0}>
@@ -59,7 +59,7 @@ export function NotificationBell() {
             <Text weight="bold" size="sm">
               Notifications
             </Text>
-            {/* <Group spacing={8}>
+            <Group spacing={8}>
               <Tooltip label="Mark all as read" position="bottom">
                 <ActionIcon size="sm" onClick={() => handleMarkAsRead({ all: true })}>
                   <IconListCheck />
@@ -74,13 +74,10 @@ export function NotificationBell() {
                   <IconSettings />
                 </ActionIcon>
               </Tooltip>
-            </Group> */}
+            </Group>
           </Group>
           <Divider />
-          <Center p="sm">
-            <Text>Notifications have been temporarily disabled. Check back soon!</Text>
-          </Center>
-          {/* {loadingNotifications ? (
+          {loadingNotifications ? (
             <Center p="sm">
               <Loader />
             </Center>
@@ -112,7 +109,7 @@ export function NotificationBell() {
             <Center p="sm">
               <Text>All caught up! Nothing to see here</Text>
             </Center>
-          )} */}
+          )}
         </Stack>
       </Popover.Dropdown>
     </Popover>

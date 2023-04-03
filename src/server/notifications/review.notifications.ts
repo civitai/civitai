@@ -3,15 +3,24 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 export const reviewNotifications = createNotificationProcessor({
   'new-review': {
     displayName: 'New reviews',
-    prepareMessage: ({ details }) => ({
-      message: `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`,
-      url: `/models/${details.modelId}?modal=reviewThread&reviewId=${details.reviewId}`,
-    }),
+    prepareMessage: ({ details }) => {
+      if (details.version === 2) {
+        return {
+          message: `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`,
+          url: `/reviews/${details.reviewId}`,
+        };
+      }
+      return {
+        message: `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`,
+        url: `/redirect?to=review&reviewId=${details.reviewId}`,
+      };
+    },
     prepareQuery: ({ lastSent }) => `
       WITH new_reviews AS (
         SELECT DISTINCT
           m."userId" "ownerId",
           jsonb_build_object(
+            'version', 2,
             'modelId', r."modelId",
             'reviewId', r.id,
             'modelName', m.name,
@@ -40,7 +49,7 @@ export const reviewNotifications = createNotificationProcessor({
     displayName: 'Review reminders',
     prepareMessage: ({ details }) => ({
       message: `Remember to review "${details.modelName}"`,
-      url: `/models/${details.modelId}?modal=reviewEdit`,
+      url: `/models/${details.modelId}`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH pending_reviews AS (
