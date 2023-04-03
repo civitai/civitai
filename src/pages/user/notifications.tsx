@@ -21,38 +21,38 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
 export default function Notifications() {
-  // const currentUser = useCurrentUser();
-  // const queryUtils = trpc.useContext();
+  const currentUser = useCurrentUser();
+  const queryUtils = trpc.useContext();
 
-  // const { ref, inView } = useInView();
+  const { ref, inView } = useInView();
 
-  // const { data, isLoading, fetchNextPage, hasNextPage } =
-  //   trpc.notification.getAllByUser.useInfiniteQuery(
-  //     {},
-  //     {
-  //       getNextPageParam: (lastPage) => lastPage.nextCursor,
-  //     }
-  //   );
-  // const notifications = useMemo(
-  //   () => data?.pages.flatMap((page) => page.items) ?? [],
-  //   [data?.pages]
-  // );
+  const { data, isLoading, fetchNextPage, hasNextPage } =
+    trpc.notification.getAllByUser.useInfiniteQuery(
+      {},
+      {
+        getNextPageParam: (lastPage) => lastPage.nextCursor,
+      }
+    );
+  const notifications = useMemo(
+    () => data?.pages.flatMap((page) => page.items) ?? [],
+    [data?.pages]
+  );
 
-  // const readNotificationMutation = trpc.notification.markRead.useMutation({
-  //   async onSuccess() {
-  //     await queryUtils.user.checkNotifications.invalidate();
-  //     await queryUtils.notification.getAllByUser.invalidate();
-  //   },
-  // });
-  // const handleMarkAsRead = ({ id, all }: { id?: string; all?: boolean }) => {
-  //   if (currentUser) readNotificationMutation.mutate({ id, all, userId: currentUser.id });
-  // };
+  const readNotificationMutation = trpc.notification.markRead.useMutation({
+    async onSuccess() {
+      await queryUtils.user.checkNotifications.invalidate();
+      await queryUtils.notification.getAllByUser.invalidate();
+    },
+  });
+  const handleMarkAsRead = ({ id, all }: { id?: string; all?: boolean }) => {
+    if (currentUser) readNotificationMutation.mutate({ id, all, userId: currentUser.id });
+  };
 
-  // useEffect(() => {
-  //   if (inView) {
-  //     fetchNextPage();
-  //   }
-  // }, [fetchNextPage, inView]);
+  useEffect(() => {
+    if (inView) {
+      fetchNextPage();
+    }
+  }, [fetchNextPage, inView]);
 
   return (
     <>
@@ -62,7 +62,7 @@ export default function Notifications() {
           <Grid.Col span={12}>
             <Group position="apart">
               <Title order={1}>Notifications</Title>
-              {/* <Group spacing={8}>
+              <Group spacing={8}>
                 <Tooltip label="Mark all as read" position="bottom">
                   <ActionIcon size="lg" onClick={() => handleMarkAsRead({ all: true })}>
                     <IconListCheck />
@@ -77,14 +77,14 @@ export default function Notifications() {
                     <IconSettings />
                   </ActionIcon>
                 </Tooltip>
-              </Group> */}
+              </Group>
             </Group>
           </Grid.Col>
           <Grid.Col span={12} px={0}>
             <Center>
               <Text>Notifications have been temporarily disabled. Check back soon!</Text>
             </Center>
-            {/* {isLoading ? (
+            {isLoading ? (
               <Center>
                 <Loader />
               </Center>
@@ -106,7 +106,7 @@ export default function Notifications() {
               <Center>
                 <Text>All caught up! Nothing to see here</Text>
               </Center>
-            )} */}
+            )}
           </Grid.Col>
         </Grid>
       </Container>
