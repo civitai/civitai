@@ -275,6 +275,7 @@ export const addPostImage = async ({
     select: editPostImageSelect,
   });
 
+  if (!result) throw throwNotFoundError(`Image ${partialResult.id} not found`);
   return result;
 };
 
