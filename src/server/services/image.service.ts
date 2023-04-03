@@ -524,7 +524,6 @@ export const ingestImage = async ({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }).then((res) => res.json())) as ImageScanResultResponse;
-    console.log(ok);
 
     if (deleted)
       return {
