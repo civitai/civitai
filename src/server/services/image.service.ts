@@ -724,7 +724,7 @@ export const getAllImages = async ({
 
   if (!!prioritizedUserIds?.length) {
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
-    orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}),0,1), ${orderBy}`;
+    orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}),i.index,1000),  ${orderBy}`;
   }
 
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
