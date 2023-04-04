@@ -358,7 +358,6 @@ export default function ModelDetailsV2({
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
   const nsfw = userNotBlurringNsfw && model.nsfw === true;
 
-  console.log({ versionImages });
   const meta = (
     <Meta
       title={`${model.name} | Stable Diffusion ${model.type} | Civitai`}
