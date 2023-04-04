@@ -139,3 +139,9 @@ export const publishModelSchema = z.object({
   id: z.number(),
   versionIds: z.array(z.number()).optional(),
 });
+
+export type ToggleModelLockInput = z.infer<typeof toggleModelLockSchema>;
+export const toggleModelLockSchema = z.object({
+  id: z.number(),
+  locked: z.boolean(),
+});

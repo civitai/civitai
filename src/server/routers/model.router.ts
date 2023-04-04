@@ -17,6 +17,7 @@ import {
   publishModelHandler,
   reorderModelVersionsHandler,
   restoreModelHandler,
+  toggleModelLockHandler,
   unpublishModelHandler,
   updateModelHandler,
   upsertModelHandler,
@@ -33,6 +34,7 @@ import {
   modelUpsertSchema,
   publishModelSchema,
   reorderModelVersionsSchema,
+  toggleModelLockSchema,
 } from '~/server/schema/model.schema';
 import {
   guardedProcedure,
@@ -165,4 +167,8 @@ export const modelRouter = router({
     .input(reorderModelVersionsSchema)
     .use(isOwnerOrModerator)
     .mutation(reorderModelVersionsHandler),
+  toggleLock: protectedProcedure
+    .input(toggleModelLockSchema)
+    .use(isOwnerOrModerator)
+    .mutation(toggleModelLockHandler),
 });

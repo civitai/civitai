@@ -13,6 +13,7 @@ import {
   ModelUpsertInput,
   PublishModelSchema,
   ReorderModelVersionsSchema,
+  ToggleModelLockInput,
 } from '~/server/schema/model.schema';
 import {
   getAllModelsWithVersionsSelect,
@@ -29,6 +30,7 @@ import {
   permaDeleteModelById,
   publishModelById,
   restoreModelById,
+  toggleLockModel,
   updateModel,
   updateModelById,
   upsertModel,
@@ -699,6 +701,15 @@ export const reorderModelVersionsHandler = async ({
     return model;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const toggleModelLockHandler = async ({ input }: { input: ToggleModelLockInput }) => {
+  try {
+    await toggleLockModel(input);
+  } catch (error) {
+    if (error instanceof TRPCError) error;
     else throw throwDbError(error);
   }
 };

@@ -13,6 +13,8 @@ import {
   Text,
   ThemeIcon,
   Title,
+  Paper,
+  Center,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -33,6 +35,8 @@ import {
   IconRecycle,
   IconTagOff,
   IconTrash,
+  IconLock,
+  IconLockOff,
 } from '@tabler/icons';
 import truncate from 'lodash/truncate';
 import { InferGetServerSidePropsType } from 'next';
@@ -80,6 +84,7 @@ import useIsClient from '~/hooks/useIsClient';
 import { ImageSort } from '~/server/common/enums';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
+import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -116,6 +121,7 @@ export default function ModelDetailsV2({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
+
   const router = useRouter();
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
@@ -532,6 +538,24 @@ export default function ModelDetailsV2({
                         </Menu.Item>
                       </>
                     )}
+                    {isModerator && (
+                      <ToggleLockModel modelId={model.id} locked={model.locked}>
+                        {({ onClick }) => (
+                          <Menu.Item
+                            icon={
+                              model.locked ? (
+                                <IconLockOff size={14} stroke={1.5} />
+                              ) : (
+                                <IconLock size={14} stroke={1.5} />
+                              )
+                            }
+                            onClick={onClick}
+                          >
+                            {model.locked ? 'Unlock' : 'Lock'} model discussion
+                          </Menu.Item>
+                        )}
+                      </ToggleLockModel>
+                    )}
                   </Menu.Dropdown>
                 </Menu>
               </Group>
@@ -655,7 +679,13 @@ export default function ModelDetailsV2({
                   </Group>
                   <ModelDiscussionV2 modelId={model.id} />
                 </Stack>
-              ) : null}
+              ) : (
+                <Paper p="lg">
+                  <Center>
+                    <Text size="sm">Discussions are turned off for this model.</Text>
+                  </Center>
+                </Paper>
+              )}
 
               <Stack spacing="md">
                 <Group spacing="xs" align="flex-end">

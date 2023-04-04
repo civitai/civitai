@@ -1,3 +1,4 @@
+import { ToggleModelLockInput } from './../schema/model.schema';
 import {
   CommercialUse,
   MetricTimeframe,
@@ -762,4 +763,8 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
   const count = await dbRead.model.count({ where });
 
   return getPagingData({ items, count }, take, page);
+};
+
+export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
+  await dbWrite.model.update({ where: { id }, data: { locked } });
 };
