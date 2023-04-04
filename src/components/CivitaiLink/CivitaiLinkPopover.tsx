@@ -80,7 +80,7 @@ function LinkDropdown() {
       <Stack spacing={0} p="xs">
         <Group position="apart" noWrap>
           <Title order={4} size="sm">
-            Civitai Link
+            Agentswap Link
           </Title>
           {canToggleManageInstances && (
             <Tooltip label="Manage instances">
@@ -121,7 +121,7 @@ function NotConnected({ error }: { error?: string }) {
       <Text
         color="dimmed"
         size="xs"
-      >{`We're unable to connect to the Civitai Link Coordination Server.`}</Text>
+      >{`We're unable to connect to the Agentswap Link Coordination Server.`}</Text>
       {error && (
         <Text color="red" size="xs">
           {error}
@@ -139,7 +139,7 @@ function LostConnection({ error }: { error?: string }) {
       <Text
         color="dimmed"
         size="xs"
-      >{`We've lost connect to the Civitai Link Coordination Server.`}</Text>
+      >{`We've lost connect to the Agentswap Link Coordination Server.`}</Text>
       {error && (
         <Text color="red" size="xs">
           {error}

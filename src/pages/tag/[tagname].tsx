@@ -34,7 +34,7 @@ export default function TagPage() {
   return (
     <>
       <Meta
-        title={`${tag?.name} Stable Diffusion AI Models | Civitai`}
+        title={`${tag?.name} Stable Diffusion AI Models | Agentswap`}
         description={`Browse ${tag?.name} Stable Diffusion models, checkpoints, hypernetworks, textual inversions, embeddings, Aesthetic Gradients, and LORAs`}
       />
       {tag && (

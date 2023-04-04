@@ -353,7 +353,7 @@ export default function ModelDetailsV2({
 
   const meta = (
     <Meta
-      title={`${model.name} | Stable Diffusion ${model.type} | Civitai`}
+      title={`${model.name} | Stable Diffusion ${model.type} | Agentswap`}
       description={truncate(removeTags(model.description ?? ''), { length: 150 })}
       image={
         nsfw || versionImages[0]?.url == null

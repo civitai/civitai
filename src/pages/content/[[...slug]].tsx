@@ -53,7 +53,7 @@ export default function ContentPage({
   return (
     <>
       <Meta
-        title={`${title} | Civitai`}
+        title={`${title} | Agentswap`}
         description={description ?? truncate(removeTags(content), { length: 150 })}
       />
       <Container size="md">

@@ -90,7 +90,7 @@ export default function QuestionPage(
   return (
     <>
       <Meta
-        title={`${question.title} | Civitai`}
+        title={`${question.title} | Agentswap`}
         description={truncate(removeTags(question.content ?? ''), { length: 150 })}
         // TODO - determine if we need to do anything to handle content that has images/videos in it
       />

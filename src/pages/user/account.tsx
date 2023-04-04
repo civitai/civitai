@@ -22,7 +22,7 @@ export default function Account({ providers }: Props) {
 
   return (
     <>
-      <Meta title="Manage your Account - Civitai" />
+      <Meta title="Manage your Account - Agentswap" />
 
       <Container pb="md" size="xs">
         <Stack>

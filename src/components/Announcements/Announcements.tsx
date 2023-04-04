@@ -44,7 +44,7 @@ const WelcomeAnnouncement = (props: AnnouncementsProps) => (
   <Announcement
     id={0}
     emoji="👋"
-    title="Welcome to Civitai!"
+    title="Welcome to Agentswap!"
     content="Browse, share, and review custom AI art models, [learn more...](/content/guides/what-is-civitai)"
     {...props}
   />

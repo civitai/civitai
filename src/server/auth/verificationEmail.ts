@@ -13,7 +13,7 @@ export async function sendVerificationRequest({
   const result = await transport.sendMail({
     to,
     from,
-    subject: `Sign in to Civitai`,
+    subject: `Sign in to Agentswap`,
     text: text({ url }),
     html: html({ url, theme }),
   });
@@ -51,7 +51,7 @@ function html({ url, theme }: { url: string; theme: Theme }) {
         <tr>
           <td align="center"
             style="padding: 10px 0px; font-size: 22px; font-family: Helvetica, Arial, sans-serif; color: ${color.text};">
-            Sign in to <strong>Civitai</strong>
+            Sign in to <strong>Agentswap</strong>
           </td>
         </tr>
         <tr>
@@ -82,5 +82,5 @@ function html({ url, theme }: { url: string; theme: Theme }) {
 
 /** Email Text body (fallback for email clients that don't render HTML, e.g. feature phones) */
 function text({ url }: { url: string }) {
-  return `Sign in to Civitai:\n${url}\n\n`;
+  return `Sign in to Agentswap:\n${url}\n\n`;
 }

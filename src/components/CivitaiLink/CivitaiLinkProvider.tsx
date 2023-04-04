@@ -114,7 +114,7 @@ export const useCivitaiLinkStore = create<CivitaiLinkStore>()(
             const inError = activity.status === 'error';
             if (activity.type === 'resources:add') {
               showNotification({
-                title: 'Civitai Link',
+                title: 'Agentswap Link',
                 message: `${inError ? 'Failed ' : ''}Added ${
                   activity.resource.modelName
                 } to SD Instance`,
@@ -163,7 +163,7 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const handleMessage = (msg: string) => {
-      showNotification({ id: msg, message: msg, title: 'Civitai Link', color: 'blue' });
+      showNotification({ id: msg, message: msg, title: 'Agentswap Link', color: 'blue' });
     };
 
     const handleInstance = (payload: Instance) => {
@@ -301,7 +301,7 @@ export function CivitaiLinkProvider({ children }: { children: React.ReactElement
         connected: false,
         socketConnected: false,
         resources: [],
-        error: 'Civitai Link is not enabled',
+        error: 'Agentswap Link is not enabled',
         status: 'not-connected',
         createInstance: () => Promise.resolve(),
         deleteInstance: () => Promise.resolve(),

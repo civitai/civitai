@@ -48,7 +48,7 @@ export default function QuestionsList() {
 
   return (
     <>
-      <Meta title="Questions | Civitai" />
+      <Meta title="Questions | Agentswap" />
       <Container pb="xl">
         <Stack spacing="md">
           <Group position="apart">

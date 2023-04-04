@@ -33,7 +33,7 @@ export default function Leaderboard() {
   return (
     <>
       <Meta
-        title="Creators Leaderboard | Civitai"
+        title="Creators Leaderboard | Agentswap"
         description={`The top creators of Stable Diffusion models this month are ${data
           .slice(0, 10)
           .map((x, i) => `${i + 1}. ${x.username}`)

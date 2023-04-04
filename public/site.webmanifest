@@ -1,20 +1,20 @@
 {
-    "name": "Civitai",
-    "short_name": "Civitai",
-    "start_url": "/",
-    "icons": [
-        {
-            "src": "/images/android-chrome-192x192.png",
-            "sizes": "192x192",
-            "type": "image/png"
-        },
-        {
-            "src": "/images/android-chrome-512x512.png",
-            "sizes": "512x512",
-            "type": "image/png"
-        }
-    ],
-    "theme_color": "#000",
-    "background_color": "#000",
-    "display": "standalone"
+  "name": "Agentswap",
+  "short_name": "Agentswap",
+  "start_url": "/",
+  "icons": [
+    {
+      "src": "/images/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/images/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "theme_color": "#000",
+  "background_color": "#000",
+  "display": "standalone"
 }

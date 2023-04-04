@@ -35,7 +35,7 @@ import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 
 const { openModal, Modal } = createContextModal({
   name: 'civitai-link-wizard',
-  title: 'Civitai Link Setup',
+  title: 'Agentswap Link Setup',
   size: 800,
   // withCloseButton: false,
   // closeOnClickOutside: false,
@@ -65,13 +65,13 @@ const { openModal, Modal } = createContextModal({
 
     return (
       <Stepper active={active} onStepClick={setActive} breakpoint="sm" allowNextStepsSelect={false}>
-        <Stepper.Step label="About Civitai Link" description="Learn what it does">
+        <Stepper.Step label="About Agentswap Link" description="Learn what it does">
           <Stack mt="sm">
             <Stack spacing={4}>
               <Title order={3} sx={{ lineHeight: 1.1 }}>
-                About Civitai Link
+                About Agentswap Link
               </Title>
-              <Text>{`Civitai Link allows you to interact with your Stable Diffusion instance in realtime wherever it is from any device.`}</Text>
+              <Text>{`Agentswap Link allows you to interact with your Stable Diffusion instance in realtime wherever it is from any device.`}</Text>
 
               <AspectRatio ratio={16 / 9}>
                 <YoutubeEmbed videoId="MaSRXvM05x4" />

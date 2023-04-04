@@ -73,7 +73,7 @@ export default function LinkRole({
         {linked ? (
           <Stack spacing="md" align="center">
             <Title align="center" order={1} sx={{ lineHeight: 1.2 }}>
-              Civitai + Discord = ❤️
+              Agentswap + Discord = ❤️
             </Title>
             <Alert color="green" my="lg">
               <Group noWrap>
@@ -93,9 +93,9 @@ export default function LinkRole({
         ) : (
           <Stack spacing="md">
             <Title order={3} sx={{ lineHeight: 1.2 }}>
-              Connect your Discord account to your Civitai account
+              Connect your Discord account to your Agentswap account
             </Title>
-            <Text>{`Take your Civitai accolades into Discord to get special roles and perks by connecting your account.`}</Text>
+            <Text>{`Take your Agentswap accolades into Discord to get special roles and perks by connecting your account.`}</Text>
 
             {providers?.discord && (
               <SocialButton

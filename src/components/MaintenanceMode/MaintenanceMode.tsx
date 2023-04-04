@@ -6,7 +6,7 @@ export const MaintenanceMode = () => {
   return (
     <>
       <Meta
-        title="We'll be right back | Civitai"
+        title="We'll be right back | Agentswap"
         description="We're adjusting a few things, be back in a few minutes..."
       />
       <Center p="xl" sx={{ height: '100vh' }}>

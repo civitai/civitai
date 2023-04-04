@@ -5,27 +5,31 @@ export const SupportButton = ({ ...props }: Props) => {
   const { classes } = useStyles();
 
   return (
-    <Link href="/pricing" passHref>
-      <Box component="a" className={classes.root} {...props}>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          fill="none"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={classes.svg}
-        >
-          <path
-            className={classes.pulser}
-            d="M19.5 12.572 12 20l-7.5-7.428A5 5 0 1 1 12 6.006a5 5 0 1 1 7.5 6.572"
-          />
-          <path
-            className={classes.heart}
-            d="M19.5 12.572 12 20l-7.5-7.428A5 5 0 1 1 12 6.006a5 5 0 1 1 7.5 6.572"
-          />
-        </svg>
-      </Box>
-    </Link>
+    <>
+      {false && (
+        <Link href="/pricing" passHref>
+          <Box component="a" className={classes.root} {...props}>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={classes.svg}
+            >
+              <path
+                className={classes.pulser}
+                d="M19.5 12.572 12 20l-7.5-7.428A5 5 0 1 1 12 6.006a5 5 0 1 1 7.5 6.572"
+              />
+              <path
+                className={classes.heart}
+                d="M19.5 12.572 12 20l-7.5-7.428A5 5 0 1 1 12 6.006a5 5 0 1 1 7.5 6.572"
+              />
+            </svg>
+          </Box>
+        </Link>
+      )}
+    </>
   );
 };
 

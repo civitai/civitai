@@ -57,7 +57,7 @@ export function AppFooter() {
             if (hash) setShowHash((x) => !x);
           }}
         >
-          &copy; Civitai {new Date().getFullYear()}
+          &copy; Agentswap {new Date().getFullYear()}
         </Text>
         {showHash && hash && (
           <Stack spacing={2}>
@@ -77,16 +77,19 @@ export function AppFooter() {
           </Stack>
         )}
         <Group spacing={0} sx={{ flexWrap: 'nowrap' }}>
-          <Button
-            component={NextLink}
-            href="/pricing"
-            {...buttonProps}
-            variant="subtle"
-            color="pink"
-            px={mobile ? 5 : 'xs'}
-          >
-            Support Us ❤️
-          </Button>
+          {false && (
+            <Button
+              component={NextLink}
+              href="/pricing"
+              {...buttonProps}
+              variant="subtle"
+              color="pink"
+              px={mobile ? 5 : 'xs'}
+            >
+              Support Us ❤️
+            </Button>
+          )}
+
           <Button
             component={NextLink}
             prefetch={false}
@@ -108,15 +111,19 @@ export function AppFooter() {
           <Button component="a" href="/github" {...buttonProps} target="_blank">
             GitHub
           </Button>
-          <Button component="a" href="/discord" {...buttonProps} target="_blank">
-            Discord
-          </Button>
-          <Button component="a" href="/twitter" {...buttonProps} target="_blank">
-            Twitter
-          </Button>
-          <Button component="a" href="/reddit" {...buttonProps} target="_blank">
-            Reddit
-          </Button>
+          {false && (
+            <>
+              <Button component="a" href="/discord" {...buttonProps} target="_blank">
+                Discord
+              </Button>
+              <Button component="a" href="/twitter" {...buttonProps} target="_blank">
+                Twitter
+              </Button>
+              <Button component="a" href="/reddit" {...buttonProps} target="_blank">
+                Reddit
+              </Button>
+            </>
+          )}
           <Button
             component="a"
             href="/github/wiki/REST-API-Reference"

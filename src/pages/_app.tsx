@@ -130,7 +130,7 @@ function MyApp(props: CustomAppProps) {
   return (
     <>
       <Head>
-        <title>Civitai | Share your models</title>
+        <title>Agentswap | Share your models</title>
         <MetaPWA />
       </Head>
 

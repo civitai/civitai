@@ -39,7 +39,7 @@ export default function Login({
         )}
         <Paper radius="md" p="xl" withBorder>
           <Text size="lg" weight={500}>
-            Welcome to Civitai, sign in with
+            Welcome to Agentswap, sign in with
           </Text>
 
           <Stack mb={error ? 'md' : undefined} mt="md">

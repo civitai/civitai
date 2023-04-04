@@ -65,7 +65,7 @@ export default function Gallery() {
   return (
     <>
       <Meta
-        title={`Civitai${
+        title={`Agentswap${
           !currentUser ? ` | Stable Diffusion models, embeddings, hypernetworks and more` : ''
         }`}
         description="Civitai is a platform for Stable Diffusion AI Art models. We have a collection of over 1,700 models from 250+ creators. We also have a collection of 1200 reviews from the community along with 12,000+ images with prompts to get you started."

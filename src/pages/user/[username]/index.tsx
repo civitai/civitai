@@ -149,7 +149,7 @@ export default function UserPage({
     <>
       {user && stats ? (
         <Meta
-          title={`${user.username} Creator Profile | Civitai`}
+          title={`${user.username} Creator Profile | Agentswap`}
           description={`Average Rating: ${stats.ratingAllTime.toFixed(1)} (${abbreviateNumber(
             stats.ratingCountAllTime
           )}), Models Uploaded: ${abbreviateNumber(uploads)}, Followers: ${abbreviateNumber(
@@ -161,8 +161,8 @@ export default function UserPage({
         />
       ) : (
         <Meta
-          title={`Creator Profile | Civitai`}
-          description="Learn more about this awesome creator on Civitai."
+          title={`Creator Profile | Agentswap`}
+          description="Learn more about this awesome creator on Agentswap."
         />
       )}
       <Tabs defaultValue="published" variant="outline">

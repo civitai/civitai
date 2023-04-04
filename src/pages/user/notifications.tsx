@@ -56,7 +56,7 @@ export default function Notifications() {
 
   return (
     <>
-      <Meta title="Notifications | Civitai" />
+      <Meta title="Notifications | Agentswap" />
       <Container size="sm">
         <Grid gutter="xl" align="center">
           <Grid.Col span={12}>

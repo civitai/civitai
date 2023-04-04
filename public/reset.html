@@ -1,65 +1,65 @@
 <!DOCTYPE html>
 <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reset Me | Agentswap</title>
+    <style>
+      body {
+        background: #111;
+        color: #ccc;
+        width: 350px;
+        margin: 40px auto;
+        font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen,
+          Ubuntu, Cantarell, Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
+      }
 
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Reset Me | Civitai</title>
-  <style>
-    body {
-      background: #111;
-      color: #ccc;
-      width: 350px;
-      margin: 40px auto;
-      font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen,
-        Ubuntu, Cantarell, Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
-    }
+      button {
+        width: 100%;
+        height: 48px;
+        background: #3498db;
+        color: #fff;
+        font-weight: 500;
+        text-transform: uppercase;
+        font-size: 1.1em;
+        cursor: pointer;
+      }
 
-    button {
-      width: 100%;
-      height: 48px;
-      background: #3498db;
-      color: #fff;
-      font-weight: 500;
-      text-transform: uppercase;
-      font-size: 1.1em;
-      cursor: pointer;
-    }
+      .small {
+        font-size: 0.8em;
+        margin-top: 10px;
+      }
+    </style>
+  </head>
 
-    .small {
-      font-size: 0.8em;
-      margin-top: 10px;
-    }
-  </style>
-</head>
+  <body>
+    <h1>Reset Me</h1>
+    <p>
+      Having trouble with the site? Here's a little button you can press to try
+      and get unstuck:
+    </p>
+    <button>Run Clean-up</button>
+    <p class="small">You will be redirected to the homepage after completion</p>
+  </body>
 
-<body>
-  <h1>Reset Me</h1>
-  <p>Having trouble with the site? Here's a little button you can press to try and get unstuck:</p>
-  <button>Run Clean-up</button>
-  <p class="small">You will be redirected to the homepage after completion</p>
-</body>
+  <script>
+    const button = document.querySelector('button')
+    button.addEventListener('click', async () => {
+      button.innerHTML = 'Running...'
 
-<script>
-  const button = document.querySelector('button');
-  button.addEventListener('click', async () => {
-    button.innerHTML = 'Running...';
+      // Clear indexedDB
+      const dbNames = ['keyval-store', 'tensorflowjs']
+      for (const dbName of dbNames) window.indexedDB.deleteDatabase(dbName)
 
-    // Clear indexedDB
-    const dbNames = ['keyval-store', 'tensorflowjs'];
-    for (const dbName of dbNames) window.indexedDB.deleteDatabase(dbName);
+      // Clear cache
+      const cache = await caches.keys()
+      cache.forEach((key) => caches.delete(key))
 
+      // Clear local storage
+      localStorage.clear()
 
-    // Clear cache
-    const cache = await caches.keys();
-    cache.forEach((key) => caches.delete(key));
-
-    // Clear local storage
-    localStorage.clear();
-
-    window.location.href = '/';
-  });
-</script>
-
+      window.location.href = '/'
+    })
+  </script>
 </html>
