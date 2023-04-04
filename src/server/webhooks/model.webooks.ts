@@ -29,17 +29,20 @@ export const modelWebhooks = createWebhookProcessor({
         tags: tagsOnModels.map(({ tag }) => tag.name),
         modelVersions: modelVersions
           .map(({ images, files, ...version }) => {
-            const primaryFile = getPrimaryFile(files);
+            const castedFiles = files as Array<
+              Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
+            >;
+            const primaryFile = getPrimaryFile(castedFiles);
             if (!primaryFile) return null;
 
             return {
               ...version,
-              files: files.map((file) => ({
+              files: castedFiles.map((file) => ({
                 ...file,
                 downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,
-                  format: file.format,
+                  format: file.metadata.format,
                   primary: primaryFile.id === file.id,
                 })}`,
               })),
@@ -84,17 +87,20 @@ export const modelWebhooks = createWebhookProcessor({
         tags: tagsOnModels.map(({ tag }) => tag.name),
         modelVersions: modelVersions
           .map(({ images, files, ...version }) => {
-            const primaryFile = getPrimaryFile(files);
+            const castedFiles = files as Array<
+              Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
+            >;
+            const primaryFile = getPrimaryFile(castedFiles);
             if (!primaryFile) return null;
 
             return {
               ...version,
-              files: files.map((file) => ({
+              files: castedFiles.map((file) => ({
                 ...file,
                 downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,
-                  format: file.format,
+                  format: file.metadata.format,
                   primary: primaryFile.id === file.id,
                 })}`,
               })),

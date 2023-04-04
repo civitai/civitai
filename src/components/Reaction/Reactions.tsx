@@ -1,10 +1,14 @@
 import { Button, Group, Popover, Text, PopoverProps, GroupProps } from '@mantine/core';
+import { useSessionStorage } from '@mantine/hooks';
 import { ReviewReactions } from '@prisma/client';
 import { IconMoodSmile, IconPlus } from '@tabler/icons';
+import { capitalize } from 'lodash-es';
+import { useMemo, useState } from 'react';
+import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
-import { ReactionButton } from './ReactionButton';
+import { ReactionButton, useReactionsStore } from './ReactionButton';
 
 export type ReactionMetrics = {
   likeCount?: number;
@@ -26,7 +30,6 @@ const availableReactions: ReactionToEmoji = {
 type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
   reactions: { userId: number; reaction: ReviewReactions }[];
   metrics?: ReactionMetrics;
-  popoverPosition?: PopoverProps['position'];
   readonly?: boolean;
   withinPortal?: boolean;
 };
@@ -36,69 +39,69 @@ export function Reactions({
   metrics = {},
   entityType,
   entityId,
-  popoverPosition = 'top-start',
   readonly,
   withinPortal,
   ...groupProps
 }: ReactionsProps & Omit<GroupProps, 'children' | 'onClick'>) {
-  const currentUser = useCurrentUser();
+  const storedReactions = useReactionsStore({ entityType, entityId }) ?? {};
+  const [showAll, setShowAll] = useSessionStorage<boolean>({
+    key: 'showAllReactions',
+    defaultValue: false,
+  });
+
+  const hasAllReactions = Object.entries(metrics).every(([key, value]) => {
+    // ie. converts the key `likeCount` to `Like`
+    const reactionType = capitalize(key).replace(/count/, '');
+    const hasReaction =
+      storedReactions[reactionType] !== undefined
+        ? storedReactions[reactionType]
+        : !!reactions.find((x) => x.reaction === reactionType);
+
+    return value > 0 || !!storedReactions[reactionType] || hasReaction;
+  });
 
   return (
-    <Group
-      spacing={4}
-      align="center"
-      onClick={(e) => {
-        if (!readonly) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }}
-      {...groupProps}
-    >
-      <Popover
-        shadow="md"
-        position={popoverPosition}
-        withArrow
-        disabled={readonly}
-        withinPortal={withinPortal}
+    <LoginPopover message="You must be logged in to react to this" withArrow={false}>
+      <Group
+        spacing={4}
+        align="center"
+        onClick={(e) => {
+          if (!readonly) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
+        {...groupProps}
       >
-        <Popover.Target>
-          <Button variant="subtle" size="xs" color="gray" radius="xl" compact>
+        {!hasAllReactions && (
+          <Button
+            variant="subtle"
+            size="xs"
+            color="gray"
+            radius="xs"
+            px={0}
+            compact
+            onClick={() => setShowAll((s) => !s)}
+          >
             <Group spacing={2}>
-              <IconPlus size={14} stroke={1.5} />
-              <IconMoodSmile size={14} stroke={1.5} />
+              <IconPlus size={16} stroke={2.5} />
+              <IconMoodSmile size={18} stroke={2.5} />
             </Group>
           </Button>
-        </Popover.Target>
-        <Popover.Dropdown p={4}>
-          {currentUser ? (
-            <ReactionsList
-              reactions={reactions}
-              metrics={metrics}
-              entityType={entityType}
-              entityId={entityId}
-            >
-              {ReactionSelector}
-            </ReactionsList>
-          ) : (
-            <Text color="dimmed" size="xs" px="xs">
-              You must be logged in to react
-            </Text>
-          )}
-        </Popover.Dropdown>
-      </Popover>
+        )}
 
-      <ReactionsList
-        reactions={reactions}
-        metrics={metrics}
-        entityType={entityType}
-        entityId={entityId}
-        noEmpty
-        readonly={readonly}
-      >
-        {ReactionBadge}
-      </ReactionsList>
-    </Group>
+        <ReactionsList
+          reactions={reactions}
+          metrics={metrics}
+          entityType={entityType}
+          entityId={entityId}
+          noEmpty={!showAll}
+          readonly={readonly}
+        >
+          {ReactionBadge}
+        </ReactionsList>
+      </Group>
+    </LoginPopover>
   );
 }
 
@@ -162,9 +165,17 @@ function ReactionBadge({
   reaction: ReviewReactions;
 }) {
   return (
-    <Button size="xs" radius="xl" variant="light" color={hasReacted ? 'blue' : 'gray'} compact>
+    <Button
+      size="xs"
+      radius="xs"
+      variant="light"
+      pl={2}
+      pr={3}
+      color={hasReacted ? 'blue' : 'gray'}
+      compact
+    >
       <Group spacing={4} align="center">
-        <Text inherit>{availableReactions[reaction]}</Text>
+        <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>{availableReactions[reaction]}</Text>
         <Text inherit>{count}</Text>
       </Group>
     </Button>
@@ -179,7 +190,7 @@ function ReactionSelector({
   hasReacted: boolean;
 }) {
   return (
-    <Button size="xs" radius="sm" variant={'subtle'} color={hasReacted ? 'blue' : 'gray'}>
+    <Button size="xs" radius="xs" variant={'subtle'} color={hasReacted ? 'blue' : 'gray'}>
       {availableReactions[reaction]}
     </Button>
   );

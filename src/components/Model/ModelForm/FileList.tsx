@@ -1,16 +1,16 @@
 import { ActionIcon, Anchor, Group, InputWrapperProps, Stack } from '@mantine/core';
-import { ModelFileFormat, ModelType } from '@prisma/client';
+import { ModelType } from '@prisma/client';
 import { IconTrash } from '@tabler/icons';
 import { useEffect, useState } from 'react';
 import { useFieldArray, UseFormReturn } from 'react-hook-form';
 
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { InputFileUpload } from '~/libs/form';
-import { ModelFileType } from '~/server/common/constants';
+import { constants, ModelFileType } from '~/server/common/constants';
 import { ModelFileInput } from '~/server/schema/model-file.schema';
 import { getDisplayName } from '~/utils/string-helpers';
 
-const fileFormats = Object.values(ModelFileFormat).filter((type) => type !== 'Other');
+const fileFormats = constants.modelFileFormats.filter((type) => type !== 'Other');
 const fileFormatCount = fileFormats.length;
 
 const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {

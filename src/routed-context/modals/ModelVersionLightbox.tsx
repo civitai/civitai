@@ -4,6 +4,7 @@ import { createRoutedContext } from '~/routed-context/create-routed-context';
 import { Lightbox } from '~/routed-context/modals/Lightbox';
 import { trpc } from '~/utils/trpc';
 
+// TODO: Consider deleting this file since it has been replaced
 export default createRoutedContext({
   schema: z.object({
     modelVersionId: z.number(),
@@ -23,7 +24,7 @@ export default createRoutedContext({
         opened={context.opened}
         onClose={context.close}
         initialSlide={initialSlide}
-        images={modelVersion?.images}
+        // images={modelVersion?.images}
         connect={{ entityId: id, entityType: 'model' }}
       />
     );

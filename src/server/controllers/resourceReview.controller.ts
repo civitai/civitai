@@ -2,18 +2,29 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetRatingTotalsInput,
   GetResourceReviewsInfiniteInput,
+  UpdateResourceReviewInput,
   UpsertResourceReviewInput,
 } from '../schema/resourceReview.schema';
 import { throwDbError } from '~/server/utils/errorHandling';
 import { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
 import {
+  getResourceReview,
   deleteResourceReview,
   getRatingTotals,
   getResourceReviews,
   getResourceReviewsInfinite,
   upsertResourceReview,
+  updateResourceReview,
 } from '~/server/services/resourceReview.service';
 import { Context } from '~/server/createContext';
+
+export const getResourceReviewHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    return await getResourceReview(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
 
 export const getResourceReviewsHandler = async ({ input }: { input: GetResourceReviewsInput }) => {
   try {
@@ -61,6 +72,20 @@ export const upsertResourceReviewHandler = async ({
 }) => {
   try {
     return await upsertResourceReview({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const updateResourceReviewHandler = async ({
+  input,
+  ctx,
+}: {
+  input: UpdateResourceReviewInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await updateResourceReview({ ...input });
   } catch (error) {
     throw throwDbError(error);
   }

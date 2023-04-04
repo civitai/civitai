@@ -1,5 +1,4 @@
 import { Prisma } from '@prisma/client';
-import { SessionUser } from 'next-auth';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
 
@@ -168,15 +167,16 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       inaccurate: true,
       baseModel: true,
       earlyAccessTimeFrame: true,
-      images: {
-        orderBy: { index: 'asc' },
-        select: {
-          index: true,
-          image: {
-            select: imageSelect,
-          },
-        },
-      },
+      status: true,
+      // images: {
+      //   orderBy: { index: 'asc' },
+      //   select: {
+      //     index: true,
+      //     image: {
+      //       select: imageSelect,
+      //     },
+      //   },
+      // },
       rank: {
         select: {
           downloadCountAllTime: true,
@@ -191,7 +191,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           sizeKB: true,
           name: true,
           type: true,
-          format: true,
+          metadata: true,
           pickleScanResult: true,
           pickleScanMessage: true,
           virusScanResult: true,
@@ -204,6 +204,11 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
               hash: true,
             },
           },
+        },
+      },
+      posts: {
+        select: {
+          id: true,
         },
       },
     },

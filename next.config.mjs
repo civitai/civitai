@@ -86,12 +86,11 @@ export default defineNextConfig({
         destination: 'https://youtu.be/fs-Zs-fvxb0',
         permanent: false,
       },
-      // TODO: Uncomment this after completing the new image detail page
-      // {
-      //   source: '/gallery/:path*',
-      //   destination: '/images/:path*',
-      //   permanent: true,
-      // },
+      {
+        source: '/gallery/:path*',
+        destination: '/images/:path*',
+        permanent: true,
+      },
     ];
   },
   webpack: (config, { isServer }) => {

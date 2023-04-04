@@ -26,7 +26,7 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { GalleryDetailContextMenu } from '~/components/Gallery/GalleryDetailContextMenu';
+import { ImageDetailContextMenu } from '~/components/Image/Detail/ImageDetailContextMenu';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
@@ -90,35 +90,16 @@ export function ImageDetail() {
                       </ActionIcon>
                     </ReportImageButton>
                     {(isMod || isOwner) && (
-                      <GalleryDetailContextMenu>
+                      <ImageDetailContextMenu>
                         <ActionIcon size="lg">
                           <IconDotsVertical />
                         </ActionIcon>
-                      </GalleryDetailContextMenu>
+                      </ImageDetailContextMenu>
                     )}
                   </Group>
                 </Group>
                 <CloseButton size="lg" variant="default" onClick={close} />
               </Group>
-              {/* {infinite && image.connections && (
-                <Link
-                  href={
-                    image.connections.reviewId
-                      ? `/models/${image.connections.modelId}?modal=reviewThread&reviewId=${image.connections.reviewId}`
-                      : `/models/${image.connections.modelId}`
-                  }
-                  passHref
-                >
-                  <Anchor size="xs" target="_blank">
-                    <Group spacing={4} align="center">
-                      <Text inherit>
-                        {image.connections.reviewId ? 'Go to review thread' : 'Go to model page'}
-                      </Text>
-                      <IconExternalLink size={14} />
-                    </Group>
-                  </Anchor>
-                </Link>
-              )} */}
             </Stack>
           </Card.Section>
           <Card.Section
@@ -139,7 +120,14 @@ export function ImageDetail() {
                   {`This image won't be visible to other users until it's reviewed by our moderators.`}
                 </AlertWithIcon>
               )}
-              <VotableTags entityType="image" entityId={image.id} />
+              <VotableTags
+                entityType="image"
+                entityId={image.id}
+                canAdd
+                canAddModerated={isMod}
+                collapsible
+                px="md"
+              />
               <div>
                 <Divider
                   label="Discussion"
@@ -171,6 +159,7 @@ export function ImageDetail() {
               </div>
               <Stack spacing="md" mt="auto">
                 <Divider label="Resources" labelPosition="center" />
+
                 <Box px="md">
                   <ImageResources imageId={image.id} />
                 </Box>

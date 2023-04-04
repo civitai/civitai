@@ -10,10 +10,22 @@ import {
   Sx,
   ActionIcon,
   Menu,
+  HoverCard,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconDotsVertical, IconEye, IconEyeOff, IconFlag, IconLock, IconPlus } from '@tabler/icons';
-import { useRouter } from 'next/router';
+import { Prisma } from '@prisma/client';
+import {
+  IconDotsVertical,
+  IconEye,
+  IconEyeOff,
+  IconFlag,
+  IconLock,
+  IconPlus,
+  IconPencil,
+  IconAlertTriangle,
+  IconCheck,
+  IconX,
+} from '@tabler/icons';
 import React, { cloneElement, createContext, useContext, useState, useCallback } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -21,8 +33,12 @@ import { immer } from 'zustand/middleware/immer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { ImageModel } from '~/server/selectors/image.selector';
+import { SimpleTag } from '~/server/selectors/tag.selector';
 import { useImageStore } from '~/store/images.store';
 import { isDefined } from '~/utils/type-guards';
+import Router, { useRouter } from 'next/router';
+import { trpc } from '~/utils/trpc';
 
 export type ImageGuardConnect = {
   entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post';
@@ -81,7 +97,7 @@ const useImageGuardContext = () => {
   - use case: home page, model card, toggle image - since I don't have all the images yet, I need to be able to still manage nsfw state for all the images without having the knowledge of which images are nsfw
 */
 
-// type CustomImageModel = Omit<ImageModel, 'tags'> & {
+// export type CustomImageModel = Omit<ImageModel, 'tags'> & {
 //   imageNsfw?: boolean;
 //   tags?: SimpleTag[];
 //   analysis?: Prisma.JsonValue;
@@ -91,6 +107,9 @@ type ImageProps = {
   id: number;
   nsfw: boolean;
   imageNsfw?: boolean;
+  postId?: number | null;
+  width?: number | null;
+  needsReview?: boolean;
 };
 
 type ImageGuardProps<T extends ImageProps> = {
@@ -126,7 +145,9 @@ const ImageGuardContentCtx = createContext<{
   showToggleConnect: boolean;
   canToggleNsfw: boolean;
   showReportNsfw: boolean;
-}>({} as any);
+  isOwner: boolean;
+  isModerator: boolean;
+} | null>(null);
 const useImageGuardContentContext = () => {
   const context = useContext(ImageGuardContentCtx);
   if (!context)
@@ -153,6 +174,8 @@ function ImageGuardContentProvider({
     useCallback((state) => state.images[image.id.toString()] ?? {}, [image.id])
   );
   const userId: number | undefined = (image as any).userId ?? (image as any).user?.id;
+  const isOwner = userId === currentUser?.id;
+  const isModerator = currentUser?.isModerator ?? false;
   const showing = showConnection ?? showImage;
   const nsfw = !!userId && userId === currentUser?.id ? false : imageStore.nsfw ?? image.nsfw;
   const nsfwWithBlur = nsfw && shouldBlur;
@@ -178,6 +201,8 @@ function ImageGuardContentProvider({
           nsfw: nsfwWithBlur,
           imageNsfw: nsfw,
         },
+        isOwner,
+        isModerator,
       }}
     >
       {children}
@@ -200,7 +225,19 @@ ImageGuard.Report = function ReportImage({
 }: {
   position?: 'static' | 'top-left' | 'top-right';
 }) {
-  const { image, showReportNsfw } = useImageGuardContentContext();
+  const { image, showReportNsfw, isOwner, isModerator } = useImageGuardContentContext();
+  const [needsReview, setNeedsReview] = useState(image.needsReview);
+
+  const moderateImagesMutation = trpc.image.moderate.useMutation();
+  const handleModerate = async (accept: boolean) => {
+    if (!isModerator) return;
+    moderateImagesMutation.mutate({
+      ids: [image.id],
+      needsReview: accept ? false : undefined,
+      delete: !accept ? true : undefined,
+    });
+    setNeedsReview(false);
+  };
   if (!showReportNsfw) return null;
 
   const handleClick = (e: React.SyntheticEvent) => {
@@ -209,44 +246,102 @@ ImageGuard.Report = function ReportImage({
     openContext('report', { entityType: ReportEntity.Image, entityId: image.id });
   };
 
-  return (
-    <Menu position="left-start" withArrow offset={-5}>
-      <Menu.Target>
-        <ActionIcon
-          variant="transparent"
-          p={0}
-          onClick={(e: React.MouseEvent) => {
-            e.preventDefault();
-            e.stopPropagation();
-          }}
-          sx={{
-            width: 30,
-            position: 'absolute',
-            top: 5,
-            left: position === 'top-left' ? 5 : undefined,
-            right: position === 'top-right' ? 5 : undefined,
-            zIndex: 8,
-          }}
-        >
-          <IconDotsVertical
-            size={26}
-            color="#fff"
-            filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-          />
-        </ActionIcon>
-      </Menu.Target>
-      <Menu.Dropdown>
-        <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleClick}>
-          Report image
-        </Menu.Item>
-      </Menu.Dropdown>
-    </Menu>
-  );
-};
+  const handleEditClick = (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    Router.push(`/posts/${image.postId}/edit`);
+  };
 
-type ToggleStatus = 'show' | 'hide';
-type ToggleProps = {
-  children: ({ status }: { status: ToggleStatus }) => React.ReactElement;
+  let NeedsReviewBadge = needsReview && (
+    <ThemeIcon size="lg" color="yellow">
+      <IconAlertTriangle strokeWidth={2.5} size={26} />
+    </ThemeIcon>
+  );
+
+  if (needsReview && isModerator)
+    NeedsReviewBadge = (
+      <Menu position="bottom">
+        <Menu.Target>
+          <Box>{NeedsReviewBadge}</Box>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Item
+            onClick={() => handleModerate(true)}
+            icon={<IconCheck size={14} stroke={1.5} />}
+          >
+            Approve
+          </Menu.Item>
+          <Menu.Item onClick={() => handleModerate(false)} icon={<IconX size={14} stroke={1.5} />}>
+            Reject
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
+    );
+  else if (needsReview) {
+    NeedsReviewBadge = (
+      <HoverCard width={200} withArrow>
+        <HoverCard.Target>{NeedsReviewBadge}</HoverCard.Target>
+        <HoverCard.Dropdown p={8}>
+          <Stack spacing={0}>
+            <Text weight="bold" size="xs">
+              Flagged for review
+            </Text>
+            <Text size="xs">
+              {`This image won't be visible to other users until it's reviewed by our moderators.`}
+            </Text>
+          </Stack>
+        </HoverCard.Dropdown>
+      </HoverCard>
+    );
+  }
+
+  return (
+    <Group
+      spacing={4}
+      sx={{
+        position: 'absolute',
+        top: 5,
+        left: position === 'top-left' ? 5 : undefined,
+        right: position === 'top-right' ? 5 : undefined,
+        zIndex: 8,
+      }}
+    >
+      {NeedsReviewBadge}
+      <Menu position="left-start" withArrow offset={-5}>
+        <Menu.Target>
+          <ActionIcon
+            variant="transparent"
+            p={0}
+            onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            sx={{ width: 30 }}
+          >
+            <IconDotsVertical
+              size={26}
+              color="#fff"
+              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+            />
+          </ActionIcon>
+        </Menu.Target>
+        <Menu.Dropdown>
+          {!isOwner && (
+            <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleClick}>
+              Report image
+            </Menu.Item>
+          )}
+          {(isOwner || isModerator) && image.postId && (
+            <>
+              <Menu.Item icon={<IconPencil size={14} stroke={1.5} />} onClick={handleEditClick}>
+                Edit Image Post
+              </Menu.Item>
+            </>
+          )}
+        </Menu.Dropdown>
+      </Menu>
+    </Group>
+  );
 };
 
 ImageGuard.ToggleImage = function ToggleImage({

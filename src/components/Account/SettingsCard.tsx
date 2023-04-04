@@ -1,12 +1,13 @@
 import { Card, Divider, Group, Select, Stack, Switch, Title } from '@mantine/core';
-import { ModelFileFormat } from '@prisma/client';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
 import { reloadSession } from '~/utils/next-auth-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
+import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-const validModelFormats = Object.values(ModelFileFormat).filter((format) => format !== 'Other');
+const validModelFormats = constants.modelFileFormats.filter((format) => format !== 'Other');
 
 export function SettingsCard() {
   const user = useCurrentUser();
@@ -40,16 +41,36 @@ export function SettingsCard() {
             label="Preferred Format"
             name="fileFormat"
             data={validModelFormats}
-            value={user.preferredModelFormat ?? ModelFileFormat.SafeTensor}
-            onChange={(value: ModelFileFormat) => mutate({ ...user, preferredModelFormat: value })}
+            value={user.filePreferences?.format ?? 'SafeTensor'}
+            onChange={(value: ModelFileFormat) =>
+              mutate({ ...user, filePreferences: { ...user.filePreferences, format: value } })
+            }
             disabled={isLoading}
           />
           <Select
             label="Preferred Size"
-            name="fileFormat"
-            data={['Full', 'Pruned']}
-            value={user.preferredPrunedModel ? 'Pruned' : 'Full'}
-            onChange={(value) => mutate({ ...user, preferredPrunedModel: value === 'Pruned' })}
+            name="size"
+            data={constants.modelFileSizes.map((size) => ({
+              value: size,
+              label: titleCase(size),
+            }))}
+            value={user.filePreferences?.size ?? 'pruned'}
+            onChange={(value: ModelFileSize) =>
+              mutate({ ...user, filePreferences: { ...user.filePreferences, size: value } })
+            }
+            disabled={isLoading}
+          />
+          <Select
+            label="Preferred FP"
+            name="fp"
+            data={constants.modelFileFp.map((value) => ({
+              value,
+              label: value.toUpperCase(),
+            }))}
+            value={user.filePreferences?.fp ?? 'fp16'}
+            onChange={(value: ModelFileSize) =>
+              mutate({ ...user, filePreferences: { ...user.filePreferences, fp: value } })
+            }
             disabled={isLoading}
           />
         </Group>

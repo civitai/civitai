@@ -3,25 +3,15 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isNumber } from '~/utils/type-guards';
 import { ImageDetail } from '~/components/Image/Detail/ImageDetail';
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
+import { parseImagesQuery } from '~/components/Image/image.utils';
 
 export default function ImagePage() {
   const router = useRouter();
   const imageId = Number(router.query.imageId);
-  const modelId = router.query.modelId ? Number(router.query.modelId) : undefined;
-  const modelVersionId = router.query.modelVersionId
-    ? Number(router.query.modelVersionId)
-    : undefined;
-  const postId = router.query.postId ? Number(router.query.postId) : undefined;
-  const username = router.query.username as string;
+  const filters = parseImagesQuery(router.query);
 
   return (
-    <ImageDetailProvider
-      imageId={imageId}
-      modelId={modelId}
-      modelVersionId={modelVersionId}
-      postId={postId}
-      username={username}
-    >
+    <ImageDetailProvider imageId={imageId} filters={filters}>
       <ImageDetail />
     </ImageDetailProvider>
   );

@@ -39,8 +39,8 @@ export default MixedAuthEndpoint(async function handler(
     const { nextPage, prevPage, baseUrl } = getPaginationLinks({ ...metadata, req });
 
     const preferredFormat = {
-      type: user?.preferredPrunedModel ? 'Pruned Model' : undefined,
-      format: user?.preferredModelFormat,
+      type: user?.filePreferences?.size === 'pruned' ? 'Pruned Model' : undefined,
+      metadata: user?.filePreferences,
     };
     const primaryFileOnly = req.query.primaryFileOnly === 'true';
 
@@ -54,20 +54,23 @@ export default MixedAuthEndpoint(async function handler(
         tags: tagsOnModels.map(({ tag }) => tag.name),
         modelVersions: modelVersions
           .map(({ images, files, ...version }) => {
-            const primaryFile = getPrimaryFile(files, preferredFormat);
+            let castedFiles = files as Array<
+              Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
+            >;
+            const primaryFile = getPrimaryFile(castedFiles, preferredFormat);
             if (!primaryFile) return null;
-            if (primaryFileOnly) files = [primaryFile];
+            if (primaryFileOnly) castedFiles = [primaryFile];
 
             return {
               ...version,
-              files: files.map(({ hashes, ...file }) => ({
+              files: castedFiles.map(({ hashes, ...file }) => ({
                 ...file,
                 name: getDownloadFilename({ model, modelVersion: version, file }),
                 hashes: hashesAsObject(hashes),
                 downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,
-                  format: file.format,
+                  format: file.metadata.format,
                   primary: primaryFile.id === file.id,
                 })}`,
                 primary: primaryFile.id === file.id ? true : undefined,

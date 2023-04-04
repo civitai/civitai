@@ -10,7 +10,7 @@ import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const publishText = 'Publish';
-const hiddenLabel = `When a post is Hidden, you can grab a link and share it outside of the Civitai community.  Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;
+export const hiddenLabel = `When a post is Hidden, you can grab a link and share it outside of the Civitai community. Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;
 const matureLabel = 'Mature content may include content that is suggestive or provocative';
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -34,6 +34,7 @@ export function EditPostControls() {
 
 function ManagePostStatus() {
   const router = useRouter();
+  const returnUrl = router.query.returnUrl as string;
   const currentUser = useCurrentUser();
   const id = useEditPostContext((state) => state.id);
   const tags = useEditPostContext((state) => state.tags);
@@ -55,7 +56,8 @@ function ManagePostStatus() {
       {
         onSuccess: () => {
           setPublishedAt(publishedAt);
-          router.push(`/user/${currentUser.username}/posts`);
+          if (returnUrl) router.push(returnUrl);
+          else router.push(`/user/${currentUser.username}/posts`);
         },
       }
     );
@@ -84,11 +86,13 @@ function ManagePostStatus() {
             </div>
           </Tooltip>
         )}
-        <ShareButton title={title} url={`/posts/${id}`}>
-          <Button variant="default" style={{ flex: 1 }}>
-            Share
-          </Button>
-        </ShareButton>
+        {publishedAt && (
+          <ShareButton title={title} url={`/posts/${id}`}>
+            <Button variant="default" style={{ flex: 1 }}>
+              Share
+            </Button>
+          </ShareButton>
+        )}
       </Group>
       <Text size="xs">
         {!publishedAt ? (
@@ -110,7 +114,7 @@ function ManagePostStatus() {
   );
 }
 
-function ManagePostMaturity() {
+export function ManagePostMaturity() {
   const id = useEditPostContext((state) => state.id);
   const nsfw = useEditPostContext((state) => state.nsfw);
   const toggleNsfw = useEditPostContext((state) => state.toggleNsfw);

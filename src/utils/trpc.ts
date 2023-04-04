@@ -8,18 +8,20 @@ import { isDev } from '~/env/other';
 
 const url = '/api/trpc';
 
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: false,
+      staleTime: Infinity,
+    },
+  },
+});
+
 export const trpc = createTRPCNext<AppRouter>({
   config() {
     return {
-      queryClient: new QueryClient({
-        defaultOptions: {
-          queries: {
-            refetchOnWindowFocus: false,
-            retry: false,
-            staleTime: Infinity,
-          },
-        },
-      }),
+      queryClient,
       transformer: superjson,
       links: [
         loggerLink({

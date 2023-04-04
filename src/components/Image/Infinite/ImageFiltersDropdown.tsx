@@ -1,27 +1,20 @@
 import { Divider, Stack, Chip, ChipProps, createStyles, MultiSelect, Button } from '@mantine/core';
 import { ImageGenerationProcess } from '@prisma/client';
-import { BrowsingModeFilter } from '~/components/Filters/BrowsingModeFilter';
 import { FiltersDropdown } from '~/components/Filters/FiltersDropdown';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { BrowsingMode } from '~/server/common/enums';
-import { trpc } from '~/utils/trpc';
 import { IconFilterOff } from '@tabler/icons';
 
 export function ImageFiltersDropdown() {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
-  const showNSFWToggle = !currentUser || currentUser.showNsfw;
+  // const showNSFWToggle = !currentUser || currentUser.showNsfw;
 
-  const defaultBrowsingMode = showNSFWToggle ? BrowsingMode.All : BrowsingMode.SFW;
-
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
   const generation = useFiltersContext((state) => state.image.generation) ?? [];
   // const excludedTags = useFiltersContext((state) => state.image.excludedTags) ?? [];
   const setFilters = useFiltersContext((state) => state.setFilters);
 
-  const count =
-    (showNSFWToggle && browsingMode !== defaultBrowsingMode ? 1 : 0) + generation.length;
+  const count = generation.length;
 
   // const { data: { items: tags } = { items: [] } } = trpc.tag.getAll.useQuery(
   //   { entityType: ['Image'], categories: false, unlisted: false },
@@ -30,15 +23,14 @@ export function ImageFiltersDropdown() {
 
   const clearFilters = () => {
     setFilters({
-      browsingMode: defaultBrowsingMode,
       image: {
         generation: [],
-        excludedTags: [],
+        // excludedTags: [],
       },
     });
   };
 
-  if (!showNSFWToggle) return null;
+  // if (!showNSFWToggle) return null;
 
   const chipProps: Partial<ChipProps> = {
     radius: 'sm',

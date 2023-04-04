@@ -1,16 +1,11 @@
 import { useRouter } from 'next/router';
-import { NotFound } from '~/components/AppLayout/NotFound';
 import { PostDetail } from '~/components/Post/Detail/PostDetail';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isNumber } from '~/utils/type-guards';
 
 export default function PostDetailPage() {
   const router = useRouter();
   const postId = Number(router.query.postId);
-
-  const features = useFeatureFlags();
-  if (!features.posts) return <NotFound />;
 
   return (
     <>

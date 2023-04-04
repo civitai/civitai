@@ -4,7 +4,6 @@ import {
   MetricTimeframe,
   CommercialUse,
   CheckpointType,
-  ModelFileFormat,
 } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
@@ -105,6 +104,14 @@ export const mergePermissionInput = licensingSchema.extend({
 export const deleteModelSchema = getByIdSchema.extend({ permanently: z.boolean().optional() });
 export type DeleteModelSchema = z.infer<typeof deleteModelSchema>;
 
+export const getDownloadSchema = z.object({
+  modelId: z.preprocess((val) => Number(val), z.number()),
+  modelVersionId: z.preprocess((val) => Number(val), z.number()).optional(),
+  type: z.enum(constants.modelFileTypes).optional(),
+  format: z.enum(constants.modelFileFormats).optional(),
+});
+export type GetDownloadSchema = z.infer<typeof getDownloadSchema>;
+
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
 export const modelUpsertSchema = licensingSchema.extend({
   id: z.number().optional(),
@@ -119,10 +126,16 @@ export const modelUpsertSchema = licensingSchema.extend({
   locked: z.boolean().optional(),
 });
 
-export const getDownloadSchema = z.object({
-  modelId: z.preprocess((val) => Number(val), z.number()),
-  modelVersionId: z.preprocess((val) => Number(val), z.number()).optional(),
-  type: z.enum(constants.modelFileTypes).optional(),
-  format: z.nativeEnum(ModelFileFormat).optional(),
+export type ReorderModelVersionsSchema = z.infer<typeof reorderModelVersionsSchema>;
+export const reorderModelVersionsSchema = z.object({
+  id: z.number(),
+  modelVersions: z.array(
+    z.object({ id: z.number(), name: z.string(), index: z.number().nullable() })
+  ),
 });
-export type GetDownloadSchema = z.infer<typeof getDownloadSchema>;
+
+export type PublishModelSchema = z.infer<typeof publishModelSchema>;
+export const publishModelSchema = z.object({
+  id: z.number(),
+  versionIds: z.array(z.number()).optional(),
+});

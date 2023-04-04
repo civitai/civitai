@@ -29,7 +29,7 @@ export function CreatorCard({ user }: Props) {
   const { data: creator } = trpc.user.getCreator.useQuery(
     { id: user.id },
     {
-      initialData: {
+      placeholderData: {
         ...user,
         stats: {
           downloadCountAllTime: 0,
@@ -39,7 +39,6 @@ export function CreatorCard({ user }: Props) {
           ratingCountAllTime: 0,
         },
       },
-      staleTime: 0,
     }
   );
 

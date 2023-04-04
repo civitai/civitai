@@ -29,7 +29,7 @@ type ImagePreviewProps = {
   nsfw?: boolean;
   aspectRatio?: number;
   // lightboxImages?: ImageModel[];
-  image: Omit<ImageModel, 'tags' | 'scannedAt' | 'userId'>;
+  image: Omit<ImageModel, 'tags' | 'scannedAt' | 'userId' | 'postId'>;
   edgeImageProps?: Omit<EdgeImageProps, 'src'>;
   withMeta?: boolean;
   onClick?: React.MouseEventHandler<HTMLImageElement>;
@@ -108,54 +108,54 @@ export function ImagePreview({
     </ImageMetaPopover>
   );
 
-  let NeedsReviewBadge = needsReview && (
-    <ThemeIcon size="lg" color="yellow">
-      <IconAlertTriangle strokeWidth={2.5} size={26} />
-    </ThemeIcon>
-  );
+  // let NeedsReviewBadge = needsReview && (
+  //   <ThemeIcon size="lg" color="yellow">
+  //     <IconAlertTriangle strokeWidth={2.5} size={26} />
+  //   </ThemeIcon>
+  // );
 
-  if (needsReview && user?.isModerator)
-    NeedsReviewBadge = (
-      <Menu position="bottom">
-        <Menu.Target>
-          <Box>{NeedsReviewBadge}</Box>
-        </Menu.Target>
-        <Menu.Dropdown>
-          <Menu.Item
-            onClick={() => handleModerate(true)}
-            icon={<IconCheck size={14} stroke={1.5} />}
-          >
-            Approve
-          </Menu.Item>
-          <Menu.Item onClick={() => handleModerate(false)} icon={<IconX size={14} stroke={1.5} />}>
-            Reject
-          </Menu.Item>
-        </Menu.Dropdown>
-      </Menu>
-    );
-  else if (needsReview) {
-    NeedsReviewBadge = (
-      <HoverCard width={200} withArrow>
-        <HoverCard.Target>{NeedsReviewBadge}</HoverCard.Target>
-        <HoverCard.Dropdown p={8}>
-          <Stack spacing={0}>
-            <Text weight="bold" size="xs">
-              Flagged for review
-            </Text>
-            <Text size="xs">
-              {`This image won't be visible to other users until it's reviewed by our moderators.`}
-            </Text>
-          </Stack>
-        </HoverCard.Dropdown>
-      </HoverCard>
-    );
-  }
+  // if (needsReview && user?.isModerator)
+  //   NeedsReviewBadge = (
+  //     <Menu position="bottom">
+  //       <Menu.Target>
+  //         <Box>{NeedsReviewBadge}</Box>
+  //       </Menu.Target>
+  //       <Menu.Dropdown>
+  //         <Menu.Item
+  //           onClick={() => handleModerate(true)}
+  //           icon={<IconCheck size={14} stroke={1.5} />}
+  //         >
+  //           Approve
+  //         </Menu.Item>
+  //         <Menu.Item onClick={() => handleModerate(false)} icon={<IconX size={14} stroke={1.5} />}>
+  //           Reject
+  //         </Menu.Item>
+  //       </Menu.Dropdown>
+  //     </Menu>
+  //   );
+  // else if (needsReview) {
+  //   NeedsReviewBadge = (
+  //     <HoverCard width={200} withArrow>
+  //       <HoverCard.Target>{NeedsReviewBadge}</HoverCard.Target>
+  //       <HoverCard.Dropdown p={8}>
+  //         <Stack spacing={0}>
+  //           <Text weight="bold" size="xs">
+  //             Flagged for review
+  //           </Text>
+  //           <Text size="xs">
+  //             {`This image won't be visible to other users until it's reviewed by our moderators.`}
+  //           </Text>
+  //         </Stack>
+  //       </HoverCard.Dropdown>
+  //     </HoverCard>
+  //   );
+  // }
 
   const edgeImageStyle: CSSProperties = {
     maxHeight: '100%',
     maxWidth: '100%',
   };
-  if (onClick) edgeImageStyle.cursor = 'pointer';
+  // if (onClick) edgeImageStyle.cursor = 'pointer'; // !important - this line was causing hydration errors
   if (style?.height || style?.maxHeight) edgeImageStyle.maxHeight = '100%';
   const Image = nsfw ? (
     <Center style={{ width: cw, height: ch, maxWidth: '100%' }}>
@@ -190,7 +190,7 @@ export function ImagePreview({
         </AspectRatio>
       )}
       <Group spacing={4} sx={{ position: 'absolute', bottom: '5px', right: '5px' }}>
-        {NeedsReviewBadge}
+        {/* {NeedsReviewBadge} */}
         {Meta}
       </Group>
     </Box>

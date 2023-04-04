@@ -33,11 +33,15 @@ export const CommentForm = ({
   const { classes } = useStyles();
   const { entityId, entityType, isMuted, data, setCreated, limit } = useCommentsContext();
   const editorRef = useRef<EditorCommandsRef | null>(null);
-  const replySetRef = useRef(false);
+  // const replySetRef = useRef(false);
   const [focused, setFocused] = useState(autoFocus);
+  const defaultValues = { ...comment, entityId, entityType };
+  // TODO - figure out why `&nbsp;` is preventing me from immediately adding another mentions when using the input
+  if (replyTo)
+    defaultValues.content = `<span data-type="mention" data-id="mention:${replyTo.id}" data-label="${replyTo.username}" contenteditable="false">@${replyTo.username}</span>&nbsp;`;
   const form = useForm({
     schema: upsertCommentv2Schema,
-    defaultValues: { ...comment, entityId, entityType },
+    defaultValues,
     shouldUnregister: false,
     mode: 'onChange',
   });
@@ -54,16 +58,17 @@ export const CommentForm = ({
     [data]
   );
 
-  useEffect(() => {
-    if (editorRef.current && replyTo && !replySetRef.current) {
-      replySetRef.current = true;
-      setTimeout(() => {
-        editorRef.current?.insertContentAtCursor(
-          `<span data-type="mention" data-id="mention:${replyTo.id}" data-label="${replyTo.username}" contenteditable="false">@${replyTo.username}</span>&nbsp;`
-        );
-      }, 0);
-    }
-  }, []); //eslint-disable-line
+  // useEffect(() => {
+  //   if (editorRef.current && replyTo && !replySetRef.current) {
+  //     replySetRef.current = true;
+  //     setTimeout(() => {
+
+  //       // editorRef.current?.insertContentAtCursor(
+  //       //   `<span data-type="mention" data-id="mention:${replyTo.id}" data-label="${replyTo.username}" contenteditable="false">@${replyTo.username}</span>&nbsp;`
+  //       // );
+  //     }, 0);
+  //   }
+  // }, []); //eslint-disable-line
 
   const queryUtils = trpc.useContext();
   const { mutate, isLoading } = trpc.commentv2.upsert.useMutation({

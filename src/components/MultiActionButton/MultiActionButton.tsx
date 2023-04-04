@@ -31,7 +31,12 @@ const _MultiActionButton = forwardRef<HTMLButtonElement, Props>(
       );
 
     const menu = hasMenuItems && (
-      <Menu position="bottom-end">
+      <Menu
+        position="bottom-end"
+        styles={(theme) => ({
+          itemRightSection: { display: 'flex', marginLeft: theme.spacing.xs },
+        })}
+      >
         <Menu.Target>{menuButton}</Menu.Target>
         <Menu.Dropdown>{menuItems}</Menu.Dropdown>
       </Menu>

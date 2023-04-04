@@ -40,6 +40,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { ImageSort } from '~/server/common/enums';
 
 export const getModelVersionImagesHandler = ({
   input: { modelVersionId },
@@ -302,6 +303,109 @@ export const getInfiniteImagesHandler = async ({
       isModerator: ctx.user?.isModerator,
     });
   } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export type ImagesAsPostModel = AsyncReturnType<typeof getImagesAsPostsInfiniteHandler>['items'][0];
+export const getImagesAsPostsInfiniteHandler = async ({
+  input: { limit, cursor, ...input },
+  ctx,
+}: {
+  input: GetInfiniteImagesInput;
+  ctx: Context;
+}) => {
+  try {
+    const posts: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
+    let remaining = limit;
+
+    while (true) {
+      // TODO Optimize: override the select statement to exclude repeated elements like creator data
+      const { nextCursor, items } = await getAllImages({
+        ...input,
+        cursor,
+        limit: Math.ceil(limit * 3), // Overscan so that I can merge by postId
+        userId: ctx.user?.id,
+      });
+
+      // Merge images by postId
+      for (const image of items) {
+        if (!image?.postId) continue; // Skip images that aren't part of a post
+        if (!posts[image.postId]) posts[image.postId] = [];
+        posts[image.postId].push(image);
+      }
+
+      // If there are no more images, stop
+      cursor = nextCursor;
+      if (!cursor) break;
+
+      // If there are enough posts, stop
+      if (Object.keys(posts).length >= limit) break;
+      remaining = limit - Object.keys(posts).length;
+    }
+
+    // Get reviews from the users who created the posts
+    const userIds = [...new Set(Object.values(posts).map(([post]) => post.user.id))];
+    const reviews = await dbRead.resourceReview.findMany({
+      where: {
+        userId: { in: userIds },
+        modelId: input.modelId,
+        modelVersionId: input.modelVersionId,
+      },
+      select: { userId: true, rating: true, details: true, id: true },
+    });
+
+    // Prepare the results
+    const results = Object.values(posts).map((images) => {
+      const user = images[0].user;
+      const review = reviews.find((review) => review.userId === user.id);
+      const createdAt = images.map((image) => image.createdAt).sort()[0];
+      return {
+        postId: images[0].postId as number,
+        publishedAt: images[0].publishedAt,
+        createdAt,
+        user,
+        images,
+        review: review
+          ? {
+              rating: review.rating,
+              details: review?.details,
+              id: review.id,
+            }
+          : undefined,
+      };
+    });
+
+    if (input.sort === ImageSort.Newest)
+      results.sort((a, b) => {
+        if (a.createdAt < b.createdAt) return 1;
+        if (a.createdAt > b.createdAt) return -1;
+        return 0;
+      });
+    else if (input.sort === ImageSort.MostReactions)
+      results.sort((a, b) => {
+        const aReactions = Object.values(a.images[0].stats ?? {}).reduce((a, b) => a + b, 0);
+        const bReactions = Object.values(b.images[0].stats ?? {}).reduce((a, b) => a + b, 0);
+        if (aReactions < bReactions) return 1;
+        if (aReactions > bReactions) return -1;
+        return 0;
+      });
+    else if (input.sort === ImageSort.MostComments)
+      results.sort((a, b) => {
+        const aComments = a.images[0].stats?.commentCountAllTime ?? 0;
+        const bComments = b.images[0].stats?.commentCountAllTime ?? 0;
+        if (aComments < bComments) return 1;
+        if (aComments > bComments) return -1;
+        return 0;
+      });
+
+    return {
+      nextCursor: cursor,
+      items: results,
+    };
+  } catch (error) {
+    console.log({ error });
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }

@@ -496,11 +496,12 @@ const getReportLink = (report: ReportDetail) => {
     if (report.image.modelId) parts.push(`modelId=${report.image.modelId}`);
     if (report.image.modelVersionId) parts.push(`modelVersionId=${report.image.modelVersionId}`);
     if (report.image.reviewId) parts.push(`reviewId=${report.image.reviewId}`);
-    return `/gallery/${report.image.id}/?${parts.join('&')}`;
+    return `/images/${report.image.id}/?${parts.join('&')}`;
   }
 };
 
 function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?: MantineSize }) {
+  // TODO.Briant - create a helper function for this
   const queryClient = useQueryClient();
 
   const { mutate, isLoading } = trpc.report.setStatus.useMutation({

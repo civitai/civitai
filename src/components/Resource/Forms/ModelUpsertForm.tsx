@@ -22,7 +22,7 @@ import {
 } from '~/libs/form';
 import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
 import { showErrorNotification } from '~/utils/notifications';
-import { splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const schema = modelUpsertSchema.refine(
@@ -37,20 +37,24 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const defaultValues: ModelUpsertInput = {
     ...model,
     name: model?.name ?? '',
+    description: model?.description ?? null,
+    tagsOnModels: model?.tagsOnModels ?? [],
     status: model?.status ?? 'Draft',
     type: model?.type ?? 'Checkpoint',
+    checkpointType: model?.checkpointType,
+    poi: model?.poi ?? false,
+    nsfw: model?.nsfw ?? false,
     allowCommercialUse: model?.allowCommercialUse ?? CommercialUse.Sell,
     allowDerivatives: model?.allowDerivatives ?? true,
     allowNoCredit: model?.allowNoCredit ?? true,
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
   };
-  const form = useForm({ schema, defaultValues, shouldUnregister: false });
+  const form = useForm({ schema, mode: 'onChange', defaultValues, shouldUnregister: false });
   const queryUtils = trpc.useContext();
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
   const nsfwPoi = form.watch(['nsfw', 'poi']);
   const { isDirty, errors } = form.formState;
-  const editing = !!model;
 
   const handleModelTypeChange = (value: ModelType) => {
     form.setValue('checkpointType', null);
@@ -64,8 +68,9 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   };
 
   const upsertModelMutation = trpc.model.upsert.useMutation({
-    onSuccess: async (data) => {
+    onSuccess: async (data, payload) => {
       await queryUtils.model.getById.invalidate({ id: data.id });
+      if (!payload.id) await queryUtils.model.getMyDraftModels.invalidate();
       onSubmit(data);
     },
     onError: (error) => {
@@ -95,11 +100,10 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                   label="Type"
                   placeholder="Type"
                   data={Object.values(ModelType).map((type) => ({
-                    label: splitUppercase(type),
+                    label: getDisplayName(type),
                     value: type,
                   }))}
                   onChange={handleModelTypeChange}
-                  disabled={editing}
                   withAsterisk
                 />
                 {type === 'Checkpoint' && (
@@ -230,14 +234,14 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
             <Paper radius="md" p="xl" withBorder>
               <Stack>
                 <Text size="md" weight={500}>
-                  This model:
+                  This resource:
                 </Text>
                 <InputCheckbox
                   name="poi"
                   label="Depicts an actual person"
                   description="For Example: Tom Cruise or Tom Cruise as Maverick"
                 />
-                <InputCheckbox name="nsfw" label="Is for an adult audience (NSFW)" />
+                <InputCheckbox name="nsfw" label="Is intended to produce mature themes only" />
               </Stack>
             </Paper>
             {nsfwPoi.every((item) => item === true) && (
@@ -248,13 +252,13 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                       <IconExclamationMark />
                     </ThemeIcon>
                     <Text size="xs" sx={{ lineHeight: 1.2 }}>
-                      NSFW content depicting actual people is not permitted.
+                      Mature content depicting actual people is not permitted.
                     </Text>
                   </Group>
                 </Alert>
                 <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
                   Please revise the content of this listing to ensure no actual person is depicted
-                  in an NSFW context out of respect for the individual.
+                  in an mature context out of respect for the individual.
                 </Text>
               </>
             )}
@@ -271,5 +275,5 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
 type Props = {
   onSubmit: (data: ModelUpsertInput) => void;
   children: React.ReactNode | ((data: { loading: boolean }) => React.ReactNode);
-  model?: ModelUpsertInput;
+  model?: Partial<ModelUpsertInput>;
 };

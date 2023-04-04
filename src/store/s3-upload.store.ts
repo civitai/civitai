@@ -51,7 +51,7 @@ type StoreProps = {
   items: TrackedFile[];
   setItems: (dispatch: (items: TrackedFile[]) => TrackedFile[]) => void;
   clear: (predicate?: (item: TrackedFile) => boolean) => void;
-  getStatus: () => {
+  getStatus: (predicate?: (item: TrackedFile) => boolean) => {
     pending: number;
     error: number;
     uploading: number;
@@ -129,8 +129,8 @@ export const useS3UploadStore = create<StoreProps>()(
           if (state.items.length === 0) deregisterCatchNavigation();
         });
       },
-      getStatus: () => {
-        const items = get().items;
+      getStatus: (predicate) => {
+        const items = predicate ? get().items.filter(predicate) : get().items;
         return {
           pending: items.filter((x) => x.status === 'pending').length,
           error: items.filter((x) => x.status === 'error').length,
@@ -150,13 +150,13 @@ export const useS3UploadStore = create<StoreProps>()(
         });
       },
       abort: (uuid) => {
-        // TODO.posts - check with justin
         const item = get().items.find((x) => x.uuid === uuid);
         item?.abort();
       },
       upload: async ({ file, type, options, meta }, cb) => {
         // register catch navigation if beginning upload queue
-        if (get().items.length === 0) registerCatchNavigation();
+        if (get().items.filter((item) => item.status === 'uploading').length === 0)
+          registerCatchNavigation();
         const filename = encodeURIComponent(file.name);
 
         const requestExtras = options?.endpoint?.request ?? {
@@ -192,10 +192,11 @@ export const useS3UploadStore = create<StoreProps>()(
           const { bucket, key, uploadId, urls } = data;
           const uuid = uuidv4();
 
-          let currentXhr: XMLHttpRequest;
-          const abort = () => {
-            if (currentXhr) currentXhr.abort();
-          };
+          // let currentXhr: XMLHttpRequest;
+          // const abort = () => {
+          //   console.log({ currentXhr });
+          //   if (currentXhr) currentXhr.abort();
+          // };
 
           let index = -1;
           const trackedFile = {
@@ -214,7 +215,7 @@ export const useS3UploadStore = create<StoreProps>()(
 
             return false;
           });
-          const pendingItem = { ...trackedFile, ...existingItem, abort };
+          const pendingItem = { ...trackedFile, ...existingItem };
 
           set((state) => {
             if (index !== -1) state.items[index] = pendingItem;
@@ -248,6 +249,7 @@ export const useS3UploadStore = create<StoreProps>()(
               method: 'POST',
               headers,
               body: JSON.stringify({
+                bucket,
                 key,
                 type,
                 uploadId,
@@ -259,6 +261,7 @@ export const useS3UploadStore = create<StoreProps>()(
               method: 'POST',
               headers,
               body: JSON.stringify({
+                bucket,
                 key,
                 type,
                 uploadId,
@@ -294,7 +297,13 @@ export const useS3UploadStore = create<StoreProps>()(
               xhr.open('PUT', url);
               xhr.setRequestHeader('Content-Type', 'application/octet-stream');
               xhr.send(part);
-              currentXhr = xhr;
+              // currentXhr = xhr;
+
+              updateFile(pendingItem.uuid, {
+                abort: () => {
+                  if (xhr) xhr.abort();
+                },
+              });
             });
 
           // Make part requests
@@ -320,16 +329,30 @@ export const useS3UploadStore = create<StoreProps>()(
                 timeRemaining: 0,
                 uploaded: 0,
               });
-              await abortUpload();
+              await abortUpload().catch((err) => {
+                console.error('Failed to abort upload');
+                console.error(err);
+              });
               return;
-              // const payload = preparePayload(uuid, { url: null, bucket, key });
-              // cb?.(payload);
-              // return payload;
             }
           }
 
           // Complete the multipart upload
-          await completeUpload();
+          const completeResult = await completeUpload().catch((err) => {
+            console.error('Failed to complete upload');
+            console.error(err);
+            updateFile(pendingItem.uuid, {
+              status: 'error',
+              progress: 0,
+              speed: 0,
+              timeRemaining: 0,
+              uploaded: 0,
+            });
+
+            return { ok: false };
+          });
+          if (!completeResult.ok) return;
+
           updateFile(pendingItem.uuid, { status: 'success' });
 
           const url = urls[0].url.split('?')[0];
@@ -362,7 +385,7 @@ const registerCatchNavigation = () => {
     register({
       name: 'file-upload',
       message: 'Files are still uploading. Upload progress will be lost',
-      predicate: () => useS3UploadStore.getState().getStatus().uploading === 0,
+      predicate: () => useS3UploadStore.getState().getStatus().uploading > 0,
       event: 'beforeunload',
     });
 };

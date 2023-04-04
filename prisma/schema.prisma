@@ -54,28 +54,27 @@ model SessionInvalidation {
 }
 
 model User {
-  id                   Int                   @id @default(autoincrement())
-  name                 String?
-  username             String?               @unique @db.Citext
-  email                String?               @unique
-  emailVerified        DateTime?
-  ethereumAddress      String?               @unique
-  image                String?
-  showNsfw             Boolean?              @default(false)
-  blurNsfw             Boolean?              @default(true)
-  isModerator          Boolean?              @default(false)
-  tos                  Boolean?              @default(false)
-  onboarded            Boolean?              @default(false)
-  createdAt            DateTime              @default(now())
-  deletedAt            DateTime?
-  preferredModelFormat ModelFileFormat?      @default(SafeTensor)
-  preferredPrunedModel Boolean?              @default(false)
-  customerId           String?               @unique
-  subscriptionId       String?
-  subscription         CustomerSubscription?
-  muted                Boolean?              @default(false)
-  bannedAt             DateTime?
-  autoplayGifs         Boolean?              @default(true)
+  id              Int                   @id @default(autoincrement())
+  name            String?
+  username        String?               @unique @db.Citext
+  email           String?               @unique
+  emailVerified   DateTime?
+  ethereumAddress String?               @unique
+  image           String?
+  showNsfw        Boolean?              @default(false)
+  blurNsfw        Boolean?              @default(true)
+  isModerator     Boolean?              @default(false)
+  tos             Boolean?              @default(false)
+  onboarded       Boolean?              @default(false)
+  createdAt       DateTime              @default(now())
+  deletedAt       DateTime?
+  customerId      String?               @unique
+  subscriptionId  String?
+  subscription    CustomerSubscription?
+  muted           Boolean?              @default(false)
+  bannedAt        DateTime?
+  autoplayGifs    Boolean?              @default(true)
+  filePreferences Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
 
   accounts             Account[]
   sessions             Session[]
@@ -467,12 +466,6 @@ enum ScanResultCode {
   Error
 }
 
-enum ModelFileFormat {
-  PickleTensor
-  SafeTensor
-  Other
-}
-
 model ModelFile {
   id                Int             @id @default(autoincrement())
   name              String
@@ -480,7 +473,6 @@ model ModelFile {
   sizeKB            Float
   createdAt         DateTime        @default(now())
   type              String          @default("Model")
-  format            ModelFileFormat @default(Other)
   modelVersionId    Int
   modelVersion      ModelVersion    @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   pickleScanResult  ScanResultCode  @default(Pending)
@@ -492,6 +484,7 @@ model ModelFile {
   scanRequestedAt   DateTime?
   rawScanResult     Json?
   hashes            ModelFileHash[]
+  metadata          Json?
 
   @@index([modelVersionId], type: Hash)
 }
@@ -1270,7 +1263,8 @@ model CommentV2 {
   userId       Int
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   threadId     Int
-  thread       Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  thread       Thread   @relation("thread", fields: [threadId], references: [id], onDelete: Cascade)
+  childThread  Thread?  @relation("childThread")
   metadata     Json?
 
   reactions CommentV2Reaction[]
@@ -1293,11 +1287,13 @@ model Thread {
   post       Post?           @relation(fields: [postId], references: [id], onDelete: SetNull)
   reviewId   Int?            @unique
   review     ResourceReview? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
-  modelId    Int?
+  commentId  Int?            @unique
+  comment    CommentV2?      @relation("childThread", fields: [commentId], references: [id], onDelete: SetNull)
+  modelId    Int?            @unique
   model      Model?          @relation(fields: [modelId], references: [id], onDelete: SetNull)
   metadata   Json            @default("{}")
 
-  comments CommentV2[]
+  comments CommentV2[] @relation("thread")
 
   @@index([reviewId], type: Hash)
   @@index([postId], type: Hash)
@@ -2060,12 +2056,13 @@ model ImageResourceHelper {
   reviewDetails         String?
   reviewCreatedAt       DateTime?
   name                  String?
+  hash                  String?
   modelVersionId        Int?
   modelVersionName      String?
   modelVersionCreatedAt DateTime?
   modelId               Int?
   modelName             String?
-  modelRating           Int?
+  modelRating           Float?
   modelRatingCount      Int?
   modelDownloadCount    Int?
   modelCommentCount     Int?

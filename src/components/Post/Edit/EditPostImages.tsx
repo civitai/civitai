@@ -15,7 +15,7 @@ import {
   Popover,
   Code,
   BadgeProps,
-  AspectRatio,
+  Box,
 } from '@mantine/core';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { Fragment, useState } from 'react';
@@ -31,10 +31,10 @@ import {
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { useCFUploadStore } from '~/store/cf-upload.store';
 import { EditImageDrawer } from '~/components/Post/Edit/EditImageDrawer';
-import { TagType } from '@prisma/client';
 import { PostEditImage } from '~/server/controllers/post.controller';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
 
-export function EditPostImages() {
+export function EditPostImages({ max = 10 }: { max?: number }) {
   const postId = useEditPostContext((state) => state.id);
   const modelVersionId = useEditPostContext((state) => state.modelVersionId);
   const upload = useEditPostContext((state) => state.upload);
@@ -44,7 +44,7 @@ export function EditPostImages() {
 
   return (
     <Stack>
-      <ImageDropzone onDrop={handleDrop} count={images.length} max={50} />
+      <ImageDropzone onDrop={handleDrop} count={images.length} max={max} />
       <Stack>
         {images.map(({ type, data }, index) => (
           <Fragment key={index}>
@@ -73,7 +73,7 @@ function ImageController({
     generationProcess,
     needsReview,
     resourceHelper,
-    tags,
+    _count,
   },
 }: {
   image: PostEditImage;
@@ -84,8 +84,6 @@ function ImageController({
   const setSelectedImageId = useEditPostContext((state) => state.setSelectedImageId);
   const handleSelectImageClick = () => setSelectedImageId(id);
 
-  const generatedTags = tags?.filter((x) => x.type !== TagType.UserGenerated);
-
   return (
     <Card className={classes.container} withBorder={withBorder} p={0}>
       <EdgeImage
@@ -94,13 +92,11 @@ function ImageController({
         width={width ?? 1200}
         onLoad={() => setWithBorder(true)}
       />
+      {!!_count.tags && (
+        <VotableTags entityType="image" entityId={id} p="xs" canAdd canAddModerated />
+      )}
       <>
-        <Group className={cx(classes.footer, classes.content)} spacing={6} p="xs" position="right">
-          {!!generatedTags.length && (
-            <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
-              Generated Tags
-            </Badge>
-          )}
+        <Group className={classes.actions}>
           {meta ? (
             <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
               Generation Data
@@ -119,28 +115,28 @@ function ImageController({
               Missing Resources
             </Badge>
           )}
+          <Menu position="bottom-end" withinPortal>
+            <Menu.Target>
+              <ActionIcon size="lg" variant="transparent" p={0}>
+                <IconDotsVertical
+                  size={24}
+                  color="#fff"
+                  style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item onClick={handleSelectImageClick}>Edit image</Menu.Item>
+              <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
+                {({ onClick, isLoading }) => (
+                  <Menu.Item color="red" onClick={onClick}>
+                    Delete image
+                  </Menu.Item>
+                )}
+              </DeleteImage>
+            </Menu.Dropdown>
+          </Menu>
         </Group>
-        <Menu position="bottom-end">
-          <Menu.Target>
-            <ActionIcon size="lg" variant="transparent" p={0} className={classes.actions}>
-              <IconDotsVertical
-                size={24}
-                color="#fff"
-                style={{ filter: `drop-shadow(0 0 2px #000)` }}
-              />
-            </ActionIcon>
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Item onClick={handleSelectImageClick}>Edit image</Menu.Item>
-            <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
-              {({ onClick, isLoading }) => (
-                <Menu.Item color="red" onClick={onClick}>
-                  Delete image
-                </Menu.Item>
-              )}
-            </DeleteImage>
-          </Menu.Dropdown>
-        </Menu>
       </>
     </Card>
   );
@@ -151,10 +147,11 @@ function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
   const items = useCFUploadStore((state) => state.items);
   const trackedFile = items.find((x) => x.meta.uuid === uuid);
   const removeFile = useEditPostContext((state) => state.removeFile);
+  console.log({ trackedFile });
   return (
     <Card className={classes.container} withBorder p={0}>
       <EdgeImage src={url} alt={name ?? undefined} />
-      {status === 'uploading' && trackedFile && (
+      {trackedFile && (
         <Card radius={0} p="sm" className={cx(classes.footer, classes.ambient)}>
           <Group noWrap>
             <Text>{trackedFile.status}</Text>
@@ -276,7 +273,7 @@ const useStyles = createStyles((theme) => {
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
-      minHeight: 100,
+      minHeight: 200,
     },
     actions: {
       position: 'absolute',
@@ -294,15 +291,6 @@ const useStyles = createStyles((theme) => {
       backdropFilter: 'blur(7px)',
       boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
     },
-    content: {
-      background: theme.fn.gradient({
-        from: 'rgba(37,38,43,0.8)',
-        to: 'rgba(37,38,43,0)',
-        deg: 0,
-      }),
-      backdropFilter: 'blur(13px) saturate(160%)',
-      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    },
     footer: {
       position: 'absolute',
       bottom: 0,
@@ -317,6 +305,7 @@ const useStyles = createStyles((theme) => {
 
 const sharedBadgeProps: Partial<BadgeProps> = {
   sx: () => ({ cursor: 'pointer' }),
+  variant: 'filled',
 };
 
 const readyBadgeProps: Partial<BadgeProps> = {

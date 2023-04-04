@@ -60,7 +60,7 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
         {value.map((tag, index) => (
           <Badge
             key={tag.id ?? index}
-            size="lg"
+            size="xs"
             sx={{ paddingRight: 5 }}
             rightSection={
               <ActionIcon
@@ -78,7 +78,8 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
           </Badge>
         ))}
         <Badge
-          size="lg"
+          // size="lg"
+          radius="xs"
           className={classes.badge}
           classNames={{ inner: classes.inner }}
           onClick={!adding ? open : undefined}

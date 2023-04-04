@@ -57,7 +57,7 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
 
   return (
     <Stack spacing="xs">
-      <DismissibleAlert
+      {/* <DismissibleAlert
         id="image-reproduction"
         title="What is this?"
         getInitialValueInEffect={false}
@@ -79,7 +79,7 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
             </Text>
           </>
         }
-      />
+      /> */}
       {metas.long.map(({ label, value }) => (
         <Stack key={label} spacing={0}>
           <Group spacing={4} align="center">

@@ -3,7 +3,7 @@ export type NotificationProcessor = {
   priority?: number;
   toggleable?: boolean;
   prepareQuery?: (input: NotificationProcessorRunInput) => string;
-  prepareMessage: (notification: BareNotification) => NotificationMessage;
+  prepareMessage: (notification: BareNotification) => NotificationMessage | undefined;
 };
 
 export type BareNotification = {

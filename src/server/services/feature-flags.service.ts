@@ -15,7 +15,7 @@ const featureFlags = createTypedDictionary({
   apiKeys: ['public'],
   ambientCard: ['public'],
   gallery: ['mod', 'founder'],
-  posts: ['mod'],
+  posts: [],
   civitaiLink: ['mod'],
   stripe: ['mod'],
 });

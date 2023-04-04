@@ -60,4 +60,20 @@ declare global {
     meta?: Record<string, unknown>;
     id?: number;
   };
+
+  type ModelFileFormat = 'SafeTensor' | 'PickleTensor' | 'Other';
+  type ModelFileSize = 'full' | 'pruned';
+  type ModelFileFp = 'fp32' | 'fp16';
+
+  type UserFilePreferences = {
+    format: ModelFileFormat;
+    size: ModelFileSize;
+    fp: ModelFileFp;
+  };
+
+  type FileMetadata = {
+    format?: ModelFileFormat;
+    size?: ModelFileSize;
+    fp?: ModelFileFp;
+  };
 }

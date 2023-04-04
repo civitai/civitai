@@ -1,15 +1,8 @@
-import {
-  ModelFileFormat,
-  ModelHashType,
-  ModelStatus,
-  Prisma,
-  ScanResultCode,
-} from '@prisma/client';
+import { ModelHashType, ModelStatus, Prisma, ScanResultCode } from '@prisma/client';
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
-import { constants } from '~/server/common/constants';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { ScannerTasks } from '~/server/jobs/scan-files';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { bytesToKB } from '~/utils/number-helpers';
@@ -18,22 +11,13 @@ import { getGetUrl } from '~/utils/s3-utils';
 export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { modelVersionId, type, format, ...query } = querySchema.parse(req.query);
+  const { fileId, ...query } = querySchema.parse(req.query);
   const tasks = query.tasks ?? ['Import', 'Scan', 'Hash'];
   const scanResult: ScanResult = req.body;
 
-  const {
-    url,
-    id: fileId,
-    name,
-  } = (await dbWrite.modelFile.findFirst({
-    where: {
-      modelVersionId,
-      type,
-      format,
-    },
-  })) ?? {};
-  if (!url || !fileId) return res.status(404).json({ error: 'File not found' });
+  const where: Prisma.ModelFileFindUniqueArgs['where'] = { id: fileId };
+  const file = await dbRead.modelFile.findUnique({ where });
+  if (!file) return res.status(404).json({ error: 'File not found' });
 
   const data: Prisma.ModelFileUpdateInput = {};
 
@@ -55,9 +39,9 @@ export default WebhookEndpoint(async (req, res) => {
   if (tasks.includes('Import')) {
     data.exists = scanResult.fileExists === 1;
     const bucket = env.S3_SETTLED_BUCKET;
-    const scannerImportedFile = !url.includes(bucket) && scanResult.url.includes(bucket);
+    const scannerImportedFile = !file.url.includes(bucket) && scanResult.url.includes(bucket);
     if (data.exists && scannerImportedFile) data.url = scanResult.url;
-    if (!data.exists) await unpublish(modelVersionId);
+    if (!data.exists) await unpublish(file.modelVersionId);
   }
 
   if (tasks.includes('Convert')) {
@@ -73,11 +57,10 @@ export default WebhookEndpoint(async (req, res) => {
         data: {
           name: convertedName,
           sizeKB,
-          modelVersionId,
+          modelVersionId: file.modelVersionId,
           url: baseUrl,
-          type,
-          format:
-            format == 'safetensors' ? ModelFileFormat.SafeTensor : ModelFileFormat.PickleTensor,
+          type: file.type,
+          metadata: { format: format === 'safetensors' ? 'SafeTensor' : 'PickleTensor' },
           hashes: {
             create: Object.entries(hashes).map(([type, hash]) => ({
               type: hashTypeMap[type.toLowerCase()] as ModelHashType,
@@ -90,7 +73,7 @@ export default WebhookEndpoint(async (req, res) => {
   }
 
   // Update if we made changes...
-  if (Object.keys(data).length > 0) await dbWrite.modelFile.update({ where: { id: fileId }, data });
+  if (Object.keys(data).length > 0) await dbWrite.modelFile.update({ where, data });
 
   // Update hashes
   if (tasks.includes('Hash') && scanResult.hashes) {
@@ -181,9 +164,7 @@ type ConversionResult = {
 };
 
 const querySchema = z.object({
-  modelVersionId: z.preprocess((val) => Number(val), z.number()),
-  type: z.enum(constants.modelFileTypes),
-  format: z.nativeEnum(ModelFileFormat),
+  fileId: z.preprocess((val) => Number(val), z.number()),
   tasks: z.array(z.enum(ScannerTasks)).optional(),
 });
 

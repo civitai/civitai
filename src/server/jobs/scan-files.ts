@@ -1,9 +1,9 @@
-import { ModelFileFormat, Prisma, ScanResultCode } from '@prisma/client';
+import { Prisma, ScanResultCode } from '@prisma/client';
 import { S3Client } from '@aws-sdk/client-s3';
 import dayjs from 'dayjs';
 
 import { env } from '~/env/server.mjs';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { getGetUrl, getS3Client } from '~/utils/s3-utils';
 
 import { createJob } from './job';
@@ -19,9 +19,9 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
     ],
   };
 
-  const files = await dbWrite.modelFile.findMany({
+  const files = await dbRead.modelFile.findMany({
     where,
-    select: { id: true, modelVersionId: true, type: true, url: true, format: true },
+    select: { id: true, url: true },
   });
 
   const s3 = getS3Client();
@@ -54,7 +54,7 @@ type ScannerRequest = {
 };
 
 export async function requestScannerTasks({
-  file: { modelVersionId, type, format, url: s3Url },
+  file: { id: fileId, url: s3Url },
   s3,
   tasks = ['Scan', 'Hash'],
   lowPriority = false,
@@ -64,9 +64,7 @@ export async function requestScannerTasks({
   const callbackUrl =
     `${env.NEXTAUTH_URL}/api/webhooks/scan-result?` +
     new URLSearchParams([
-      ['modelVersionId', modelVersionId.toString()],
-      ['type', type],
-      ['format', format],
+      ['fileId', fileId.toString()],
       ['token', env.WEBHOOK_TOKEN],
       ...tasks.map((task) => ['tasks', task]),
     ]);
@@ -105,9 +103,7 @@ export async function requestScannerTasks({
 }
 
 type FileScanRequest = {
-  modelVersionId: number;
-  type: string;
-  format: ModelFileFormat;
+  id: number;
   url: string;
 };
 

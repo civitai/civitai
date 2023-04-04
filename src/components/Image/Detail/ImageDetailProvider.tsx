@@ -9,6 +9,7 @@ import { useImageFilters } from '~/providers/FiltersProvider';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { removeEmpty } from '~/utils/object-helpers';
+import { useQueryImages } from '~/components/Image/image.utils';
 
 type ImageDetailState = {
   images: ImageV2Model[];
@@ -37,48 +38,35 @@ export const useImageDetailContext = () => {
 export function ImageDetailProvider({
   children,
   imageId,
-  postId,
-  modelId,
-  modelVersionId,
-  username,
+  filters,
 }: {
   children: React.ReactElement;
   imageId: number;
-  postId?: number;
-  modelId?: number;
-  modelVersionId?: number;
-  username?: string;
+  filters: {
+    postId?: number;
+    modelId?: number;
+    modelVersionId?: number;
+    username?: string;
+    limit?: number;
+    prioritizedUserIds?: number[];
+    tags?: number[];
+  } & Record<string, unknown>;
 }) {
   const router = useRouter();
   const active = router.query.active === 'true';
   const closingRef = useRef(false);
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
+  const { postId, modelId, modelVersionId, username } = filters;
 
   // #region [data fetching]
-  /**
-   * NOTE: consider what props are being passed to the query when we are querying by things like `postId`
-   */
-  // the globally set filter values should only be applied when accessing the image detail from the image gallery
-  const globalImageFilters = useImageFilters();
-  const filters = useMemo(() => {
-    const baseFilters = { postId, modelId, modelVersionId, username };
-    return removeEmpty(
-      !postId && !modelVersionId && !username
-        ? { ...baseFilters, ...globalImageFilters }
-        : baseFilters
-    );
-  }, [globalImageFilters, postId, modelId, modelVersionId, username]);
+  const { images, isLoading } = useQueryImages(filters);
 
-  const { data, isLoading } = trpc.image.getInfinite.useInfiniteQuery(filters, {
-    getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-    getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
-    trpc: { context: { skipBatch: true } },
-  });
-
+  // TODO.Briant - return to this
+  const shouldFetchImage = !!images?.length && !images.find((x) => x.id === imageId);
   const { data: prefetchedImage } = trpc.image.get.useQuery({ id: imageId }, { enabled: false });
 
-  const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
+  // const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
   const image = images.find((x) => x.id === imageId) ?? prefetchedImage ?? undefined;
   // #endregion
 

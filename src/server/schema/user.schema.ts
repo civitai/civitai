@@ -1,5 +1,8 @@
-import { ModelFileFormat, TagEngagementType } from '@prisma/client';
+import { TagEngagementType } from '@prisma/client';
 import { z } from 'zod';
+import { constants } from '~/server/common/constants';
+
+import { getAllQuerySchema } from '~/server/schema/base.schema';
 
 export const usernameSchema = z
   .string()
@@ -13,7 +16,6 @@ export const getUserByUsernameSchema = z.object({
 });
 
 export type GetUserByUsernameSchema = z.infer<typeof getUserByUsernameSchema>;
-import { getAllQuerySchema } from '~/server/schema/base.schema';
 
 export const getAllUsersInput = getAllQuerySchema
   .extend({ email: z.string(), ids: z.array(z.number()) })
@@ -29,11 +31,16 @@ export const userUpdateSchema = z.object({
   onboarded: z.boolean().optional(),
   email: z.string().email().optional().nullable(),
   image: z.string().nullish(),
-  preferredModelFormat: z.nativeEnum(ModelFileFormat).optional(),
-  preferredPrunedModel: z.boolean().optional(),
   badgeId: z.number().nullish(),
   nameplateId: z.number().nullish(),
   autoplayGifs: z.boolean().optional(),
+  filePreferences: z
+    .object({
+      format: z.enum(constants.modelFileFormats).optional(),
+      size: z.enum(constants.modelFileSizes).optional(),
+      fp: z.enum(constants.modelFileFp).optional(),
+    })
+    .optional(),
 });
 export type UserUpdateInput = z.input<typeof userUpdateSchema>;
 

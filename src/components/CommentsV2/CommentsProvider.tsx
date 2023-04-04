@@ -12,7 +12,7 @@ import { trpc } from '~/utils/trpc';
 
 type CommentsResult = InfiniteCommentResults['comments'];
 
-type BadgeProps = {
+export type CommentV2BadgeProps = {
   userId: number;
   color: MantineColor;
   label: string;
@@ -23,7 +23,7 @@ type Props = CommentConnectorInput & {
   initialLimit?: number;
   initialCount?: number;
   limit?: number;
-  badges?: BadgeProps[];
+  badges?: CommentV2BadgeProps[];
   children: ({
     data,
     isInitialLoading,
@@ -48,7 +48,7 @@ type ChildProps = {
   isLocked: boolean;
   isMuted: boolean;
   created: CommentsResult;
-  badges?: BadgeProps[];
+  badges?: CommentV2BadgeProps[];
   limit?: number;
 };
 

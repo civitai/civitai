@@ -6,8 +6,10 @@ import { getHasClientHistory } from '~/store/ClientHistoryStore';
 import { create } from 'zustand';
 import { Freeze } from 'react-freeze';
 import { NextLink } from '@mantine/next';
+import Link from 'next/link';
 import { removeEmpty } from '~/utils/object-helpers';
 import useIsClient from '~/hooks/useIsClient';
+import { Anchor } from '@mantine/core';
 
 const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
 const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLightbox'));
@@ -18,6 +20,9 @@ const GalleryDetailModal = dynamic(() => import('~/routed-context/modals/Gallery
 const ImageDetailModal = dynamic(() => import('~/routed-context/modals/ImageDetailModal'));
 const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
 const ModelEdit = dynamic(() => import('~/routed-context/modals/ModelEdit'));
+const ModelVersionEdit = dynamic(() => import('~/routed-context/modals/ModelVersionEdit'));
+const FilesEdit = dynamic(() => import('~/routed-context/modals/FilesEdit'));
+const ResourceReviewModal = dynamic(() => import('~/routed-context/modals/ResourceReviewModal'));
 
 // this is they type I want to hook up at some point
 type ModalRegistry<P> = {
@@ -30,6 +35,22 @@ const registry = {
     Component: ModelEdit,
     resolve: (args: React.ComponentProps<typeof ModelEdit>) => [
       { query: { ...Router.query, ...args, modal: 'modelEdit' } },
+      undefined, // could be a page url for reviews here (/reviews/:reviewId)
+      { shallow: true },
+    ],
+  },
+  modelVersionEdit: {
+    Component: ModelVersionEdit,
+    resolve: (args: React.ComponentProps<typeof ModelVersionEdit>) => [
+      { query: { ...Router.query, ...args, modal: 'modelVersionEdit' } },
+      undefined, // could be a page url for reviews here (/reviews/:reviewId)
+      { shallow: true },
+    ],
+  },
+  filesEdit: {
+    Component: FilesEdit,
+    resolve: (args: React.ComponentProps<typeof FilesEdit>) => [
+      { query: { ...Router.query, ...args, modal: 'filesEdit' } },
       undefined, // could be a page url for reviews here (/reviews/:reviewId)
       { shallow: true },
     ],
@@ -102,12 +123,29 @@ const registry = {
     Component: ImageDetailModal,
     resolve: ({ imageId, ...args }: React.ComponentProps<typeof ImageDetailModal>) => {
       const slug = Router.query.slug ?? 'placeholder';
+      const { tags, ...prevRouterParams } = Router.query;
       return [
         {
-          query: { ...Router.query, slug, imageId, ...args, modal: 'imageDetailModal' },
+          query: { ...prevRouterParams, slug, imageId, ...args, modal: 'imageDetailModal' },
         },
         {
           pathname: `/images/${imageId}`,
+          query: args,
+        },
+        { shallow: true },
+      ];
+    },
+  },
+  resourceReviewModal: {
+    Component: ResourceReviewModal,
+    resolve: ({ reviewId, ...args }: React.ComponentProps<typeof ResourceReviewModal>) => {
+      const slug = Router.query.slug ?? 'placeholder';
+      return [
+        {
+          query: { ...Router.query, slug, reviewId, ...args, modal: 'resourceReviewModal' },
+        },
+        {
+          pathname: `/reviews/${reviewId}`,
           query: args,
         },
         { shallow: true },
@@ -151,7 +189,7 @@ export function RoutedContextProvider2() {
   if (!modal) return null;
 
   const query = QS.parse(QS.stringify(router.query));
-  const Modal = registry[query.modal as keyof typeof registry].Component;
+  const Modal = registry[modal as keyof typeof registry].Component;
   return Modal ? <Modal {...(query as any)} /> : null;
 }
 
@@ -166,8 +204,15 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
   modal,
   options: initialOptions,
   children,
+  onClick,
+  style,
+  className,
   ...props
-}: OpenRoutedContextProps<TName>) {
+}: OpenRoutedContextProps<TName> & {
+  onClick?: (e: React.MouseEvent<HTMLAnchorElement>) => void;
+  style?: React.CSSProperties;
+  className?: string;
+}) {
   const setFreeze = useFreezeStore((state) => state.setFreeze);
   const toResolve = removeEmpty(props);
   const isClient = useIsClient();
@@ -184,9 +229,12 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
       {...options}
       onClick={(e) => {
         if (!e.ctrlKey) {
+          onClick?.(e);
           setFreeze(true);
         }
       }}
+      style={style}
+      className={className}
     >
       {children}
     </NextLink>
@@ -203,23 +251,47 @@ export const useFreezeStore = create<{
   setFreeze: (freeze: boolean) =>
     set((state) => {
       if (state.freeze === freeze) return {};
-      let placeholder: React.ReactNode | undefined;
-      if (freeze) {
-        const placeholderContent = document.getElementById('freezeBlock')?.innerHTML;
-        placeholder = placeholderContent ? (
-          <div dangerouslySetInnerHTML={{ __html: placeholderContent }} />
-        ) : undefined;
-      }
+      // let placeholder: React.ReactNode | undefined;
+      // if (freeze) {
+      //   const placeholderContent = document.getElementById('freezeBlock')?.innerHTML;
+      //   placeholder = placeholderContent ? (
+      //     <div dangerouslySetInnerHTML={{ __html: placeholderContent }} />
+      //   ) : undefined;
+      // }
 
-      return { freeze, placeholder };
+      return { freeze };
     }),
 }));
 
+let observer: MutationObserver | undefined;
+
 export function FreezeProvider({ children }: { children: React.ReactElement }) {
   const freeze = useFreezeStore((state) => state.freeze);
-  const placeholder = useFreezeStore((state) => state.placeholder);
+  // const placeholder = useFreezeStore((state) => state.placeholder);
+
+  useEffect(() => {
+    if (observer) return;
+    observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type !== 'attributes' || mutation.attributeName !== 'style') continue;
+        const target = mutation.target as HTMLElement;
+        if (target.getAttribute('style')?.includes('display: none !important;'))
+          target.setAttribute('style', '');
+      }
+    });
+
+    const fetchFreezeBlockInterval = setInterval(() => {
+      const freezeBlockEl = document.getElementById('freezeBlock');
+      if (!freezeBlockEl || !observer) return;
+      observer.observe(freezeBlockEl, {
+        attributeFilter: ['style'],
+      });
+      clearInterval(fetchFreezeBlockInterval);
+    }, 1000);
+  }, []);
+
   return (
-    <Freeze freeze={freeze} placeholder={placeholder}>
+    <Freeze freeze={freeze} placeholder={null}>
       <div id="freezeBlock">{children}</div>
     </Freeze>
   );

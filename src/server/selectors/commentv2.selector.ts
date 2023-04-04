@@ -21,6 +21,17 @@ export const commentV2Select = Prisma.validator<Prisma.CommentV2Select>()({
   reactions: {
     select: getReactionsSelectV2,
   },
+  childThread: {
+    select: {
+      id: true,
+      locked: true,
+      _count: {
+        select: {
+          comments: true,
+        },
+      },
+    },
+  },
 });
 
 //TODO - come up with a better way of prefetching data and communicating the limits of that prefetched data to the client component

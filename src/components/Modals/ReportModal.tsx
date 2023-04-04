@@ -52,6 +52,7 @@ const reports = [
       ReportEntity.Comment,
       ReportEntity.CommentV2,
       ReportEntity.Image,
+      // ReportEntity.ResourceReview,
     ],
   },
   {
@@ -64,6 +65,7 @@ const reports = [
       ReportEntity.Comment,
       ReportEntity.CommentV2,
       ReportEntity.Image,
+      // ReportEntity.ResourceReview,
     ],
   },
   {
@@ -168,7 +170,7 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
 
               // review invalidate
               if (reviewId) {
-                await queryUtils.review.getDetail.setData(
+                queryUtils.review.getDetail.setData(
                   { id: reviewId },
                   produce((old) => {
                     if (old) {
@@ -183,23 +185,6 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
               await queryUtils.review.getAll.invalidate();
               // model invalidate
               if (modelId) {
-                queryUtils.model.getById.setData(
-                  { id: modelId },
-                  produce((old) => {
-                    if (old) {
-                      if (variables.reason === ReportReason.NSFW) {
-                        const [modelVersionIndex, imageIndex] = old.modelVersions.reduce<
-                          [number, number]
-                        >((acc, value, modelVersionIndex) => {
-                          const imageIndex = value.images.findIndex((x) => x.id === variables.id);
-                          return imageIndex > -1 ? [modelVersionIndex, imageIndex] : acc;
-                        }, [] as any);
-                        if (modelVersionIndex > -1 && imageIndex > -1)
-                          old.modelVersions[modelVersionIndex].images[imageIndex].nsfw = true;
-                      }
-                    }
-                  })
-                );
                 await queryUtils.model.getAll.invalidate();
               }
               break;

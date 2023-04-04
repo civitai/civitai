@@ -107,7 +107,7 @@ function SortableImage({
       className={cx(classes.root, { [classes.hidden]: activeId === sortableId && isDragging })}
       style={style}
     >
-      <EdgeImage src={image.previewUrl ?? image.url} width={220} className={classes.image} />
+      <EdgeImage src={image.previewUrl ?? image.url} width={450} className={classes.image} />
       <Center className={classes.draggable} {...listeners} {...attributes}>
         <Paper className={classes.draggableIcon} p="xl" radius={100}>
           <IconArrowsMaximize
