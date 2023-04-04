@@ -22,8 +22,9 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { ImageSort } from '~/server/common/enums';
+import { BrowsingMode, ImageSort } from '~/server/common/enums';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 
 const useStyles = createStyles((theme) => ({
@@ -104,6 +105,7 @@ export function ModelCarousel({
   limit = 10,
 }: Props) {
   const router = useRouter();
+  const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   // const setFilters = useFiltersContext((state) => state.setFilters);
   // const filters = useImageFilters();
@@ -113,6 +115,7 @@ export function ModelCarousel({
     prioritizedUserIds: [modelUserId],
     period: 'AllTime',
     sort: ImageSort.MostReactions,
+    browsingMode: currentUser ? undefined : BrowsingMode.SFW,
     limit,
   });
 

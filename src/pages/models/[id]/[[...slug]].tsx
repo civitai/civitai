@@ -82,29 +82,28 @@ import { isNumber } from '~/utils/type-guards';
 import Router from 'next/router';
 import { QS } from '~/utils/qs';
 import useIsClient from '~/hooks/useIsClient';
-import { ImageSort } from '~/server/common/enums';
+import { BrowsingMode, ImageSort } from '~/server/common/enums';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg, ctx }) => {
+  resolver: async ({ ssg, ctx, session }) => {
     const params = (ctx.params ?? {}) as { id: string; slug: string[] };
     const query = ctx.query as { modelVersionId: string };
     const id = Number(params.id);
     const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
     if (!isNumber(id)) return { notFound: true };
 
-    const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(
-      (err) => null
-    );
+    const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(() => null);
     if (version)
       await ssg?.image.getInfinite.prefetchInfinite({
         modelVersionId: version.id,
         prioritizedUserIds: [version.model.userId],
         period: 'AllTime',
         sort: ImageSort.MostReactions,
+        browsingMode: session?.user ? undefined : BrowsingMode.SFW,
         limit: CAROUSEL_LIMIT,
       });
 
@@ -167,6 +166,7 @@ export default function ModelDetailsV2({
       prioritizedUserIds: model ? [model.user.id] : undefined,
       period: 'AllTime',
       sort: ImageSort.MostReactions,
+      browsingMode: currentUser ? undefined : BrowsingMode.SFW,
       limit: CAROUSEL_LIMIT,
     },
     {
@@ -358,6 +358,7 @@ export default function ModelDetailsV2({
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
   const nsfw = userNotBlurringNsfw && model.nsfw === true;
 
+  console.log({ versionImages });
   const meta = (
     <Meta
       title={`${model.name} | Stable Diffusion ${model.type} | Civitai`}
