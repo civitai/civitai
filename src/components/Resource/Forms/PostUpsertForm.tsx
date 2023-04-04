@@ -15,6 +15,7 @@ import { EditPostReviews } from '~/components/Post/Edit/EditPostReviews';
 import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
 import { ReorderImages, ReorderImagesButton } from '~/components/Post/Edit/ReorderImages';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -74,14 +75,14 @@ export function PostUpsertForm({ modelVersionId, modelId }: Props) {
         </Stack>
       </Grid.Col>
       <Grid.Col md={8} sm={6} orderSm={1}>
-        {!reorder ? <EditPostImages max={10} /> : <ReorderImages />}
+        {!reorder ? <EditPostImages /> : <ReorderImages />}
       </Grid.Col>
     </Grid>
   ) : (
     <ImageDropzone
       onDrop={handleDrop}
       loading={createPostMutation.isLoading}
-      max={10}
+      max={POST_IMAGE_LIMIT}
       count={imagesCount}
     />
   );

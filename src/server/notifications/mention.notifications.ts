@@ -59,8 +59,7 @@ export const mentionNotifications = createNotificationProcessor({
         FROM "CommentV2" c
         JOIN "User" u ON c."userId" = u.id
         JOIN "Thread" t ON t.id = c."threadId"
-        WHERE m."userId" > 0
-          AND (c."createdAt" > '${lastSent}')
+        WHERE (c."createdAt" > '${lastSent}')
           AND c.content LIKE '%"mention:%'
           -- Unhandled thread types...
           AND t."questionId" IS NULL

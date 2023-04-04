@@ -68,7 +68,7 @@ export function SettingsCard() {
               label: value.toUpperCase(),
             }))}
             value={user.filePreferences?.fp ?? 'fp16'}
-            onChange={(value: ModelFileSize) =>
+            onChange={(value: ModelFileFp) =>
               mutate({ ...user, filePreferences: { ...user.filePreferences, fp: value } })
             }
             disabled={isLoading}

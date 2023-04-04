@@ -583,6 +583,7 @@ type GetAllImagesRaw = {
   scannedAt: Date;
   needsReview: boolean;
   userId: number;
+  index: number;
   postId: number;
   publishedAt: Date | null;
   username: string | null;
@@ -724,7 +725,7 @@ export const getAllImages = async ({
 
   if (!!prioritizedUserIds?.length) {
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
-    if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
+    // if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
     orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), i.index, 1000),  ${orderBy}`;
   }
 
@@ -746,6 +747,7 @@ export const getAllImages = async ({
       i."needsReview",
       i."userId",
       i."postId",
+      i."index",
       p."publishedAt",
       u.username,
       u.image "userImage",

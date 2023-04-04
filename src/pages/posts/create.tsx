@@ -8,6 +8,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useState } from 'react';
 import { BackButton } from '~/components/BackButton/BackButton';
+import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 
 export default function PostCreate() {
   const router = useRouter();
@@ -83,7 +84,7 @@ export default function PostCreate() {
         onDrop={handleDrop}
         loading={isLoading}
         count={images.length}
-        max={10}
+        max={POST_IMAGE_LIMIT}
       />
     </Container>
   );

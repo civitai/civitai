@@ -2,14 +2,14 @@ CREATE OR REPLACE FUNCTION insert_image_resource(image_id INTEGER)
 RETURNS VOID AS $$
 BEGIN
 	WITH image_resource_hashes AS (
-		SELECT id, (jsonb_each_text(meta->'hashes')).key as name, (jsonb_each_text(meta->'hashes')).value as hash, true as detected
+		SELECT id, null::int model_version_id, (jsonb_each_text(meta->'hashes')).key as name, (jsonb_each_text(meta->'hashes')).value as hash, true as detected
 		FROM "Image"
 		WHERE jsonb_typeof(meta->'hashes') = 'object'
 			AND id = image_id
 
 		UNION
 
-		SELECT id, COALESCE(meta->>'Model','model') as name, meta->>'Model hash' as hash, true as detected
+		SELECT id, null::int model_version_id, COALESCE(meta->>'Model','model') as name, meta->>'Model hash' as hash, true as detected
 		FROM "Image"
 		WHERE jsonb_typeof(meta->'Model hash') = 'string'
 			AND jsonb_typeof(meta->'hashes') != 'object'
@@ -17,12 +17,12 @@ BEGIN
 
 		UNION
 
-		SELECT i.id, CONCAT(m.name,' - ', mv.name), mf.hash, false as detected
+		SELECT i.id, mv.id model_version_id, CONCAT(m.name,' - ', mv.name), mf.hash, false as detected
 		FROM "Image" i
 		JOIN "Post" p ON i."postId" = p.id
 		JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-		JOIN "Model" m ON m.id = mv."modelId"
-		JOIN (
+		JOIN "Model" m ON m.id = mv."modelId" AND m.status != 'Deleted'
+		LEFT JOIN (
 		  SELECT mf."modelVersionId", MIN(mfh.hash) hash
 		  FROM "ModelFile" mf
 		  JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id
@@ -33,7 +33,7 @@ BEGIN
 	), image_resource_id AS (
 		SELECT DISTINCT
 		  irh.id,
-		  mf."modelVersionId",
+		  COALESCE(irh.model_version_id, mf."modelVersionId") "modelVersionId",
 		  irh.name,
 		  irh.hash,
 		  irh.detected,

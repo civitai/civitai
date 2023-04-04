@@ -28,6 +28,7 @@ type GetSelectArgs = { userId?: number };
 export const getImageV2Select = ({ userId }: GetSelectArgs) =>
   Prisma.validator<Prisma.ImageSelect>()({
     id: true,
+    index: true,
     postId: true,
     name: true,
     url: true,
