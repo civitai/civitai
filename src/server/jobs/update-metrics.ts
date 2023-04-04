@@ -1446,13 +1446,13 @@ export const updateMetricsJob = createJob(
     // Update all affected metrics
     // --------------------------------------------
     await updateModelMetrics('models');
-    // await updateModelMetrics('versions');
-    // await updateAnswerMetrics();
-    // await updateQuestionMetrics();
-    // await updateUserMetrics();
-    // await updateTagMetrics();
-    // await updateImageMetrics();
-    // await updatePostMetrics();
+    await updateModelMetrics('versions');
+    await updateAnswerMetrics();
+    await updateQuestionMetrics();
+    await updateUserMetrics();
+    await updateTagMetrics();
+    await updateImageMetrics();
+    await updatePostMetrics();
     log('Updated metrics');
 
     // Update the last update time
@@ -1470,7 +1470,7 @@ export const updateMetricsJob = createJob(
     if (shouldUpdateFastRanks) {
       await refreshModelRank();
       await refreshVersionModelRank();
-      // await refreshTagRank();
+      await refreshTagRank();
       log('Updated fast ranks');
       await dbWrite?.keyValue.upsert({
         where: { key: RANK_FAST_LAST_UPDATED_KEY },
@@ -1483,9 +1483,9 @@ export const updateMetricsJob = createJob(
     // --------------------------------------------
     const shouldUpdateRanks = lastRankDate.getTime() + RANK_UPDATE_DELAY <= new Date().getTime();
     if (shouldUpdateRanks) {
-      // await refreshImageRank();
-      // await refreshPostRank();
-      // await refreshUserRank();
+      await refreshImageRank();
+      await refreshPostRank();
+      await refreshUserRank();
       log('Updated ranks');
       await dbWrite?.keyValue.upsert({
         where: { key: RANK_LAST_UPDATED_KEY },

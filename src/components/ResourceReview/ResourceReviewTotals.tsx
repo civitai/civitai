@@ -16,8 +16,9 @@ export function ResourceReviewTotals({
   const { classes, cx } = useStyles();
   const { data, isLoading } = trpc.resourceReview.getRatingTotals.useQuery({ modelVersionId });
 
-  const total =
-    count ?? (data ? Object.values(data).reduce<number>((acc, value) => acc + value, 0) : 0);
+  const total = data
+    ? Object.values(data).reduce<number>((acc, value) => acc + value, 0)
+    : undefined;
   const average =
     rating ??
     (data && !!total
@@ -34,7 +35,7 @@ export function ResourceReviewTotals({
           <Group>
             <Text>Reviews</Text>
             <Text size="sm" color="dimmed">
-              {total} version ratings
+              {total ?? count} version ratings
             </Text>
           </Group>
           <Group>
