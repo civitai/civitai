@@ -684,7 +684,7 @@ export default function ModelDetailsV2({
                   </Group>
                 </Group>
                 <ImageCategories />
-                <ImagesAsPostsInfinite modelId={model.id} />
+                <ImagesAsPostsInfinite modelId={model.id} modelVersions={model.modelVersions} />
               </Stack>
             </>
           )}

@@ -585,6 +585,7 @@ type GetAllImagesRaw = {
   userId: number;
   index: number;
   postId: number;
+  modelVersionId: number | null;
   publishedAt: Date | null;
   username: string | null;
   userImage: string | null;
@@ -751,6 +752,7 @@ export const getAllImages = async ({
       i."postId",
       i."index",
       p."publishedAt",
+      p."modelVersionId",
       u.username,
       u.image "userImage",
       u."deletedAt",
@@ -841,7 +843,11 @@ export const getAllImages = async ({
   }, {} as Record<number, (typeof userCosmeticsRaw)[0]['cosmetic'][]>);
 
   const images: Array<
-    ImageV2Model & { tags: VotableTagModel[] | undefined; publishedAt: Date | null }
+    ImageV2Model & {
+      tags: VotableTagModel[] | undefined;
+      publishedAt: Date | null;
+      modelVersionId: number | null;
+    }
   > = rawImages.map(
     ({
       reactions,
@@ -938,6 +944,7 @@ type ImagesForModelVersions = {
   height: number;
   hash: string;
   modelVersionId: number;
+  meta?: Prisma.JsonValue;
 };
 export const getImagesForModelVersion = async ({
   modelVersionIds,
@@ -945,12 +952,16 @@ export const getImagesForModelVersion = async ({
   excludedIds,
   excludedUserIds,
   currentUserId,
+  imagesPerVersion = 1,
+  include = [],
 }: {
   modelVersionIds: number | number[];
   excludedTagIds?: number[];
   excludedIds?: number[];
   excludedUserIds?: number[];
   currentUserId?: number;
+  imagesPerVersion?: number;
+  include?: Array<'meta'>;
 }) => {
   if (!Array.isArray(modelVersionIds)) modelVersionIds = [modelVersionIds];
   const imageWhere: Prisma.Sql[] = [
@@ -994,7 +1005,7 @@ export const getImagesForModelVersion = async ({
         JOIN "Model" m ON m.id = mv."modelId" AND m."userId" = p."userId"
         WHERE ${Prisma.join(imageWhere, ' AND ')}
       ) ranked
-      WHERE ranked.row_num = 1
+      WHERE ranked.row_num <= ${imagesPerVersion}
     )
     SELECT
       i.id,
@@ -1006,8 +1017,10 @@ export const getImagesForModelVersion = async ({
       i.height,
       i.hash,
       t."modelVersionId"
+      ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
     FROM targets t
     JOIN "Image" i ON i.id = t.id
+    ORDER BY i."index"
   `;
 
   return images;

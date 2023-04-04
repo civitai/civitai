@@ -27,6 +27,8 @@ export function booleanString() {
         ? value === 'true'
         : typeof value === 'number'
         ? value === 1
+        : typeof value === 'boolean'
+        ? value
         : undefined,
     z.boolean()
   );

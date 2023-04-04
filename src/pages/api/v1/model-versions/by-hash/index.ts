@@ -5,6 +5,7 @@ import { isProd } from '~/env/other';
 import { prepareModelVersionResponse } from '~/pages/api/v1/model-versions/[id]';
 import { dbRead } from '~/server/db/client';
 import { getModelVersionApiSelect } from '~/server/selectors/modelVersion.selector';
+import { getImagesForModelVersion } from '~/server/services/image.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z
@@ -36,9 +37,22 @@ export default PublicEndpoint(
       },
     });
 
+    const modelVersionIds = [...new Set(files.map((file) => file.modelVersion.id))];
+    const images = await getImagesForModelVersion({
+      modelVersionIds,
+      imagesPerVersion: 10,
+      include: ['meta'],
+    });
+
     const baseUrl = new URL(isProd ? `https://${req.headers.posthost}` : 'http://localhost:3000');
-    const modelVersions = files.map((file) =>
-      prepareModelVersionResponse(file.modelVersion, baseUrl)
+    const modelVersions = await Promise.all(
+      files.map((file) =>
+        prepareModelVersionResponse(
+          file.modelVersion,
+          baseUrl,
+          images.filter((x) => x.modelVersionId === file.modelVersion.id)
+        )
+      )
     );
 
     res.status(200).json(modelVersions);

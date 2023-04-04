@@ -80,12 +80,17 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     allowDerivatives,
     allowCommercialUse,
     browsingMode,
+    ids,
   },
   select,
   user: sessionUser,
   count = false,
 }: {
-  input: Omit<GetAllModelsOutput, 'limit' | 'page'> & { take?: number; skip?: number };
+  input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
+    take?: number;
+    skip?: number;
+    ids?: number[];
+  };
   select: TSelect;
   user?: SessionUser;
   count?: boolean;
@@ -157,6 +162,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       ],
     });
   }
+  if (!!ids?.length) AND.push({ id: { in: ids } });
   if (excludedUserIds && excludedUserIds.length && !username) {
     AND.push({ userId: { notIn: excludedUserIds } });
   }

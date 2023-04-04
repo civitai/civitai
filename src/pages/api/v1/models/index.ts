@@ -75,7 +75,7 @@ export default MixedAuthEndpoint(async function handler(
                 })}`,
                 primary: primaryFile.id === file.id ? true : undefined,
               })),
-              images: images.map(({ image: { url, id, ...image } }) => ({
+              images: images.map(({ url, id, ...image }) => ({
                 url: getEdgeUrl(url, { width: 450, name: id.toString() }),
                 ...image,
               })),

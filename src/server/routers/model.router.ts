@@ -12,6 +12,7 @@ import {
   getModelsPagedSimpleHandler,
   getModelsWithVersionsHandler,
   getModelVersionsHandler,
+  getModelWithVersionsHandler,
   getMyDraftModelsHandler,
   publishModelHandler,
   reorderModelVersionsHandler,
@@ -131,6 +132,7 @@ export const modelRouter = router({
   getAllWithVersions: publicProcedure
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
     .query(getModelsWithVersionsHandler),
+  getByIdWithVersions: publicProcedure.input(getByIdSchema).query(getModelWithVersionsHandler),
   getVersions: publicProcedure.input(getByIdSchema).query(getModelVersionsHandler),
   getMyDraftModels: protectedProcedure.input(getAllQuerySchema).query(getMyDraftModelsHandler),
   add: guardedProcedure.input(modelSchema).use(checkFilesExistence).mutation(createModelHandler),

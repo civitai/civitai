@@ -44,7 +44,8 @@ export function ImagesAsPostsCard({
   const router = useRouter();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
-  const { modelId, username } = useImagesAsPostsInfiniteContext();
+  const { modelId, username, modelVersions } = useImagesAsPostsInfiniteContext();
+  const modelVersionName = modelVersions?.find((x) => x.id === data.modelVersionId)?.name;
   const queryUtils = trpc.useContext();
   const postId = data.postId ?? undefined;
   const imageFilters = useImageFilters();
@@ -104,7 +105,11 @@ export function ImagesAsPostsCard({
                 <Group p="xs" noWrap maw="100%">
                   <UserAvatar
                     user={data.user}
-                    subText={<DaysFromNow date={data.createdAt} />}
+                    subText={
+                      <>
+                        <DaysFromNow date={data.createdAt} /> - {modelVersionName ?? 'Cross-post'}
+                      </>
+                    }
                     subTextForce
                     size="md"
                     spacing="xs"
