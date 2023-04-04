@@ -32,7 +32,7 @@ export const createResourceReviewSchema = z.object({
   modelId: z.number(),
   modelVersionId: z.number(),
   rating: z.number(),
-  details: z.string().optional(),
+  details: z.string(),
 });
 
 export type UpdateResourceReviewInput = z.infer<typeof updateResourceReviewSchema>;
