@@ -36,7 +36,10 @@ export function PostImages({ postId }: { postId: number }) {
         </Group>
       </Center>
     );
-  if (!images) return <Alert>We could not display any images from this post</Alert>;
+  if (!images?.length)
+    return (
+      <Alert>Due to your filter settings, we could not display any images from this post</Alert>
+    );
 
   const remainingImages = images.length - maxInitialImages;
 
