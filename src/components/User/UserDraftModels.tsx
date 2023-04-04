@@ -90,7 +90,7 @@ export function UserDraftModels({ enabled = false }: Props) {
 
   return (
     <Stack>
-      <ScrollArea.Autosize maxHeight={400} onScrollPositionChange={({ y }) => setScrolled(y !== 0)}>
+      <ScrollArea mah={400} onScrollPositionChange={({ y }) => setScrolled(y !== 0)}>
         <Table verticalSpacing="md" fontSize="md" striped={hasDrafts}>
           <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
             <tr>
@@ -168,7 +168,7 @@ export function UserDraftModels({ enabled = false }: Props) {
             )}
           </tbody>
         </Table>
-      </ScrollArea.Autosize>
+      </ScrollArea>
       {pagination.totalPages > 1 && (
         <Group position="apart">
           <Text>Total {pagination.totalItems} items</Text>

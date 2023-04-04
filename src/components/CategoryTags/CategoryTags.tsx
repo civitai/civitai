@@ -3,7 +3,6 @@ import { IconChevronLeft, IconChevronRight } from '@tabler/icons';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TagSort } from '~/server/common/enums';
 
 import { trpc } from '~/utils/trpc';
@@ -77,6 +76,10 @@ const useStyles = createStyles((theme) => ({
       display: 'block',
     },
   },
+  viewport: {
+    overflowX: 'scroll',
+    overflowY: 'hidden',
+  },
 }));
 
 export function CategoryTags() {
@@ -108,6 +111,7 @@ export function CategoryTags() {
     <ScrollArea
       viewportRef={viewportRef}
       className={classes.tagsContainer}
+      classNames={classes}
       type="never"
       onScrollPositionChange={setScrollPosition}
     >

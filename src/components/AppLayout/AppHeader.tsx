@@ -1,20 +1,21 @@
 import {
+  ActionIcon,
   Anchor,
+  Badge,
+  Box,
   Burger,
   Button,
   createStyles,
+  Grid,
   Group,
   Header,
   Menu,
+  Paper,
+  ScrollArea,
   Switch,
+  Transition,
   UnstyledButton,
   useMantineColorScheme,
-  Transition,
-  Paper,
-  Grid,
-  Badge,
-  ActionIcon,
-  Box,
 } from '@mantine/core';
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
@@ -462,7 +463,10 @@ export function AppHeader() {
                   style={{ ...styles, borderLeft: 0, borderRight: 0 }}
                   radius={0}
                 >
-                  {burgerMenuItems}
+                  {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
+                  <ScrollArea.Autosize maxHeight={'calc(100vh - 269px)'}>
+                    {burgerMenuItems}
+                  </ScrollArea.Autosize>
                   {currentUser && (
                     <Box px="md">
                       <BrowsingModeMenu />
