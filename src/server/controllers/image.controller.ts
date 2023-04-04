@@ -405,7 +405,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
       items: results,
     };
   } catch (error) {
-    console.log('___ONE MORE TIME___');
     console.log({ error });
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

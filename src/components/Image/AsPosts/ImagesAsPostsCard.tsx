@@ -50,19 +50,25 @@ export function ImagesAsPostsCard({
   const imageFilters = useImageFilters();
 
   const cover = data.images[0];
-  const tallestImage = data.images.sort((a, b) => {
-    const aHeight = a.height ?? 0;
-    const bHeight = b.height ?? 0;
-    return aHeight > bHeight ? aHeight : bHeight;
-  })[0];
 
   const imageHeight = useMemo(() => {
+    const tallestImage = data.images.sort((a, b) => {
+      const aHeight = a.height ?? 0;
+      const bHeight = b.height ?? 0;
+      const aAspectRatio = aHeight > 0 ? (a.width ?? 0) / aHeight : 0;
+      const bAspectRatio = bHeight > 0 ? (b.width ?? 0) / bHeight : 0;
+      if (aAspectRatio < 1 && bAspectRatio >= 1) return -1;
+      if (bAspectRatio < 1 && aAspectRatio <= 1) return 1;
+      if (aHeight === bHeight) return 0;
+      return aHeight > bHeight ? -1 : 1;
+    })[0];
+
     if (!tallestImage.width || !tallestImage.height) return 300;
     const width = cardWidth > 0 ? cardWidth : 300;
     const aspectRatio = tallestImage.width / tallestImage.height;
     const imageHeight = Math.floor(width / aspectRatio);
     return Math.min(imageHeight, 600);
-  }, [cardWidth, tallestImage.width, tallestImage.height]);
+  }, [cardWidth, data.images]);
 
   const cardHeight = imageHeight + 57 + (data.images.length > 1 ? 8 : 0);
 
@@ -95,7 +101,7 @@ export function ImagesAsPostsCard({
           {inView && (
             <>
               <Paper radius={0}>
-                <Group p="xs" noWrap>
+                <Group p="xs" noWrap maw="100%">
                   <UserAvatar
                     user={data.user}
                     subText={<DaysFromNow date={data.createdAt} />}
@@ -105,7 +111,7 @@ export function ImagesAsPostsCard({
                     withUsername
                     linkToProfile
                   />
-                  <Group ml="auto">
+                  <Group ml="auto" noWrap>
                     {!data.publishedAt && (
                       <Tooltip label="Post not Published" withArrow>
                         <ActionIcon
@@ -130,16 +136,16 @@ export function ImagesAsPostsCard({
                           }}
                           style={{ paddingRight: data.review?.details ? undefined : 0 }}
                           icon={
-                            <Group spacing={0} align="center">
+                            <Group spacing={2} align="center">
                               <Rating
-                                size="sm"
+                                size="xs"
                                 value={data.review.rating / 5}
                                 readOnly
                                 fractions={5}
                                 count={1}
                               />
-                              <Text size="md" sx={{ lineHeight: 1.2 }}>
-                                {`(${Math.round(data.review.rating * 10) / 10})`}
+                              <Text size="xs" sx={{ lineHeight: 1.2 }}>
+                                {`${data.review.rating}.0`}
                               </Text>
                             </Group>
                           }

@@ -268,6 +268,7 @@ let observer: MutationObserver | undefined;
 export function FreezeProvider({ children }: { children: React.ReactElement }) {
   const freeze = useFreezeStore((state) => state.freeze);
   // const placeholder = useFreezeStore((state) => state.placeholder);
+
   useEffect(() => {
     if (observer) return;
     observer = new MutationObserver((mutations) => {
@@ -287,10 +288,6 @@ export function FreezeProvider({ children }: { children: React.ReactElement }) {
       });
       clearInterval(fetchFreezeBlockInterval);
     }, 1000);
-
-    // return () => {
-    //   observer?.disconnect(); // shouldn't need this due to the observer being set
-    // };
   }, []);
 
   return (
