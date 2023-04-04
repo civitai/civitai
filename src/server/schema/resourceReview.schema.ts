@@ -27,6 +27,14 @@ export const upsertResourceReviewSchema = z.object({
   details: z.string().optional(),
 });
 
+export type CreateResourceReviewInput = z.infer<typeof createResourceReviewSchema>;
+export const createResourceReviewSchema = z.object({
+  modelId: z.number(),
+  modelVersionId: z.number(),
+  rating: z.number(),
+  details: z.string().optional(),
+});
+
 export type UpdateResourceReviewInput = z.infer<typeof updateResourceReviewSchema>;
 export const updateResourceReviewSchema = z.object({
   id: z.number(),

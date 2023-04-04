@@ -1,10 +1,12 @@
 import {
+  createResourceReviewSchema,
   getRatingTotalsSchema,
   getResourceReviewsInfinite,
   updateResourceReviewSchema,
 } from './../schema/resourceReview.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  createResourceReviewHandler,
   deleteResourceReviewHandler,
   getRatingTotalsHandler,
   getResourceReviewHandler,
@@ -53,6 +55,9 @@ export const resourceReviewRouter = router({
     .input(upsertResourceReviewSchema)
     .use(isOwnerOrModerator)
     .mutation(upsertResourceReviewHandler),
+  create: protectedProcedure
+    .input(createResourceReviewSchema)
+    .mutation(createResourceReviewHandler),
   update: protectedProcedure
     .input(updateResourceReviewSchema)
     .use(isOwnerOrModerator)

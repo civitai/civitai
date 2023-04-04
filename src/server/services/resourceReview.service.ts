@@ -4,6 +4,7 @@ import {
   GetResourceReviewsInfiniteInput,
   GetRatingTotalsInput,
   UpdateResourceReviewInput,
+  CreateResourceReviewInput,
 } from './../schema/resourceReview.schema';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
@@ -135,6 +136,12 @@ export const upsertResourceReview = (data: UpsertResourceReviewInput & { userId:
 
 export const deleteResourceReview = ({ id }: GetByIdInput) => {
   return dbWrite.resourceReview.delete({ where: { id } });
+};
+
+export const createResourceReview = async (
+  data: CreateResourceReviewInput & { userId: number }
+) => {
+  return await dbWrite.resourceReview.create({ data, select: { id: true } });
 };
 
 export const updateResourceReview = ({ id, rating, details }: UpdateResourceReviewInput) => {
