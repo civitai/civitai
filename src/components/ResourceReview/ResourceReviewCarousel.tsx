@@ -1,5 +1,4 @@
 import { ImageSort } from '~/server/common/enums';
-import { trpc } from '~/utils/trpc';
 import { Carousel } from '@mantine/carousel';
 import {
   ActionIcon,
@@ -7,20 +6,16 @@ import {
   Box,
   Center,
   createStyles,
-  Loader,
   useMantineTheme,
-  Card,
   Button,
   Container,
 } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 import { IconInfoCircle } from '@tabler/icons';
-import { useRouter } from 'next/router';
 
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { NextLink } from '@mantine/next';
