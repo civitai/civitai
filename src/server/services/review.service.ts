@@ -231,7 +231,7 @@ export const convertReviewToComment = ({
     });
 
     await tx.review.delete({ where: { id } });
-    await queueMetricUpdate('Model', modelId);
+    await queueMetricUpdate('Model', modelId, tx);
 
     return comment;
   });
@@ -247,7 +247,7 @@ export const updateReviewReportStatusByReason = ({
   status: ReportStatus;
 }) => {
   return dbWrite.$transaction(async (tx) => {
-    await dbWrite.report.updateMany({
+    await tx.report.updateMany({
       where: { reason, review: { reviewId: id } },
       data: { status },
     });

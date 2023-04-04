@@ -220,7 +220,7 @@ export const addPostTag = async ({ postId, id, name: initialName }: AddPostTagIn
       select: { id: true, target: true },
     });
     if (!tag) {
-      return await dbWrite.tag.create({
+      return await tx.tag.create({
         data: {
           type: TagType.UserGenerated,
           target: [TagTarget.Post],
@@ -235,7 +235,7 @@ export const addPostTag = async ({ postId, id, name: initialName }: AddPostTagIn
       });
     } else {
       // update the tag target if needed
-      return await dbWrite.tag.update({
+      return await tx.tag.update({
         where: { id: tag.id },
         data: {
           target: !tag.target.includes(TagTarget.Post) ? { push: TagTarget.Post } : undefined,

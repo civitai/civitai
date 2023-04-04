@@ -1508,9 +1508,14 @@ type MetricUpdateType =
   | 'Tag'
   | 'Image'
   | 'Post';
-export const queueMetricUpdate = async (type: MetricUpdateType, id: number) => {
+export const queueMetricUpdate = async (
+  type: MetricUpdateType,
+  id: number,
+  db: typeof dbWrite | undefined = undefined
+) => {
   try {
-    await dbWrite.metricUpdateQueue.createMany({ data: { type, id } });
+    db ??= dbWrite;
+    await db.metricUpdateQueue.createMany({ data: { type, id } });
   } catch (e) {
     // Ignore duplicate errors
   }

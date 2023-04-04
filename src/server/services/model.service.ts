@@ -694,7 +694,7 @@ export const publishModelById = async ({ id, versionIds }: PublishModelSchema) =
       const includeVersions = versionIds && versionIds.length > 0;
       const publishedAt = new Date();
 
-      const model = await dbWrite.model.update({
+      const model = await tx.model.update({
         where: { id },
         data: {
           status: ModelStatus.Published,
