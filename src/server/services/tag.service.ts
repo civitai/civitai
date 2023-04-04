@@ -192,7 +192,9 @@ export const getVotableTags = async ({
         if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
       }
     }
-    results = results.filter((tag) => tag.type !== 'Moderation' || (tag.vote && tag.vote > 0));
+    results = results.filter(
+      (tag) => tag.type !== 'Moderation' || tag.score > 0 || (tag.vote && tag.vote > 0)
+    );
   }
 
   return results;

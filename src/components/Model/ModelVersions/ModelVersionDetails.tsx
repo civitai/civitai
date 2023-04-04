@@ -355,7 +355,8 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
           <ModelFileAlert versionId={version.id} modelType={model.type} files={version.files} />
           <Accordion
             variant="separated"
-            defaultValue={'version-details'}
+            multiple
+            defaultValue={['version-details']}
             styles={(theme) => ({
               content: { padding: 0 },
               item: {
