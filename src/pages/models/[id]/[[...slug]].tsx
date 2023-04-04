@@ -639,9 +639,11 @@ export default function ModelDetailsV2({
               onFavoriteClick={handleToggleFavorite}
             />
           )}
-          {isClient && !loadingModel && !loadingImages && (
-            <>
-              {!model.locked ? (
+          {isClient &&
+            !loadingModel &&
+            !loadingImages &&
+            (!model.locked ? (
+              <>
                 <Stack spacing="md">
                   <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
                     <Group spacing="xs">
@@ -679,45 +681,43 @@ export default function ModelDetailsV2({
                   </Group>
                   <ModelDiscussionV2 modelId={model.id} />
                 </Stack>
-              ) : (
-                <Paper p="lg">
-                  <Center>
-                    <Text size="sm">Discussions are turned off for this model.</Text>
-                  </Center>
-                </Paper>
-              )}
-
-              <Stack spacing="md">
-                <Group spacing="xs" align="flex-end">
-                  <Title order={2}>Gallery</Title>
-                  <LoginRedirect reason="create-review">
-                    <Button
-                      component={NextLink}
-                      className={classes.discussionActionButton}
-                      variant="outline"
-                      size="xs"
-                      leftIcon={<IconPlus size={16} />}
-                      href={`/posts/create?modelId=${model.id}${
-                        selectedVersion ? `&modelVersionId=${selectedVersion.id}` : ''
-                      }&returnUrl=${router.asPath}`}
-                    >
-                      Add post
-                    </Button>
-                  </LoginRedirect>
-                </Group>
-                {/* IMAGES */}
-                <Group position="apart" spacing={0}>
-                  <SortFilter type="image" />
-                  <Group spacing={4}>
-                    <PeriodFilter />
-                    {/* <ImageFiltersDropdown /> */}
+                <Stack spacing="md">
+                  <Group spacing="xs" align="flex-end">
+                    <Title order={2}>Gallery</Title>
+                    <LoginRedirect reason="create-review">
+                      <Button
+                        component={NextLink}
+                        className={classes.discussionActionButton}
+                        variant="outline"
+                        size="xs"
+                        leftIcon={<IconPlus size={16} />}
+                        href={`/posts/create?modelId=${model.id}${
+                          selectedVersion ? `&modelVersionId=${selectedVersion.id}` : ''
+                        }&returnUrl=${router.asPath}`}
+                      >
+                        Add post
+                      </Button>
+                    </LoginRedirect>
                   </Group>
-                </Group>
-                <ImageCategories />
-                <ImagesAsPostsInfinite modelId={model.id} modelVersions={model.modelVersions} />
-              </Stack>
-            </>
-          )}
+                  {/* IMAGES */}
+                  <Group position="apart" spacing={0}>
+                    <SortFilter type="image" />
+                    <Group spacing={4}>
+                      <PeriodFilter />
+                      {/* <ImageFiltersDropdown /> */}
+                    </Group>
+                  </Group>
+                  <ImageCategories />
+                  <ImagesAsPostsInfinite modelId={model.id} modelVersions={model.modelVersions} />
+                </Stack>
+              </>
+            ) : (
+              <Paper p="lg">
+                <Center>
+                  <Text size="sm">Discussions are turned off for this model.</Text>
+                </Center>
+              </Paper>
+            ))}
         </Stack>
         {versionCount > 1 ? (
           <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />

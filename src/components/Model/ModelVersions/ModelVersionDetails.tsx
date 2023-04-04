@@ -429,11 +429,13 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                 </Stack>
               </Accordion.Panel>
             </Accordion.Item>
-            <ResourceReviewTotals
-              modelVersionId={version.id}
-              rating={version.rank?.ratingAllTime}
-              count={version.rank?.ratingCountAllTime}
-            />
+            {!model.locked && (
+              <ResourceReviewTotals
+                modelVersionId={version.id}
+                rating={version.rank?.ratingAllTime}
+                count={version.rank?.ratingCountAllTime}
+              />
+            )}
             {version.description && (
               <Accordion.Item value="version-description">
                 <Accordion.Control>{`About this version`}</Accordion.Control>
