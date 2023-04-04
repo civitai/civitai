@@ -9,6 +9,7 @@ import {
   Badge,
   Rating,
   Box,
+  Divider,
   CloseButton,
   Button,
 } from '@mantine/core';
@@ -122,30 +123,23 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
       )}
       <Container>
         <Stack>
-          <Stack spacing="xs">
-            <Text size="md" weight={500}>
+          <Group spacing={4}>
+            <Text size="md" mr="xs" weight={500} lh="1.1">
               Related posts
             </Text>
             {loadingRelatedPosts && !relatedPosts ? (
-              <Center>
-                <Loader variant="bars" />
-              </Center>
+              <Loader variant="dots" />
             ) : (
-              <Group spacing={4}>
-                {relatedPosts?.items.map((post) => (
-                  <Link
-                    key={post.id}
-                    href={`/posts/${post.id}/${post.title ? slugit(post.title) : ''}`}
-                    passHref
-                  >
-                    <Button component="a" size="xs" variant="light" compact>
-                      {post.title ? post.title : `From: ${formatDate(post.publishedAt as Date)}`}
-                    </Button>
-                  </Link>
-                ))}
-              </Group>
+              relatedPosts?.items.map((post) => (
+                <Link key={post.id} href={`/posts/${post.id}`} passHref>
+                  <Button component="a" size="xs" variant="light" compact>
+                    {post.title ? post.title : `From: ${formatDate(post.publishedAt as Date)}`}
+                  </Button>
+                </Link>
+              ))
             )}
-          </Stack>
+          </Group>
+          <Divider />
           {data.details && <RenderHtml html={data.details} />}
 
           <Stack spacing="xs">
