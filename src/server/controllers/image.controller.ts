@@ -361,8 +361,9 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const user = images[0].user;
       const review = reviews.find((review) => review.userId === user.id);
       const createdAt = images.map((image) => image.createdAt).sort()[0];
+      if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       return {
-        postId: images[0].postId,
+        postId: images[0].postId as number,
         publishedAt: images[0].publishedAt,
         createdAt,
         user,
@@ -405,7 +406,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
       items: results,
     };
   } catch (error) {
-    console.log('___ONE MORE TIME___');
     console.log({ error });
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

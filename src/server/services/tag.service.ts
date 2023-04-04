@@ -139,7 +139,7 @@ export const getVotableTags = async ({
   id,
   take = 20,
 }: GetVotableTagsSchema & { userId?: number }) => {
-  const results: VotableTagModel[] = [];
+  let results: VotableTagModel[] = [];
   if (type === 'model') {
     const tags = await dbRead.modelTag.findMany({
       where: { modelId: id, score: { gt: 0 } },
@@ -192,6 +192,9 @@ export const getVotableTags = async ({
         if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
       }
     }
+    results = results.filter(
+      (tag) => tag.type !== 'Moderation' || tag.score > 0 || (tag.vote && tag.vote > 0)
+    );
   }
 
   return results;

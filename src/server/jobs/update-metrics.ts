@@ -12,7 +12,7 @@ const RANK_UPDATE_DELAY = 1000 * 60 * 60; // 60 minutes
 
 export const updateMetricsJob = createJob(
   'update-metrics',
-  '*/1 * * * *',
+  '*/3 * * * *',
   async () => {
     // Get the last time this ran from the KeyValue store
     // --------------------------------------
@@ -74,23 +74,31 @@ export const updateMetricsJob = createJob(
           WHERE ("createdAt" > '${lastUpdate}') AND type = 'Favorite'
         ),
         -- Get all comments that have been created since then
+        --recent_comments AS
+        --(
+        --  SELECT
+        --    t."modelId" AS model_id
+        --  FROM "CommentV2" c
+        --  JOIN "Thread" ct ON ct.id = c."threadId" AND ct."commentId" IS NOT NULL
+        --  JOIN "CommentV2" p ON p.id = ct."commentId"
+        --  JOIN "Thread" t ON t.id = p."threadId"
+        --  WHERE (c."createdAt" > '${lastUpdate}')
+        --
+        --  UNION ALL
+        --
+        --  SELECT
+        --    t."modelId" AS model_id
+        --  FROM "CommentV2" c
+        --  JOIN "Thread" t ON t.id = c."threadId" AND t."modelId" IS NOT NULL
+        --  WHERE (c."createdAt" > '${lastUpdate}')
+        --),
+        -- Bring back the old comments table for now
         recent_comments AS
         (
           SELECT
-            t."modelId" AS model_id
-          FROM "CommentV2" c
-          JOIN "Thread" ct ON ct.id = c."threadId" AND ct."commentId" IS NOT NULL
-          JOIN "CommentV2" p ON p.id = ct."commentId"
-          JOIN "Thread" t ON t.id = p."threadId"
-          WHERE (c."createdAt" > '${lastUpdate}')
-
-          UNION ALL
-
-          SELECT
-            t."modelId" AS model_id
-          FROM "CommentV2" c
-          JOIN "Thread" t ON t.id = c."threadId" AND t."modelId" IS NOT NULL
-          WHERE (c."createdAt" > '${lastUpdate}')
+            "modelId" AS model_id
+          FROM "Comment"
+          WHERE ("createdAt" > '${lastUpdate}')
         ),
         -- Get all affected models
         affected_models AS
@@ -285,25 +293,28 @@ export const updateMetricsJob = createJob(
               SUM(CASE WHEN c."createdAt" >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_comment_count,
               SUM(CASE WHEN c."createdAt" >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_comment_count,
               SUM(CASE WHEN c."createdAt" >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_comment_count
-            FROM (
-              SELECT
-                t."modelId",
-                c.id,
-                c."createdAt"
-              FROM "CommentV2" c
-              JOIN "Thread" t ON t.id = c."threadId" AND t."modelId" IS NOT NULL
-              WHERE c."tosViolation" = FALSE
-              UNION
-              SELECT
-                t."modelId",
-                c.id,
-                c."createdAt"
-              FROM "CommentV2" p
-              JOIN "Thread" t ON t.id = p."threadId" AND t."modelId" IS NOT NULL
-              JOIN "Thread" ct ON ct."commentId" = p.id
-              JOIN "CommentV2" c ON c."threadId" = ct.id
-              WHERE c."tosViolation" = FALSE
-            ) c
+            -- FROM (
+            --   SELECT
+            --     t."modelId",
+            --     c.id,
+            --     c."createdAt"
+            --   FROM "CommentV2" c
+            --   JOIN "Thread" t ON t.id = c."threadId" AND t."modelId" IS NOT NULL
+            --   WHERE c."tosViolation" = FALSE
+            --   UNION
+            --   SELECT
+            --     t."modelId",
+            --     c.id,
+            --     c."createdAt"
+            --   FROM "CommentV2" p
+            --   JOIN "Thread" t ON t.id = p."threadId" AND t."modelId" IS NOT NULL
+            --   JOIN "Thread" ct ON ct."commentId" = p.id
+            --   JOIN "CommentV2" c ON c."threadId" = ct.id
+            --   WHERE c."tosViolation" = FALSE
+            -- ) c
+
+            -- Bring back old comment count until we switch to v2
+            FROM "Comment" c WHERE "tosViolation" = FALSE
             GROUP BY c."modelId"
           ) cs ON m.model_id = cs.model_id
         ) m
@@ -1435,13 +1446,13 @@ export const updateMetricsJob = createJob(
     // Update all affected metrics
     // --------------------------------------------
     await updateModelMetrics('models');
-    await updateModelMetrics('versions');
-    await updateAnswerMetrics();
-    await updateQuestionMetrics();
-    await updateUserMetrics();
-    await updateTagMetrics();
-    await updateImageMetrics();
-    await updatePostMetrics();
+    // await updateModelMetrics('versions');
+    // await updateAnswerMetrics();
+    // await updateQuestionMetrics();
+    // await updateUserMetrics();
+    // await updateTagMetrics();
+    // await updateImageMetrics();
+    // await updatePostMetrics();
     log('Updated metrics');
 
     // Update the last update time
@@ -1459,7 +1470,7 @@ export const updateMetricsJob = createJob(
     if (shouldUpdateFastRanks) {
       await refreshModelRank();
       await refreshVersionModelRank();
-      await refreshTagRank();
+      // await refreshTagRank();
       log('Updated fast ranks');
       await dbWrite?.keyValue.upsert({
         where: { key: RANK_FAST_LAST_UPDATED_KEY },
@@ -1472,9 +1483,9 @@ export const updateMetricsJob = createJob(
     // --------------------------------------------
     const shouldUpdateRanks = lastRankDate.getTime() + RANK_UPDATE_DELAY <= new Date().getTime();
     if (shouldUpdateRanks) {
-      await refreshImageRank();
-      await refreshPostRank();
-      await refreshUserRank();
+      // await refreshImageRank();
+      // await refreshPostRank();
+      // await refreshUserRank();
       log('Updated ranks');
       await dbWrite?.keyValue.upsert({
         where: { key: RANK_LAST_UPDATED_KEY },

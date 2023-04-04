@@ -30,7 +30,7 @@ export default function ImagesAsPostsInfinite({
   username,
 }: ImagesAsPostsInfiniteProps) {
   const router = useRouter();
-  const { ref, inView } = useInView({ triggerOnce: true });
+  // const { ref, inView } = useInView({ triggerOnce: true });
   const isMobile = useIsMobile();
   const globalFilters = useImageFilters();
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
@@ -48,44 +48,44 @@ export default function ImagesAsPostsInfinite({
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
       trpc: { context: { skipBatch: true } },
       keepPreviousData: true,
-      enabled: inView,
+      // enabled: inView,
     });
 
   const items = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
   return (
-    <div ref={ref}>
-      {inView ? (
-        <ImagesAsPostsInfiniteContext.Provider value={{ modelId, username }}>
-          <MasonryGrid2
-            data={items}
-            hasNextPage={hasNextPage}
-            isRefetching={isRefetching}
-            isFetchingNextPage={isFetchingNextPage}
-            fetchNextPage={fetchNextPage}
-            columnWidth={columnWidth}
-            render={ImagesAsPostsCard}
-            filters={filters}
-          />
-          {isLoading && (
-            <Paper style={{ minHeight: 200, position: 'relative' }}>
-              <LoadingOverlay visible zIndex={10} />
-            </Paper>
-          )}
-          {!isLoading && !items.length && (
-            <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Stack>
-                <Text size="xl">There are no images for this model yet.</Text>
-                <Text color="dimmed">
-                  Add a post to showcase your images generated from this model.
-                </Text>
-              </Stack>
-            </Paper>
-          )}
-        </ImagesAsPostsInfiniteContext.Provider>
-      ) : (
-        <div style={{ height: 200 }} />
+    // <div ref={ref}>
+    //   {inView ? (
+    <ImagesAsPostsInfiniteContext.Provider value={{ modelId, username }}>
+      <MasonryGrid2
+        data={items}
+        hasNextPage={hasNextPage}
+        isRefetching={isRefetching}
+        isFetchingNextPage={isFetchingNextPage}
+        fetchNextPage={fetchNextPage}
+        columnWidth={columnWidth}
+        render={ImagesAsPostsCard}
+        filters={filters}
+      />
+      {isLoading && (
+        <Paper style={{ minHeight: 200, position: 'relative' }}>
+          <LoadingOverlay visible zIndex={10} />
+        </Paper>
       )}
-    </div>
+      {!isLoading && !items.length && (
+        <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Stack>
+            <Text size="xl">There are no images for this model yet.</Text>
+            <Text color="dimmed">
+              Add a post to showcase your images generated from this model.
+            </Text>
+          </Stack>
+        </Paper>
+      )}
+    </ImagesAsPostsInfiniteContext.Provider>
+    //   ) : (
+    //     <div style={{ height: 200 }} />
+    //   )}
+    // </div>
   );
 }

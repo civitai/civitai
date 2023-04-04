@@ -37,7 +37,12 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    const version = await getDefaultModelVersion({ modelId: id, modelVersionId: versionId });
+    const version = await getDefaultModelVersion({ modelId: id, modelVersionId: versionId }).catch(
+      (err) => {
+        console.error(err);
+        return null;
+      }
+    );
     if (!version) return { notFound: true };
     if (version.status === ModelStatus.Published)
       return {

@@ -11,7 +11,6 @@ import {
   MultiSelect,
   Popover,
   ScrollArea,
-  SegmentedControl,
   Stack,
 } from '@mantine/core';
 import { ImageGenerationProcess, MetricTimeframe } from '@prisma/client';
@@ -403,6 +402,7 @@ export function GalleryCategories() {
     <ScrollArea
       viewportRef={viewportRef}
       className={classes.tagsContainer}
+      classNames={classes}
       type="never"
       onScrollPositionChange={setScrollPosition}
     >
@@ -540,6 +540,11 @@ const useStyles = createStyles((theme, _params, getRef) => {
       [theme.fn.largerThan('md')]: {
         display: 'block',
       },
+    },
+
+    viewport: {
+      overflowX: 'scroll',
+      overflowY: 'hidden',
     },
   };
 });

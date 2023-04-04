@@ -14,6 +14,7 @@ import Link from 'next/link';
 import { useMemo } from 'react';
 import { z } from 'zod';
 
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { closeRoutedContext } from '~/providers/RoutedContextProvider';
@@ -48,7 +49,7 @@ export default createRoutedContext({
             <Center>
               <Loader size="lg" />
             </Center>
-          ) : model ? (
+          ) : data ? (
             <Stack spacing="xl">
               <Link href={`/models/${modelId}`} passHref shallow>
                 <Anchor size="sm">
@@ -71,7 +72,9 @@ export default createRoutedContext({
                 )}
               </ModelUpsertForm>
             </Stack>
-          ) : null}
+          ) : (
+            <NotFound />
+          )}
         </Container>
       </Modal>
     );

@@ -73,7 +73,7 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
   // #region [base masonic settings]
   const containerRef = useRef(null);
   const [width, height] = useWindowSize();
-  const scrollHeight = document.documentElement.scrollHeight;
+  const scrollHeight = typeof window === 'undefined' ? 0 : document?.documentElement.scrollHeight;
   const { offset, width: containerWidth } = useContainerPosition(containerRef, [
     width,
     height,

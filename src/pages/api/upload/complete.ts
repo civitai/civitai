@@ -12,10 +12,15 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   }
 
   const { bucket, key, type, uploadId, parts } = req.body;
-  const result = await completeMultipartUpload(bucket, key, uploadId, parts);
-  await logToDb('s3-upload-complete', { userId, type, key, uploadId });
+  try {
+    const result = await completeMultipartUpload(bucket, key, uploadId, parts);
+    await logToDb('s3-upload-complete', { userId, type, key, uploadId });
 
-  res.status(200).json(result);
+    res.status(200).json(result.Location);
+  } catch (e) {
+    const error = e as Error;
+    res.status(500).json({ error });
+  }
 };
 
 export default upload;

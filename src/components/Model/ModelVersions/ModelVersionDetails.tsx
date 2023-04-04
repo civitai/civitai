@@ -200,7 +200,9 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
           <Text size="xs" weight={500} lineClamp={2}>
             {`${
               ['Model', 'Pruned Model'].includes(file.type) ? file.metadata.format + ' ' : ''
-            }${startCase(file.type)} ${file.metadata.fp} (${formatKBytes(file.sizeKB)})`}
+            }${startCase(file.type)}${
+              file.metadata.fp ? ' ' + file.metadata.fp : ''
+            } (${formatKBytes(file.sizeKB)})`}
           </Text>
           <Button
             component="a"
@@ -353,7 +355,8 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
           <ModelFileAlert versionId={version.id} modelType={model.type} files={version.files} />
           <Accordion
             variant="separated"
-            defaultValue={'version-details'}
+            multiple
+            defaultValue={['version-details']}
             styles={(theme) => ({
               content: { padding: 0 },
               item: {

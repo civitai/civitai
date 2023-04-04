@@ -151,7 +151,6 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       },
     },
   },
-  // TODO - why is this not referencing `getModelVersionDetailsSelect`? If they are out of sync, we should sync it up
   modelVersions: {
     orderBy: { index: 'asc' },
     select: {
@@ -168,15 +167,6 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       baseModel: true,
       earlyAccessTimeFrame: true,
       status: true,
-      // images: {
-      //   orderBy: { index: 'asc' },
-      //   select: {
-      //     index: true,
-      //     image: {
-      //       select: imageSelect,
-      //     },
-      //   },
-      // },
       rank: {
         select: {
           downloadCountAllTime: true,

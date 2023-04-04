@@ -268,7 +268,7 @@ export const addPostImage = async ({
     select: { id: true },
   });
 
-  await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id})`;
+  await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id}::int)`;
 
   const result = await dbWrite.image.findUnique({
     where: { id: partialResult.id },

@@ -1,4 +1,5 @@
 import { useRouter } from 'next/router';
+import { parseImagesQuery } from '~/components/Image/image.utils';
 import { PostDetail } from '~/components/Post/Detail/PostDetail';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isNumber } from '~/utils/type-guards';
@@ -22,6 +23,7 @@ export const getServerSideProps = createServerSideProps({
     if (!isNumber(postId)) return { notFound: true };
 
     await ssg?.post.get.prefetch({ id: postId });
-    await ssg?.image.getInfinite.prefetchInfinite({ postId });
+    // TODO - come back to this when global image filters are better defined
+    // await ssg?.image.getInfinite.prefetchInfinite({ postId });
   },
 });

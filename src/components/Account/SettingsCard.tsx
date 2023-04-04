@@ -4,7 +4,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { reloadSession } from '~/utils/next-auth-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
-import { splitUppercase } from '~/utils/string-helpers';
+import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const validModelFormats = constants.modelFileFormats.filter((format) => format !== 'Other');
@@ -52,7 +52,7 @@ export function SettingsCard() {
             name="size"
             data={constants.modelFileSizes.map((size) => ({
               value: size,
-              label: splitUppercase(size),
+              label: titleCase(size),
             }))}
             value={user.filePreferences?.size ?? 'pruned'}
             onChange={(value: ModelFileSize) =>
@@ -61,12 +61,15 @@ export function SettingsCard() {
             disabled={isLoading}
           />
           <Select
-            label="Preferred Floating Point"
+            label="Preferred FP"
             name="fp"
-            data={constants.modelFileFp}
+            data={constants.modelFileFp.map((value) => ({
+              value,
+              label: value.toUpperCase(),
+            }))}
             value={user.filePreferences?.fp ?? 'fp16'}
-            onChange={(value: ModelFileSize) =>
-              mutate({ ...user, filePreferences: { ...user.filePreferences, size: value } })
+            onChange={(value: ModelFileFp) =>
+              mutate({ ...user, filePreferences: { ...user.filePreferences, fp: value } })
             }
             disabled={isLoading}
           />

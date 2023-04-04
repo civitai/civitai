@@ -2061,7 +2061,7 @@ model ImageResourceHelper {
   modelVersionCreatedAt DateTime?
   modelId               Int?
   modelName             String?
-  modelRating           Int?
+  modelRating           Float?
   modelRatingCount      Int?
   modelDownloadCount    Int?
   modelCommentCount     Int?

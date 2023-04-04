@@ -169,7 +169,7 @@ export default function UserPage({
         {user && (
           <Box className={classes.banner} mb="md">
             <Container size="xl">
-              <Stack className={classes.wrapper} mb={isSameUser ? 'md' : undefined}>
+              <Stack className={classes.wrapper}>
                 {user.image && (
                   <div className={classes.outsideImage}>
                     <AspectRatio ratio={1 / 1} className={classes.image}>
@@ -393,8 +393,11 @@ const useStyles = createStyles((theme) => ({
   },
   wrapper: {
     alignItems: 'flex-start',
+    marginBottom: theme.spacing.md,
+
     [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
       alignItems: 'center',
+      marginBottom: theme.spacing.xs * 4, // 40px
     },
   },
   outsideImage: {

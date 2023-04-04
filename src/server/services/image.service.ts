@@ -524,7 +524,6 @@ export const ingestImage = async ({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }).then((res) => res.json())) as ImageScanResultResponse;
-    console.log(ok);
 
     if (deleted)
       return {
@@ -584,6 +583,7 @@ type GetAllImagesRaw = {
   scannedAt: Date;
   needsReview: boolean;
   userId: number;
+  index: number;
   postId: number;
   publishedAt: Date | null;
   username: string | null;
@@ -725,7 +725,10 @@ export const getAllImages = async ({
 
   if (!!prioritizedUserIds?.length) {
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
-    orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}),0,1), ${orderBy}`;
+    if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
+    AND.push(Prisma.sql`i."userId" IN (${Prisma.join(prioritizedUserIds)})`);
+    orderBy = `i."postId" + i."index"`;
+    // orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), i.index, 1000),  ${orderBy}`;
   }
 
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
@@ -746,6 +749,7 @@ export const getAllImages = async ({
       i."needsReview",
       i."userId",
       i."postId",
+      i."index",
       p."publishedAt",
       u.username,
       u.image "userImage",
@@ -821,6 +825,21 @@ export const getAllImages = async ({
     }
   }
 
+  // Get user cosmetics
+  const users = [...new Set(rawImages.map((i) => i.userId))];
+  const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
+    where: { userId: { in: users }, equippedAt: { not: null } },
+    select: {
+      userId: true,
+      cosmetic: { select: { id: true, data: true, type: true, source: true, name: true } },
+    },
+  });
+  const userCosmetics = userCosmeticsRaw.reduce((acc, { userId, cosmetic }) => {
+    acc[userId] = acc[userId] ?? [];
+    acc[userId].push(cosmetic);
+    return acc;
+  }, {} as Record<number, (typeof userCosmeticsRaw)[0]['cosmetic'][]>);
+
   const images: Array<
     ImageV2Model & { tags: VotableTagModel[] | undefined; publishedAt: Date | null }
   > = rawImages.map(
@@ -844,6 +863,7 @@ export const getAllImages = async ({
         username,
         image: userImage,
         deletedAt,
+        cosmetics: userCosmetics[creatorId]?.map((cosmetic) => ({ cosmetic })) ?? [],
       },
       stats: {
         cryCountAllTime: cryCount,

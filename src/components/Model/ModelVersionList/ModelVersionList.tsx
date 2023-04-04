@@ -74,6 +74,10 @@ const useStyles = createStyles((theme) => ({
       display: 'block',
     },
   },
+  viewport: {
+    overflowX: 'scroll',
+    overflowY: 'hidden',
+  },
 }));
 
 export function ModelVersionList({
@@ -102,6 +106,7 @@ export function ModelVersionList({
   return (
     <ScrollArea
       className={classes.scrollContainer}
+      classNames={classes}
       viewportRef={viewportRef}
       onScrollPositionChange={setScrollPosition}
       type="never"
