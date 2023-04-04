@@ -9,6 +9,7 @@ import {
   Center,
   Tooltip,
   Box,
+  Text,
 } from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons';
 import { useMemo } from 'react';
@@ -129,7 +130,18 @@ export function ImagesAsPostsCard({
                           }}
                           style={{ paddingRight: data.review?.details ? undefined : 0 }}
                           icon={
-                            <Rating size="sm" value={data.review?.rating} readOnly fractions={4} />
+                            <Group spacing={0} align="center">
+                              <Rating
+                                size="sm"
+                                value={data.review.rating / 5}
+                                readOnly
+                                fractions={5}
+                                count={1}
+                              />
+                              <Text size="md" sx={{ lineHeight: 1.2 }}>
+                                {`(${Math.round(data.review.rating * 10) / 10})`}
+                              </Text>
+                            </Group>
                           }
                         >
                           {data.review?.details && (

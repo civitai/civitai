@@ -362,7 +362,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const review = reviews.find((review) => review.userId === user.id);
       const createdAt = images.map((image) => image.createdAt).sort()[0];
       return {
-        postId: images[0].postId,
+        postId: images[0].postId as number,
         publishedAt: images[0].publishedAt,
         createdAt,
         user,
