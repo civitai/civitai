@@ -90,10 +90,9 @@ export const getServerSideProps = createServerSideProps({
     const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
     if (!isNumber(id)) return { notFound: true };
 
-    const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch((err) => {
-      console.error(err);
-      return null;
-    });
+    const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(
+      (err) => null
+    );
     if (version)
       await ssg?.image.getInfinite.prefetchInfinite({
         modelVersionId: version.id,
