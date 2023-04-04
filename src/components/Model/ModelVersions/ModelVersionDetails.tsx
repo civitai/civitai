@@ -395,8 +395,6 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
               value="version-files"
               sx={(theme) => ({
                 borderColor: !filesCount ? `${theme.colors.red[4]} !important` : undefined,
-                marginTop: theme.spacing.md,
-                marginBottom: theme.spacing.md,
               })}
             >
               <Accordion.Control>
