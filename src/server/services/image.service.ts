@@ -725,8 +725,10 @@ export const getAllImages = async ({
 
   if (!!prioritizedUserIds?.length) {
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
-    // if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
-    orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), i.index, 1000),  ${orderBy}`;
+    if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
+    AND.push(Prisma.sql`i."userId" IN (${Prisma.join(prioritizedUserIds)})`);
+    orderBy = `i."postId" + i."index"`;
+    // orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), i.index, 1000),  ${orderBy}`;
   }
 
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`

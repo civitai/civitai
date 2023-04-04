@@ -54,8 +54,6 @@ import { getDownloadUrl } from '~/utils/delivery-worker';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
-  // const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
-  // const userId = ctx.user?.id;
   try {
     const model = await getModel({
       input,
@@ -66,28 +64,11 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       throw throwNotFoundError(`No model with id ${input.id}`);
     }
 
-    // const isOwnerOrModerator = model.user.id === ctx.user?.id || ctx.user?.isModerator;
-    // const hiddenTags = await getHiddenTagsForUser({ userId });
-    // const hiddenImages = await getHiddenImagesForUser({ userId });
     const features = getFeatureFlags({ user: ctx.user });
 
     return {
       ...model,
       modelVersions: model.modelVersions.map((version) => {
-        // let images = version.images.flatMap((x) => ({
-        //   ...x.image,
-        //   tags: x.image.tags.map(({ tag }) => tag),
-        // }));
-        // if (!isOwnerOrModerator) {
-        //   images = images.filter(
-        //     ({ id, tags }) =>
-        //       !hiddenImages.includes(id) && !tags.some((tag) => hiddenTags.includes(tag.id))
-        //   );
-
-        //   if (prioritizeSafeImages)
-        //     images = images.sort((a, b) => (a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1));
-        // }
-
         let earlyAccessDeadline = features.earlyAccessModel
           ? getEarlyAccessDeadline({
               versionCreatedAt: version.createdAt,
@@ -121,7 +102,6 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         return {
           ...version,
           hashes,
-          // images,
           earlyAccessDeadline,
           canDownload,
           files: files as Array<
