@@ -8,6 +8,7 @@ import {
   TagTarget,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { ManipulateType } from 'dayjs';
 import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
 
@@ -32,6 +33,7 @@ import {
 import { modelWithDetailsSelect } from '~/server/selectors/model.selector';
 import { ingestNewImages } from '~/server/services/image.service';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
@@ -202,6 +204,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       : undefined,
     AND: AND.length ? AND : undefined,
     modelVersions: { some: { baseModel: baseModels?.length ? { in: baseModels } : undefined } },
+    lastVersionAt:
+      period !== MetricTimeframe.AllTime
+        ? { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) }
+        : undefined,
   };
 
   const orderBy: Prisma.ModelOrderByWithRelationInput = { rank: { newRank: 'asc' } };

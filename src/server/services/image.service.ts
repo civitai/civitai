@@ -717,6 +717,9 @@ export const getAllImages = async ({
     AND.push(Prisma.sql`(${Prisma.join(OR, ' OR ')})`);
   }
 
+  // Limit to images created since period start
+  if (period !== 'AllTime') AND.push(Prisma.raw(`i."createdAt" >= now() - INTERVAL '1 ${period}'`));
+
   const [cursorProp, cursorDirection] = orderBy?.split(' ');
   if (cursor) {
     const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
