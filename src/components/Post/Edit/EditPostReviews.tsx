@@ -7,6 +7,7 @@ import { useEffect, useMemo } from 'react';
 import { isDefined } from '~/utils/type-guards';
 import uniqWith from 'lodash/uniqWith';
 import isEqual from 'lodash/isEqual';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 export function EditPostReviews() {
   const id = useEditPostContext((state) => state.id);
@@ -33,7 +34,18 @@ export function EditPostReviews() {
   }, [imageResources, refetch]); //eslint-disable-line
 
   return (
-    <Stack>
+    <Stack mt="lg">
+      <Text size="sm" tt="uppercase" weight="bold">
+        Resource Reviews
+      </Text>
+      {!!data?.length && (
+        <DismissibleAlert
+          id="leave-review-alert"
+          color="blue"
+          title="What did you think of the resources you used?"
+          content="Take a moment to rate the resources you used in this post by clicking the stars below and optionally leaving a comment about the resource."
+        />
+      )}
       <Stack>
         {data?.map((resource, index) => (
           <EditResourceReview
