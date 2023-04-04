@@ -33,8 +33,10 @@ import { useCFUploadStore } from '~/store/cf-upload.store';
 import { EditImageDrawer } from '~/components/Post/Edit/EditImageDrawer';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 
-export function EditPostImages({ max = 10 }: { max?: number }) {
+export function EditPostImages({ max }: { max?: number }) {
+  max ??= POST_IMAGE_LIMIT;
   const postId = useEditPostContext((state) => state.id);
   const modelVersionId = useEditPostContext((state) => state.modelVersionId);
   const upload = useEditPostContext((state) => state.upload);
