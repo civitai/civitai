@@ -2,7 +2,13 @@ import { Container, Paper, Stack, Text, Alert, Group, ThemeIcon, Divider } from 
 import { IconExclamationMark } from '@tabler/icons';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { BuiltInProviderType } from 'next-auth/providers';
-import { getCsrfToken, getProviders, signIn } from 'next-auth/react';
+import {
+  ClientSafeProvider,
+  getCsrfToken,
+  getProviders,
+  LiteralUnion,
+  signIn,
+} from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { EmailLogin } from '~/components/EmailLogin/EmailLogin';
 import { EthereumLogin } from '~/components/EthereumLogin/EthereumLogin';
@@ -44,17 +50,17 @@ export default function Login({
 
           <Stack mb={error ? 'md' : undefined} mt="md">
             {providers
-              ? Object.values(providers)
-                  .filter((x) => x.id !== 'email')
-                  .map((provider) => {
-                    return (
-                      <SocialButton
-                        key={provider.name}
-                        provider={provider.id as BuiltInProviderType}
-                        onClick={() => signIn(provider.id, { callbackUrl: returnUrl })}
-                      />
-                    );
-                  })
+              ? Object.values(providers).map((provider) => {
+                  if (provider.type === 'email') return null;
+                  if (provider.type === 'credentials') return null;
+                  return (
+                    <SocialButton
+                      key={provider.name}
+                      provider={provider.id as BuiltInProviderType}
+                      onClick={() => signIn(provider.id, { callbackUrl: returnUrl })}
+                    />
+                  );
+                })
               : null}
             <EthereumLogin callbackUrl={returnUrl} />
             <Divider label="Or" labelPosition="center" />
@@ -75,7 +81,10 @@ export default function Login({
   );
 }
 
-type NextAuthProviders = AsyncReturnType<typeof getProviders>;
+type NextAuthProviders = Record<
+  LiteralUnion<BuiltInProviderType | 'ethereum', string>,
+  ClientSafeProvider
+> | null;
 type NextAuthCsrfToken = AsyncReturnType<typeof getCsrfToken>;
 type Props = {
   providers: NextAuthProviders;

@@ -41,7 +41,7 @@ export const EthereumLogin = ({ callbackUrl }: Props) => {
     const signature = await signMessageAsync({
       message: message.prepareMessage(),
     });
-    signIn('credentials', { message: JSON.stringify(message), signature, callbackUrl });
+    signIn('ethereum', { message: JSON.stringify(message), signature, callbackUrl });
   }, [address, callbackUrl, chain?.id, signMessageAsync]);
 
   const handleButtonClick = useCallback(

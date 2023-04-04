@@ -126,13 +126,14 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
       from: env.EMAIL_FROM,
     }),
     CredentialsProvider({
+      id: 'ethereum',
       name: 'Ethereum',
       credentials: {
         message: { label: 'Message', type: 'text', placeholder: '0x0' },
         signature: { label: 'Signature', type: 'text', placeholder: '0x0' },
       },
       // @ts-expect-error - this is a bug in the types, user.id is string but it should be number
-      async authorize(credentials) {
+      async authorize(credentials, req) {
         try {
           const siwe = new SiweMessage(JSON.parse(credentials?.message || '{}'));
           const { success } = await siwe.verify({
@@ -143,17 +144,38 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
 
           if (!success) return null;
 
-          const { address: ethereumAddress } = siwe;
-          const existingUser = await dbWrite.user.findUnique({
-            where: { ethereumAddress },
+          const { address } = siwe;
+          const existingAccount = await dbWrite.account.findUnique({
+            where: {
+              provider_providerAccountId: {
+                provider: 'ethereum',
+                providerAccountId: address,
+              },
+            },
+            select: { userId: true },
           });
-          if (existingUser) return existingUser;
+          if (existingAccount) {
+            const user = await dbWrite.user.findUnique({
+              where: { id: existingAccount.userId },
+            });
+            return user;
+          }
 
           const newUser = await dbWrite.user.create({
             data: {
               // Username can not contain period, so we replace it with underscore
-              username: shortenIfAddress(ethereumAddress).replaceAll('.', '_'),
-              ethereumAddress,
+              username: shortenIfAddress(address).replaceAll('.', '_'),
+            },
+          });
+          await dbWrite.account.create({
+            data: {
+              type: 'credentials',
+              provider: 'ethereum',
+              providerAccountId: address,
+              userId: newUser.id,
+              access_token: credentials?.signature || '',
+              token_type: 'signature',
+              metadata: JSON.parse(credentials?.message || '{}'),
             },
           });
           return newUser;
@@ -181,7 +203,7 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   },
 });
 
-const oldCookieName = `${cookiePrefix}next-auth.session-token`;
+// const oldCookieName = `${cookiePrefix}next-auth.session-token`;
 const authOptions = async (req: NextApiRequest, res: NextApiResponse) => {
   // Disabling because it seems it may be causing issues
   // const cookies = getCookies({ req, res });
