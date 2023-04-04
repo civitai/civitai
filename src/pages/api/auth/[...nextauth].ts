@@ -2,12 +2,14 @@ import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import { User } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import NextAuth, { Session, type NextAuthOptions } from 'next-auth';
+import { getToken } from 'next-auth/jwt';
 import DiscordProvider from 'next-auth/providers/discord';
 import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
 import EmailProvider from 'next-auth/providers/email';
 import CredentialsProvider from 'next-auth/providers/credentials';
+import { getCsrfToken } from 'next-auth/react';
 import { SiweMessage } from 'siwe';
 
 import { env } from '~/env/server.mjs';
@@ -16,7 +18,6 @@ import { getRandomInt } from '~/utils/number-helpers';
 import { sendVerificationRequest } from '~/server/auth/verificationEmail';
 import { refreshToken, invalidateSession } from '~/server/utils/session-helpers';
 import { getSessionUser, updateAccountScope } from '~/server/services/user.service';
-import { getCsrfToken } from 'next-auth/react';
 import { shortenIfAddress } from '~/utils/address';
 
 const setUserName = async (email: string) => {
@@ -133,11 +134,13 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
         signature: { label: 'Signature', type: 'text', placeholder: '0x0' },
       },
       // @ts-expect-error - this is a bug in the types, user.id is string but it should be number
-      async authorize(credentials, req) {
+      async authorize(credentials) {
         try {
-          const siwe = new SiweMessage(JSON.parse(credentials?.message || '{}'));
+          const message = JSON.parse(credentials?.message || '{}');
+          const signature = credentials?.signature || '';
+          const siwe = new SiweMessage(message);
           const { success } = await siwe.verify({
-            signature: credentials?.signature || '',
+            signature,
             domain: host,
             nonce: await getCsrfToken({ req }),
           });
@@ -145,7 +148,25 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
           if (!success) return null;
 
           const { address } = siwe;
-          const existingAccount = await dbWrite.account.findUnique({
+          const findUniqueUser = async (id: number) =>
+            await dbWrite.user.findUnique({
+              where: { id },
+            });
+          const createNewAccount = async (userId: number) =>
+            await dbWrite.account.create({
+              data: {
+                userId,
+                type: 'credentials',
+                provider: 'ethereum',
+                providerAccountId: address,
+                access_token: signature,
+                token_type: 'signature',
+                metadata: message,
+              },
+            });
+
+          // Sign-In
+          const account = await dbWrite.account.findUnique({
             where: {
               provider_providerAccountId: {
                 provider: 'ethereum',
@@ -154,30 +175,27 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
             },
             select: { userId: true },
           });
-          if (existingAccount) {
-            const user = await dbWrite.user.findUnique({
-              where: { id: existingAccount.userId },
-            });
+          if (account) {
+            return await findUniqueUser(account.userId);
+          }
+
+          // Connect
+          const token = await getToken({ req, cookieName, secureCookie: useSecureCookies });
+          if (token) {
+            const user = await findUniqueUser(Number(token.sub));
+            if (!user) return null;
+            await createNewAccount(user.id);
             return user;
           }
 
+          // Sign-Up
           const newUser = await dbWrite.user.create({
             data: {
               // Username can not contain period, so we replace it with underscore
               username: shortenIfAddress(address).replaceAll('.', '_'),
             },
           });
-          await dbWrite.account.create({
-            data: {
-              type: 'credentials',
-              provider: 'ethereum',
-              providerAccountId: address,
-              userId: newUser.id,
-              access_token: credentials?.signature || '',
-              token_type: 'signature',
-              metadata: JSON.parse(credentials?.message || '{}'),
-            },
-          });
+          await createNewAccount(newUser.id);
           return newUser;
         } catch (e) {
           return null;

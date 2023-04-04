@@ -13,6 +13,7 @@ export const getUserAccountsHandler = async ({ ctx }: { ctx: DeepNonNullable<Con
       select: {
         id: true,
         provider: true,
+        providerAccountId: true,
       },
     });
   } catch (error) {
