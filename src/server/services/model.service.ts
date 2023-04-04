@@ -699,6 +699,7 @@ export const publishModelById = async ({ id, versionIds }: PublishModelSchema) =
         data: {
           status: ModelStatus.Published,
           publishedAt,
+          lastVersionAt: includeVersions ? publishedAt : undefined,
           modelVersions: includeVersions
             ? {
                 updateMany: {
@@ -750,7 +751,7 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
   const { take, skip } = getPagination(limit, page);
   const where: Prisma.ModelFindManyArgs['where'] = {
     userId,
-    status: ModelStatus.Draft,
+    OR: [{ status: ModelStatus.Draft }, { status: ModelStatus.Unpublished }],
   };
 
   const items = await dbRead.model.findMany({

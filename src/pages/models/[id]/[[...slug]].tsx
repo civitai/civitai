@@ -37,6 +37,7 @@ import {
   IconTrash,
   IconLock,
   IconLockOff,
+  IconMessageCircleOff,
 } from '@tabler/icons';
 import truncate from 'lodash/truncate';
 import { InferGetServerSidePropsType } from 'next';
@@ -712,9 +713,16 @@ export default function ModelDetailsV2({
                 </Stack>
               </>
             ) : (
-              <Paper p="lg">
+              <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
                 <Center>
-                  <Text size="sm">Discussions are turned off for this model.</Text>
+                  <Group spacing="xs">
+                    <ThemeIcon color="gray" size="xl" radius="xl">
+                      <IconMessageCircleOff />
+                    </ThemeIcon>
+                    <Text size="lg" color="dimmed">
+                      Discussion is turned off for this model.
+                    </Text>
+                  </Group>
                 </Center>
               </Paper>
             ))}
