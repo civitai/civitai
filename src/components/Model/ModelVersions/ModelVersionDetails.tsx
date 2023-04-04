@@ -231,7 +231,10 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
   const hasFiles = filesCount > 0;
   const hasPosts = !!version.posts?.length;
   const showPublishButton =
-    isOwnerOrMod && version.status !== ModelStatus.Published && hasFiles && hasPosts;
+    isOwnerOrMod &&
+    (version.status !== ModelStatus.Published || model.status !== ModelStatus.Published) &&
+    hasFiles &&
+    hasPosts;
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
 
   return (
