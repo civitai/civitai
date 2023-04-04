@@ -732,6 +732,8 @@ export const getAllImages = async ({
     // orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), i.index, 1000),  ${orderBy}`;
   }
 
+  const includeRank = cursorProp?.startsWith('r.');
+
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
     SELECT
       i.id,
@@ -768,9 +770,7 @@ export const getAllImages = async ({
     JOIN "User" u ON u.id = i."userId"
     JOIN "Post" p ON p.id = i."postId"
     ${Prisma.raw(
-      cursorProp?.startsWith('r.')
-        ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id`
-        : ''
+      includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id` : ''
     )}
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     ${
@@ -784,7 +784,7 @@ export const getAllImages = async ({
     ) ir ON ir."imageId" = i.id`
     }
     WHERE ${Prisma.join(AND, ' AND ')}
-    ORDER BY ${Prisma.raw(orderBy)} NULLS LAST
+    ORDER BY ${Prisma.raw(orderBy)} ${Prisma.raw(includeRank && optionalRank ? 'NULLS LAST' : '')}
     LIMIT ${limit + 1}
   `;
 
