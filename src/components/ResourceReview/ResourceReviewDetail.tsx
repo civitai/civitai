@@ -10,6 +10,7 @@ import {
   Rating,
   Box,
   CloseButton,
+  Button,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { NavigateBack } from '~/components/BackButton/BackButton';
@@ -25,11 +26,18 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ResourceReviewMenu } from '~/components/ResourceReview/ResourceReviewMenu';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import Link from 'next/link';
+import { formatDate } from '~/utils/date-helpers';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
   const inModal = !!router.query.modal;
+
   const { data, isLoading } = trpc.resourceReview.get.useQuery({ id: reviewId });
+  const { data: relatedPosts, isLoading: loadingRelatedPosts } = trpc.post.getInfinite.useQuery(
+    { username: data?.user.username, modelVersionId: data?.modelVersion.id },
+    { enabled: !!data }
+  );
 
   const getModelUrl = (data: ResourceReviewDetailModel) =>
     `/models/${data.model.id}/${slugit(data.model.name)}`;
@@ -114,6 +122,30 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
       )}
       <Container>
         <Stack>
+          <Stack spacing="xs">
+            <Text size="md" weight={500}>
+              Related posts
+            </Text>
+            {loadingRelatedPosts && !relatedPosts ? (
+              <Center>
+                <Loader variant="bars" />
+              </Center>
+            ) : (
+              <Group spacing={4}>
+                {relatedPosts?.items.map((post) => (
+                  <Link
+                    key={post.id}
+                    href={`/posts/${post.id}/${post.title ? slugit(post.title) : ''}`}
+                    passHref
+                  >
+                    <Button component="a" size="xs" variant="light" compact>
+                      {post.title ? post.title : `From: ${formatDate(post.publishedAt as Date)}`}
+                    </Button>
+                  </Link>
+                ))}
+              </Group>
+            )}
+          </Stack>
           {data.details && <RenderHtml html={data.details} />}
 
           <Stack spacing="xs">

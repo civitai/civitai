@@ -102,7 +102,7 @@ export function ImagesAsPostsCard({
           {inView && (
             <>
               <Paper radius={0}>
-                <Group p="xs" noWrap maw="100%">
+                <Group p="xs" align="flex-start" noWrap maw="100%">
                   <UserAvatar
                     user={data.user}
                     subText={
@@ -141,7 +141,7 @@ export function ImagesAsPostsCard({
                           }}
                           style={{ paddingRight: data.review?.details ? undefined : 0 }}
                           icon={
-                            <Group spacing={2} align="center">
+                            <Group spacing={2} align="center" noWrap>
                               <Rating
                                 size="xs"
                                 value={data.review.rating / 5}

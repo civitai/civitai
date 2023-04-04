@@ -123,6 +123,15 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
 
     async function onSuccess() {
       setPublishedAt(new Date());
+      // Update post title
+      mutate(
+        { id, title: `${modelVersion?.model.name} - ${modelVersion?.name} Showcase` },
+        {
+          onSuccess: async () => {
+            await queryUtils.post.getEdit.invalidate({ id });
+          },
+        }
+      );
       await queryUtils.model.getById.invalidate({ id: modelId });
       await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId });
       await queryUtils.image.getInfinite.invalidate();
@@ -159,11 +168,16 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
       onConfirm: () => {
         const publishedAt = new Date();
         mutate(
-          { id, publishedAt },
+          {
+            id,
+            publishedAt,
+            title: `${modelVersion?.model.name} - ${modelVersion?.name} Showcase`,
+          },
           {
             async onSuccess() {
               setPublishedAt(publishedAt);
               await queryUtils.model.getById.invalidate({ id: modelId });
+              await queryUtils.post.getEdit.invalidate({ id });
               await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId });
               await queryUtils.image.getInfinite.invalidate();
               await router.replace(`/models/${modelId}?modelVersionId=${modelVersionId}`);
