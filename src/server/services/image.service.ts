@@ -727,9 +727,15 @@ export const getAllImages = async ({
   if (!!prioritizedUserIds?.length) {
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
     if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
-    AND.push(Prisma.sql`i."userId" IN (${Prisma.join(prioritizedUserIds)})`);
-    orderBy = `i."postId" + i."index"`;
-    // orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), i.index, 1000),  ${orderBy}`;
+
+    // If system user, show community images
+    if (prioritizedUserIds.length === 1 && prioritizedUserIds[0] === -1)
+      orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), i.index, 1000),  ${orderBy}`;
+    else {
+      // For everyone else, only show their images.
+      AND.push(Prisma.sql`i."userId" IN (${Prisma.join(prioritizedUserIds)})`);
+      orderBy = `i."postId" + i."index"`; // Order by oldest post first
+    }
   }
 
   const includeRank = cursorProp?.startsWith('r.');
