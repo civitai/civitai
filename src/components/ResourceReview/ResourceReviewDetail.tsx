@@ -29,6 +29,7 @@ import { ResourceReviewMenu } from '~/components/ResourceReview/ResourceReviewMe
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import Link from 'next/link';
 import { formatDate } from '~/utils/date-helpers';
+import { PostSort } from '~/server/common/enums';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
@@ -36,7 +37,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
 
   const { data, isLoading } = trpc.resourceReview.get.useQuery({ id: reviewId });
   const { data: relatedPosts, isLoading: loadingRelatedPosts } = trpc.post.getInfinite.useQuery(
-    { username: data?.user.username, modelVersionId: data?.modelVersion.id },
+    { username: data?.user.username, modelVersionId: data?.modelVersion.id, sort: PostSort.Newest },
     { enabled: !!data }
   );
 
@@ -131,7 +132,11 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
               <Loader variant="dots" />
             ) : (
               relatedPosts?.items.map((post) => (
-                <Link key={post.id} href={`/posts/${post.id}`} passHref>
+                <Link
+                  key={post.id}
+                  href={`/posts/${post.id}/${post.title ? slugit(post.title) : ''}`}
+                  passHref
+                >
                   <Button component="a" size="xs" variant="light" compact>
                     {post.title ? post.title : `From: ${formatDate(post.publishedAt as Date)}`}
                   </Button>
