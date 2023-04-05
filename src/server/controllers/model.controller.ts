@@ -102,8 +102,12 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           )
           .filter(isDefined);
 
+        // Oldest post first so that we use it as the showcase
+        const posts = version.posts.sort((a, b) => a.id - b.id);
+
         return {
           ...version,
+          posts,
           hashes,
           earlyAccessDeadline,
           canDownload,
