@@ -1,6 +1,5 @@
 import { Container, Stack, Group, createStyles, Box, Center, Title, Text } from '@mantine/core';
-import { useRouter } from 'next/router';
-import { GetServerSideProps } from 'next/types';
+import { InferGetServerSidePropsType } from 'next/types';
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
 import {
   InfiniteModelsSort,
@@ -9,26 +8,27 @@ import {
 } from '~/components/InfiniteModels/InfiniteModelsFilters';
 import { Meta } from '~/components/Meta/Meta';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 
-export const getServerSideProps: GetServerSideProps = async (ctx) => {
-  const ssg = await getServerProxySSGHelpers(ctx);
-  const tagname = ctx.query.tagname as string;
-  if (tagname) await ssg.tag.getTagWithModelCount.prefetch({ name: tagname });
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  resolver: async ({ ctx, ssg }) => {
+    const tagname = ctx.query.tagname as string;
+    if (tagname) await ssg?.tag.getTagWithModelCount.prefetch({ name: tagname });
 
-  return {
-    props: {
-      trpcState: ssg.dehydrate(),
-    },
-  };
-};
+    return { props: { tagname } };
+  },
+});
 
-export default function TagPage() {
+export default function TagPage({
+  tagname,
+}: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { classes } = useStyles();
-  const router = useRouter();
-  const tagname = router.query.tagname as string;
 
-  const { data: tag } = trpc.tag.getTagWithModelCount.useQuery({ name: tagname });
+  const { data = [] } = trpc.tag.getTagWithModelCount.useQuery({ name: tagname });
+  const [tag] = data;
+
   const count = tag?.count ?? 0;
 
   return (
