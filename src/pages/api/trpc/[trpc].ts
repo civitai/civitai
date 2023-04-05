@@ -1,8 +1,10 @@
 // src/pages/api/trpc/[trpc].ts
+import { TRPCError } from '@trpc/server';
 import { createNextApiHandler } from '@trpc/server/adapters/next';
 import { isDev } from '~/env/other';
 import { createContext } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
+import { handleTRPCError, throwDbError } from '~/server/utils/errorHandling';
 
 const PUBLIC_CACHE_MAX_AGE = 60;
 const PUBLIC_CACHE_STALE_WHILE_REVALIDATE = 30;
@@ -32,9 +34,15 @@ export default createNextApiHandler({
 
     return {};
   },
-  onError: isDev
-    ? ({ path, error }) => {
-        console.error(`❌ tRPC failed on ${path}: ${error}`);
-      }
-    : undefined,
+  // onError: isDev
+  //   ? ({ path, error }) => {
+  //       console.error(`❌ tRPC failed on ${path}: ${error}`);
+  //     }
+  //   : undefined,
+  onError: ({ error, type, path, input, ctx, req }) => {
+    if (isDev) {
+      console.error(`❌ tRPC failed on ${path}: ${error}`);
+    }
+    handleTRPCError(error);
+  },
 });
