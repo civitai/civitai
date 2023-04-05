@@ -15,6 +15,7 @@ import { ModelStatus, ModelType } from '@prisma/client';
 import { UploadType } from '~/server/common/enums';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import { z } from 'zod';
+import { getModelFileFormat } from '~/utils/file-helpers';
 
 type ZodErrorSchema = { _errors: string[] };
 type SchemaError = {
@@ -413,7 +414,9 @@ export const checkConflictingFiles = (files: FileFromContextProps[]) => {
   const conflictCount: Record<string, number> = {};
 
   files.forEach((item) => {
-    const key = [item.size, item.type, item.fp].filter(Boolean).join('-');
+    const key = [item.size, item.type, item.fp, getModelFileFormat(item.name)]
+      .filter(Boolean)
+      .join('-');
     if (conflictCount[key]) conflictCount[key] += 1;
     else conflictCount[key] = 1;
   });
