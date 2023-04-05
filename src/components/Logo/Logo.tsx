@@ -1,5 +1,4 @@
 import { Box, BoxProps, createStyles } from '@mantine/core';
-import Image from 'next/image';
 
 export function Logo({ ...props }: LogoProps) {
   const { classes } = useStyles();
