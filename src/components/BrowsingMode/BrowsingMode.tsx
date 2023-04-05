@@ -10,7 +10,7 @@ import {
   Indicator,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { IconEye, IconEyeOff, TablerIconProps } from '@tabler/icons';
+import { IconEye, IconEyeOff, IconShield, IconShieldOff, TablerIconProps } from '@tabler/icons';
 import { useEffect } from 'react';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -26,6 +26,8 @@ const options = [
   { label: 'Everything', value: BrowsingMode.All },
 ];
 
+const indicatorProps: TablerIconProps = { size: 12, strokeWidth: 4 };
+
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   const currentUser = useCurrentUser();
   const cookieMode = useFiltersContext((state) => state.browsingMode);
@@ -40,10 +42,30 @@ export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
     [BrowsingMode.All]: 'red',
   }[browsingMode];
 
+  const label = {
+    [BrowsingMode.SFW]: <IconShield {...indicatorProps} />,
+    [BrowsingMode.NSFW]: undefined,
+    [BrowsingMode.All]: <IconShieldOff {...indicatorProps} />,
+  }[browsingMode];
+
   return (
     <Popover withArrow>
       <Popover.Target>
-        <Indicator color={indicatorColor} disabled={!indicatorColor}>
+        <Indicator
+          color={indicatorColor}
+          disabled={!indicatorColor}
+          label={label}
+          radius={10}
+          offset={4}
+          withBorder
+          styles={{
+            indicator: {
+              padding: 0,
+              width: 20,
+              height: '20px !important',
+            },
+          }}
+        >
           <ActionIcon>
             {currentUser.blurNsfw ? <IconEyeOff {...iconProps} /> : <IconEye {...iconProps} />}
           </ActionIcon>

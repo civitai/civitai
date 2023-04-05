@@ -1,4 +1,3 @@
-import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { BaseModel } from '~/server/common/constants';
 
@@ -14,7 +13,7 @@ import {
   getVersionById,
   upsertModelVersion,
   deleteVersionById,
-  updateModelVersionById,
+  publishModelVersionById,
 } from '~/server/services/model-version.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
@@ -134,17 +133,7 @@ export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput
 
 export const publishModelVersionHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
-    const publishedAt = new Date();
-    const version = await updateModelVersionById({
-      ...input,
-      data: {
-        status: ModelStatus.Published,
-        model: { update: { lastVersionAt: publishedAt } },
-        posts: { updateMany: { where: { publishedAt: null }, data: { publishedAt } } },
-      },
-    });
-    if (!version) throw throwNotFoundError(`No model with id ${input.id}`);
-
+    const version = await publishModelVersionById(input);
     return version;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
