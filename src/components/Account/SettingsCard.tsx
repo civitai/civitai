@@ -33,7 +33,7 @@ export function SettingsCard() {
           label="Autoplay GIFs"
           checked={user.autoplayGifs}
           disabled={isLoading}
-          onChange={(e) => mutate({ ...user, autoplayGifs: e.target.checked })}
+          onChange={(e) => mutate({ id: user.id, autoplayGifs: e.target.checked })}
         />
         <Divider label="Model File Preferences" mb={-12} />
         <Group noWrap grow>
@@ -43,7 +43,7 @@ export function SettingsCard() {
             data={validModelFormats}
             value={user.filePreferences?.format ?? 'SafeTensor'}
             onChange={(value: ModelFileFormat) =>
-              mutate({ ...user, filePreferences: { ...user.filePreferences, format: value } })
+              mutate({ id: user.id, filePreferences: { ...user.filePreferences, format: value } })
             }
             disabled={isLoading}
           />
@@ -56,7 +56,7 @@ export function SettingsCard() {
             }))}
             value={user.filePreferences?.size ?? 'pruned'}
             onChange={(value: ModelFileSize) =>
-              mutate({ ...user, filePreferences: { ...user.filePreferences, size: value } })
+              mutate({ id: user.id, filePreferences: { ...user.filePreferences, size: value } })
             }
             disabled={isLoading}
           />
@@ -69,7 +69,7 @@ export function SettingsCard() {
             }))}
             value={user.filePreferences?.fp ?? 'fp16'}
             onChange={(value: ModelFileFp) =>
-              mutate({ ...user, filePreferences: { ...user.filePreferences, fp: value } })
+              mutate({ id: user.id, filePreferences: { ...user.filePreferences, fp: value } })
             }
             disabled={isLoading}
           />

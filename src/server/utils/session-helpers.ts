@@ -46,8 +46,8 @@ export async function refreshToken(token: JWT) {
   return token;
 }
 
-export function invalidateSession(userId: number) {
-  redis.set(`session:${userId}`, new Date().toISOString(), {
+export async function invalidateSession(userId: number) {
+  await redis.set(`session:${userId}`, new Date().toISOString(), {
     EX: DEFAULT_EXPIRATION, // 30 days
   });
   log(`Scheduling refresh session for user ${userId}`);
