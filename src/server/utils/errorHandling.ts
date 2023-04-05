@@ -40,8 +40,9 @@ const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
 
 export function throwDbError(error: unknown) {
   // Always log to console
-  if (error instanceof TRPCError) throw error;
-  else if (error instanceof Prisma.PrismaClientKnownRequestError)
+  if (error instanceof TRPCError) {
+    throw error;
+  } else if (error instanceof Prisma.PrismaClientKnownRequestError)
     throw new TRPCError({
       code: prismaErrorToTrpcCode[error.code] ?? 'INTERNAL_SERVER_ERROR',
       message: error.message,
@@ -60,6 +61,30 @@ export function throwDbError(error: unknown) {
     cause: error,
   });
 }
+
+export const handleTRPCError = (error: unknown) => {
+  const isTrpcError = error instanceof TRPCError;
+  if (!isTrpcError) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError)
+      throw new TRPCError({
+        code: prismaErrorToTrpcCode[error.code] ?? 'INTERNAL_SERVER_ERROR',
+        message: error.message,
+        cause: error,
+      });
+    else if (error instanceof Prisma.PrismaClientValidationError)
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'Database validation error',
+        cause: error,
+      });
+    else
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'An unexpected error ocurred, please try again later',
+        cause: error,
+      });
+  }
+};
 
 export function throwAuthorizationError(message: string | null = null) {
   message ??= 'You are not authorized to perform this action';
