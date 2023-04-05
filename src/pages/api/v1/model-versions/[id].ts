@@ -11,6 +11,7 @@ import {
   getModelVersionApiSelect,
   ModelVersionApiReturn,
 } from '~/server/selectors/modelVersion.selector';
+import { getImagesForModelVersion } from '~/server/services/image.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 
@@ -31,16 +32,26 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     select: getModelVersionApiSelect,
   });
 
-  resModelVersionDetails(req, res, modelVersion);
+  await resModelVersionDetails(req, res, modelVersion);
 });
 
-export function prepareModelVersionResponse(modelVersion: ModelVersionApiReturn, baseUrl: URL) {
-  const { images, files, model, ...version } = modelVersion;
+export async function prepareModelVersionResponse(
+  modelVersion: ModelVersionApiReturn,
+  baseUrl: URL,
+  images?: AsyncReturnType<typeof getImagesForModelVersion>
+) {
+  const { files, model, ...version } = modelVersion;
   const castedFiles = files as Array<
     Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
   >;
   const primaryFile = getPrimaryFile(castedFiles);
   if (!primaryFile) return null;
+
+  images ??= await getImagesForModelVersion({
+    modelVersionIds: [version.id],
+    include: ['meta'],
+    imagesPerVersion: 10,
+  });
 
   return {
     ...version,
@@ -57,7 +68,7 @@ export function prepareModelVersionResponse(modelVersion: ModelVersionApiReturn,
         primary: primaryFile.id === file.id,
       })}`,
     })),
-    images: images.map(({ image: { url, id, ...image } }) => ({
+    images: images.map(({ url, id, userId, name, modelVersionId, ...image }) => ({
       url: getEdgeUrl(url, { width: 450, name: id.toString() }),
       ...image,
     })),
@@ -68,7 +79,7 @@ export function prepareModelVersionResponse(modelVersion: ModelVersionApiReturn,
   };
 }
 
-export function resModelVersionDetails(
+export async function resModelVersionDetails(
   req: NextApiRequest,
   res: NextApiResponse,
   modelVersion: ModelVersionApiReturn | null
@@ -76,7 +87,7 @@ export function resModelVersionDetails(
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
 
   const baseUrl = new URL(isProd ? `https://${req.headers.host}` : 'http://localhost:3000');
-  const body = prepareModelVersionResponse(modelVersion, baseUrl);
+  const body = await prepareModelVersionResponse(modelVersion, baseUrl);
   if (!body) return res.status(404).json({ error: 'Missing model file' });
   res.status(200).json(body);
 }

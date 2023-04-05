@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 
 export function PopConfirm({
   children,
+  enabled = true,
   message = 'Are you sure?',
   onConfirm,
   onCancel,
@@ -12,6 +13,7 @@ export function PopConfirm({
   message: React.ReactNode;
   onConfirm?: () => void;
   onCancel?: () => void;
+  enabled?: boolean;
 } & Omit<PopoverProps, 'opened' | 'onChange'>) {
   const [opened, setOpened] = useState(false);
 
@@ -24,6 +26,8 @@ export function PopConfirm({
     onConfirm?.();
     setOpened(false);
   };
+
+  if (!enabled) return children;
 
   return (
     <Popover {...popoverProps} opened={opened} onChange={setOpened}>

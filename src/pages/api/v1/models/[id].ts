@@ -1,4 +1,6 @@
 import { ModelHashType } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
@@ -6,10 +8,13 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import { publicApiContext } from '~/server/createContext';
+import { appRouter } from '~/server/routers';
 import { getAllModelsWithVersionsSelect } from '~/server/selectors/model.selector';
 import { getModel } from '~/server/services/model.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getBaseUrl } from '~/server/utils/url-helpers';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -24,50 +29,63 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   const { id } = results.data;
   if (!id) return res.status(400).json({ error: 'Missing modelId' });
 
-  const fullModel = await getModel({ input: { id }, select: getAllModelsWithVersionsSelect });
-  if (!fullModel) return res.status(404).json({ error: 'Model not found' });
+  const baseUrl = getBaseUrl();
 
-  const baseUrl = new URL(isProd ? `https://${req.headers.host}` : 'http://localhost:3000');
+  const apiCaller = appRouter.createCaller({ ...publicApiContext });
+  try {
+    const { modelVersions, tagsOnModels, user, ...model } =
+      await apiCaller.model.getByIdWithVersions({ id });
 
-  const { modelVersions, tagsOnModels, user, ...model } = fullModel;
-  res.status(200).json({
-    ...model,
-    creator: {
-      username: user.username,
-      image: user.image ? getEdgeUrl(user.image, { width: 96 }) : null,
-    },
-    tags: tagsOnModels.map(({ tag }) => tag.name),
-    modelVersions: modelVersions
-      .map(({ images, files, ...version }) => {
-        const castedFiles = files as Array<
-          Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
-        >;
-        const primaryFile = getPrimaryFile(castedFiles);
-        if (!primaryFile) return null;
+    res.status(200).json({
+      ...model,
+      creator: {
+        username: user.username,
+        image: user.image ? getEdgeUrl(user.image, { width: 96, name: user.username }) : null,
+      },
+      tags: tagsOnModels.map((tag) => tag.tag),
+      modelVersions: modelVersions
+        .map(({ images, files, ...version }) => {
+          const castedFiles = files as Array<
+            Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
+          >;
+          const primaryFile = getPrimaryFile(castedFiles);
+          if (!primaryFile) return null;
 
-        return {
-          ...version,
-          files: castedFiles.map(({ hashes, ...file }) => ({
-            ...file,
-            name: getDownloadFilename({ model: fullModel, modelVersion: version, file }),
-            hashes: hashesAsObject(hashes),
-            downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
+          return {
+            ...version,
+            files: castedFiles.map(({ hashes, ...file }) => ({
+              ...file,
+              name: getDownloadFilename({ model, modelVersion: version, file }),
+              hashes: hashesAsObject(hashes),
+              downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
+                versionId: version.id,
+                type: file.type,
+                format: file.metadata.format,
+                primary: primaryFile.id === file.id,
+              })}`,
+              primary: primaryFile.id === file.id ? true : undefined,
+            })),
+            images: images.map(({ url, id, ...image }) => ({
+              url: getEdgeUrl(url, { width: 450, name: id.toString() }),
+              ...image,
+            })),
+            downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
               versionId: version.id,
-              type: file.type,
-              format: file.metadata.format,
-              primary: primaryFile.id === file.id,
+              primary: true,
             })}`,
-          })),
-          images: images.map(({ image: { url, id, ...image } }) => ({
-            url: getEdgeUrl(url, { width: 450, name: id.toString() }),
-            ...image,
-          })),
-          downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
-            versionId: version.id,
-            primary: true,
-          })}`,
-        };
-      })
-      .filter((x) => x),
-  });
+          };
+        })
+        .filter((x) => x),
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) {
+      const apiError = error as TRPCError;
+      const status = getHTTPStatusCodeFromError(apiError);
+      const parsedError = JSON.parse(apiError.message);
+
+      res.status(status).json(parsedError);
+    } else {
+      res.status(500).json({ message: 'An unexpected error occurred', error });
+    }
+  }
 });

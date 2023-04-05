@@ -81,9 +81,6 @@ export default function Notifications() {
             </Group>
           </Grid.Col>
           <Grid.Col span={12} px={0}>
-            <Center>
-              <Text>Notifications have been temporarily disabled. Check back soon!</Text>
-            </Center>
             {isLoading ? (
               <Center>
                 <Loader />

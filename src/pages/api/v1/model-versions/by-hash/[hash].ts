@@ -30,5 +30,5 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     },
   })) ?? { modelVersion: null };
 
-  resModelVersionDetails(req, res, modelVersion);
+  await resModelVersionDetails(req, res, modelVersion);
 });

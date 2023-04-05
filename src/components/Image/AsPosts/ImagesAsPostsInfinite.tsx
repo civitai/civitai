@@ -10,9 +10,11 @@ import { InView, useInView } from 'react-intersection-observer';
 import { useRouter } from 'next/router';
 import { parseImagesQuery } from '~/components/Image/image.utils';
 
+type ModelVersionsProps = { id: number; name: string };
 type ImagesAsPostsInfiniteState = {
   modelId?: number;
   username?: string;
+  modelVersions?: ModelVersionsProps[];
 };
 const ImagesAsPostsInfiniteContext = createContext<ImagesAsPostsInfiniteState | null>(null);
 export const useImagesAsPostsInfiniteContext = () => {
@@ -21,13 +23,16 @@ export const useImagesAsPostsInfiniteContext = () => {
   return context;
 };
 
-type ImagesAsPostsInfiniteProps = ImagesAsPostsInfiniteState & { columnWidth?: number };
+type ImagesAsPostsInfiniteProps = ImagesAsPostsInfiniteState & {
+  columnWidth?: number;
+};
 
 const LIMIT = 50;
 export default function ImagesAsPostsInfinite({
   columnWidth = 300,
   modelId,
   username,
+  modelVersions,
 }: ImagesAsPostsInfiniteProps) {
   const router = useRouter();
   // const { ref, inView } = useInView({ triggerOnce: true });
@@ -56,7 +61,7 @@ export default function ImagesAsPostsInfinite({
   return (
     // <div ref={ref}>
     //   {inView ? (
-    <ImagesAsPostsInfiniteContext.Provider value={{ modelId, username }}>
+    <ImagesAsPostsInfiniteContext.Provider value={{ modelId, username, modelVersions }}>
       <MasonryGrid2
         data={items}
         hasNextPage={hasNextPage}

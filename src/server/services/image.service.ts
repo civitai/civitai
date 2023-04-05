@@ -585,6 +585,7 @@ type GetAllImagesRaw = {
   userId: number;
   index: number;
   postId: number;
+  modelVersionId: number | null;
   publishedAt: Date | null;
   username: string | null;
   userImage: string | null;
@@ -716,6 +717,10 @@ export const getAllImages = async ({
     AND.push(Prisma.sql`(${Prisma.join(OR, ' OR ')})`);
   }
 
+  // TODO Briant: turn this back on when we have support for separate period filters
+  // Limit to images created since period start
+  // if (period !== 'AllTime') AND.push(Prisma.raw(`i."createdAt" >= now() - INTERVAL '1 ${period}'`));
+
   const [cursorProp, cursorDirection] = orderBy?.split(' ');
   if (cursor) {
     const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
@@ -725,9 +730,19 @@ export const getAllImages = async ({
 
   if (!!prioritizedUserIds?.length) {
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
-    // if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
-    orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), i.index, 1000),  ${orderBy}`;
+    if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
+
+    // If system user, show community images
+    if (prioritizedUserIds.length === 1 && prioritizedUserIds[0] === -1)
+      orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), i.index, 1000),  ${orderBy}`;
+    else {
+      // For everyone else, only show their images.
+      AND.push(Prisma.sql`i."userId" IN (${Prisma.join(prioritizedUserIds)})`);
+      orderBy = `i."postId" + i."index"`; // Order by oldest post first
+    }
   }
+
+  const includeRank = cursorProp?.startsWith('r.');
 
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
     SELECT
@@ -749,6 +764,7 @@ export const getAllImages = async ({
       i."postId",
       i."index",
       p."publishedAt",
+      p."modelVersionId",
       u.username,
       u.image "userImage",
       u."deletedAt",
@@ -764,9 +780,7 @@ export const getAllImages = async ({
     JOIN "User" u ON u.id = i."userId"
     JOIN "Post" p ON p.id = i."postId"
     ${Prisma.raw(
-      cursorProp?.startsWith('r.')
-        ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id`
-        : ''
+      includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id` : ''
     )}
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     ${
@@ -780,7 +794,7 @@ export const getAllImages = async ({
     ) ir ON ir."imageId" = i.id`
     }
     WHERE ${Prisma.join(AND, ' AND ')}
-    ORDER BY ${Prisma.raw(orderBy)} NULLS LAST
+    ORDER BY ${Prisma.raw(orderBy)} ${Prisma.raw(includeRank && optionalRank ? 'NULLS LAST' : '')}
     LIMIT ${limit + 1}
   `;
 
@@ -839,7 +853,11 @@ export const getAllImages = async ({
   }, {} as Record<number, (typeof userCosmeticsRaw)[0]['cosmetic'][]>);
 
   const images: Array<
-    ImageV2Model & { tags: VotableTagModel[] | undefined; publishedAt: Date | null }
+    ImageV2Model & {
+      tags: VotableTagModel[] | undefined;
+      publishedAt: Date | null;
+      modelVersionId: number | null;
+    }
   > = rawImages.map(
     ({
       reactions,
@@ -936,6 +954,7 @@ type ImagesForModelVersions = {
   height: number;
   hash: string;
   modelVersionId: number;
+  meta?: Prisma.JsonValue;
 };
 export const getImagesForModelVersion = async ({
   modelVersionIds,
@@ -943,12 +962,16 @@ export const getImagesForModelVersion = async ({
   excludedIds,
   excludedUserIds,
   currentUserId,
+  imagesPerVersion = 1,
+  include = [],
 }: {
   modelVersionIds: number | number[];
   excludedTagIds?: number[];
   excludedIds?: number[];
   excludedUserIds?: number[];
   currentUserId?: number;
+  imagesPerVersion?: number;
+  include?: Array<'meta'>;
 }) => {
   if (!Array.isArray(modelVersionIds)) modelVersionIds = [modelVersionIds];
   const imageWhere: Prisma.Sql[] = [
@@ -992,7 +1015,7 @@ export const getImagesForModelVersion = async ({
         JOIN "Model" m ON m.id = mv."modelId" AND m."userId" = p."userId"
         WHERE ${Prisma.join(imageWhere, ' AND ')}
       ) ranked
-      WHERE ranked.row_num = 1
+      WHERE ranked.row_num <= ${imagesPerVersion}
     )
     SELECT
       i.id,
@@ -1004,8 +1027,10 @@ export const getImagesForModelVersion = async ({
       i.height,
       i.hash,
       t."modelVersionId"
+      ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
     FROM targets t
     JOIN "Image" i ON i.id = t.id
+    ORDER BY i."index"
   `;
 
   return images;

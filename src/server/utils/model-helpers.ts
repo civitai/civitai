@@ -1,8 +1,14 @@
+import { ModelType } from '@prisma/client';
+import { startCase } from 'lodash';
+import { ModelFileType } from '~/server/common/constants';
+import { getDisplayName } from '~/utils/string-helpers';
+
 type FileFormatType = {
+  type: string | ModelFileType;
   metadata: FileMetadata;
 };
 
-export const defaultFilePreferences: FileFormatType = {
+export const defaultFilePreferences: Omit<FileFormatType, 'type'> = {
   metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' },
 };
 
@@ -21,14 +27,15 @@ export function getPrimaryFile<T extends FileFormatType>(
   const getScore = (file: FileFormatType) => {
     const { format, size, fp } = file.metadata;
 
-    if (size === preferredSize && format === preferredFormat && fp === preferredFp) return 4;
-    else if (size === preferredSize && format === preferredFormat) return 3;
-    else if (format === preferredFormat) return 2;
-    else if (size === preferredSize) return 1;
+    if (size === preferredSize && format === preferredFormat && fp === preferredFp) return 5;
+    else if (size === preferredSize && format === preferredFormat) return 4;
+    else if (format === preferredFormat) return 3;
+    else if (size === preferredSize) return 2;
+    else if (fp === preferredFp) return 1;
     else if (
       size === defaultFilePreferences.metadata.size &&
       format === defaultFilePreferences.metadata.format &&
-      fp === preferredFp
+      fp === defaultFilePreferences.metadata.fp
     )
       return 0;
     else if (
@@ -48,3 +55,19 @@ export function getPrimaryFile<T extends FileFormatType>(
     }))
     .sort((a, b) => b.score - a.score)[0].file;
 }
+
+export const getFileDisplayName = ({
+  file,
+  modelType,
+}: {
+  file: { type: string | ModelFileType; metadata: FileMetadata };
+  modelType: ModelType;
+}) => {
+  const { format, size, fp } = file.metadata;
+  if (file.type === 'Model') {
+    if (modelType === ModelType.Checkpoint)
+      return `${startCase(size)} ${startCase(file.type)} ${fp}`;
+    return getDisplayName(modelType);
+  }
+  return startCase(file.type);
+};

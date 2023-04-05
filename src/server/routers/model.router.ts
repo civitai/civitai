@@ -12,10 +12,12 @@ import {
   getModelsPagedSimpleHandler,
   getModelsWithVersionsHandler,
   getModelVersionsHandler,
+  getModelWithVersionsHandler,
   getMyDraftModelsHandler,
   publishModelHandler,
   reorderModelVersionsHandler,
   restoreModelHandler,
+  toggleModelLockHandler,
   unpublishModelHandler,
   updateModelHandler,
   upsertModelHandler,
@@ -32,6 +34,7 @@ import {
   modelUpsertSchema,
   publishModelSchema,
   reorderModelVersionsSchema,
+  toggleModelLockSchema,
 } from '~/server/schema/model.schema';
 import {
   guardedProcedure,
@@ -131,6 +134,7 @@ export const modelRouter = router({
   getAllWithVersions: publicProcedure
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
     .query(getModelsWithVersionsHandler),
+  getByIdWithVersions: publicProcedure.input(getByIdSchema).query(getModelWithVersionsHandler),
   getVersions: publicProcedure.input(getByIdSchema).query(getModelVersionsHandler),
   getMyDraftModels: protectedProcedure.input(getAllQuerySchema).query(getMyDraftModelsHandler),
   add: guardedProcedure.input(modelSchema).use(checkFilesExistence).mutation(createModelHandler),
@@ -163,4 +167,8 @@ export const modelRouter = router({
     .input(reorderModelVersionsSchema)
     .use(isOwnerOrModerator)
     .mutation(reorderModelVersionsHandler),
+  toggleLock: protectedProcedure
+    .input(toggleModelLockSchema)
+    .use(isOwnerOrModerator)
+    .mutation(toggleModelLockHandler),
 });

@@ -19,13 +19,21 @@ import { trpc } from '~/utils/trpc';
 import { useState, useMemo } from 'react';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
+import { ImagesInfiniteModel } from '~/server/services/image.service';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
-export function PostImages({ postId }: { postId: number }) {
+export function PostImages({
+  postId,
+  images,
+  isLoading,
+}: {
+  postId: number;
+  images: ImagesInfiniteModel[];
+  isLoading?: boolean;
+}) {
   const { classes, cx } = useStyles();
   const [showMore, setShowMore] = useState(false);
-  const { images, isLoading } = useQueryImages({ postId });
 
   if (isLoading)
     return (
@@ -36,7 +44,10 @@ export function PostImages({ postId }: { postId: number }) {
         </Group>
       </Center>
     );
-  if (!images) return <Alert>We could not display any images from this post</Alert>;
+  if (!images?.length)
+    return (
+      <Alert>Due to your filter settings, we could not display any images from this post</Alert>
+    );
 
   const remainingImages = images.length - maxInitialImages;
 

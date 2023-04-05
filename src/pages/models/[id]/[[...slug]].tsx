@@ -13,6 +13,8 @@ import {
   Text,
   ThemeIcon,
   Title,
+  Paper,
+  Center,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -33,6 +35,9 @@ import {
   IconRecycle,
   IconTagOff,
   IconTrash,
+  IconLock,
+  IconLockOff,
+  IconMessageCircleOff,
 } from '@tabler/icons';
 import truncate from 'lodash/truncate';
 import { InferGetServerSidePropsType } from 'next';
@@ -77,28 +82,28 @@ import { isNumber } from '~/utils/type-guards';
 import Router from 'next/router';
 import { QS } from '~/utils/qs';
 import useIsClient from '~/hooks/useIsClient';
-import { ImageSort } from '~/server/common/enums';
+import { BrowsingMode, ImageSort } from '~/server/common/enums';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
+import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg, ctx }) => {
+  resolver: async ({ ssg, ctx, session }) => {
     const params = (ctx.params ?? {}) as { id: string; slug: string[] };
     const query = ctx.query as { modelVersionId: string };
     const id = Number(params.id);
     const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
     if (!isNumber(id)) return { notFound: true };
 
-    const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(
-      (err) => null
-    );
+    const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(() => null);
     if (version)
       await ssg?.image.getInfinite.prefetchInfinite({
         modelVersionId: version.id,
         prioritizedUserIds: [version.model.userId],
         period: 'AllTime',
         sort: ImageSort.MostReactions,
+        browsingMode: session?.user ? undefined : BrowsingMode.SFW,
         limit: CAROUSEL_LIMIT,
       });
 
@@ -116,6 +121,7 @@ export default function ModelDetailsV2({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
+
   const router = useRouter();
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
@@ -123,6 +129,7 @@ export default function ModelDetailsV2({
 
   const [opened, { toggle }] = useDisclosure();
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
+  const gallerySectionRef = useRef<HTMLDivElement | null>(null);
 
   const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery(
     { id },
@@ -160,6 +167,7 @@ export default function ModelDetailsV2({
       prioritizedUserIds: model ? [model.user.id] : undefined,
       period: 'AllTime',
       sort: ImageSort.MostReactions,
+      browsingMode: currentUser ? undefined : BrowsingMode.SFW,
       limit: CAROUSEL_LIMIT,
     },
     {
@@ -429,8 +437,8 @@ export default function ModelDetailsV2({
                       }
                       sx={{ cursor: 'pointer' }}
                       onClick={() => {
-                        if (!discussionSectionRef.current) return;
-                        scrollToTop(discussionSectionRef.current);
+                        if (!gallerySectionRef.current) return;
+                        scrollToTop(gallerySectionRef.current);
                       }}
                     >
                       <Text className={classes.modelBadgeText}>
@@ -532,6 +540,24 @@ export default function ModelDetailsV2({
                         </Menu.Item>
                       </>
                     )}
+                    {isModerator && (
+                      <ToggleLockModel modelId={model.id} locked={model.locked}>
+                        {({ onClick }) => (
+                          <Menu.Item
+                            icon={
+                              model.locked ? (
+                                <IconLockOff size={14} stroke={1.5} />
+                              ) : (
+                                <IconLock size={14} stroke={1.5} />
+                              )
+                            }
+                            onClick={onClick}
+                          >
+                            {model.locked ? 'Unlock' : 'Lock'} model discussion
+                          </Menu.Item>
+                        )}
+                      </ToggleLockModel>
+                    )}
                   </Menu.Dropdown>
                 </Menu>
               </Group>
@@ -613,11 +639,17 @@ export default function ModelDetailsV2({
               user={currentUser}
               isFavorite={isFavorite}
               onFavoriteClick={handleToggleFavorite}
+              onBrowseClick={() => {
+                if (!gallerySectionRef.current) return;
+                scrollToTop(gallerySectionRef.current);
+              }}
             />
           )}
-          {isClient && !loadingModel && !loadingImages && (
-            <>
-              {!model.locked ? (
+          {isClient &&
+            !loadingModel &&
+            !loadingImages &&
+            (!model.locked ? (
+              <>
                 <Stack spacing="md">
                   <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
                     <Group spacing="xs">
@@ -655,39 +687,50 @@ export default function ModelDetailsV2({
                   </Group>
                   <ModelDiscussionV2 modelId={model.id} />
                 </Stack>
-              ) : null}
-
-              <Stack spacing="md">
-                <Group spacing="xs" align="flex-end">
-                  <Title order={2}>Gallery</Title>
-                  <LoginRedirect reason="create-review">
-                    <Button
-                      component={NextLink}
-                      className={classes.discussionActionButton}
-                      variant="outline"
-                      size="xs"
-                      leftIcon={<IconPlus size={16} />}
-                      href={`/posts/create?modelId=${model.id}${
-                        selectedVersion ? `&modelVersionId=${selectedVersion.id}` : ''
-                      }&returnUrl=${router.asPath}`}
-                    >
-                      Add post
-                    </Button>
-                  </LoginRedirect>
-                </Group>
-                {/* IMAGES */}
-                <Group position="apart" spacing={0}>
-                  <SortFilter type="image" />
-                  <Group spacing={4}>
-                    <PeriodFilter />
-                    {/* <ImageFiltersDropdown /> */}
+                <Stack spacing="md" ref={gallerySectionRef} id="gallery">
+                  <Group spacing="xs" align="flex-end">
+                    <Title order={2}>Gallery</Title>
+                    <LoginRedirect reason="create-review">
+                      <Button
+                        component={NextLink}
+                        className={classes.discussionActionButton}
+                        variant="outline"
+                        size="xs"
+                        leftIcon={<IconPlus size={16} />}
+                        href={`/posts/create?modelId=${model.id}${
+                          selectedVersion ? `&modelVersionId=${selectedVersion.id}` : ''
+                        }&returnUrl=${router.asPath}`}
+                      >
+                        Add post
+                      </Button>
+                    </LoginRedirect>
                   </Group>
-                </Group>
-                <ImageCategories />
-                <ImagesAsPostsInfinite modelId={model.id} />
-              </Stack>
-            </>
-          )}
+                  {/* IMAGES */}
+                  <Group position="apart" spacing={0}>
+                    <SortFilter type="image" />
+                    <Group spacing={4}>
+                      <PeriodFilter />
+                      {/* <ImageFiltersDropdown /> */}
+                    </Group>
+                  </Group>
+                  <ImageCategories />
+                  <ImagesAsPostsInfinite modelId={model.id} modelVersions={model.modelVersions} />
+                </Stack>
+              </>
+            ) : (
+              <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
+                <Center>
+                  <Group spacing="xs">
+                    <ThemeIcon color="gray" size="xl" radius="xl">
+                      <IconMessageCircleOff />
+                    </ThemeIcon>
+                    <Text size="lg" color="dimmed">
+                      Discussion is turned off for this model.
+                    </Text>
+                  </Group>
+                </Center>
+              </Paper>
+            ))}
         </Stack>
         {versionCount > 1 ? (
           <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />

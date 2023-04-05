@@ -123,7 +123,7 @@ export const createReport = async ({
         });
         break;
       case ReportEntity.Review:
-        await dbWrite.reviewReport.create({
+        await tx.reviewReport.create({
           data: {
             review: { connect: { id } },
             report,
@@ -131,7 +131,7 @@ export const createReport = async ({
         });
         break;
       case ReportEntity.Comment:
-        await dbWrite.commentReport.create({
+        await tx.commentReport.create({
           data: {
             comment: { connect: { id } },
             report,
@@ -139,7 +139,7 @@ export const createReport = async ({
         });
         break;
       case ReportEntity.CommentV2:
-        await dbWrite.commentV2Report.create({
+        await tx.commentV2Report.create({
           data: {
             commentV2: { connect: { id } },
             report,

@@ -74,6 +74,10 @@ const useStyles = createStyles((theme) => ({
       display: 'block',
     },
   },
+  viewport: {
+    overflowX: 'scroll',
+    overflowY: 'hidden',
+  },
 }));
 
 export function ModelVersionList({
@@ -102,6 +106,7 @@ export function ModelVersionList({
   return (
     <ScrollArea
       className={classes.scrollContainer}
+      classNames={classes}
       viewportRef={viewportRef}
       onScrollPositionChange={setScrollPosition}
       type="never"
@@ -211,7 +216,6 @@ export function ModelVersionList({
                   </Menu.Item>
                   <Menu.Item
                     icon={<IconFileSettings size={14} stroke={1.5} />}
-                    // TODO.manuel: link to files edit
                     onClick={(e) => {
                       e.stopPropagation();
                       openRoutedContext('filesEdit', {

@@ -25,7 +25,8 @@ export const postsQuerySchema = postsFilterSchema.extend({
   username: z
     .string()
     .transform((data) => postgresSlugify(data))
-    .optional(),
+    .nullish(),
+  modelVersionId: z.number().optional(),
 });
 
 export type PostCreateInput = z.infer<typeof postCreateSchema>;

@@ -13,6 +13,7 @@ import {
   ModelUpsertInput,
   PublishModelSchema,
   ReorderModelVersionsSchema,
+  ToggleModelLockInput,
 } from '~/server/schema/model.schema';
 import {
   getAllModelsWithVersionsSelect,
@@ -29,6 +30,7 @@ import {
   permaDeleteModelById,
   publishModelById,
   restoreModelById,
+  toggleLockModel,
   updateModel,
   updateModelById,
   upsertModel,
@@ -51,11 +53,10 @@ import { isDefined } from '~/utils/type-guards';
 import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getDownloadUrl } from '~/utils/delivery-worker';
+import { ModelSort } from '~/server/common/enums';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
-  // const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
-  // const userId = ctx.user?.id;
   try {
     const model = await getModel({
       input,
@@ -66,28 +67,11 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       throw throwNotFoundError(`No model with id ${input.id}`);
     }
 
-    // const isOwnerOrModerator = model.user.id === ctx.user?.id || ctx.user?.isModerator;
-    // const hiddenTags = await getHiddenTagsForUser({ userId });
-    // const hiddenImages = await getHiddenImagesForUser({ userId });
     const features = getFeatureFlags({ user: ctx.user });
 
     return {
       ...model,
       modelVersions: model.modelVersions.map((version) => {
-        // let images = version.images.flatMap((x) => ({
-        //   ...x.image,
-        //   tags: x.image.tags.map(({ tag }) => tag),
-        // }));
-        // if (!isOwnerOrModerator) {
-        //   images = images.filter(
-        //     ({ id, tags }) =>
-        //       !hiddenImages.includes(id) && !tags.some((tag) => hiddenTags.includes(tag.id))
-        //   );
-
-        //   if (prioritizeSafeImages)
-        //     images = images.sort((a, b) => (a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1));
-        // }
-
         let earlyAccessDeadline = features.earlyAccessModel
           ? getEarlyAccessDeadline({
               versionCreatedAt: version.createdAt,
@@ -118,10 +102,13 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           )
           .filter(isDefined);
 
+        // Oldest post first so that we use it as the showcase
+        const posts = version.posts.sort((a, b) => a.id - b.id);
+
         return {
           ...version,
+          posts,
           hashes,
-          // images,
           earlyAccessDeadline,
           canDownload,
           files: files as Array<
@@ -408,7 +395,7 @@ export const getModelsWithVersionsHandler = async ({
   input,
   ctx,
 }: {
-  input: GetAllModelsOutput;
+  input: GetAllModelsOutput & { ids?: number[] };
   ctx: Context;
 }) => {
   const { limit = DEFAULT_PAGE_SIZE, page, ...queryInput } = input;
@@ -421,10 +408,27 @@ export const getModelsWithVersionsHandler = async ({
       count: true,
     });
 
+    const modelVersionIds = rawResults.items.flatMap(({ modelVersions }) =>
+      modelVersions.map(({ id }) => id)
+    );
+    const images = await getImagesForModelVersion({
+      modelVersionIds,
+      imagesPerVersion: 10,
+      include: ['meta'],
+    });
+
     const results = {
       count: rawResults.count,
-      items: rawResults.items.map(({ rank, ...model }) => ({
+      items: rawResults.items.map(({ rank, modelVersions, ...model }) => ({
         ...model,
+        modelVersions: modelVersions.map((modelVersion) => ({
+          ...modelVersion,
+          images: images
+            .filter((image) => image.modelVersionId === modelVersion.id)
+            .map(({ modelVersionId, name, userId, ...image }) => ({
+              ...image,
+            })),
+        })),
         stats: {
           downloadCount: rank?.downloadCountAllTime ?? 0,
           favoriteCount: rank?.favoriteCountAllTime ?? 0,
@@ -439,6 +443,28 @@ export const getModelsWithVersionsHandler = async ({
   } catch (error) {
     throw throwDbError(error);
   }
+};
+
+export const getModelWithVersionsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  const results = await getModelsWithVersionsHandler({
+    input: {
+      ids: [input.id],
+      sort: ModelSort.HighestRated,
+      favorites: false,
+      hidden: false,
+      period: 'AllTime',
+    },
+    ctx,
+  });
+  if (!results.items.length) throw throwNotFoundError(`No model with id ${input.id}`);
+
+  return results.items[0];
 };
 
 // TODO - TEMP HACK for reporting modal
@@ -679,6 +705,15 @@ export const reorderModelVersionsHandler = async ({
     return model;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const toggleModelLockHandler = async ({ input }: { input: ToggleModelLockInput }) => {
+  try {
+    await toggleLockModel(input);
+  } catch (error) {
+    if (error instanceof TRPCError) error;
     else throw throwDbError(error);
   }
 };

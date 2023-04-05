@@ -42,11 +42,16 @@ export const getPostsInfinite = async ({
   sort,
   user,
   tags,
+  modelVersionId,
 }: PostsQueryInput & { user?: SessionUser }) => {
   const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
   const orderBy: Prisma.Enumerable<Prisma.PostOrderByWithRelationInput> = [];
   const isOwnerRequest = user && user.username === username;
-  if (username) AND.push({ user: { username } });
+  if (username) {
+    const targetUser = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
+    AND.push({ userId: targetUser?.id });
+  }
+  if (modelVersionId) AND.push({ modelVersionId });
   if (isOwnerRequest) {
     orderBy.push({ id: 'desc' });
   } else {
@@ -149,12 +154,9 @@ export const getPostEditDetail = async ({ id }: GetByIdInput) => {
   };
 };
 
-export const createPost = async ({
-  userId,
-  modelVersionId,
-}: PostCreateInput & { userId: number }) => {
+export const createPost = async ({ userId, ...data }: PostCreateInput & { userId: number }) => {
   const result = await dbWrite.post.create({
-    data: { userId, modelVersionId },
+    data: { ...data, userId },
     select: editPostSelect,
   });
   return {
@@ -164,9 +166,9 @@ export const createPost = async ({
   };
 };
 
-export const updatePost = async (data: PostUpdateInput) => {
-  await dbWrite.post.updateMany({
-    where: { id: data.id },
+export const updatePost = ({ id, ...data }: PostUpdateInput) => {
+  return dbWrite.post.update({
+    where: { id },
     data: {
       ...data,
       title: data.title !== undefined ? (data.title.length > 0 ? data.title : null) : undefined,
@@ -218,7 +220,7 @@ export const addPostTag = async ({ postId, id, name: initialName }: AddPostTagIn
       select: { id: true, target: true },
     });
     if (!tag) {
-      return await dbWrite.tag.create({
+      return await tx.tag.create({
         data: {
           type: TagType.UserGenerated,
           target: [TagTarget.Post],
@@ -233,7 +235,7 @@ export const addPostTag = async ({ postId, id, name: initialName }: AddPostTagIn
       });
     } else {
       // update the tag target if needed
-      return await dbWrite.tag.update({
+      return await tx.tag.update({
         where: { id: tag.id },
         data: {
           target: !tag.target.includes(TagTarget.Post) ? { push: TagTarget.Post } : undefined,
