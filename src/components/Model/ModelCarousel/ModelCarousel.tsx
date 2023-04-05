@@ -108,6 +108,7 @@ export function ModelCarousel({
   limit = 10,
   onBrowseClick,
 }: Props) {
+  const router = useRouter();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
 
@@ -140,7 +141,7 @@ export function ModelCarousel({
   if (!isLoading && !images.length) {
     return (
       <Paper
-        p="xl"
+        p="sm"
         radius="md"
         className={cx(!mobile && classes.carousel, mobile && classes.mobileBlock)}
         sx={{
@@ -158,18 +159,32 @@ export function ModelCarousel({
             </ThemeIcon>
             <Text size="lg">No showcase images available</Text>
             <Text size="sm" color="dimmed" ta="center">
-              {`There aren't any images by the creator of this model that align with your content preferences. Consider adjusting your settings or browsing the community gallery below.`}
+              {currentUser
+                ? `No images from this creator match your content preferences. Adjust your settings or explore the community gallery below.`
+                : `No images from this creator match the default content preferences. Log in to adjust your settings or explore the community gallery below.`}
             </Text>
           </Stack>
-          <Group grow>
-            <Button component={NextLink} href="/user/account#content-moderation" variant="outline">
-              Adjust Settings
-            </Button>
-            {onBrowseClick && (
-              <Button onClick={onBrowseClick} variant="outline">
-                Browse Gallery
+          <Group grow w="100%">
+            {currentUser ? (
+              <Button
+                component={NextLink}
+                href="/user/account#content-moderation"
+                variant="outline"
+              >
+                Adjust Settings
+              </Button>
+            ) : (
+              <Button
+                component={NextLink}
+                href={`/login?returnUrl=${router.asPath}`}
+                variant="outline"
+              >
+                Log In
               </Button>
             )}
+            <Button onClick={onBrowseClick} variant="outline">
+              Browse Gallery
+            </Button>
           </Group>
         </Stack>
       </Paper>

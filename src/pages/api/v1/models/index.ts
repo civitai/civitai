@@ -89,7 +89,7 @@ export default MixedAuthEndpoint(async function handler(
       })),
       metadata: { ...metadata, nextPage, prevPage },
     });
-  } catch (error) {
+  } catch (error: any) {
     if (error instanceof TRPCError) {
       const apiError = error as TRPCError;
       const status = getHTTPStatusCodeFromError(apiError);
@@ -97,7 +97,7 @@ export default MixedAuthEndpoint(async function handler(
 
       res.status(status).json(parsedError);
     } else {
-      res.status(500).json({ message: 'An unexpected error occurred', error });
+      res.status(500).json({ message: 'An unexpected error occurred', error: error.message });
     }
   }
 });

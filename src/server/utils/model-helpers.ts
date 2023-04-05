@@ -49,7 +49,6 @@ export function getPrimaryFile<T extends FileFormatType>(
   };
 
   return files
-    .filter((file) => file.type === 'Model')
     .map((file) => ({
       file,
       score: getScore(file),
