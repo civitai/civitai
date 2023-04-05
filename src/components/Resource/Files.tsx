@@ -50,6 +50,7 @@ export function Files({ model, version }: Props) {
   );
 }
 
+// TODO.Briant - compare file extension when checking for duplicate files
 function FilesComponent({ model }: Props) {
   const theme = useMantineTheme();
 

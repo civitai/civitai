@@ -1,4 +1,5 @@
 import { Stack, Text, List, MantineSize } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import { useRouter } from 'next/router';
 import { MouseEvent } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -25,6 +26,8 @@ export function NotificationList({
         const read = !!notification.viewedAt;
 
         if (!details) return null;
+
+        console.log({ details });
 
         const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
           e.preventDefault();
@@ -56,12 +59,13 @@ export function NotificationList({
 
         return (
           <Text
-            component="a"
+            component={NextLink}
             href={details.url ?? ''}
             key={notification.id}
             variant="text"
             sx={{ opacity: read ? 0.6 : 1 }}
-            onClick={handleClick}
+            shallow
+            // onClick={handleClick}
           >
             <List.Item
               onClick={() => (!read ? onItemClick(notification) : undefined)}
