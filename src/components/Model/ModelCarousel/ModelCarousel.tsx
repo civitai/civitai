@@ -12,8 +12,10 @@ import {
   Paper,
   Stack,
   Text,
+  ThemeIcon,
 } from '@mantine/core';
-import { IconInfoCircle } from '@tabler/icons';
+import { NextLink } from '@mantine/next';
+import { IconInfoCircle, IconPhotoOff } from '@tabler/icons';
 import { useRouter } from 'next/router';
 
 import { useQueryImages } from '~/components/Image/image.utils';
@@ -22,11 +24,11 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { useFiltersContext, useImageFilters } from '~/providers/FiltersProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { ImageSort } from '~/server/common/enums';
+import { BrowsingMode, ImageSort } from '~/server/common/enums';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -104,17 +106,18 @@ export function ModelCarousel({
   nsfw,
   mobile = false,
   limit = 10,
+  onBrowseClick,
 }: Props) {
   const router = useRouter();
+  const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
-  // const setFilters = useFiltersContext((state) => state.setFilters);
-  // const filters = useImageFilters();
 
   const { images, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
     period: 'AllTime',
     sort: ImageSort.MostReactions,
+    browsingMode: currentUser ? undefined : BrowsingMode.SFW,
     limit,
   });
 
@@ -136,47 +139,51 @@ export function ModelCarousel({
     );
 
   if (!isLoading && !images.length) {
-    // const hasTagFilters = filters.tags && filters.tags.length > 0;
-
     return (
       <Paper
-        p="xl"
+        p="sm"
         radius="md"
         className={cx(!mobile && classes.carousel, mobile && classes.mobileBlock)}
         sx={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          minHeight: mobile ? 300 : 600,
+          minHeight: mobile ? 300 : 500,
         }}
         withBorder
       >
-        <Stack>
-          <Stack spacing={4}>
-            <Text size="lg">No images found</Text>
-            <Text size="sm" color="dimmed">
-              {/* {hasTagFilters
-                ? 'Try removing your images filters'
-                : 'Share your creation for this model'} */}
-              Share your creation for this model
+        <Stack align="center" maw={380}>
+          <Stack spacing={4} align="center">
+            <ThemeIcon color="gray" size={64} radius={100}>
+              <IconPhotoOff size={32} />
+            </ThemeIcon>
+            <Text size="lg">No showcase images available</Text>
+            <Text size="sm" color="dimmed" ta="center">
+              {currentUser
+                ? `No images from this creator match your content preferences. Adjust your settings or explore the community gallery below.`
+                : `No images from this creator match the default content preferences. Log in to adjust your settings or explore the community gallery below.`}
             </Text>
           </Stack>
-          <Group position="center">
-            <Button
-              variant="outline"
-              // onClick={() =>
-              //   hasTagFilters
-              //     ? setFilters({ image: {} })
-              //     : router.push(`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`)
-              // }
-              onClick={() =>
-                router.push(
-                  `/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}&returnUrl=${router.asPath}`
-                )
-              }
-            >
-              {/* {hasTagFilters ? 'Clear Filters' : 'Share Images'} */}
-              Share Images
+          <Group grow w="100%">
+            {currentUser ? (
+              <Button
+                component={NextLink}
+                href="/user/account#content-moderation"
+                variant="outline"
+              >
+                Adjust Settings
+              </Button>
+            ) : (
+              <Button
+                component={NextLink}
+                href={`/login?returnUrl=${router.asPath}`}
+                variant="outline"
+              >
+                Log In
+              </Button>
+            )}
+            <Button onClick={onBrowseClick} variant="outline">
+              Browse Gallery
             </Button>
           </Group>
         </Stack>
@@ -302,4 +309,5 @@ type Props = {
   nsfw: boolean;
   mobile?: boolean;
   limit?: number;
+  onBrowseClick?: VoidFunction;
 };

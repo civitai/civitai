@@ -48,7 +48,7 @@ import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { CAROUSEL_LIMIT, ModelFileType } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getPrimaryFile, getFileDisplayName } from '~/server/utils/model-helpers';
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -56,7 +56,14 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { removeTags, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-export function ModelVersionDetails({ model, version, user, isFavorite, onFavoriteClick }: Props) {
+export function ModelVersionDetails({
+  model,
+  version,
+  user,
+  isFavorite,
+  onFavoriteClick,
+  onBrowseClick,
+}: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
   const queryUtils = trpc.useContext();
 
@@ -198,11 +205,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
       <Stack spacing={4}>
         <Group position="apart" noWrap>
           <Text size="xs" weight={500} lineClamp={2}>
-            {`${
-              ['Model', 'Pruned Model'].includes(file.type) ? file.metadata.format + ' ' : ''
-            }${startCase(file.type)}${
-              file.metadata.fp ? ' ' + file.metadata.fp : ''
-            } (${formatKBytes(file.sizeKB)})`}
+            {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)})
           </Text>
           <Button
             component="a"
@@ -231,7 +234,10 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
   const hasFiles = filesCount > 0;
   const hasPosts = !!version.posts?.length;
   const showPublishButton =
-    isOwnerOrMod && version.status !== ModelStatus.Published && hasFiles && hasPosts;
+    isOwnerOrMod &&
+    (version.status !== ModelStatus.Published || model.status !== ModelStatus.Published) &&
+    hasFiles &&
+    hasPosts;
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
 
   return (
@@ -392,8 +398,6 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
               value="version-files"
               sx={(theme) => ({
                 borderColor: !filesCount ? `${theme.colors.red[4]} !important` : undefined,
-                marginTop: theme.spacing.md,
-                marginBottom: theme.spacing.md,
               })}
             >
               <Accordion.Control>
@@ -426,11 +430,13 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
                 </Stack>
               </Accordion.Panel>
             </Accordion.Item>
-            <ResourceReviewTotals
-              modelVersionId={version.id}
-              rating={version.rank?.ratingAllTime}
-              count={version.rank?.ratingCountAllTime}
-            />
+            {!model.locked && (
+              <ResourceReviewTotals
+                modelVersionId={version.id}
+                rating={version.rank?.ratingAllTime}
+                count={version.rank?.ratingCountAllTime}
+              />
+            )}
             {version.description && (
               <Accordion.Item value="version-description">
                 <Accordion.Control>{`About this version`}</Accordion.Control>
@@ -540,6 +546,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
             modelVersionId={version.id}
             modelUserId={model.user.id}
             limit={CAROUSEL_LIMIT}
+            onBrowseClick={onBrowseClick}
           />
           {model.description ? (
             <ContentClamp maxHeight={300}>
@@ -570,4 +577,5 @@ type Props = {
   onFavoriteClick: VoidFunction;
   user?: SessionUser | null;
   isFavorite?: boolean;
+  onBrowseClick?: VoidFunction;
 };

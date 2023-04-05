@@ -1,6 +1,7 @@
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getAllModelsWithVersionsSelect } from '~/server/selectors/model.selector';
+import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';
@@ -10,17 +11,20 @@ export const modelWebhooks = createWebhookProcessor({
   'new-model': {
     displayName: 'New Models',
     getData: async ({ lastSent, prisma }) => {
-      const models = (
-        await prisma.model.findMany({
-          where: {
-            publishedAt: {
-              gt: lastSent,
-            },
-            deletedAt: null,
+      const models = await prisma.model.findMany({
+        where: {
+          publishedAt: {
+            gt: lastSent,
           },
-          select: getAllModelsWithVersionsSelect,
-        })
-      )?.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
+          deletedAt: null,
+        },
+        select: getAllModelsWithVersionsSelect,
+      });
+
+      const modelVersionIds = models.flatMap((model) => model.modelVersions.map((v) => v.id));
+      const images = await getImagesForModelVersion({ modelVersionIds });
+
+      models?.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
         ...model,
         creator: {
           username: user.username,
@@ -28,7 +32,7 @@ export const modelWebhooks = createWebhookProcessor({
         },
         tags: tagsOnModels.map(({ tag }) => tag.name),
         modelVersions: modelVersions
-          .map(({ images, files, ...version }) => {
+          .map(({ files, ...version }) => {
             const castedFiles = files as Array<
               Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
             >;
@@ -46,10 +50,12 @@ export const modelWebhooks = createWebhookProcessor({
                   primary: primaryFile.id === file.id,
                 })}`,
               })),
-              images: images.map(({ image: { url, ...image } }) => ({
-                url: getEdgeUrl(url, { width: 450 }),
-                ...image,
-              })),
+              images: images
+                .filter((x) => x.modelVersionId === version.id)
+                .map(({ url, ...image }) => ({
+                  url: getEdgeUrl(url, { width: 450 }),
+                  ...image,
+                })),
               downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                 versionId: version.id,
                 primary: true,
@@ -65,20 +71,23 @@ export const modelWebhooks = createWebhookProcessor({
   'updated-model': {
     displayName: 'Updated Models',
     getData: async ({ lastSent, prisma }) => {
-      const models = (
-        await prisma.model.findMany({
-          where: {
-            lastVersionAt: {
-              gt: lastSent,
-            },
-            publishedAt: {
-              lt: lastSent,
-            },
-            deletedAt: null,
+      const models = await prisma.model.findMany({
+        where: {
+          lastVersionAt: {
+            gt: lastSent,
           },
-          select: getAllModelsWithVersionsSelect,
-        })
-      )?.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
+          publishedAt: {
+            lt: lastSent,
+          },
+          deletedAt: null,
+        },
+        select: getAllModelsWithVersionsSelect,
+      });
+
+      const modelVersionIds = models.flatMap((model) => model.modelVersions.map((v) => v.id));
+      const images = await getImagesForModelVersion({ modelVersionIds });
+
+      models.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
         ...model,
         creator: {
           username: user.username,
@@ -86,7 +95,7 @@ export const modelWebhooks = createWebhookProcessor({
         },
         tags: tagsOnModels.map(({ tag }) => tag.name),
         modelVersions: modelVersions
-          .map(({ images, files, ...version }) => {
+          .map(({ files, ...version }) => {
             const castedFiles = files as Array<
               Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
             >;
@@ -104,10 +113,12 @@ export const modelWebhooks = createWebhookProcessor({
                   primary: primaryFile.id === file.id,
                 })}`,
               })),
-              images: images.map(({ image: { url, ...image } }) => ({
-                url: getEdgeUrl(url, { width: 450 }),
-                ...image,
-              })),
+              images: images
+                .filter((x) => x.modelVersionId === version.id)
+                .map(({ url, ...image }) => ({
+                  url: getEdgeUrl(url, { width: 450 }),
+                  ...image,
+                })),
               downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                 versionId: version.id,
                 primary: true,

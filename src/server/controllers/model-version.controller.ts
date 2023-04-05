@@ -134,11 +134,13 @@ export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput
 
 export const publishModelVersionHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
+    const publishedAt = new Date();
     const version = await updateModelVersionById({
       ...input,
       data: {
         status: ModelStatus.Published,
-        posts: { updateMany: { where: { publishedAt: null }, data: { publishedAt: new Date() } } },
+        model: { update: { lastVersionAt: publishedAt } },
+        posts: { updateMany: { where: { publishedAt: null }, data: { publishedAt } } },
       },
     });
     if (!version) throw throwNotFoundError(`No model with id ${input.id}`);

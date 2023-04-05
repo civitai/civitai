@@ -24,16 +24,11 @@ import {
 import { throwDbError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { Context } from '~/server/createContext';
-import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { dbRead } from '~/server/db/client';
 
-export const getTagWithModelCountHandler = async ({
-  input: { name },
-}: {
-  input: GetTagByNameInput;
-}) => {
+export const getTagWithModelCountHandler = ({ input: { name } }: { input: GetTagByNameInput }) => {
   try {
-    return await getTagWithModelCount({ name });
+    return getTagWithModelCount({ name });
   } catch (error) {
     throw throwDbError(error);
   }

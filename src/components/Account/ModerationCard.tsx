@@ -125,7 +125,7 @@ export function ModerationCard({
           <SkeletonSwitch
             loading={!user}
             checked={showNsfw ?? false}
-            onChange={(e) => !!user?.id && updateUser({ ...user, showNsfw: e.target.checked })}
+            onChange={(e) => !!user?.id && updateUser({ id: user.id, showNsfw: e.target.checked })}
           />
         </Group>
       </Card.Section>

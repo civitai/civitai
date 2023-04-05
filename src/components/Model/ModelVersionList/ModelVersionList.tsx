@@ -216,7 +216,6 @@ export function ModelVersionList({
                   </Menu.Item>
                   <Menu.Item
                     icon={<IconFileSettings size={14} stroke={1.5} />}
-                    // TODO.manuel: link to files edit
                     onClick={(e) => {
                       e.stopPropagation();
                       openRoutedContext('filesEdit', {

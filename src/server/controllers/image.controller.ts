@@ -353,18 +353,28 @@ export const getImagesAsPostsInfiniteHandler = async ({
         modelId: input.modelId,
         modelVersionId: input.modelVersionId,
       },
-      select: { userId: true, rating: true, details: true, id: true },
+      select: {
+        userId: true,
+        rating: true,
+        details: true,
+        id: true,
+        modelVersionId: true,
+      },
     });
 
     // Prepare the results
     const results = Object.values(posts).map((images) => {
-      const user = images[0].user;
-      const review = reviews.find((review) => review.userId === user.id);
+      const [image] = images;
+      const user = image.user;
+      const review = reviews.find(
+        (review) => review.userId === user.id && review.modelVersionId === image.modelVersionId
+      );
       const createdAt = images.map((image) => image.createdAt).sort()[0];
       if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       return {
-        postId: images[0].postId as number,
-        publishedAt: images[0].publishedAt,
+        postId: image.postId as number,
+        modelVersionId: image.modelVersionId,
+        publishedAt: image.publishedAt,
         createdAt,
         user,
         images,

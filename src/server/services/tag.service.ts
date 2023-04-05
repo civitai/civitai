@@ -1,4 +1,4 @@
-import { ModelStatus, Prisma, TagTarget } from '@prisma/client';
+import { Prisma, TagTarget } from '@prisma/client';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
 
@@ -14,24 +14,19 @@ import { imageTagCompositeSelect, modelTagCompositSelect } from '~/server/select
 import { getSystemTags } from '~/server/services/system-cache';
 import { userCache } from '~/server/services/user-cache.service';
 
-export const getTagWithModelCount = async ({ name }: { name: string }) => {
-  return await dbRead.$queryRaw<{ id: number; name: string; count: number }>`
+export const getTagWithModelCount = ({ name }: { name: string }) => {
+  return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
     SELECT "public"."Tag"."id",
-    "public"."Tag"."name",
-    (
-      SELECT COUNT(*) AS "_aggr_count_tagsOnModels"
-      FROM "public"."TagsOnModels"
-      WHERE ("public"."TagsOnModels"."modelId", "public"."TagsOnModels"."tagId") IN (
-        SELECT "t0"."modelId", "t0"."tagId"
-        FROM "public"."TagsOnModels" AS "t0" INNER JOIN "public"."Model" AS "j0" ON ("j0"."id") = ("t0"."modelId")
-        WHERE "j0"."status" = 'Published'
-          AND "t0"."modelId" IS NOT NULL
-          AND "t0"."tagId" = "public"."Tag"."id"
-      )
-    ) as count
+      "public"."Tag"."name",
+      CAST(COUNT("public"."TagsOnModels"."tagId") AS INTEGER) as count
     FROM "public"."Tag"
+    LEFT JOIN "public"."TagsOnModels" ON "public"."Tag"."id" = "public"."TagsOnModels"."tagId"
+    LEFT JOIN "public"."Model" ON "public"."TagsOnModels"."modelId" = "public"."Model"."id"
     WHERE "public"."Tag"."name" LIKE ${name}
-    LIMIT 1 OFFSET 0
+      AND "public"."Model"."status" = 'Published'
+      AND "public"."TagsOnModels"."modelId" IS NOT NULL
+    GROUP BY "public"."Tag"."id", "public"."Tag"."name"
+    LIMIT 1 OFFSET 0;
   `;
 };
 

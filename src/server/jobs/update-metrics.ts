@@ -1,6 +1,7 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { createLogger } from '~/utils/logging';
+import { Prisma, PrismaClient } from '@prisma/client';
 
 const log = createLogger('update-metrics', 'blue');
 
@@ -1446,13 +1447,13 @@ export const updateMetricsJob = createJob(
     // Update all affected metrics
     // --------------------------------------------
     await updateModelMetrics('models');
-    // await updateModelMetrics('versions');
-    // await updateAnswerMetrics();
-    // await updateQuestionMetrics();
-    // await updateUserMetrics();
-    // await updateTagMetrics();
-    // await updateImageMetrics();
-    // await updatePostMetrics();
+    await updateModelMetrics('versions');
+    await updateAnswerMetrics();
+    await updateQuestionMetrics();
+    await updateUserMetrics();
+    await updateTagMetrics();
+    await updateImageMetrics();
+    await updatePostMetrics();
     log('Updated metrics');
 
     // Update the last update time
@@ -1470,7 +1471,7 @@ export const updateMetricsJob = createJob(
     if (shouldUpdateFastRanks) {
       await refreshModelRank();
       await refreshVersionModelRank();
-      // await refreshTagRank();
+      await refreshTagRank();
       log('Updated fast ranks');
       await dbWrite?.keyValue.upsert({
         where: { key: RANK_FAST_LAST_UPDATED_KEY },
@@ -1483,9 +1484,9 @@ export const updateMetricsJob = createJob(
     // --------------------------------------------
     const shouldUpdateRanks = lastRankDate.getTime() + RANK_UPDATE_DELAY <= new Date().getTime();
     if (shouldUpdateRanks) {
-      // await refreshImageRank();
-      // await refreshPostRank();
-      // await refreshUserRank();
+      await refreshImageRank();
+      await refreshPostRank();
+      await refreshUserRank();
       log('Updated ranks');
       await dbWrite?.keyValue.upsert({
         where: { key: RANK_LAST_UPDATED_KEY },
@@ -1508,9 +1509,23 @@ type MetricUpdateType =
   | 'Tag'
   | 'Image'
   | 'Post';
-export const queueMetricUpdate = async (type: MetricUpdateType, id: number) => {
+export const queueMetricUpdate = async (
+  type: MetricUpdateType,
+  id: number,
+  db:
+    | Omit<
+        PrismaClient<
+          Prisma.PrismaClientOptions,
+          never,
+          Prisma.RejectOnNotFound | Prisma.RejectPerOperation | undefined
+        >,
+        '$connect' | '$disconnect' | '$on' | '$transaction' | '$use'
+      >
+    | undefined = undefined
+) => {
   try {
-    await dbWrite.metricUpdateQueue.createMany({ data: { type, id } });
+    db ??= dbWrite;
+    await db.metricUpdateQueue.createMany({ data: { type, id } });
   } catch (e) {
     // Ignore duplicate errors
   }

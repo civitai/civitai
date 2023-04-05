@@ -61,7 +61,7 @@ export function ListSearch({ onSearch }: Props) {
     query.startsWith('#') ? query.substring(1).toLowerCase().trim() : query.toLowerCase();
 
   const { data: tags } = trpc.tag.getAll.useQuery(
-    { query: parseTagQuery(value), limit, entityType: [TagTarget.Model] },
+    { query: parseTagQuery(value), limit, entityType: [TagTarget.Model], withModels: true },
     { enabled: !!value.length && canQueryTags }
   );
 
@@ -75,7 +75,7 @@ export function ListSearch({ onSearch }: Props) {
     const parsedQuery = parseTagQuery(query);
     const tag = tags?.items.find((x) => x.name.toLowerCase() === parsedQuery);
     if (!tag) return;
-    router.push(`/tag/${tag.name.toLowerCase()}`);
+    router.push(`/tag/${encodeURIComponent(tag.name.toLowerCase())}`);
   };
 
   const handleSetUser = (query: string) => {

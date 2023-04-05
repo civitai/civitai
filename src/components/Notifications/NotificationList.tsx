@@ -1,4 +1,5 @@
 import { Stack, Text, List, MantineSize } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import { useRouter } from 'next/router';
 import { MouseEvent } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -26,42 +27,43 @@ export function NotificationList({
 
         if (!details) return null;
 
-        const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
-          e.preventDefault();
+        // const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
+        //   e.preventDefault();
 
-          if (!details.url) return;
-          if (details.target === '_blank') return window.open(details.url, '_blank');
+        //   if (!details.url) return;
+        //   if (details.target === '_blank') return window.open(details.url, '_blank');
 
-          const toModal = details.url.includes('?modal=');
-          if (toModal) {
-            const [pathname] = router.asPath.split('?');
-            const [notificationPathname, query] = details.url.split('?');
-            if (pathname !== notificationPathname) {
-              router.push(notificationPathname).then(() =>
-                router.push(
-                  { pathname: notificationPathname, query: QS.parse(query) as any }, //eslint-disable-line
-                  undefined,
-                  {
-                    shallow: true,
-                  }
-                )
-              );
-            } else {
-              router.push(details.url, undefined, { shallow: true });
-            }
-          } else {
-            router.push(details.url);
-          }
-        };
+        //   const toModal = details.url.includes('?modal=');
+        //   if (toModal) {
+        //     const [pathname] = router.asPath.split('?');
+        //     const [notificationPathname, query] = details.url.split('?');
+        //     if (pathname !== notificationPathname) {
+        //       router.push(notificationPathname).then(() =>
+        //         router.push(
+        //           { pathname: notificationPathname, query: QS.parse(query) as any }, //eslint-disable-line
+        //           undefined,
+        //           {
+        //             shallow: true,
+        //           }
+        //         )
+        //       );
+        //     } else {
+        //       router.push(details.url, undefined, { shallow: true });
+        //     }
+        //   } else {
+        //     router.push(details.url);
+        //   }
+        // };
 
         return (
           <Text
-            component="a"
+            component={NextLink}
             href={details.url ?? ''}
             key={notification.id}
             variant="text"
             sx={{ opacity: read ? 0.6 : 1 }}
-            onClick={handleClick}
+            shallow
+            // onClick={handleClick}
           >
             <List.Item
               onClick={() => (!read ? onItemClick(notification) : undefined)}

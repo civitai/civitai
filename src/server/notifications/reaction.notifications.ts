@@ -137,6 +137,7 @@ export const reactionNotifications = createNotificationProcessor({
         } model has received ${details.reactionCount} reactions`;
       }
 
+      // TODO.Justin - add the postId to the query string
       return { message, url: `/images/${details.imageId}` };
     },
     prepareQuery: ({ lastSent }) => `

@@ -1,3 +1,4 @@
+import { ToggleModelLockInput } from './../schema/model.schema';
 import {
   CommercialUse,
   MetricTimeframe,
@@ -7,6 +8,7 @@ import {
   TagTarget,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { ManipulateType } from 'dayjs';
 import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
 
@@ -31,6 +33,7 @@ import {
 import { modelWithDetailsSelect } from '~/server/selectors/model.selector';
 import { ingestNewImages } from '~/server/services/image.service';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
@@ -80,12 +83,17 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     allowDerivatives,
     allowCommercialUse,
     browsingMode,
+    ids,
   },
   select,
   user: sessionUser,
   count = false,
 }: {
-  input: Omit<GetAllModelsOutput, 'limit' | 'page'> & { take?: number; skip?: number };
+  input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
+    take?: number;
+    skip?: number;
+    ids?: number[];
+  };
   select: TSelect;
   user?: SessionUser;
   count?: boolean;
@@ -157,6 +165,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       ],
     });
   }
+  if (!!ids?.length) AND.push({ id: { in: ids } });
   if (excludedUserIds && excludedUserIds.length && !username) {
     AND.push({ userId: { notIn: excludedUserIds } });
   }
@@ -195,6 +204,11 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       : undefined,
     AND: AND.length ? AND : undefined,
     modelVersions: { some: { baseModel: baseModels?.length ? { in: baseModels } : undefined } },
+    // TODO Briant: turn this back on when we have support for separate period filters
+    // lastVersionAt:
+    //   period !== MetricTimeframe.AllTime
+    //     ? { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) }
+    //     : undefined,
   };
 
   const orderBy: Prisma.ModelOrderByWithRelationInput = { rank: { newRank: 'asc' } };
@@ -687,11 +701,12 @@ export const publishModelById = async ({ id, versionIds }: PublishModelSchema) =
       const includeVersions = versionIds && versionIds.length > 0;
       const publishedAt = new Date();
 
-      const model = await dbWrite.model.update({
+      const model = await tx.model.update({
         where: { id },
         data: {
           status: ModelStatus.Published,
           publishedAt,
+          lastVersionAt: includeVersions ? publishedAt : undefined,
           modelVersions: includeVersions
             ? {
                 updateMany: {
@@ -743,7 +758,7 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
   const { take, skip } = getPagination(limit, page);
   const where: Prisma.ModelFindManyArgs['where'] = {
     userId,
-    status: ModelStatus.Draft,
+    OR: [{ status: ModelStatus.Draft }, { status: ModelStatus.Unpublished }],
   };
 
   const items = await dbRead.model.findMany({
@@ -756,4 +771,8 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
   const count = await dbRead.model.count({ where });
 
   return getPagingData({ items, count }, take, page);
+};
+
+export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
+  await dbWrite.model.update({ where: { id }, data: { locked } });
 };
