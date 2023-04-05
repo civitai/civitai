@@ -1,6 +1,7 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { createLogger } from '~/utils/logging';
+import { Prisma, PrismaClient } from '@prisma/client';
 
 const log = createLogger('update-metrics', 'blue');
 
@@ -1511,7 +1512,16 @@ type MetricUpdateType =
 export const queueMetricUpdate = async (
   type: MetricUpdateType,
   id: number,
-  db: typeof dbWrite | undefined = undefined
+  db:
+    | Omit<
+        PrismaClient<
+          Prisma.PrismaClientOptions,
+          never,
+          Prisma.RejectOnNotFound | Prisma.RejectPerOperation | undefined
+        >,
+        '$connect' | '$disconnect' | '$on' | '$transaction' | '$use'
+      >
+    | undefined = undefined
 ) => {
   try {
     db ??= dbWrite;
