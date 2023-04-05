@@ -129,6 +129,7 @@ export default function ModelDetailsV2({
 
   const [opened, { toggle }] = useDisclosure();
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
+  const gallerySectionRef = useRef<HTMLDivElement | null>(null);
 
   const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery(
     { id },
@@ -436,8 +437,8 @@ export default function ModelDetailsV2({
                       }
                       sx={{ cursor: 'pointer' }}
                       onClick={() => {
-                        if (!discussionSectionRef.current) return;
-                        scrollToTop(discussionSectionRef.current);
+                        if (!gallerySectionRef.current) return;
+                        scrollToTop(gallerySectionRef.current);
                       }}
                     >
                       <Text className={classes.modelBadgeText}>
@@ -638,6 +639,10 @@ export default function ModelDetailsV2({
               user={currentUser}
               isFavorite={isFavorite}
               onFavoriteClick={handleToggleFavorite}
+              onBrowseClick={() => {
+                if (!gallerySectionRef.current) return;
+                scrollToTop(gallerySectionRef.current);
+              }}
             />
           )}
           {isClient &&
@@ -682,7 +687,7 @@ export default function ModelDetailsV2({
                   </Group>
                   <ModelDiscussionV2 modelId={model.id} />
                 </Stack>
-                <Stack spacing="md">
+                <Stack spacing="md" ref={gallerySectionRef} id="gallery">
                   <Group spacing="xs" align="flex-end">
                     <Title order={2}>Gallery</Title>
                     <LoginRedirect reason="create-review">

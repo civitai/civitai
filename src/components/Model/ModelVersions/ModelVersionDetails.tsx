@@ -56,7 +56,14 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { removeTags, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-export function ModelVersionDetails({ model, version, user, isFavorite, onFavoriteClick }: Props) {
+export function ModelVersionDetails({
+  model,
+  version,
+  user,
+  isFavorite,
+  onFavoriteClick,
+  onBrowseClick,
+}: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
   const queryUtils = trpc.useContext();
 
@@ -539,6 +546,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
             modelVersionId={version.id}
             modelUserId={model.user.id}
             limit={CAROUSEL_LIMIT}
+            onBrowseClick={onBrowseClick}
           />
           {model.description ? (
             <ContentClamp maxHeight={300}>
@@ -569,4 +577,5 @@ type Props = {
   onFavoriteClick: VoidFunction;
   user?: SessionUser | null;
   isFavorite?: boolean;
+  onBrowseClick?: VoidFunction;
 };
