@@ -1,9 +1,10 @@
-import { ModelVersionEngagementType, Prisma } from '@prisma/client';
+import { ModelStatus, ModelVersionEngagementType, Prisma } from '@prisma/client';
 
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { playfab } from '~/server/playfab/client';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -143,4 +144,31 @@ export const updateModelVersionById = ({
   data,
 }: GetByIdInput & { data: Prisma.ModelVersionUpdateInput }) => {
   return dbWrite.modelVersion.update({ where: { id }, data });
+};
+
+export const publishModelVersionById = async ({ id }: GetByIdInput) => {
+  const publishedAt = new Date();
+  const version = await dbWrite.modelVersion.update({
+    where: { id },
+    data: {
+      status: ModelStatus.Published,
+      model: { update: { lastVersionAt: publishedAt } },
+      posts: { updateMany: { where: { publishedAt: null }, data: { publishedAt } } },
+    },
+    select: {
+      id: true,
+      modelId: true,
+      model: { select: { userId: true, id: true, type: true } },
+    },
+  });
+  if (!version) throw throwNotFoundError(`No model version with id ${id}`);
+
+  const { model } = version;
+  await playfab.trackEvent(model.userId, {
+    eventName: 'user_update_model',
+    modelId: model.id,
+    type: model.type,
+  });
+
+  return version;
 };
