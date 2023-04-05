@@ -422,6 +422,18 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   return { ...rest, tier };
 };
 
+export const removeAllContent = ({ id }: { id: number }) => {
+  return dbWrite.$transaction([
+    dbWrite.model.deleteMany({ where: { userId: id } }),
+    dbWrite.comment.deleteMany({ where: { userId: id } }),
+    dbWrite.commentV2.deleteMany({ where: { userId: id } }),
+    dbWrite.review.deleteMany({ where: { userId: id } }),
+    dbWrite.resourceReview.deleteMany({ where: { userId: id } }),
+    dbWrite.post.deleteMany({ where: { userId: id } }),
+    dbWrite.image.deleteMany({ where: { userId: id } }),
+  ]);
+};
+
 export const getUserCosmetics = ({
   userId,
   equipped,
