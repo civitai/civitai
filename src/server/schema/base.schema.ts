@@ -1,11 +1,16 @@
 import { z } from 'zod';
+import { parseNumericString } from '~/utils/query-string-helpers';
 
 export const getByIdSchema = z.object({ id: z.number() });
 export type GetByIdInput = z.infer<typeof getByIdSchema>;
 
-export const getAllQuerySchema = z.object({
-  limit: z.preprocess((val) => Number(val), z.number().min(0).max(200).default(20)).optional(),
-  page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
+export type PaginationInput = z.infer<typeof paginationSchema>;
+export const paginationSchema = z.object({
+  limit: z.preprocess(parseNumericString, z.number().min(1).max(200).default(20)),
+  page: z.preprocess(parseNumericString, z.number().min(0).default(1)),
+});
+
+export const getAllQuerySchema = paginationSchema.extend({
   query: z.string().optional(),
 });
 export type GetAllSchema = z.infer<typeof getAllQuerySchema>;

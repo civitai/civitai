@@ -1,3 +1,4 @@
+import { GetResourceReviewPagedInput } from './../schema/resourceReview.schema';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CreateResourceReviewInput,
@@ -17,15 +18,16 @@ import {
   upsertResourceReview,
   updateResourceReview,
   createResourceReview,
+  getPagedResourceReviews,
 } from '~/server/services/resourceReview.service';
 import { Context } from '~/server/createContext';
 
 export const getResourceReviewHandler = async ({ input }: { input: GetByIdInput }) => {
-  try {
-    return await getResourceReview(input);
-  } catch (error) {
-    throw throwDbError(error);
-  }
+  // try {
+  return await getResourceReview(input);
+  // } catch (error) {
+  //   throw throwDbError(error);
+  // }
 };
 
 export const getResourceReviewsHandler = async ({ input }: { input: GetResourceReviewsInput }) => {
@@ -119,4 +121,17 @@ export const deleteResourceReviewHandler = async ({
   } catch (error) {
     throw throwDbError(error);
   }
+};
+
+export const getResourceReviewsPagedHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetResourceReviewPagedInput;
+}) => {
+  // try {
+  return await getPagedResourceReviews(input);
+  // } catch (error) {
+  //   throw throwDbError(error);
+  // }
 };

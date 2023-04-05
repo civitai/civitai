@@ -1,17 +1,19 @@
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getReactionsSelect } from './../selectors/reaction.selector';
 import {
   GetResourceReviewsInfiniteInput,
   GetRatingTotalsInput,
   UpdateResourceReviewInput,
   CreateResourceReviewInput,
+  GetResourceReviewPagedInput,
 } from './../schema/resourceReview.schema';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
 import { Prisma } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { getPagedData } from '~/server/utils/pagination-helpers';
 
 export type ResourceReviewDetailModel = AsyncReturnType<typeof getResourceReview>;
 export const getResourceReview = async ({ id }: GetByIdInput) => {
@@ -150,5 +152,47 @@ export const updateResourceReview = ({ id, rating, details }: UpdateResourceRevi
     where: { id },
     data: { rating, details },
     select: { id: true },
+  });
+};
+
+export const getPagedResourceReviews = async (input: GetResourceReviewPagedInput) => {
+  return await getPagedData(input, async ({ skip, take, modelId, modelVersionId, username }) => {
+    const AND: Prisma.Enumerable<Prisma.ResourceReviewWhereInput> = [{ modelId, modelVersionId }];
+    if (username) AND.push({ user: { username } });
+
+    const [count, items] = await dbRead.$transaction([
+      dbRead.resourceReview.count({ where: { AND } }),
+      dbRead.resourceReview.findMany({
+        skip,
+        take,
+        where: { AND },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          model: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          modelVersion: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          rating: true,
+          details: true,
+          user: { select: userWithCosmeticsSelect },
+          createdAt: true,
+          helper: {
+            select: {
+              imageCount: true,
+            },
+          },
+        },
+      }),
+    ]);
+    return { items, count };
   });
 };

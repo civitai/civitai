@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { paginationSchema } from '~/server/schema/base.schema';
 
 export type GetResourceReviewsInput = z.infer<typeof getResourceReviewsSchema>;
 export const getResourceReviewsSchema = z.object({
@@ -40,4 +41,11 @@ export const updateResourceReviewSchema = z.object({
   id: z.number(),
   rating: z.number().optional(),
   details: z.string().optional(),
+});
+
+export type GetResourceReviewPagedInput = z.infer<typeof getResourceReviewPagedSchema>;
+export const getResourceReviewPagedSchema = paginationSchema.extend({
+  modelId: z.number(),
+  modelVersionId: z.number().optional(),
+  username: z.string().optional(),
 });

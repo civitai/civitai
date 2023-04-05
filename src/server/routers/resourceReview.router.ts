@@ -3,6 +3,7 @@ import {
   getRatingTotalsSchema,
   getResourceReviewsInfinite,
   updateResourceReviewSchema,
+  getResourceReviewPagedSchema,
 } from './../schema/resourceReview.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -11,6 +12,7 @@ import {
   getRatingTotalsHandler,
   getResourceReviewHandler,
   getResourceReviewsInfiniteHandler,
+  getResourceReviewsPagedHandler,
   updateResourceReviewHandler,
   upsertResourceReviewHandler,
 } from './../controllers/resourceReview.controller';
@@ -18,6 +20,7 @@ import { dbRead } from '~/server/db/client';
 import { upsertResourceReviewSchema } from '~/server/schema/resourceReview.schema';
 import { middleware, publicProcedure, router, protectedProcedure } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { getPagedResourceReviews } from '~/server/services/resourceReview.service';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -26,15 +29,15 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 
   const userId = ctx.user.id;
   let ownerId = userId;
-  if (id) {
-    const isModerator = ctx?.user?.isModerator;
+  const isModerator = ctx?.user?.isModerator;
+  if (!isModerator && id) {
     ownerId =
       (await dbRead.resourceReview.findUnique({ where: { id }, select: { userId: true } }))
         ?.userId ?? 0;
-    if (!isModerator) {
-      if (ownerId !== userId) throw throwAuthorizationError();
-    }
+    if (ownerId !== userId) throw throwAuthorizationError();
   }
+
+  console.log('MADE IT !!!!');
 
   return next({
     ctx: {
@@ -50,6 +53,9 @@ export const resourceReviewRouter = router({
   getInfinite: publicProcedure
     .input(getResourceReviewsInfinite)
     .query(getResourceReviewsInfiniteHandler),
+  getPaged: publicProcedure
+    .input(getResourceReviewPagedSchema)
+    .query(({ input }) => getPagedResourceReviews(input)),
   getRatingTotals: publicProcedure.input(getRatingTotalsSchema).query(getRatingTotalsHandler),
   upsert: protectedProcedure
     .input(upsertResourceReviewSchema)
