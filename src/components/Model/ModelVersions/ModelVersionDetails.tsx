@@ -48,7 +48,7 @@ import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { CAROUSEL_LIMIT, ModelFileType } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getPrimaryFile, getFileDisplayName } from '~/server/utils/model-helpers';
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -198,11 +198,7 @@ export function ModelVersionDetails({ model, version, user, isFavorite, onFavori
       <Stack spacing={4}>
         <Group position="apart" noWrap>
           <Text size="xs" weight={500} lineClamp={2}>
-            {`${
-              ['Model', 'Pruned Model'].includes(file.type) ? file.metadata.format + ' ' : ''
-            }${startCase(file.type)}${
-              file.metadata.fp ? ' ' + file.metadata.fp : ''
-            } (${formatKBytes(file.sizeKB)})`}
+            {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)})
           </Text>
           <Button
             component="a"
