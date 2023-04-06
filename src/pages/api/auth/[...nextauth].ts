@@ -66,7 +66,7 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
     },
     async jwt({ token, user }) {
       if (req.url === '/api/auth/session?update') {
-        invalidateSession(Number(token.sub));
+        await invalidateSession(Number(token.sub));
         const user = await getSessionUser({ userId: Number(token.sub) });
         token.user = user;
       } else {

@@ -24,7 +24,7 @@ export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
 
 export const userUpdateSchema = z.object({
   id: z.number(),
-  username: usernameSchema,
+  username: usernameSchema.optional(),
   showNsfw: z.boolean().optional(),
   blurNsfw: z.boolean().optional(),
   tos: z.boolean().optional(),

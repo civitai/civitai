@@ -69,7 +69,9 @@ export const getCommentById = <TSelect extends Prisma.CommentSelect>({
     where: {
       id,
       tosViolation: !isMod ? false : undefined,
-      model: isMod ? undefined : { OR: [{ status: 'Published' }, { userId: user?.id }] },
+      model: isMod
+        ? undefined
+        : { OR: [{ status: 'Published' }, { userId: user?.id }], locked: false },
     },
     select,
   });

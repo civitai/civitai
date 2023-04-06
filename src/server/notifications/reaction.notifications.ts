@@ -137,7 +137,7 @@ export const reactionNotifications = createNotificationProcessor({
         } model has received ${details.reactionCount} reactions`;
       }
 
-      return { message, url: `/images/${details.imageId}` };
+      return { message, url: `/images/${details.imageId}?postId=${details.postId}` };
     },
     prepareQuery: ({ lastSent }) => `
       WITH milestones AS (
@@ -168,6 +168,7 @@ export const reactionNotifications = createNotificationProcessor({
           JSON_BUILD_OBJECT(
             'version', 2,
             'imageId', i.id,
+            'postId', i."postId",
             'models', ir.models,
             'reactionCount', ms.value
           ) "details"

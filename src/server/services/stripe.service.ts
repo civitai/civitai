@@ -100,7 +100,7 @@ export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) 
     const customer = await stripe.customers.create({ email });
 
     await dbWrite.user.update({ where: { id }, data: { customerId: customer.id } });
-    invalidateSession(id);
+    await invalidateSession(id);
 
     return customer.id;
   } else {
@@ -129,7 +129,7 @@ export const createSubscribeSession = async ({
 
   if (subscriptions.length > 0) {
     const { url } = await createManageSubscriptionSession({ customerId });
-    invalidateSession(user.id);
+    await invalidateSession(user.id);
     return { sessionId: null, url };
   }
 
@@ -251,7 +251,7 @@ export const upsertSubscription = async (
     });
   }
 
-  invalidateSession(user.id);
+  await invalidateSession(user.id);
 };
 
 export const toDateTime = (secs: number) => {

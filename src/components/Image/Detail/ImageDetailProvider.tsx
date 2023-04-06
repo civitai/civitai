@@ -60,11 +60,15 @@ export function ImageDetailProvider({
   const { postId, modelId, modelVersionId, username } = filters;
 
   // #region [data fetching]
-  const { images, isLoading } = useQueryImages(filters);
+  const { images, isLoading: imagesLoading } = useQueryImages(filters);
 
   // TODO.Briant - return to this
-  const shouldFetchImage = !!images?.length && !images.find((x) => x.id === imageId);
-  const { data: prefetchedImage } = trpc.image.get.useQuery({ id: imageId }, { enabled: false });
+  const shouldFetchImage =
+    !imagesLoading && !!images?.length && !images.find((x) => x.id === imageId);
+  const { data: prefetchedImage, isLoading: imageLoading } = trpc.image.get.useQuery(
+    { id: imageId },
+    { enabled: shouldFetchImage }
+  );
 
   // const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
   const image = images.find((x) => x.id === imageId) ?? prefetchedImage ?? undefined;
@@ -178,7 +182,7 @@ export function ImageDetailProvider({
       value={{
         images,
         image,
-        isLoading,
+        isLoading: imagesLoading || imageLoading,
         active,
         connect,
         toggleInfo,

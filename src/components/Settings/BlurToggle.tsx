@@ -15,7 +15,7 @@ export function BlurToggle({ children, iconProps = {} }: BlurToggleProps) {
   });
 
   const icon = user.blurNsfw ? <IconEyeOff {...iconProps} /> : <IconEye {...iconProps} />;
-  const toggle = () => mutate({ ...user, blurNsfw: !user.blurNsfw });
+  const toggle = () => mutate({ id: user.id, blurNsfw: !user.blurNsfw });
   if (!children)
     children = () => (
       <ActionIcon onClick={toggle}>{user.blurNsfw ? <IconEyeOff /> : <IconEye />}</ActionIcon>
