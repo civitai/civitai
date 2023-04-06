@@ -102,18 +102,13 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
     if (!image) return;
     const meta = { ...(image.meta as z.infer<typeof imageMetaSchema>), ...data.meta };
     const payload = { ...image, ...data, meta };
-    if (!Object.keys(form.formState.dirtyFields).length) {
-      onClose();
-      showSuccessNotification({ message: 'Image details saved successfully' });
-    } else {
-      mutate(payload, {
-        onSuccess: (response) => {
-          showSuccessNotification({ message: 'Image details saved successfully' });
-          setImage(response.id, () => response);
-          onClose();
-        },
-      });
-    }
+    mutate(payload, {
+      onSuccess: (response) => {
+        showSuccessNotification({ message: 'Image details saved successfully' });
+        setImage(response.id, () => response);
+        onClose();
+      },
+    });
   };
 
   if (!image) return <NotFound />;
