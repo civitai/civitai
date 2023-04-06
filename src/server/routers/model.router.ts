@@ -16,6 +16,7 @@ import {
   getMyDraftModelsHandler,
   publishModelHandler,
   reorderModelVersionsHandler,
+  requestReviewHandler,
   restoreModelHandler,
   toggleModelLockHandler,
   unpublishModelHandler,
@@ -35,6 +36,7 @@ import {
   publishModelSchema,
   reorderModelVersionsSchema,
   toggleModelLockSchema,
+  unpublishModelSchema,
 } from '~/server/schema/model.schema';
 import {
   guardedProcedure,
@@ -153,7 +155,7 @@ export const modelRouter = router({
     .use(isOwnerOrModerator)
     .mutation(publishModelHandler),
   unpublish: protectedProcedure
-    .input(getByIdSchema)
+    .input(unpublishModelSchema)
     .use(isOwnerOrModerator)
     .mutation(unpublishModelHandler),
   // TODO - TEMP HACK for reporting modal
@@ -171,4 +173,8 @@ export const modelRouter = router({
     .input(toggleModelLockSchema)
     .use(isOwnerOrModerator)
     .mutation(toggleModelLockHandler),
+  requestReview: protectedProcedure
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .mutation(requestReviewHandler),
 });

@@ -1,4 +1,4 @@
-import { ToggleModelLockInput } from './../schema/model.schema';
+import { ModelMeta, ToggleModelLockInput } from './../schema/model.schema';
 import {
   CommercialUse,
   MetricTimeframe,
@@ -9,6 +9,7 @@ import {
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
+import { isEmpty } from 'lodash-es';
 import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
 
@@ -84,6 +85,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     allowCommercialUse,
     browsingMode,
     ids,
+    needsReview,
   },
   select,
   user: sessionUser,
@@ -184,6 +186,9 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       TypeOr.push({ type: { in: otherTypes } });
     } else TypeOr.push({ type: { not: 'Checkpoint' } });
     AND.push({ OR: TypeOr });
+  }
+  if (needsReview && sessionUser?.isModerator) {
+    AND.push({ meta: { path: ['needsReview'], equals: true } });
   }
 
   const hideNSFWModels = browsingMode === BrowsingMode.SFW || !canViewNsfw;
@@ -304,7 +309,8 @@ export const upsertModel = ({
   tagsOnModels,
   userId,
   ...data
-}: ModelUpsertInput & { userId: number }) => {
+}: // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
+ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) => {
   if (!id)
     return dbWrite.model.create({
       select: modelWithDetailsSelect,
@@ -674,7 +680,12 @@ export const updateModel = async ({
   return model;
 };
 
-export const publishModelById = async ({ id, versionIds }: PublishModelSchema) => {
+export const publishModelById = async ({
+  id,
+  versionIds,
+  meta,
+  republishing,
+}: PublishModelSchema & { meta?: ModelMeta; republishing?: boolean }) => {
   const model = await dbWrite.$transaction(
     async (tx) => {
       const includeVersions = versionIds && versionIds.length > 0;
@@ -685,7 +696,8 @@ export const publishModelById = async ({ id, versionIds }: PublishModelSchema) =
         data: {
           status: ModelStatus.Published,
           publishedAt,
-          lastVersionAt: includeVersions ? publishedAt : undefined,
+          meta: isEmpty(meta) ? Prisma.JsonNull : meta,
+          lastVersionAt: includeVersions && !republishing ? publishedAt : undefined,
           modelVersions: includeVersions
             ? {
                 updateMany: {
@@ -725,7 +737,7 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
   const { take, skip } = getPagination(limit, page);
   const where: Prisma.ModelFindManyArgs['where'] = {
     userId,
-    OR: [{ status: ModelStatus.Draft }, { status: ModelStatus.Unpublished }],
+    status: { not: ModelStatus.Published },
   };
 
   const items = await dbRead.model.findMany({

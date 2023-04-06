@@ -5,6 +5,7 @@ import { openCivitaiLinkModal } from '~/components/CivitaiLink/CivitaiLinkWizard
 import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal';
 import { openReportModal } from '~/components/Modals/ReportModal';
 import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
+import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -17,6 +18,7 @@ const CivitaiLinkWizard = dynamic(() => import('~/components/CivitaiLink/Civitai
 const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
 );
+const UnpublishModal = dynamic(() => import('~/components/Modals/UnpublishModal'));
 
 const registry = {
   blockModelTags: {
@@ -26,6 +28,10 @@ const registry = {
   report: {
     Component: ReportModal,
     fn: openReportModal,
+  },
+  unpublishModel: {
+    Component: UnpublishModal,
+    fn: openUnpublishModal,
   },
   runStrategy: {
     Component: RunStrategyModal,
@@ -74,7 +80,7 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
 
 export function openContext<TName extends keyof typeof registry>(
   modal: TName,
-  props: Parameters<typeof registry[TName]['fn']>[0]
+  props: Parameters<(typeof registry)[TName]['fn']>[0]
 ) {
   registry[modal].fn(props as any);
 }

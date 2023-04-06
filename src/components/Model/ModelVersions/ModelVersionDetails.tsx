@@ -81,14 +81,25 @@ export function ModelVersionDetails({
 
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
+  const requestReviewMutation = trpc.model.requestReview.useMutation({
+    async onSuccess() {
+      await queryUtils.model.getById.invalidate({ id: model.id });
+    },
+  });
 
   const handlePublishClick = async () => {
     try {
-      if (model.status !== ModelStatus.Published)
+      if (model.status !== ModelStatus.Published) {
         // Publish model, version and all of its posts
-        await publishModelMutation.mutateAsync({ id: model.id, versionIds: [version.id] });
-      // Just publish the version and its posts
-      else await publishVersionMutation.mutateAsync({ id: version.id });
+        const versionIds =
+          model.status === ModelStatus.UnpublishedViolation && user?.isModerator
+            ? model.modelVersions.map(({ id }) => id)
+            : [version.id];
+        await publishModelMutation.mutateAsync({ id: model.id, versionIds });
+      } else {
+        // Just publish the version and its posts
+        await publishVersionMutation.mutateAsync({ id: version.id });
+      }
     } catch (e) {
       const error = e as TRPCClientErrorBase<DefaultErrorShape>;
       showErrorNotification({
@@ -229,7 +240,8 @@ export function ModelVersionDetails({
 
   const cleanDescription = version.description ? removeTags(version.description) : '';
 
-  const isOwnerOrMod = model.user?.id === user?.id || user?.isModerator;
+  const isOwner = model.user?.id === user?.id;
+  const isOwnerOrMod = isOwner || user?.isModerator;
   const filesCount = version.files.length;
   const hasFiles = filesCount > 0;
   const hasPosts = !!version.posts?.length;
@@ -239,6 +251,8 @@ export function ModelVersionDetails({
     hasFiles &&
     hasPosts;
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
+  const showRequestReview =
+    isOwner && !user?.isModerator && model.status === ModelStatus.UnpublishedViolation;
 
   return (
     <Grid gutter="xl">
@@ -252,7 +266,16 @@ export function ModelVersionDetails({
             limit={CAROUSEL_LIMIT}
             mobile
           />
-          {showPublishButton ? (
+          {showRequestReview ? (
+            <Button
+              color="yellow"
+              onClick={() => requestReviewMutation.mutate({ id: model.id })}
+              loading={requestReviewMutation.isLoading}
+              fullWidth
+            >
+              Request a Review
+            </Button>
+          ) : showPublishButton ? (
             <Button color="green" onClick={handlePublishClick} loading={publishing} fullWidth>
               Publish this version
             </Button>
