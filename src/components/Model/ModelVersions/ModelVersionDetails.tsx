@@ -14,12 +14,14 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
+import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
 import { IconDownload, IconHeart, IconLicense, IconMessageCircle2 } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { startCase } from 'lodash';
 import { SessionUser } from 'next-auth';
+import { useRouter } from 'next/router';
 import { useRef } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -66,6 +68,7 @@ export function ModelVersionDetails({
 }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
   const queryUtils = trpc.useContext();
+  const router = useRouter();
 
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
@@ -431,19 +434,26 @@ export function ModelVersionDetails({
               </Accordion.Panel>
             </Accordion.Item>
             {!model.locked && (
-              // <ResourceReviewTotals
-              //   modelId={model.id}
-              //   modelVersionId={version.id}
-              //   rating={version.rank?.ratingAllTime}
-              //   count={version.rank?.ratingCountAllTime}
-              // />
               <ResourceReviewSummary modelId={model.id} modelVersionId={version.id}>
                 <Accordion.Item value="resource-reviews">
                   <Accordion.Control>
-                    <ResourceReviewSummary.Header
-                      rating={version.rank?.ratingAllTime}
-                      count={version.rank?.ratingCountAllTime}
-                    />
+                    <Group position="apart">
+                      <ResourceReviewSummary.Header
+                        rating={version.rank?.ratingAllTime}
+                        count={version.rank?.ratingCountAllTime}
+                      />
+                      <Text
+                        component={NextLink}
+                        href={`${router.asPath.split('?')[0]}/reviews`}
+                        variant="link"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                        }}
+                      >
+                        See Reviews
+                      </Text>
+                    </Group>
                   </Accordion.Control>
                   <Accordion.Panel px="sm" pb="sm">
                     <ResourceReviewSummary.Totals />

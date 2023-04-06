@@ -100,7 +100,7 @@ export default function ModelReviews() {
     router.replace({ query: { ...router.query, page } }, undefined, { shallow: true });
   };
 
-  const Model = loadingModel ? <Skeleton /> : <Title>{model?.name}</Title>;
+  const Model = loadingModel ? <Skeleton height={44} /> : <Title>{model?.name}</Title>;
   const Versions = loadingVersions ? (
     <Skeleton height={36} />
   ) : !!versions?.length ? (
@@ -154,7 +154,11 @@ export default function ModelReviews() {
           </Stack>
         </Grid.Col>
         <Grid.Col sm={12} md={8}>
-          <Stack>
+          {loadingResourceReviews ? (
+            <Center p="xl">
+              <Loader />
+            </Center>
+          ) : (
             <Stack spacing="xl" style={{ position: 'relative' }}>
               <LoadingOverlay visible={refetchingResourceReviews} />
               {resourceReviews?.items.map((review) => (
@@ -168,7 +172,7 @@ export default function ModelReviews() {
                 />
               )}
             </Stack>
-          </Stack>
+          )}
         </Grid.Col>
       </Grid>
     </Container>
