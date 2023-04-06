@@ -1,23 +1,23 @@
 import { create } from 'zustand';
 import { useEffect } from 'react';
-import { ModelType, MetricTimeframe, CheckpointType, ModelStatus } from '@prisma/client';
-import { BrowsingMode, ModelSort } from '~/server/common/enums';
+import { CheckpointType, MetricTimeframe, ModelStatus, ModelType } from '@prisma/client';
+import { BrowsingMode, ModelKind, ModelSort } from '~/server/common/enums';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 import { deleteCookie } from 'cookies-next';
 import { immer } from 'zustand/middleware/immer';
 import { modelFilterSchema, useCookies } from '~/providers/CookiesProvider';
 import {
-  Popover,
   ActionIcon,
-  Stack,
-  Indicator,
-  Divider,
-  SegmentedControl,
   Button,
   Chip,
-  createStyles,
   ChipProps,
+  createStyles,
+  Divider,
+  Indicator,
+  Popover,
+  SegmentedControl,
+  Stack,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter, IconFilterOff } from '@tabler/icons';
 import { z } from 'zod';
@@ -30,6 +30,7 @@ type FilterProps = z.input<typeof modelFilterSchema>;
 
 export const useFilters = create<{
   filters: FilterProps;
+  setKind: (kind?: ModelKind) => void;
   setSort: (sort?: ModelSort) => void;
   setPeriod: (period?: MetricTimeframe) => void;
   setTypes: (types?: ModelType[]) => void;
@@ -40,6 +41,12 @@ export const useFilters = create<{
 }>()(
   immer((set) => ({
     filters: {},
+    setKind: (kind) => {
+      set((state) => {
+        state.filters.kind = kind;
+        !!kind ? setCookie('f_kind', kind) : deleteCookie('f_kind');
+      });
+    },
     setSort: (sort) => {
       set((state) => {
         state.filters.sort = sort;

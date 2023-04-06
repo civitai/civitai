@@ -21,6 +21,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   if (!type || !Object.values(UploadType).includes(type)) type = UploadType.Default;
 
   const key = `${userId}/${type ?? UploadType.Default}/${filename}.${generateToken(4)}${ext}`;
+  console.log(key);
   const result = await getMultipartPutUrl(key, req.body.size);
   await logToDb('s3-upload', {
     userId,

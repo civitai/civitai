@@ -33,6 +33,18 @@ export async function getDownloadUrl(fileUrl: string, fileName?: string) {
 }
 
 export async function getDeliveryWorkerStatus() {
+  return {
+    current: {
+      name: 'modelshare',
+      createdDate: '2023-04-01T00:00:08.332+00:00',
+    },
+    all: [
+      {
+        name: 'modelshare',
+        createdDate: '2023-04-01T00:00:08.332+00:00',
+      },
+    ],
+  };
   const url = new URL(deliveryWorkerEndpoint);
   url.pathname = 'status';
 
