@@ -25,11 +25,13 @@ export const getServerSideProps = createServerSideProps({
       where: { id },
       select: { userId: true, deletedAt: true, status: true },
     });
-    if (!model || model.deletedAt) return { notFound: true };
+    if (!model || model.deletedAt || model.status === ModelStatus.Deleted)
+      return { notFound: true };
 
     const isModerator = session.user?.isModerator ?? false;
     const isOwner = model.userId === session.user?.id || isModerator;
-    if (!isOwner || model.status !== ModelStatus.Draft)
+    const unpublished = model.status === ModelStatus.UnpublishedViolation;
+    if (!isOwner || unpublished)
       return {
         redirect: {
           destination: `/models/${params.id}?modelVersionId=${versionId}`,

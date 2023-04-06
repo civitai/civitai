@@ -90,7 +90,7 @@ export function ModelWizard() {
 
   useEffect(() => {
     // set current step based on query param
-    if (!isNew && state.step.toString() !== router.query.step) {
+    if (state.step.toString() !== router.query.step) {
       const rawStep = router.query.step;
       const step = Number(rawStep);
       const validStep = isNumber(step) && step >= 1 && step <= 4;
@@ -125,9 +125,7 @@ export function ModelWizard() {
         size="xl"
         radius="xl"
         variant="light"
-        onClick={() =>
-          router.pathname.includes('/create') ? router.back() : router.replace(`/models/${id}`)
-        }
+        onClick={() => (isNew ? router.back() : router.replace(`/models/${id}`))}
       >
         <IconX />
       </ActionIcon>

@@ -71,14 +71,14 @@ export function ModelVersionWizard({ data }: Props) {
 
   useEffect(() => {
     // set current step based on query param
-    if (!isNew && activeStep.toString() !== router.query.step) {
+    if (activeStep.toString() !== router.query.step) {
       const rawStep = router.query.step;
       const step = Number(rawStep);
       const validStep = isNumber(step) && step >= 1 && step <= 3;
 
       setActiveStep(validStep ? step : 1);
     }
-  }, [isNew, router.query.step, activeStep]);
+  }, [router.query, activeStep]);
 
   const editing = !!modelVersion?.id;
   const postId = modelVersion?.posts?.[0]?.id;
@@ -86,7 +86,7 @@ export function ModelVersionWizard({ data }: Props) {
   return (
     <Container size="sm">
       <Stack spacing="xl" py="xl">
-        <Link href={`/models/${id}`} passHref>
+        <Link href={`/models/${modelVersion?.model.id}`} passHref>
           <Anchor size="xs">
             <Group spacing={4} noWrap>
               <IconArrowLeft size={12} />
@@ -97,7 +97,11 @@ export function ModelVersionWizard({ data }: Props) {
         <Stepper
           active={activeStep - 1}
           onStepClick={(step) =>
-            router.replace(`/models/${id}/model-versions/${versionId}/wizard?step=${step + 1}`)
+            router.replace(
+              `/models/${modelVersion?.model.id}/model-versions/${versionId}/wizard?step=${
+                step + 1
+              }`
+            )
           }
           allowNextStepsSelect={false}
           size="sm"
@@ -111,7 +115,7 @@ export function ModelVersionWizard({ data }: Props) {
                 onSubmit={(result) => {
                   if (editing) return goNext();
                   router.replace(
-                    `/models/${id}/model-versions/${result?.id}/wizard?step=2`,
+                    `/models/${result?.modelId}/model-versions/${result?.id}/wizard?step=2`,
                     undefined,
                     {
                       shallow: true,

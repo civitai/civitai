@@ -166,6 +166,7 @@ export function openRoutedContext<TName extends keyof typeof registry>(
 }
 
 export function closeRoutedContext() {
+  console.log('calling close context');
   const hasHistory = getHasClientHistory();
   const { modal, ...query } = Router.query;
   if (modal) {

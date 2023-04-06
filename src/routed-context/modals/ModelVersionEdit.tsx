@@ -34,7 +34,7 @@ export default createRoutedContext({
 
     const isModerator = currentUser?.isModerator ?? false;
     const isOwner = modelVersion?.model?.user.id === currentUser?.id || isModerator;
-    if (!isOwner) closeRoutedContext();
+    if (!isLoading && modelVersion && !isOwner) closeRoutedContext();
 
     return (
       <Modal opened={context.opened} onClose={context.close} withCloseButton={false} fullScreen>
