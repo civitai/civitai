@@ -38,7 +38,7 @@ export function EdgeImage({
     blur,
     quality,
     gravity,
-    metadata,
+    metadata: metadata ?? 'keep',
     gamma,
     name,
   });

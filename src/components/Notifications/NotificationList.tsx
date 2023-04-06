@@ -23,6 +23,7 @@ export function NotificationList({
           details: notificationDetails,
         });
         const read = !!notification.viewedAt;
+        const systemNotification = notification.type === 'system-announcement';
 
         if (!details) return null;
 
@@ -73,7 +74,9 @@ export function NotificationList({
                         theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
                       }`
                     : undefined,
-                borderLeft: !read ? `3px solid ${theme.colors.blue[8]}` : undefined,
+                borderLeft: !read
+                  ? `3px solid ${theme.colors[systemNotification ? 'red' : 'blue'][8]}`
+                  : undefined,
                 padding: theme.spacing.sm,
                 paddingLeft: !read ? theme.spacing.sm - 3 : theme.spacing.sm,
 
