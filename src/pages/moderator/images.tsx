@@ -1,7 +1,6 @@
 import {
   ActionIcon,
   AspectRatio,
-  Badge,
   Box,
   Card,
   Center,
@@ -14,12 +13,10 @@ import {
   Stack,
   Text,
   Title,
-  useMantineTheme,
 } from '@mantine/core';
 import { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
 import { useListState } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
-import { TagType } from '@prisma/client';
 import {
   IconCheck,
   IconExternalLink,
@@ -30,25 +27,24 @@ import {
   IconTag,
   IconTagOff,
   IconTrash,
-  IconX,
 } from '@tabler/icons';
+import produce from 'immer';
 import { GetServerSideProps } from 'next';
 import Link from 'next/link';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
-
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { ImageConnectionLink } from '~/components/Image/ImageConnectionLink/ImageConnectionLink';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
+import { ImageSort } from '~/server/common/enums';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { ImageGetGalleryInfinite } from '~/types/router';
+import { ImageGetInfinite } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -73,37 +69,29 @@ export default function Images() {
   const queryUtils = trpc.useContext();
   const [selected, selectedHandlers] = useListState([] as number[]);
 
-  // TODO.images: Change endpoint to image.getInfinite
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching, refetch } =
-    trpc.image.getGalleryImagesInfinite.useInfiniteQuery(
-      { needsReview: true },
+    trpc.image.getInfinite.useInfiniteQuery(
+      { needsReview: true, sort: ImageSort.Newest },
       { getNextPageParam: (lastPage) => lastPage.nextCursor }
     );
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
 
   const moderateImagesMutation = trpc.image.moderate.useMutation({
     async onMutate({ ids, needsReview, delete: deleted }) {
-      await queryUtils.image.getGalleryImagesInfinite.cancel();
-      queryUtils.image.getGalleryImagesInfinite.setInfiniteData({ needsReview: true }, (data) => {
-        if (!data) {
-          return {
-            pages: [],
-            pageParams: [],
-          };
-        }
+      await queryUtils.image.getInfinite.cancel();
+      queryUtils.image.getInfinite.setInfiniteData(
+        { needsReview: true, sort: ImageSort.Newest },
+        produce((data) => {
+          if (!data?.pages?.length) return;
 
-        return {
-          ...data,
-          pages: data.pages.map((page) => ({
-            ...page,
-            items: page.items.map((item) =>
-              ids.includes(item.id)
-                ? { ...item, needsReview: deleted === true || needsReview === false ? false : true }
-                : item
-            ),
-          })),
-        };
-      });
+          for (const page of data.pages)
+            for (const item of page.items) {
+              if (ids.includes(item.id)) {
+                item.needsReview = deleted === true || needsReview === false ? false : true;
+              }
+            }
+        })
+      );
     },
     onSuccess(_, input) {
       const actions: string[] = [];
@@ -115,80 +103,8 @@ export default function Images() {
     },
   });
 
-  const disableTagMutation = trpc.tag.disableTags.useMutation({
-    async onMutate({ tags, entityIds }) {
-      const isTagIds = typeof tags[0] === 'number';
-      await queryUtils.image.getGalleryImagesInfinite.cancel();
-      queryUtils.image.getGalleryImagesInfinite.setInfiniteData({ needsReview: true }, (data) => {
-        if (!data) {
-          return {
-            pages: [],
-            pageParams: [],
-          };
-        }
-
-        // Remove tag from selected images
-        return {
-          ...data,
-          pages: data.pages.map((page) => ({
-            ...page,
-            items: page.items.map((item) =>
-              entityIds.includes(item.id)
-                ? {
-                    ...item,
-                    tags: item.tags.filter(
-                      (tag) => !tags.some((x) => (isTagIds ? x === tag.id : x === tag.name))
-                    ),
-                  }
-                : item
-            ),
-          })),
-        };
-      });
-    },
-  });
-
-  const addTagMutation = trpc.tag.addTags.useMutation({
-    async onMutate({ tags, entityIds }) {
-      const isTagIds = typeof tags[0] === 'number';
-      await queryUtils.image.getGalleryImagesInfinite.cancel();
-
-      queryUtils.image.getGalleryImagesInfinite.setInfiniteData({ needsReview: true }, (data) => {
-        if (!data) {
-          return {
-            pages: [],
-            pageParams: [],
-          };
-        }
-
-        // Add tag to selected images
-        return {
-          ...data,
-          pages: data.pages.map((page) => ({
-            ...page,
-            items: page.items.map((item) =>
-              entityIds.includes(item.id)
-                ? {
-                    ...item,
-                    tags: [
-                      ...item.tags,
-                      ...tags.map((x) => ({
-                        id: isTagIds ? (x as number) : 0,
-                        name: !isTagIds ? (x as string) : '',
-                        automated: false,
-                        needsReview: false,
-                        isCategory: false,
-                        type: TagType.UserGenerated,
-                      })),
-                    ],
-                  }
-                : item
-            ),
-          })),
-        };
-      });
-    },
-  });
+  const disableTagMutation = trpc.tag.disableTags.useMutation();
+  const addTagMutation = trpc.tag.addTags.useMutation();
 
   const handleSelect = (id: number, checked: boolean) => {
     const idIndex = selected.indexOf(id);
@@ -395,13 +311,7 @@ export default function Images() {
   );
 }
 
-function ImageGridItem({
-  data: image,
-  width: itemWidth,
-  selected,
-  onSelect,
-  disableTag,
-}: ImageGridItemProps) {
+function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: ImageGridItemProps) {
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
     const width = itemWidth > 0 ? itemWidth : 300;
@@ -409,7 +319,6 @@ function ImageGridItem({
     const imageHeight = Math.floor(width / aspectRatio);
     return Math.min(imageHeight, 600);
   }, [itemWidth, image.width, image.height]);
-  const theme = useMantineTheme();
 
   return (
     <Card
@@ -504,35 +413,12 @@ function ImageGridItem({
           )}
         />
       </Card.Section>
-      <Group pt="xs" spacing={4}>
-        {image.tags.map((tag) => (
-          <Badge
-            key={tag.id}
-            variant={
-              tag.type == 'Moderation' || theme.colorScheme === 'light' ? undefined : 'filled'
-            }
-            color={tag.type == 'Moderation' ? 'red' : 'gray'}
-            pr={0}
-          >
-            <Group spacing={0}>
-              {tag.name}
-              <ActionIcon
-                size="sm"
-                variant="transparent"
-                onClick={() => disableTag(image.id, tag.id)}
-              >
-                <IconX strokeWidth={3} size=".75rem" />
-              </ActionIcon>
-            </Group>
-          </Badge>
-        ))}
-      </Group>
     </Card>
   );
 }
 
 type ImageGridItemProps = {
-  data: ImageGetGalleryInfinite[number];
+  data: ImageGetInfinite[number];
   index: number;
   width: number;
   selected: boolean;

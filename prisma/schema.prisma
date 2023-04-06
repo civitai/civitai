@@ -2016,32 +2016,34 @@ model PostRank {
 
 /// @view
 model ImageTag {
-  imageId    Int
-  image      Image   @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  tagId      Int
-  tag        Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  tagName    String
-  tagType    TagType
-  automated  Boolean
-  confidence Int?
-  score      Int
-  upVotes    Int
-  downVotes  Int
+  imageId     Int
+  image       Image   @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  tagId       Int
+  tag         Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagName     String
+  tagType     TagType
+  automated   Boolean
+  confidence  Int?
+  score       Int
+  upVotes     Int
+  downVotes   Int
+  needsReview Boolean
 
   @@id([imageId, tagId])
 }
 
 /// @view
 model ModelTag {
-  modelId   Int
-  model     Model   @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  tagId     Int
-  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  tagName   String
-  tagType   TagType
-  score     Int
-  upVotes   Int
-  downVotes Int
+  modelId     Int
+  model       Model   @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  tagId       Int
+  tag         Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagName     String
+  tagType     TagType
+  score       Int
+  upVotes     Int
+  downVotes   Int
+  needsReview Boolean
 
   @@id([modelId, tagId])
 }
