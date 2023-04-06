@@ -606,21 +606,25 @@ export default function ModelDetailsV2({
             )}
             {model.status === ModelStatus.UnpublishedViolation && !model.meta?.needsReview && (
               <Alert color="red">
-                <Group spacing="xs" noWrap>
+                <Group spacing="xs" noWrap align="flex-start">
                   <ThemeIcon color="red">
                     <IconExclamationMark />
                   </ThemeIcon>
-                  <Text size="md">
+                  <Text size="sm" mt={-3}>
                     This model has been unpublished due to a violation of our{' '}
-                    <Link href="/content/tos" passHref>
-                      <Anchor>guidelines</Anchor>
-                    </Link>{' '}
+                    <Text component="a" variant="link" href="/content/tos" target="_blank">
+                      guidelines
+                    </Text>{' '}
                     and is not visible to the community.{' '}
                     {model.meta?.unpublishedReason && unpublishReasons[model.meta.unpublishedReason]
                       ? unpublishReasons[model.meta.unpublishedReason].notificationMessage
                       : null}{' '}
-                    If you believe this was done in error, you can request a review from one of our
-                    moderators.
+                    If you adjust your model to comply with our guidelines, you can request a review
+                    from one of our moderators. If you believe this was done in error, you can{' '}
+                    <Text component="a" variant="link" href="/appeal" target="_blank">
+                      submit an appeal
+                    </Text>
+                    .
                   </Text>
                 </Group>
               </Alert>
