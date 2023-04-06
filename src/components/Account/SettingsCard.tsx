@@ -28,13 +28,39 @@ export function SettingsCard() {
     <Card withBorder>
       <Stack>
         <Title order={2}>Browsing Settings</Title>
-        <Switch
-          name="autoplayGifs"
-          label="Autoplay GIFs"
-          checked={user.autoplayGifs}
-          disabled={isLoading}
-          onChange={(e) => mutate({ id: user.id, autoplayGifs: e.target.checked })}
-        />
+        <Divider label="Image Preferences" mb={-12} />
+        <Group noWrap grow>
+          <Switch
+            name="autoplayGifs"
+            label="Autoplay GIFs"
+            checked={user.autoplayGifs}
+            disabled={isLoading}
+            onChange={(e) => mutate({ id: user.id, autoplayGifs: e.target.checked })}
+          />
+          <Select
+            label="Preferred Format"
+            name="imageFormat"
+            data={[
+              {
+                value: 'optimized',
+                label: 'Optimized Images (fast)',
+              },
+              {
+                value: 'metadata',
+                label: 'With Metadata (slow)',
+              },
+            ]}
+            value={user.filePreferences?.imageFormat ?? 'metadata'}
+            onChange={(value: ImageFormat) =>
+              mutate({
+                id: user.id,
+                filePreferences: { ...user.filePreferences, imageFormat: value },
+              })
+            }
+            disabled={isLoading}
+          />
+        </Group>
+
         <Divider label="Model File Preferences" mb={-12} />
         <Group noWrap grow>
           <Select

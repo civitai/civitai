@@ -15,6 +15,7 @@ export type EdgeUrlProps = {
   metadata?: 'keep' | 'copyright' | 'none';
   background?: string;
   gamma?: number;
+  optimized?: boolean;
 };
 
 export function getEdgeUrl(src: string, { name, ...variantParams }: Omit<EdgeUrlProps, 'src'>) {

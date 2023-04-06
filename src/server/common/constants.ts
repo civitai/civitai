@@ -46,6 +46,7 @@ export const constants = {
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'Other'],
   modelFileSizes: ['full', 'pruned'],
   modelFileFp: ['fp16', 'fp32'],
+  imageFormats: ['optimized', 'metadata'],
   tagFilterDefaults: {
     trendingTagsLimit: 20,
   },

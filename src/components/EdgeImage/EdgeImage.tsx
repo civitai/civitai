@@ -29,6 +29,7 @@ export function EdgeImage({
   anim ??= isGif && currentUser ? (!currentUser.autoplayGifs ? false : undefined) : undefined;
   const gamma = anim === false ? 0.99 : undefined;
   if (anim && !isGif) anim = undefined;
+  const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
 
   src = getEdgeUrl(src, {
     width,
@@ -38,7 +39,8 @@ export function EdgeImage({
     blur,
     quality,
     gravity,
-    metadata: metadata ?? 'keep',
+    metadata: optimized ? undefined : metadata ?? 'keep',
+    optimized: optimized ? true : undefined,
     gamma,
     name,
   });
