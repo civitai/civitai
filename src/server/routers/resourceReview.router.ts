@@ -4,6 +4,7 @@ import {
   getResourceReviewsInfiniteSchema,
   updateResourceReviewSchema,
   getResourceReviewPagedSchema,
+  getUserResourceReviewSchema,
 } from './../schema/resourceReview.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -21,6 +22,7 @@ import {
   getRatingTotals,
   getResourceReview,
   getResourceReviewsInfinite,
+  getUserResourceReview,
 } from '~/server/services/resourceReview.service';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
@@ -38,8 +40,6 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
     if (ownerId !== userId) throw throwAuthorizationError();
   }
 
-  console.log('MADE IT !!!!');
-
   return next({
     ctx: {
       // infers the `user` as non-nullable
@@ -51,6 +51,9 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 
 export const resourceReviewRouter = router({
   get: publicProcedure.input(getByIdSchema).query(({ input }) => getResourceReview(input)),
+  getUserResourceReview: protectedProcedure
+    .input(getUserResourceReviewSchema)
+    .query(({ input, ctx }) => getUserResourceReview({ ...input, userId: ctx.user.id })),
   getInfinite: publicProcedure
     .input(getResourceReviewsInfiniteSchema)
     .query(({ input }) => getResourceReviewsInfinite(input)),

@@ -5,6 +5,7 @@ import { openCivitaiLinkModal } from '~/components/CivitaiLink/CivitaiLinkWizard
 import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal';
 import { openReportModal } from '~/components/Modals/ReportModal';
 import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
+import { openResourceReviewEditModal } from '~/components/ResourceReview/EditResourceReviewModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -14,6 +15,9 @@ const BlockModelTagsModal = dynamic(() => import('~/components/Modals/BlockModel
 const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'));
 const RunStrategyModal = dynamic(() => import('~/components/Modals/RunStrategyModal'));
 const CivitaiLinkWizard = dynamic(() => import('~/components/CivitaiLink/CivitaiLinkWizard'));
+const ResourceReviewEdit = dynamic(
+  () => import('~/components/ResourceReview/EditResourceReviewModal')
+);
 const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
 );
@@ -34,6 +38,10 @@ const registry = {
   'civitai-link-wizard': {
     Component: CivitaiLinkWizard,
     fn: openCivitaiLinkModal,
+  },
+  resourceReviewEdit: {
+    Component: ResourceReviewEdit,
+    fn: openResourceReviewEditModal,
   },
 };
 
@@ -74,7 +82,7 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
 
 export function openContext<TName extends keyof typeof registry>(
   modal: TName,
-  props: Parameters<typeof registry[TName]['fn']>[0]
+  props: Parameters<(typeof registry)[TName]['fn']>[0]
 ) {
   registry[modal].fn(props as any);
 }

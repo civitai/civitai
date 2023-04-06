@@ -50,3 +50,6 @@ export type TagGetVotableTags = TagRouter['getVotableTags'];
 
 type ResourceReviewRouter = RouterOutput['resourceReview'];
 export type ResourceReviewInfiniteModel = ResourceReviewRouter['getInfinite']['items'][number];
+export type ResourceReviewRatingTotals = ResourceReviewRouter['getRatingTotals'];
+export type ResourceReviewPaged = ResourceReviewRouter['getPaged'];
+export type ResourceReviewPagedModel = ResourceReviewRouter['getPaged']['items'][number];

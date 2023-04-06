@@ -41,7 +41,7 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { ResourceReviewTotals } from '~/components/ResourceReview/ResourceReviewTotals';
+import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
@@ -431,11 +431,25 @@ export function ModelVersionDetails({
               </Accordion.Panel>
             </Accordion.Item>
             {!model.locked && (
-              <ResourceReviewTotals
-                modelVersionId={version.id}
-                rating={version.rank?.ratingAllTime}
-                count={version.rank?.ratingCountAllTime}
-              />
+              // <ResourceReviewTotals
+              //   modelId={model.id}
+              //   modelVersionId={version.id}
+              //   rating={version.rank?.ratingAllTime}
+              //   count={version.rank?.ratingCountAllTime}
+              // />
+              <ResourceReviewSummary modelId={model.id} modelVersionId={version.id}>
+                <Accordion.Item value="resource-reviews">
+                  <Accordion.Control>
+                    <ResourceReviewSummary.Header
+                      rating={version.rank?.ratingAllTime}
+                      count={version.rank?.ratingCountAllTime}
+                    />
+                  </Accordion.Control>
+                  <Accordion.Panel px="sm" pb="sm">
+                    <ResourceReviewSummary.Totals />
+                  </Accordion.Panel>
+                </Accordion.Item>
+              </ResourceReviewSummary>
             )}
             {version.description && (
               <Accordion.Item value="version-description">

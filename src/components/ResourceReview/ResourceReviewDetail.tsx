@@ -76,7 +76,15 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
             </Title>
 
             <Group spacing={4} noWrap>
-              <ResourceReviewMenu reviewId={reviewId} userId={data.user.id} />
+              <ResourceReviewMenu
+                reviewId={reviewId}
+                userId={data.user.id}
+                review={{
+                  ...data,
+                  details: data.details ?? undefined,
+                  modelVersionId: data.modelVersion.id,
+                }}
+              />
               {inModal && (
                 <NavigateBack url={getModelWithVersionUrl(data)}>
                   {({ onClick }) => <CloseButton onClick={onClick} size="lg" />}
