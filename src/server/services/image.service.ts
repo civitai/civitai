@@ -653,7 +653,7 @@ export const getAllImages = async ({
   if (tagReview) {
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "TagsOnImage" toi
-      WHERE toi."imageId" = i.id AND toi."needReview"
+      WHERE toi."imageId" = i.id AND toi."needsReview"
     )`);
   }
 
@@ -830,6 +830,7 @@ export const getAllImages = async ({
         automated: true,
         upVotes: true,
         downVotes: true,
+        needsReview: true,
       },
     });
 

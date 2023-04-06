@@ -33,7 +33,7 @@ import Link from 'next/link';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
-
+import produce from 'immer';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageConnectionLink } from '~/components/Image/ImageConnectionLink/ImageConnectionLink';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
@@ -45,8 +45,10 @@ import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { getTagDisplayName } from '~/libs/tags';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { ImageGetGalleryInfinite } from '~/types/router';
+import { ImageGetGalleryInfinite, ImageGetInfinite } from '~/types/router';
 import { trpc } from '~/utils/trpc';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { ImageSort } from '~/server/common/enums';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerAuthSession(context);
@@ -68,74 +70,31 @@ export default function ImageTags() {
 
   // TODO.images: Change endpoint to image.getInfinite
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching, refetch } =
-    trpc.image.getGalleryImagesInfinite.useInfiniteQuery(
-      { tagReview: true },
+    trpc.image.getInfinite.useInfiniteQuery(
+      { tagReview: true, withTags: true, sort: ImageSort.Newest },
       { getNextPageParam: (lastPage) => lastPage.nextCursor }
     );
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
 
   const moderateTagsMutation = trpc.tag.moderateTags.useMutation({
     async onMutate({ entityIds, disable }) {
-      await queryUtils.image.getGalleryImagesInfinite.cancel();
-      queryUtils.image.getGalleryImagesInfinite.setInfiniteData({ tagReview: true }, (data) => {
-        if (!data) {
-          return {
-            pages: [],
-            pageParams: [],
-          };
-        }
+      await queryUtils.image.getInfinite.cancel();
+      queryUtils.image.getInfinite.setInfiniteData(
+        { tagReview: true, withTags: true, sort: ImageSort.Newest },
+        produce((data) => {
+          if (!data?.pages?.length) return;
 
-        // Remove tag from selected images
-        return {
-          ...data,
-          pages: data.pages.map((page) => ({
-            ...page,
-            items: page.items.map((item) =>
-              !entityIds.includes(item.id)
-                ? item
-                : {
-                    ...item,
-                    tags: disable
-                      ? item.tags.filter((tag) => !tag.needsReview)
-                      : item.tags.map((tag) => ({ ...tag, needsReview: false })),
-                  }
-            ),
-          })),
-        };
-      });
-    },
-  });
-
-  const disableTagMutation = trpc.tag.disableTags.useMutation({
-    async onMutate({ tags, entityIds }) {
-      const isTagIds = typeof tags[0] === 'number';
-      await queryUtils.image.getGalleryImagesInfinite.cancel();
-      queryUtils.image.getGalleryImagesInfinite.setInfiniteData({ tagReview: true }, (data) => {
-        if (!data) {
-          return {
-            pages: [],
-            pageParams: [],
-          };
-        }
-
-        // Remove tag from selected images
-        return {
-          ...data,
-          pages: data.pages.map((page) => ({
-            ...page,
-            items: page.items.map((item) =>
-              entityIds.includes(item.id)
-                ? {
-                    ...item,
-                    tags: item.tags.filter(
-                      (tag) => !tags.some((x) => (isTagIds ? x === tag.id : x === tag.name))
-                    ),
-                  }
-                : item
-            ),
-          })),
-        };
-      });
+          // Remove tag from selected images
+          for (const page of data.pages) {
+            for (const item of page.items) {
+              if (item.tags && entityIds.includes(item.id)) {
+                if (disable) item.tags = item.tags.filter((tag) => !tag.needsReview);
+                else for (const tag of item.tags) tag.needsReview = false;
+              }
+            }
+          }
+        })
+      );
     },
   });
 
@@ -144,13 +103,6 @@ export default function ImageTags() {
     if (checked && idIndex == -1) selectedHandlers.append(id);
     else if (!checked && idIndex != -1) selectedHandlers.remove(idIndex);
   };
-
-  const handleDisableTagOnImage = (imageId: number, tag: number) =>
-    disableTagMutation.mutate({
-      tags: [tag],
-      entityIds: [imageId],
-      entityType: 'image',
-    });
 
   const handleSelectAll = () => {
     if (selected.length === images.length) handleClearAll();
@@ -277,7 +229,6 @@ export default function ImageTags() {
                 {...props}
                 selected={selected.includes(props.data.id)}
                 onSelect={handleSelect}
-                disableTag={handleDisableTagOnImage}
               />
             )}
           />
@@ -294,13 +245,7 @@ export default function ImageTags() {
   );
 }
 
-function ImageGridItem({
-  data: image,
-  width: itemWidth,
-  selected,
-  onSelect,
-  disableTag,
-}: ImageGridItemProps) {
+function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: ImageGridItemProps) {
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
     const width = itemWidth > 0 ? itemWidth : 300;
@@ -311,31 +256,12 @@ function ImageGridItem({
 
   const tags = useMemo(
     () => ({
-      toReview: image.tags.filter((x) => x.needsReview),
-      other: image.tags.filter((x) => !x.needsReview),
+      toReview: image.tags?.filter((x) => x.needsReview) ?? [],
+      moderation: image.tags?.filter((x) => x.type === 'Moderation') ?? [],
     }),
     [image.tags]
   );
   const needsReview = tags.toReview.length > 0;
-
-  const renderTag = (tag: (typeof tags.toReview)[number]) => {
-    const isModeration = tag.type === 'Moderation';
-    return (
-      <Badge
-        key={tag.id}
-        variant={isModeration ? 'light' : 'filled'}
-        color={isModeration ? 'red' : 'gray'}
-        pr={0}
-      >
-        <Group spacing={0}>
-          {getTagDisplayName(tag.name)}
-          <ActionIcon size="sm" variant="transparent" onClick={() => disableTag(image.id, tag.id)}>
-            <IconX strokeWidth={3} size=".75rem" />
-          </ActionIcon>
-        </Group>
-      </Badge>
-    );
-  };
 
   return (
     <Card shadow="sm" p="xs" sx={{ opacity: !needsReview ? 0.2 : undefined }} withBorder>
@@ -426,26 +352,16 @@ function ImageGridItem({
         />
       </Card.Section>
       {needsReview && (
-        <>
-          <Divider label="Pending removal" mt="xs" />
-          <Group pt="xs" spacing={4}>
-            {tags.toReview.map(renderTag)}
-          </Group>
-        </>
+        <VotableTags mt="xs" tags={tags.moderation} entityType="image" entityId={image.id} />
       )}
-      <Divider label="Other tags" mt="xs" />
-      <Group pt="xs" spacing={4}>
-        {tags.other.map(renderTag)}
-      </Group>
     </Card>
   );
 }
 
 type ImageGridItemProps = {
-  data: ImageGetGalleryInfinite[number];
+  data: ImageGetInfinite[number];
   index: number;
   width: number;
   selected: boolean;
   onSelect: (id: number, checked: boolean) => void;
-  disableTag: (imageId: number, tagId: number) => void;
 };
