@@ -26,4 +26,5 @@ export const modelTagCompositSelect = Prisma.validator<Prisma.ImageTagSelect>()(
 export const imageTagCompositeSelect = Prisma.validator<Prisma.ImageTagSelect>()({
   ...modelTagCompositSelect,
   automated: true,
+  needsReview: true,
 });

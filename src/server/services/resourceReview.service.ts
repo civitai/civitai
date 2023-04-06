@@ -105,7 +105,7 @@ export const getRatingTotals = async ({ modelVersionId }: GetRatingTotalsInput) 
       COUNT(rr.id)::int count
     FROM "ResourceReview" rr
     JOIN "Model" m ON rr."modelId" = m.id AND m."userId" != rr."userId"
-    WHERE rr."modelVersionId" = ${modelVersionId}
+    WHERE rr."modelVersionId" = ${modelVersionId} AND NOT rr.exclude
     GROUP BY rr.rating
   `;
 
