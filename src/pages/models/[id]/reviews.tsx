@@ -224,16 +224,18 @@ function ReviewCard(review: ResourceReviewPagedModel) {
             </RoutedContextLink>
           )}
           {review.thread?._count.comments && (
-            <Badge
-              px={4}
-              leftSection={
-                <Center>
-                  <IconMessage size={14} />
-                </Center>
-              }
-            >
-              {review.thread._count.comments}
-            </Badge>
+            <RoutedContextLink modal="resourceReviewModal" reviewId={review.id}>
+              <Badge
+                px={4}
+                leftSection={
+                  <Center>
+                    <IconMessage size={14} />
+                  </Center>
+                }
+              >
+                {review.thread._count.comments}
+              </Badge>
+            </RoutedContextLink>
           )}
         </Group>
         {review.details && (
