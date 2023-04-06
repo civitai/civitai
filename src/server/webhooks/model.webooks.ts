@@ -24,7 +24,7 @@ export const modelWebhooks = createWebhookProcessor({
       const modelVersionIds = models.flatMap((model) => model.modelVersions.map((v) => v.id));
       const images = await getImagesForModelVersion({ modelVersionIds });
 
-      models?.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
+      const results = models?.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
         ...model,
         creator: {
           username: user.username,
@@ -65,7 +65,7 @@ export const modelWebhooks = createWebhookProcessor({
           .filter((x) => x),
       }));
 
-      return models;
+      return results;
     },
   },
   'updated-model': {
@@ -87,7 +87,7 @@ export const modelWebhooks = createWebhookProcessor({
       const modelVersionIds = models.flatMap((model) => model.modelVersions.map((v) => v.id));
       const images = await getImagesForModelVersion({ modelVersionIds });
 
-      models.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
+      const results = models.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
         ...model,
         creator: {
           username: user.username,
@@ -128,7 +128,7 @@ export const modelWebhooks = createWebhookProcessor({
           .filter((x) => x),
       }));
 
-      return models;
+      return results;
     },
   },
 });

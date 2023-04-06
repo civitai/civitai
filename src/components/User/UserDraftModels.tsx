@@ -96,6 +96,7 @@ export function UserDraftModels({ enabled = false }: Props) {
             <tr>
               <th>Name</th>
               <th>Type</th>
+              <th>Status</th>
               <th>Created</th>
               <th>Last Updated</th>
               <th>Missing info</th>
@@ -105,7 +106,7 @@ export function UserDraftModels({ enabled = false }: Props) {
           <tbody>
             {isLoading && (
               <tr>
-                <td colSpan={6}>
+                <td colSpan={7}>
                   <LoadingOverlay visible />
                 </td>
               </tr>
@@ -127,6 +128,9 @@ export function UserDraftModels({ enabled = false }: Props) {
                     </td>
                     <td>
                       <Badge>{splitUppercase(model.type)}</Badge>
+                    </td>
+                    <td>
+                      <Badge color="yellow">{splitUppercase(model.status)}</Badge>
                     </td>
                     <td>{formatDate(model.createdAt)}</td>
                     <td>{model.updatedAt ? formatDate(model.updatedAt) : 'N/A'}</td>

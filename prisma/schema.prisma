@@ -282,6 +282,7 @@ enum ModelStatus {
   Draft
   Published
   Unpublished
+  UnpublishedViolation
   GatherInterest
   Deleted
 }

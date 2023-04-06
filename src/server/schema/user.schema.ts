@@ -39,6 +39,7 @@ export const userUpdateSchema = z.object({
       format: z.enum(constants.modelFileFormats).optional(),
       size: z.enum(constants.modelFileSizes).optional(),
       fp: z.enum(constants.modelFileFp).optional(),
+      imageFormat: z.enum(constants.imageFormats).optional(),
     })
     .optional(),
 });
