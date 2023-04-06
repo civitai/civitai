@@ -90,7 +90,7 @@ export function UserDraftModels({ enabled = false }: Props) {
 
   return (
     <Stack>
-      <ScrollArea mah={400} onScrollPositionChange={({ y }) => setScrolled(y !== 0)}>
+      <ScrollArea style={{ height: 400 }} onScrollPositionChange={({ y }) => setScrolled(y !== 0)}>
         <Table verticalSpacing="md" fontSize="md" striped={hasDrafts}>
           <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
             <tr>

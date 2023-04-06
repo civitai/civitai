@@ -80,7 +80,7 @@ export default function UserPage({
   const { models: uploads } = user?._count ?? { models: 0 };
   const stats = user?.stats;
   const isMod = currentUser && currentUser.isModerator;
-  const isSameUser = currentUser?.username === username;
+  const isSameUser = currentUser?.username === user?.username;
 
   const removeContentMutation = trpc.user.removeAllContent.useMutation({
     onSuccess() {
