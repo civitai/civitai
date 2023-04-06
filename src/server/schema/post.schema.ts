@@ -45,14 +45,14 @@ export const postUpdateSchema = z.object({
 
 export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;
 export const removePostTagSchema = z.object({
-  postId: z.number(),
+  tagId: z.number(),
   id: z.number(),
 });
 
 export type AddPostTagInput = z.infer<typeof addPostTagSchema>;
 export const addPostTagSchema = z.object({
-  postId: z.number(),
-  id: z.number().optional(),
+  tagId: z.number().optional(),
+  id: z.number(),
   name: z.string(),
 });
 

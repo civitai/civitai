@@ -15,7 +15,6 @@ import {
   Popover,
   Code,
   BadgeProps,
-  Box,
 } from '@mantine/core';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { Fragment, useState } from 'react';
@@ -149,7 +148,7 @@ function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
   const items = useCFUploadStore((state) => state.items);
   const trackedFile = items.find((x) => x.meta.uuid === uuid);
   const removeFile = useEditPostContext((state) => state.removeFile);
-  console.log({ trackedFile });
+
   return (
     <Card className={classes.container} withBorder p={0}>
       <EdgeImage src={url} alt={name ?? undefined} />
