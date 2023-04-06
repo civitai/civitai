@@ -43,11 +43,11 @@ export function SettingsCard() {
             data={[
               {
                 value: 'optimized',
-                label: 'Optimized Images (fast)',
+                label: 'Optimized (avif, webp)',
               },
               {
                 value: 'metadata',
-                label: 'With Metadata (slow)',
+                label: 'Unoptimized (jpeg, png)',
               },
             ]}
             value={user.filePreferences?.imageFormat ?? 'metadata'}
