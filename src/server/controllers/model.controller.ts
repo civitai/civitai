@@ -357,7 +357,8 @@ export const publishModelHandler = async ({
       );
 
     const republishing = model.status !== ModelStatus.Draft;
-    const { needsReview, unpublishedReason, unpublishedAt, ...meta } = model.meta as ModelMeta;
+    const { needsReview, unpublishedReason, unpublishedAt, ...meta } =
+      (model.meta as ModelMeta | null) || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
 
     return updatedModel;
@@ -376,7 +377,7 @@ export const unpublishModelHandler = async ({ input }: { input: UnpublishModelSc
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
-    const meta = model.meta as ModelMeta;
+    const meta = (model.meta as ModelMeta | null) || {};
     const updatedModel = await updateModelById({
       id,
       data: {
@@ -763,7 +764,7 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
         'Cannot request a review for this model because it is not in the correct status'
       );
 
-    const meta = model.meta as ModelMeta;
+    const meta = (model.meta as ModelMeta | null) || {};
     const updatedModel = await upsertModel({
       ...model,
       meta: { ...meta, needsReview: true },

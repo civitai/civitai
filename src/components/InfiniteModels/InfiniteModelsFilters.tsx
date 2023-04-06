@@ -249,13 +249,7 @@ export function InfiniteModelsFilter() {
               <Chip.Group
                 spacing={4}
                 value={status}
-                onChange={(status: ModelStatus[]) =>
-                  setStatus(
-                    status.includes(ModelStatus.Unpublished)
-                      ? [...status, ModelStatus.UnpublishedViolation]
-                      : status
-                  )
-                }
+                onChange={(status: ModelStatus[]) => setStatus(status)}
                 multiple
                 my={4}
               >
