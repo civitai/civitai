@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { parseNumericString, parseNumericStringArray } from '~/utils/query-string-helpers';
+import { sanitizeHtml, santizeHtmlOptions } from '~/utils/html-helpers';
 
 /** Converts a string to a number */
 export function numericString() {
@@ -32,4 +33,15 @@ export function booleanString() {
         : undefined,
     z.boolean()
   );
+}
+
+export function sanitizedNullableString(options: santizeHtmlOptions) {
+  return z.preprocess((val) => {
+    if (!val) return;
+    const str = String(val);
+    const result = sanitizeHtml(str, options);
+    if (result.length === 0) return null;
+
+    return result;
+  }, z.string().nullish());
 }

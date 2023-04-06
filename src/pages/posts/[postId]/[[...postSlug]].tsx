@@ -19,7 +19,6 @@ export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ctx, ssg }) => {
     const params = (ctx.params ?? {}) as { postId: string };
-    console.log({ params });
     const postId = Number(params.postId);
     if (!isNumber(postId)) return { notFound: true };
 

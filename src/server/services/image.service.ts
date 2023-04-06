@@ -32,11 +32,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
 import { simpleTagSelect, imageTagSelect, ImageTag } from '~/server/selectors/tag.selector';
 import { getImageV2Select, ImageV2Model } from '~/server/selectors/imagev2.selector';
-import {
-  throwAuthorizationError,
-  throwDbError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { VotableTagModel } from '~/libs/tags';
 import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getTagsNeedingReview } from '~/server/services/system-cache';
