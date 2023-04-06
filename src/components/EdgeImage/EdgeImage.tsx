@@ -4,7 +4,10 @@ import { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 export type EdgeImageProps = EdgeUrlProps &
-  Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'loading'>;
+  Omit<
+    JSX.IntrinsicElements['img'],
+    'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'loading' | 'metadata'
+  >;
 
 export function EdgeImage({
   src,
@@ -15,7 +18,6 @@ export function EdgeImage({
   blur,
   quality,
   gravity,
-  metadata,
   className,
   name,
   ...imgProps
@@ -39,7 +41,6 @@ export function EdgeImage({
     blur,
     quality,
     gravity,
-    metadata: optimized ? undefined : metadata ?? 'keep',
     optimized: optimized ? true : undefined,
     gamma,
     name,
