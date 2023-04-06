@@ -247,7 +247,8 @@ export const modelNotifications = createNotificationProcessor({
         "userId",
         'old-draft',
         details
-      FROM to_add;
+      FROM to_add
+      WHERE NOT EXISTS (SELECT 1 FROM "Notification" no WHERE no."userId" = to_add."userId" AND type = 'old-draft' AND no.details->>'modelId' = to_add.details->>'modelId');
     `,
   },
 });

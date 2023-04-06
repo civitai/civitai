@@ -1,6 +1,9 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { webhookProcessors } from '~/server/webhooks/utils.webhooks';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('jobs', 'green');
 
 const WEBHOOKS_LAST_SENT_KEY = 'last-sent-webhooks';
 export const sendWebhooksJob = createJob('send-webhooks', '*/1 * * * *', async () => {
@@ -54,8 +57,14 @@ export const sendWebhooksJob = createJob('send-webhooks', '*/1 * * * *', async (
 
   // Send webhooks
   // --------------------------------------------
-  if (promises.length > 0) {
-    await Promise.all(promises);
-    console.log(`sent ${promises.length} webhooks`);
+  if (!promises.length) return;
+  // Break promises into batches and run them in parallel
+  const batchSize = 50;
+  for (let i = 0; i < promises.length; i += batchSize) {
+    const batch = promises.slice(i, i + batchSize);
+    log(`webhooks: sending batch ${i} to ${i + batchSize}`);
+    await Promise.all(batch);
+    await new Promise((res) => setTimeout(res, 500));
   }
+  log(`webhooks: sent ${promises.length} webhooks`);
 });

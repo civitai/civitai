@@ -124,6 +124,7 @@ export function VotableTags({
             tagId={tag.id}
             name={tag.name}
             initialVote={tag.vote}
+            needsReview={tag.needsReview}
             type={tag.type}
             score={tag.score}
             onChange={({ name, vote }) => {

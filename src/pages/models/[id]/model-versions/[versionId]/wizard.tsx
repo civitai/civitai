@@ -23,13 +23,15 @@ export const getServerSideProps = createServerSideProps({
 
     const model = await dbRead.model.findUnique({
       where: { id },
-      select: { userId: true, deletedAt: true },
+      select: { userId: true, deletedAt: true, status: true },
     });
-    if (!model || model.deletedAt) return { notFound: true };
+    if (!model || model.deletedAt || model.status === ModelStatus.Deleted)
+      return { notFound: true };
 
     const isModerator = session.user?.isModerator ?? false;
     const isOwner = model.userId === session.user?.id || isModerator;
-    if (!isOwner)
+    const unpublished = model.status === ModelStatus.UnpublishedViolation;
+    if (!isOwner || unpublished)
       return {
         redirect: {
           destination: `/models/${params.id}?modelVersionId=${versionId}`,
@@ -44,7 +46,7 @@ export const getServerSideProps = createServerSideProps({
       }
     );
     if (!version) return { notFound: true };
-    if (version.status === ModelStatus.Published)
+    if (version.status !== ModelStatus.Draft)
       return {
         redirect: {
           destination: `/models/${params.id}?modelVersionId=${versionId}`,

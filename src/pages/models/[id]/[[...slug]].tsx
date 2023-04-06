@@ -15,6 +15,7 @@ import {
   Title,
   Paper,
   Center,
+  Anchor,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -86,6 +87,7 @@ import { BrowsingMode, ImageSort } from '~/server/common/enums';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
+import { unpublishReasons } from '~/server/common/moderation-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -380,7 +382,7 @@ export default function ModelDetailsV2({
     );
 
   const isFavorite = !!favoriteModels.find((modelId) => modelId === id);
-  const deleted = !!model.deletedAt && model.status === 'Deleted';
+  const deleted = !!model.deletedAt && model.status === ModelStatus.Deleted;
   const published = model.status === ModelStatus.Published;
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
   const isMuted = currentUser?.muted ?? false;
@@ -480,13 +482,24 @@ export default function ModelDetailsV2({
                       </Menu.Item>
                     )}
                     {currentUser && isModerator && (
-                      <Menu.Item
-                        color={theme.colors.red[6]}
-                        icon={<IconTrash size={14} stroke={1.5} />}
-                        onClick={() => handleDeleteModel({ permanently: true })}
-                      >
-                        Permanently Delete Model
-                      </Menu.Item>
+                      <>
+                        {published && (
+                          <Menu.Item
+                            color="yellow"
+                            icon={<IconBan size={14} stroke={1.5} />}
+                            onClick={() => openContext('unpublishModel', { modelId: model.id })}
+                          >
+                            Unpublish as Violation
+                          </Menu.Item>
+                        )}
+                        <Menu.Item
+                          color={theme.colors.red[6]}
+                          icon={<IconTrash size={14} stroke={1.5} />}
+                          onClick={() => handleDeleteModel({ permanently: true })}
+                        >
+                          Permanently Delete Model
+                        </Menu.Item>
+                      </>
                     )}
                     {currentUser && isOwner && !deleted && (
                       <>
@@ -587,6 +600,44 @@ export default function ModelDetailsV2({
                   <Text size="md">
                     This model has been {deleted ? 'deleted' : 'unpublished'} and is not visible to
                     the community.
+                  </Text>
+                </Group>
+              </Alert>
+            )}
+            {model.status === ModelStatus.UnpublishedViolation && !model.meta?.needsReview && (
+              <Alert color="red">
+                <Group spacing="xs" noWrap align="flex-start">
+                  <ThemeIcon color="red">
+                    <IconExclamationMark />
+                  </ThemeIcon>
+                  <Text size="sm" mt={-3}>
+                    This model has been unpublished due to a violation of our{' '}
+                    <Text component="a" variant="link" href="/content/tos" target="_blank">
+                      guidelines
+                    </Text>{' '}
+                    and is not visible to the community.{' '}
+                    {model.meta?.unpublishedReason && unpublishReasons[model.meta.unpublishedReason]
+                      ? unpublishReasons[model.meta.unpublishedReason].notificationMessage
+                      : null}{' '}
+                    If you adjust your model to comply with our guidelines, you can request a review
+                    from one of our moderators. If you believe this was done in error, you can{' '}
+                    <Text component="a" variant="link" href="/appeal" target="_blank">
+                      submit an appeal
+                    </Text>
+                    .
+                  </Text>
+                </Group>
+              </Alert>
+            )}
+            {model.status === ModelStatus.UnpublishedViolation && model.meta?.needsReview && (
+              <Alert color="yellow">
+                <Group spacing="xs" noWrap>
+                  <ThemeIcon color="yellow">
+                    <IconExclamationMark />
+                  </ThemeIcon>
+                  <Text size="md">
+                    This model is currently being reviewed by our moderators. It will be visible to
+                    the community once it has been approved.
                   </Text>
                 </Group>
               </Alert>

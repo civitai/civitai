@@ -28,8 +28,7 @@ export const getServerSideProps = createServerSideProps({
 
     const isModerator = session.user?.isModerator ?? false;
     const isOwner = model.userId === session.user?.id || isModerator;
-    const isPublished = model.status === ModelStatus.Published && model.publishedAt;
-    if (!isOwner || isPublished)
+    if (!isOwner || model.status !== ModelStatus.Draft)
       return {
         redirect: {
           destination: `/models/${params.id}`,

@@ -90,12 +90,13 @@ export function UserDraftModels({ enabled = false }: Props) {
 
   return (
     <Stack>
-      <ScrollArea mah={400} onScrollPositionChange={({ y }) => setScrolled(y !== 0)}>
+      <ScrollArea style={{ height: 400 }} onScrollPositionChange={({ y }) => setScrolled(y !== 0)}>
         <Table verticalSpacing="md" fontSize="md" striped={hasDrafts}>
           <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
             <tr>
               <th>Name</th>
               <th>Type</th>
+              <th>Status</th>
               <th>Created</th>
               <th>Last Updated</th>
               <th>Missing info</th>
@@ -105,7 +106,7 @@ export function UserDraftModels({ enabled = false }: Props) {
           <tbody>
             {isLoading && (
               <tr>
-                <td colSpan={6}>
+                <td colSpan={7}>
                   <LoadingOverlay visible />
                 </td>
               </tr>
@@ -127,6 +128,9 @@ export function UserDraftModels({ enabled = false }: Props) {
                     </td>
                     <td>
                       <Badge>{splitUppercase(model.type)}</Badge>
+                    </td>
+                    <td>
+                      <Badge color="yellow">{splitUppercase(model.status)}</Badge>
                     </td>
                     <td>{formatDate(model.createdAt)}</td>
                     <td>{model.updatedAt ? formatDate(model.updatedAt) : 'N/A'}</td>

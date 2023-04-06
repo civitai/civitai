@@ -14,6 +14,7 @@ export function middleware(request: NextRequest) {
     const response = NextResponse.next();
     if (!response.headers.get('Cache-Control'))
       response.headers.set('Cache-Control', 'max-age=0, private, no-cache');
+    if (process.env.PODNAME) response.headers.set('X-Handled-By', process.env.PODNAME);
 
     return response;
   } else return handleRedirects(request);

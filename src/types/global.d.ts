@@ -64,11 +64,13 @@ declare global {
   type ModelFileFormat = 'SafeTensor' | 'PickleTensor' | 'Other';
   type ModelFileSize = 'full' | 'pruned';
   type ModelFileFp = 'fp32' | 'fp16';
+  type ImageFormat = 'optimized' | 'metadata';
 
   type UserFilePreferences = {
     format: ModelFileFormat;
     size: ModelFileSize;
     fp: ModelFileFp;
+    imageFormat: ImageFormat;
   };
 
   type FileMetadata = {

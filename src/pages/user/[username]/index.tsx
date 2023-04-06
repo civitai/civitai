@@ -23,6 +23,7 @@ import {
   IconMicrophone,
   IconMicrophoneOff,
   IconStar,
+  IconTrash,
   IconUpload,
   IconUsers,
 } from '@tabler/icons';
@@ -51,6 +52,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -78,8 +80,13 @@ export default function UserPage({
   const { models: uploads } = user?._count ?? { models: 0 };
   const stats = user?.stats;
   const isMod = currentUser && currentUser.isModerator;
-  const isSameUser = currentUser?.username === username;
+  const isSameUser = currentUser?.username === user?.username;
 
+  const removeContentMutation = trpc.user.removeAllContent.useMutation({
+    onSuccess() {
+      invalidateModeratedContent(queryUtils);
+    },
+  });
   const toggleMuteMutation = trpc.user.toggleMute.useMutation({
     async onMutate() {
       await queryUtils.user.getCreator.cancel({ username });
@@ -141,6 +148,16 @@ export default function UserPage({
           onConfirm: () => toggleBanMutation.mutate({ id: user.id }),
         });
     }
+  };
+  const handleRemoveContent = () => {
+    if (!user) return;
+    openConfirmModal({
+      title: 'Remove All Content',
+      children: `Are you sure you want to remove all content (models, reviews, comments, posts, and images) by this user? This action cannot be undone.`,
+      labels: { confirm: 'Yes, remove all content', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => removeContentMutation.mutate({ id: user.id }),
+    });
   };
 
   if (!userLoading && !user) return <NotFound />;
@@ -207,7 +224,7 @@ export default function UserPage({
                           {isMod && (
                             <Menu position="left" withinPortal>
                               <Menu.Target>
-                                <ActionIcon>
+                                <ActionIcon loading={removeContentMutation.isLoading}>
                                   <IconDotsVertical />
                                 </ActionIcon>
                               </Menu.Target>
@@ -236,6 +253,13 @@ export default function UserPage({
                                   onClick={handleToggleMute}
                                 >
                                   {user.muted ? 'Unmute user' : 'Mute user'}
+                                </Menu.Item>
+                                <Menu.Item
+                                  color="red"
+                                  icon={<IconTrash size={14} stroke={1.5} />}
+                                  onClick={handleRemoveContent}
+                                >
+                                  Remove all content
                                 </Menu.Item>
                               </Menu.Dropdown>
                             </Menu>

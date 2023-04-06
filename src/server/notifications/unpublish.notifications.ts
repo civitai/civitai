@@ -1,12 +1,6 @@
+import { unpublishReasons, type UnpublishReason } from '~/server/common/moderation-helpers';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { getDisplayName, slugit } from '~/utils/string-helpers';
-
-const unpublishReasons = {
-  'no-posts': 'because there are no images demoing what it can do',
-  'no-versions': 'because there are no published versions',
-  'no-files': 'because there are no files',
-};
-export type UnpublishReason = keyof typeof unpublishReasons;
+import { slugit } from '~/utils/string-helpers';
 
 export const unpublishNotifications = createNotificationProcessor({
   'model-version-unpublished': {
@@ -16,7 +10,7 @@ export const unpublishNotifications = createNotificationProcessor({
       message: `Your ${details.modelName}: ${
         details.modelVersionName
       } model version has been unpublished ${
-        unpublishReasons[details.reason as UnpublishReason] ?? ''
+        unpublishReasons[details.reason as UnpublishReason].notificationMessage ?? ''
       }`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}?modelVersionId=${
         details.modelVersionId
@@ -51,8 +45,8 @@ export const unpublishNotifications = createNotificationProcessor({
     displayName: 'Model unpublished',
     toggleable: false,
     prepareMessage: ({ details }) => ({
-      message: `Your ${details.modelName} model has been unpublished ${
-        unpublishReasons[details.reason as UnpublishReason] ?? ''
+      message: `Your ${details.modelName} model has been unpublished: ${
+        unpublishReasons[details.reason as UnpublishReason].notificationMessage ?? ''
       }`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}`,
     }),

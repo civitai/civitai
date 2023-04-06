@@ -6,6 +6,7 @@ import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal
 import { openReportModal } from '~/components/Modals/ReportModal';
 import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
 import { openResourceReviewEditModal } from '~/components/ResourceReview/EditResourceReviewModal';
+import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -21,6 +22,7 @@ const ResourceReviewEdit = dynamic(
 const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
 );
+const UnpublishModal = dynamic(() => import('~/components/Modals/UnpublishModal'));
 
 const registry = {
   blockModelTags: {
@@ -30,6 +32,10 @@ const registry = {
   report: {
     Component: ReportModal,
     fn: openReportModal,
+  },
+  unpublishModel: {
+    Component: UnpublishModal,
+    fn: openUnpublishModal,
   },
   runStrategy: {
     Component: RunStrategyModal,

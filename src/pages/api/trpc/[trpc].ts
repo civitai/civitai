@@ -40,7 +40,8 @@ export default createNextApiHandler({
   //   : undefined,
   onError: ({ error, type, path, input, ctx, req }) => {
     if (isDev) {
-      console.error(`❌ tRPC failed on ${path}: ${error}`);
+      console.error(`❌ tRPC failed on ${path}`);
+      console.error(error);
     }
     handleTRPCError(error);
   },

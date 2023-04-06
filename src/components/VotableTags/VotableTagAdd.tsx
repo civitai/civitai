@@ -11,12 +11,17 @@ export function VotableTagAdd({ addTag }: VotableTagAddProps) {
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const [adding, { open, close }] = useDisclosure(false);
-  const { data, isFetching } = trpc.tag.getAll.useQuery({
-    limit: 10,
-    entityType: [TagTarget.Image],
-    types: ['UserGenerated', 'Label'],
-    query: debouncedSearch.trim().toLowerCase(),
-  });
+  const { data, isFetching } = trpc.tag.getAll.useQuery(
+    {
+      limit: 10,
+      entityType: [TagTarget.Image],
+      types: ['UserGenerated', 'Label'],
+      query: debouncedSearch.trim().toLowerCase(),
+    },
+    {
+      enabled: debouncedSearch.trim().length > 0,
+    }
+  );
 
   // Style
   const { classes } = useStyles();

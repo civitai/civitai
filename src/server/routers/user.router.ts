@@ -43,7 +43,8 @@ import {
   batchBlockTagsSchema,
   getUserCosmeticsSchema,
 } from '~/server/schema/user.schema';
-import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { removeAllContent } from '~/server/services/user.service';
+import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const userRouter = router({
   getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),
@@ -81,6 +82,9 @@ export const userRouter = router({
     .input(toggleBlockedTagSchema)
     .mutation(toggleBlockedTagHandler),
   batchBlockTags: protectedProcedure.input(batchBlockTagsSchema).mutation(batchBlockTagsHandler),
-  toggleMute: protectedProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
-  toggleBan: protectedProcedure.input(getByIdSchema).mutation(toggleBanHandler),
+  toggleMute: moderatorProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
+  toggleBan: moderatorProcedure.input(getByIdSchema).mutation(toggleBanHandler),
+  removeAllContent: moderatorProcedure
+    .input(getByIdSchema)
+    .mutation(({ input }) => removeAllContent(input)),
 });

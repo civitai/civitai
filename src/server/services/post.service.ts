@@ -212,7 +212,7 @@ export const getPostTags = async ({
   ).sort((a, b) => b.postCount - a.postCount);
 };
 
-export const addPostTag = async ({ postId, id, name: initialName }: AddPostTagInput) => {
+export const addPostTag = async ({ tagId, id: postId, name: initialName }: AddPostTagInput) => {
   const name = initialName.toLowerCase().trim();
   return await dbWrite.$transaction(async (tx) => {
     const tag = await tx.tag.findUnique({
@@ -252,8 +252,8 @@ export const addPostTag = async ({ postId, id, name: initialName }: AddPostTagIn
   });
 };
 
-export const removePostTag = async ({ postId, id }: RemovePostTagInput) => {
-  await dbWrite.tagsOnPost.delete({ where: { tagId_postId: { tagId: id, postId } } });
+export const removePostTag = ({ tagId, id: postId }: RemovePostTagInput) => {
+  return dbWrite.tagsOnPost.delete({ where: { tagId_postId: { tagId, postId } } });
 };
 
 export const addPostImage = async ({

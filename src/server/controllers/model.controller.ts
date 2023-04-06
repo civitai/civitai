@@ -10,10 +10,12 @@ import {
   GetAllModelsOutput,
   GetDownloadSchema,
   ModelInput,
+  ModelMeta,
   ModelUpsertInput,
   PublishModelSchema,
   ReorderModelVersionsSchema,
   ToggleModelLockInput,
+  UnpublishModelSchema,
 } from '~/server/schema/model.schema';
 import {
   getAllModelsWithVersionsSelect,
@@ -61,16 +63,26 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const model = await getModel({
       ...input,
       user: ctx.user,
-      select: modelWithDetailsSelect,
+      select: { ...modelWithDetailsSelect, meta: true },
     });
     if (!model) {
       throw throwNotFoundError(`No model with id ${input.id}`);
     }
 
     const features = getFeatureFlags({ user: ctx.user });
+    const modelVersionIds = model.modelVersions.map((version) => version.id);
+    const posts = await dbRead.post.findMany({
+      where: {
+        modelVersionId: { in: modelVersionIds },
+        userId: model.user.id,
+      },
+      select: { id: true, modelVersionId: true },
+      orderBy: { id: 'asc' },
+    });
 
     return {
       ...model,
+      meta: model.meta as ModelMeta | null,
       modelVersions: model.modelVersions.map((version) => {
         let earlyAccessDeadline = features.earlyAccessModel
           ? getEarlyAccessDeadline({
@@ -102,12 +114,9 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           )
           .filter(isDefined);
 
-        // Oldest post first so that we use it as the showcase
-        const posts = version.posts.sort((a, b) => a.id - b.id);
-
         return {
           ...version,
-          posts,
+          posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
           hashes,
           earlyAccessDeadline,
           canDownload,
@@ -293,10 +302,7 @@ export const upsertModelHandler = async ({
     const model = await upsertModel({ ...input, userId });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
-    return {
-      ...model,
-      tagsOnModels: model.tagsOnModels?.map(({ tag }) => tag),
-    };
+    return model;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -333,35 +339,65 @@ export const updateModelHandler = async ({
   }
 };
 
-export const publishModelHandler = async ({ input }: { input: PublishModelSchema }) => {
+export const publishModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: PublishModelSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
-    const model = await publishModelById({ ...input });
+    const model = await dbRead.model.findUnique({
+      where: { id: input.id },
+      select: { status: true, meta: true },
+    });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
-    return model;
+    const { isModerator } = ctx.user;
+    if (model.status === ModelStatus.UnpublishedViolation && !isModerator)
+      throw throwAuthorizationError(
+        'You are not authorized to publish this model because it has been reported as ToS Violation'
+      );
+
+    const republishing = model.status !== ModelStatus.Draft;
+    const { needsReview, unpublishedReason, unpublishedAt, ...meta } =
+      (model.meta as ModelMeta | null) || {};
+    const updatedModel = await publishModelById({ ...input, meta, republishing });
+
+    return updatedModel;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
   }
 };
 
-export const unpublishModelHandler = async ({ input }: { input: GetByIdInput }) => {
+export const unpublishModelHandler = async ({ input }: { input: UnpublishModelSchema }) => {
   try {
-    const model = await updateModelById({
-      ...input,
+    const { id, reason } = input;
+    const model = await dbRead.model.findUnique({
+      where: { id },
+      select: { meta: true },
+    });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    const meta = (model.meta as ModelMeta | null) || {};
+    const updatedModel = await updateModelById({
+      id,
       data: {
-        status: ModelStatus.Unpublished,
+        status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
+        meta: reason
+          ? { ...meta, unpublishedReason: reason, unpublishedAt: new Date().toISOString() }
+          : undefined,
         modelVersions: {
           updateMany: {
             where: { status: ModelStatus.Published },
-            data: { status: ModelStatus.Draft },
+            data: { status: ModelStatus.Unpublished },
           },
         },
       },
     });
-    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
-    return model;
+    return updatedModel;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
@@ -665,6 +701,7 @@ export const getMyDraftModelsHandler = async ({
         name: true,
         type: true,
         createdAt: true,
+        status: true,
         updatedAt: true,
         modelVersions: {
           select: {
@@ -712,6 +749,31 @@ export const reorderModelVersionsHandler = async ({
 export const toggleModelLockHandler = async ({ input }: { input: ToggleModelLockInput }) => {
   try {
     await toggleLockModel(input);
+  } catch (error) {
+    if (error instanceof TRPCError) error;
+    else throw throwDbError(error);
+  }
+};
+
+export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const model = await dbRead.model.findUnique({
+      where: { id: input.id },
+      select: { id: true, name: true, status: true, type: true, meta: true, userId: true },
+    });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+    if (model.status !== ModelStatus.UnpublishedViolation)
+      throw throwBadRequestError(
+        'Cannot request a review for this model because it is not in the correct status'
+      );
+
+    const meta = (model.meta as ModelMeta | null) || {};
+    const updatedModel = await upsertModel({
+      ...model,
+      meta: { ...meta, needsReview: true },
+    });
+
+    return updatedModel;
   } catch (error) {
     if (error instanceof TRPCError) error;
     else throw throwDbError(error);

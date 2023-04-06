@@ -613,14 +613,19 @@ export const getAllImages = async ({
   tags,
   generation,
   reviewId,
-  withTags, // TODO.justin - return image tags when this is requested
+  withTags,
   prioritizedUserIds,
+  needsReview,
+  tagReview,
 }: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean }) => {
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
 
   // If User Isn't mod
   if (!isModerator) {
+    needsReview = false;
+    tagReview = false;
+
     // Hide images that need review
     const needsReviewOr = [Prisma.sql`i."needsReview" = false`];
     // Hide images that aren't published
@@ -633,6 +638,19 @@ export const getAllImages = async ({
     }
     AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
     AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
+  }
+
+  if (needsReview) {
+    AND.push(Prisma.sql`i."needsReview" = true`);
+    AND.push(Prisma.sql`i."scannedAt" IS NOT NULL`);
+    AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
+  }
+
+  if (tagReview) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "TagsOnImage" toi
+      WHERE toi."imageId" = i.id AND toi."needsReview"
+    )`);
   }
 
   // Filter to specific model/review content
@@ -808,6 +826,7 @@ export const getAllImages = async ({
         automated: true,
         upVotes: true,
         downVotes: true,
+        needsReview: true,
       },
     });
 

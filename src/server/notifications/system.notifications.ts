@@ -15,4 +15,12 @@ export const systemNotifications = createNotificationProcessor({
       message: `Your ${details.entity} at ${details.modelName} has been removed due to a Terms of Service violation.`,
     }),
   },
+  'system-announcement': {
+    displayName: 'System Announcement',
+    toggleable: false,
+    prepareMessage: ({ details }) => ({
+      message: details.message,
+      url: details.url,
+    }),
+  },
 });

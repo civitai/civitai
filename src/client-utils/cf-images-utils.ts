@@ -15,6 +15,7 @@ export type EdgeUrlProps = {
   metadata?: 'keep' | 'copyright' | 'none';
   background?: string;
   gamma?: number;
+  optimized?: boolean;
 };
 
 export function getEdgeUrl(src: string, { name, ...variantParams }: Omit<EdgeUrlProps, 'src'>) {
@@ -25,5 +26,5 @@ export function getEdgeUrl(src: string, { name, ...variantParams }: Omit<EdgeUrl
     .map(([key, value]) => `${key}=${value}`)
     .join(',');
 
-  return [env.NEXT_PUBLIC_IMAGE_LOCATION, src, params.toString(), `${name ?? src}.jpg`].join('/');
+  return [env.NEXT_PUBLIC_IMAGE_LOCATION, src, params.toString(), `${name ?? src}.jpeg`].join('/');
 }
