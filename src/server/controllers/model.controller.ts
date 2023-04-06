@@ -59,7 +59,7 @@ export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
     const model = await getModel({
-      input,
+      ...input,
       user: ctx.user,
       select: modelWithDetailsSelect,
     });
@@ -611,7 +611,7 @@ export const getModelDetailsForReviewHandler = async ({
 }) => {
   try {
     const model = getModel({
-      input: { id },
+      id,
       user: ctx.user,
       select: {
         poi: true,

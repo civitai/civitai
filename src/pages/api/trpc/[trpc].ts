@@ -1,10 +1,9 @@
 // src/pages/api/trpc/[trpc].ts
-import { TRPCError } from '@trpc/server';
 import { createNextApiHandler } from '@trpc/server/adapters/next';
 import { isDev } from '~/env/other';
 import { createContext } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
-import { handleTRPCError, throwDbError } from '~/server/utils/errorHandling';
+import { handleTRPCError } from '~/server/utils/errorHandling';
 
 const PUBLIC_CACHE_MAX_AGE = 60;
 const PUBLIC_CACHE_STALE_WHILE_REVALIDATE = 30;

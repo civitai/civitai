@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
+import { numericString } from '~/utils/zod-helpers';
 
 export type GetResourceReviewsInput = z.infer<typeof getResourceReviewsSchema>;
 export const getResourceReviewsSchema = z.object({
@@ -11,8 +12,8 @@ export const getRatingTotalsSchema = z.object({
   modelVersionId: z.number(),
 });
 
-export type GetResourceReviewsInfiniteInput = z.infer<typeof getResourceReviewsInfinite>;
-export const getResourceReviewsInfinite = z.object({
+export type GetResourceReviewsInfiniteInput = z.infer<typeof getResourceReviewsInfiniteSchema>;
+export const getResourceReviewsInfiniteSchema = z.object({
   limit: z.number().min(1).max(100).default(50),
   cursor: z.number().optional(),
   modelId: z.number().optional(),
@@ -45,7 +46,7 @@ export const updateResourceReviewSchema = z.object({
 
 export type GetResourceReviewPagedInput = z.infer<typeof getResourceReviewPagedSchema>;
 export const getResourceReviewPagedSchema = paginationSchema.extend({
-  modelId: z.number(),
-  modelVersionId: z.number().optional(),
+  modelId: numericString(),
+  modelVersionId: numericString().optional(),
   username: z.string().optional(),
 });

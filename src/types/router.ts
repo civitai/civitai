@@ -47,3 +47,6 @@ export type ImageGetInfinite = ImageRouter['getInfinite']['items'];
 type TagRouter = RouterOutput['tag'];
 export type TagGetAll = TagRouter['getAll']['items'];
 export type TagGetVotableTags = TagRouter['getVotableTags'];
+
+type ResourceReviewRouter = RouterOutput['resourceReview'];
+export type ResourceReviewInfiniteModel = ResourceReviewRouter['getInfinite']['items'][number];
