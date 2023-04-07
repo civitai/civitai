@@ -115,11 +115,7 @@ export function ModelVersionWizard({ data }: Props) {
                 onSubmit={(result) => {
                   if (editing) return goNext();
                   router.replace(
-                    `/models/${result?.modelId}/model-versions/${result?.id}/wizard?step=2`,
-                    undefined,
-                    {
-                      shallow: true,
-                    }
+                    `/models/${result?.modelId}/model-versions/${result?.id}/wizard?step=2`
                   );
                 }}
               >
