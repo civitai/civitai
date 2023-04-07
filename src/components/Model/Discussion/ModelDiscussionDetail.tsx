@@ -8,9 +8,6 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { trpc } from '~/utils/trpc';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ModelDiscussionComments } from '~/components/Model/Discussion/ModelDiscussionComments';
-import { useRef } from 'react';
-import { useHasClientHistory } from '~/store/ClientHistoryStore';
-import { useRouter } from 'next/router';
 import { Thread } from '@prisma/client';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 
