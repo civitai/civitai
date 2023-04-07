@@ -67,8 +67,6 @@ export function MasonryColumns<TData>({
           <div key={colIndex} className={classes.column}>
             {items.map(({ height, data }, index) => (
               <Fragment key={index}>
-                {/* <pre style={{ overflow: 'hidden' }}>{JSON.stringify(data)}</pre> */}
-                {/* {render({ data, index, width: columnWidth })} */}
                 <RenderComponent data={data} index={index} width={columnWidth} height={height} />
               </Fragment>
             ))}

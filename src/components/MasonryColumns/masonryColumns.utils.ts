@@ -1,5 +1,6 @@
 import { useWindowEvent } from '@mantine/hooks';
 import { useLayoutEffect, useMemo, useState } from 'react';
+import { createDebouncer } from '~/utils/debouncer';
 
 // don't know if I need memoized
 export const useColumnCount = (
@@ -56,8 +57,6 @@ const getMasonryColumns = <TData>(
   // Layout algorithm below always inserts into the shortest column.
   if (columnCount === 0) return [];
 
-  console.log('calculating columns');
-
   const columnHeights: number[] = Array(columnCount).fill(0);
   const columnItems: ColumnItem<TData>[][] = Array(columnCount).fill([]);
 
@@ -78,18 +77,23 @@ const getMasonryColumns = <TData>(
     // columnItems[shortest].push(item);
   }
 
-  console.log({ columnItems, columnHeights });
-
   return columnItems;
 };
 
+const windowResizeDebouncer = createDebouncer(300);
 export const useContainerWidth = (elementRef: React.MutableRefObject<HTMLElement | null>) => {
   const [windowWidth, setWindowWidth] = useState(0);
   const [width, setWidth] = useState(0);
 
-  useWindowEvent('resize', () => setWindowWidth(window.innerWidth));
+  useWindowEvent('resize', () =>
+    windowResizeDebouncer(() => {
+      console.log('resize');
+      setWindowWidth(window.innerWidth);
+    })
+  );
 
   useLayoutEffect(() => {
+    console.log('firfirea');
     const { current } = elementRef;
     if (!current) return;
     setWidth(current.offsetWidth);

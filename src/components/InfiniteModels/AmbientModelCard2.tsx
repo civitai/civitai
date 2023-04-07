@@ -182,16 +182,6 @@ export function AmbientModelCard2({ data, width, height }: Props) {
   const isHidden =
     hidden.find(({ id }) => id === user.id) || hiddenModels.find((modelId) => modelId === id);
 
-  // const height = useMemo(() => {
-  //   const aspectRatio = imageWidth / imageHeight;
-  //   return imageHeight + (aspectRatio >= 1 ? 60 : 0);
-  //   // if (!image?.width || !image?.height) return 300;
-  //   // const width = imageWidth > 0 ? imageWidth : 300;
-  //   // const aspectRatio = image.width / image.height;
-  //   // const imageHeight = Math.floor(width / aspectRatio) + (aspectRatio >= 1 ? 60 : 0);
-  //   // return Math.min(imageHeight, 600);
-  // }, [imageWidth, imageHeight]);
-
   const modelText = (
     <Text size={14} weight={500} color="white" style={{ flex: 1, lineHeight: 1 }}>
       {name}
