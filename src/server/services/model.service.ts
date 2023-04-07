@@ -118,10 +118,8 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     AND.push({ OR: statusVisibleOr });
   }
   if (sessionUser?.isModerator) {
-    if (status && status.length > 0) {
-      if (status.includes(ModelStatus.Unpublished)) status.push(ModelStatus.UnpublishedViolation);
-      AND.push({ status: status && status.length > 0 ? { in: status } : ModelStatus.Published });
-    }
+    if (status?.includes(ModelStatus.Unpublished)) status.push(ModelStatus.UnpublishedViolation);
+    AND.push({ status: status && status.length > 0 ? { in: status } : ModelStatus.Published });
   }
 
   // Filter by model permissions
