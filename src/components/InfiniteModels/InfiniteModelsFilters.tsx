@@ -37,6 +37,7 @@ export const useFilters = create<{
   setBaseModels: (baseModels?: BaseModel[]) => void;
   setBrowsingMode: (browsingMode?: BrowsingMode, keep?: boolean) => void;
   setStatus: (status?: ModelStatus[]) => void;
+  setEarlyAccess: (earlyAccess?: boolean) => void;
 }>()(
   immer((set) => ({
     filters: {},
@@ -84,6 +85,12 @@ export const useFilters = create<{
         !!status?.length ? setCookie('f_status', status) : deleteCookie('f_status');
       });
     },
+    setEarlyAccess: (earlyAccess) => {
+      set((state) => {
+        state.filters.earlyAccess = earlyAccess;
+        !!earlyAccess ? setCookie('f_earlyAccess', earlyAccess) : deleteCookie('f_earlyAccess');
+      });
+    },
   }))
 );
 
@@ -96,6 +103,7 @@ export const useInfiniteModelsFilters = () => {
     browsingMode,
     status,
     checkpointType,
+    earlyAccess,
   } = useCookies().models;
 
   const filters = useFilters((state) => state.filters);
@@ -108,6 +116,7 @@ export const useInfiniteModelsFilters = () => {
     browsingMode,
     status,
     checkpointType,
+    earlyAccess,
     ...filters,
   };
 };
@@ -169,6 +178,10 @@ export function InfiniteModelsFilter() {
   const checkpointType = useFilters(
     (state) => state.filters.checkpointType ?? cookies.checkpointType ?? 'all'
   );
+  const setEarlyAccess = useFilters((state) => state.setEarlyAccess);
+  const earlyAccess = useFilters(
+    (state) => state.filters.earlyAccess ?? cookies.earlyAccess ?? false
+  );
   const showNSFWToggle = !user || user.showNsfw;
   const showCheckpointType = !types?.length || types.includes('Checkpoint');
 
@@ -181,13 +194,15 @@ export function InfiniteModelsFilter() {
     baseModels.length +
     status.length +
     (showNSFWToggle && browsingMode !== defaultBrowsingMode ? 1 : 0) +
-    (showCheckpointType && checkpointType !== 'all' ? 1 : 0);
+    (showCheckpointType && checkpointType !== 'all' ? 1 : 0) +
+    (earlyAccess ? 1 : 0);
   const handleClear = () => {
     setTypes([]);
     setBaseModels([]);
     setStatus([]);
     setBrowsingMode(defaultBrowsingMode);
     setCheckpointType(undefined);
+    setEarlyAccess(false);
   };
 
   const chipProps: Partial<ChipProps> = {
@@ -243,24 +258,25 @@ export function InfiniteModelsFilter() {
               />
             </>
           )} */}
+          <Divider label="Model status" labelProps={{ weight: 'bold' }} />
           {user?.isModerator && (
-            <>
-              <Divider label="Model status" labelProps={{ weight: 'bold' }} />
-              <Chip.Group
-                spacing={4}
-                value={status}
-                onChange={(status: ModelStatus[]) => setStatus(status)}
-                multiple
-                my={4}
-              >
-                {availableStatus.map((status) => (
-                  <Chip key={status} value={status} {...chipProps}>
-                    {status}
-                  </Chip>
-                ))}
-              </Chip.Group>
-            </>
+            <Chip.Group
+              spacing={4}
+              value={status}
+              onChange={(status: ModelStatus[]) => setStatus(status)}
+              multiple
+              my={4}
+            >
+              {availableStatus.map((status) => (
+                <Chip key={status} value={status} {...chipProps}>
+                  {status}
+                </Chip>
+              ))}
+            </Chip.Group>
           )}
+          <Chip checked={earlyAccess} onChange={setEarlyAccess} {...chipProps}>
+            Early Access
+          </Chip>
           <Divider label="Model types" labelProps={{ weight: 'bold' }} />
           <Chip.Group
             spacing={4}

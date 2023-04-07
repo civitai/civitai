@@ -5,6 +5,7 @@ import { dbWrite, dbRead } from '~/server/db/client';
 import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { playfab } from '~/server/playfab/client';
+import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -129,10 +130,33 @@ export const upsertModelVersion = async ({ id, modelId, ...data }: ModelVersionU
   }
 
   // Otherwise, we just update the version
-  return dbWrite.modelVersion.update({
-    where: { id },
-    data,
+  const version = await dbWrite.$transaction(async (tx) => {
+    const version = await tx.modelVersion.findUnique({
+      where: { id },
+      select: { earlyAccessTimeFrame: true, createdAt: true, modelId: true },
+    });
+    if (!version) return null;
+
+    const { earlyAccessTimeFrame } = data;
+    if (earlyAccessTimeFrame && earlyAccessTimeFrame !== version.earlyAccessTimeFrame) {
+      const earlyAccessDeadline = getEarlyAccessDeadline({
+        versionCreatedAt: version.createdAt,
+        publishedAt: new Date(),
+        earlyAccessTimeframe: earlyAccessTimeFrame,
+      });
+      await tx.model.update({
+        where: { id: version.modelId },
+        data: { earlyAccessDeadline },
+      });
+    }
+
+    return tx.modelVersion.update({
+      where: { id },
+      data,
+    });
   });
+
+  return version;
 };
 
 export const deleteVersionById = async ({ id }: GetByIdInput) => {
