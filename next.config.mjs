@@ -32,15 +32,15 @@ export default defineNextConfig({
       'civitai-dev.s3.us-west-1.wasabisys.com',
     ],
   },
+  modularizeImports: {
+    'lodash': {
+      transform: 'lodash/{{member}}',
+      preventFullImport: true
+    }
+  },
   experimental: {
     // scrollRestoration: true,
     largePageDataBytes: 512 * 100000,
-    modularizeImports: {
-      'lodash': {
-        transform: 'lodash/{{member}}',
-        preventFullImport: true
-      }
-    }
   },
   poweredByHeader: false,
   redirects: async () => {
