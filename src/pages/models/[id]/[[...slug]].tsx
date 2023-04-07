@@ -89,7 +89,7 @@ import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 
-export const getServerSideProps = createServerSideProps({
+export const getServerSideProps = createServerSideProps<{ id: number }>({
   useSSG: true,
   resolver: async ({ ssg, ctx, session }) => {
     const params = (ctx.params ?? {}) as { id: string; slug: string[] };
@@ -582,8 +582,8 @@ export default function ModelDetailsV2({
                 <Collection
                   items={model.tagsOnModels}
                   renderItem={({ tag }) => (
-                    <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
-                      <Badge component="a" size="sm" sx={{ cursor: 'pointer' }}>
+                    <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}>
+                      <Badge size="sm" sx={{ cursor: 'pointer' }}>
                         {tag.name}
                       </Badge>
                     </Link>

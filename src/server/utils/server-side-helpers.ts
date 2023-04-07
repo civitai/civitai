@@ -1,4 +1,4 @@
-import { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } from 'next';
+import { GetServerSidePropsContext, GetServerSidePropsResult } from 'next';
 import { createProxySSGHelpers } from '@trpc/react-query/ssg';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { appRouter } from '~/server/routers';
@@ -26,8 +26,10 @@ export function createServerSideProps<P>({
   resolver,
   useSSG,
   prefetch = 'once',
-}: CreateServerSidePropsProps<P>) {
-  return async (context: GetServerSidePropsContext) => {
+}: CreateServerSidePropsProps<P>): (
+  context: GetServerSidePropsContext
+) => Promise<GetServerSidePropsResult<P>> {
+  return async (context) => {
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
     const session = await getServerAuthSession(context);
 
@@ -35,35 +37,26 @@ export function createServerSideProps<P>({
       useSSG && (prefetch === 'always' || !isClient)
         ? await getServerProxySSGHelpers(context, session)
         : undefined;
-    const result = (await resolver({
+    const result = await resolver({
       ctx: context,
       isClient,
       ssg,
       session,
-    })) as GetPropsFnResult<P> | undefined;
+    });
 
-    let props: GetPropsFnResult<P>['props'] | undefined;
-    if (result) {
-      if (result.redirect) return { redirect: result.redirect };
-      if (result.notFound) return { notFound: result.notFound };
-
-      props = result.props;
+    if (typeof result === 'object') {
+      if ('redirect' in result) return { redirect: result.redirect };
+      if ('notFound' in result) return { notFound: result.notFound };
     }
 
     return {
       props: {
-        ...(props ?? {}),
+        ...(typeof result === 'object' ? result.props : {}),
         ...(ssg ? { trpcState: ssg.dehydrate() } : {}),
-      },
+      } as P,
     };
   };
 }
-
-type GetPropsFnResult<P> = {
-  props: P | Promise<P>;
-  redirect: Redirect;
-  notFound: true;
-};
 
 type CreateServerSidePropsProps<P> = {
   useSSG?: boolean;
