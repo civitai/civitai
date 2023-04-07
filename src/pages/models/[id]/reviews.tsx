@@ -236,7 +236,7 @@ function ReviewCard(review: ResourceReviewPagedModel) {
                 </Center>
               }
             >
-              {review.thread._count.comments ?? '0'}
+              {review.thread?._count.comments ?? '0'}
             </Badge>
           </RoutedContextLink>
         </Group>
