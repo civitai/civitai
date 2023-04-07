@@ -316,7 +316,7 @@ const getImageDataFromFile = async (file: File) => {
   return {
     file,
     uuid: uuidv4(),
-    name: file.name,
+    name: file.name.split('.').slice(0, -1).join('.'), // remove extension
     meta,
     url,
     mimeType,
