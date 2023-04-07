@@ -1,10 +1,10 @@
-import { z } from 'zod';
+import { z, ZodNumber } from 'zod';
 import { parseNumericString, parseNumericStringArray } from '~/utils/query-string-helpers';
 import { sanitizeHtml, santizeHtmlOptions } from '~/utils/html-helpers';
 
 /** Converts a string to a number */
-export function numericString() {
-  return z.preprocess((value) => parseNumericString(value), z.number());
+export function numericString<I extends ZodNumber>(schema?: I) {
+  return z.preprocess((value) => parseNumericString(value), schema ?? z.number());
 }
 
 /** Converts an array of strings to an array of numbers */

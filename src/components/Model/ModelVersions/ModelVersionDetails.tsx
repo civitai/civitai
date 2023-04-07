@@ -467,7 +467,7 @@ export function ModelVersionDetails({
                       />
                       <Text
                         component={NextLink}
-                        href={`${router.asPath.split('?')[0]}/reviews`}
+                        href={`/models/${model.id}/reviews`}
                         variant="link"
                         size="sm"
                         onClick={(e) => {

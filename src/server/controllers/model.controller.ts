@@ -258,9 +258,18 @@ export const getModelsPagedSimpleHandler = async ({
       id: true,
       name: true,
       nsfw: true,
+      meta: true,
     },
   });
-  return getPagingData(results, take, page);
+
+  const parsedResults = {
+    ...results,
+    items: results.items.map((model) => ({
+      ...model,
+      meta: model.meta as ModelMeta | null,
+    })),
+  };
+  return getPagingData(parsedResults, take, page);
 };
 
 export const getModelVersionsHandler = async ({ input }: { input: GetByIdInput }) => {
