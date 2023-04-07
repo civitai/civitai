@@ -157,7 +157,7 @@ const useStyles = createStyles((theme) => {
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
-export function AmbientModelCard2({ data, width, height }: Props) {
+export function AmbientModelCard2Frozen({ data, width, height }: Props) {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   const theme = useMantineTheme();
