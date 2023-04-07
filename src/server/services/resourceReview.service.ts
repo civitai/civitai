@@ -114,7 +114,6 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
       COUNT(rr.id)::int count
     FROM "ResourceReview" rr
     JOIN "Model" m ON rr."modelId" = m.id AND m."userId" != rr."userId"
-    WHERE ${Prisma.join(AND, ' AND ')}
     WHERE ${Prisma.join(AND, ' AND ')} AND NOT rr.exclude
     GROUP BY rr.rating
   `;
