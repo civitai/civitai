@@ -12,17 +12,18 @@ import {
   Stack,
   Text,
   Tooltip,
+  Paper,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
-import { IconDownload, IconHeart, IconLicense, IconMessageCircle2 } from '@tabler/icons';
+import { IconDownload, IconHeart, IconLicense, IconMessageCircle2, IconGavel } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { startCase } from 'lodash';
 import { SessionUser } from 'next-auth';
 import { useRouter } from 'next/router';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -36,6 +37,7 @@ import {
 import { FileInfo } from '~/components/FileInfo/FileInfo';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { MintForm } from '~/components/MintForm/MintForm';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
@@ -47,11 +49,14 @@ import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/Resou
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
+import { chain } from '~/contract';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { CAROUSEL_LIMIT, ModelFileType } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile, getFileDisplayName } from '~/server/utils/model-helpers';
 import { ModelById } from '~/types/router';
+import { shortenIfAddress } from '~/utils/address';
+import { openEtherscan } from '~/utils/chain';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -175,6 +180,44 @@ export function ModelVersionDetails({
     },
   ];
 
+  const modelToken: DescriptionTableProps['items'] = [
+    {
+      label: 'Name',
+      value: (
+        <Text
+          style={{
+            cursor: 'pointer',
+          }}
+          td="underline"
+          onClick={() => openEtherscan('', 'token')}
+        >
+          ERC720 Name
+        </Text>
+      ),
+      visible: true,
+    },
+    {
+      label: 'Symbol',
+      value: 'ERC721 Symbol',
+      visible: true,
+    },
+    {
+      label: 'Address',
+      value: (
+        <Text
+          style={{
+            cursor: 'pointer',
+          }}
+          td="underline"
+          onClick={() => openEtherscan('', 'token')}
+        >
+          {shortenIfAddress('')}
+        </Text>
+      ),
+      visible: true,
+    },
+  ];
+
   const getFileDetails = (file: ModelById['modelVersions'][number]['files'][number]) => (
     <Group position="apart" noWrap spacing={0}>
       <VerifiedText file={file} />
@@ -256,6 +299,8 @@ export function ModelVersionDetails({
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
   const showRequestReview =
     isOwner && !user?.isModerator && model.status === ModelStatus.UnpublishedViolation;
+
+  const [isShowMintForm, setIsShowMintForm] = useState<boolean>(false);
 
   return (
     <Grid gutter="xl">
@@ -384,6 +429,18 @@ export function ModelVersionDetails({
             modelType={model.type}
             deadline={version.earlyAccessDeadline}
           />
+          {isOwnerOrMod && (
+            <Stack sx={{ flex: 1 }} spacing={4}>
+              <Button
+                leftIcon={<IconGavel size={16} />}
+                onClick={() => setIsShowMintForm(!isShowMintForm)}
+              >
+                <Text align="center">Start Mint</Text>
+              </Button>
+              {isShowMintForm && <MintForm />}
+            </Stack>
+          )}
+
           <ModelFileAlert versionId={version.id} modelType={model.type} files={version.files} />
           <Accordion
             variant="separated"
@@ -407,6 +464,24 @@ export function ModelVersionDetails({
               <Accordion.Panel>
                 <DescriptionTable
                   items={modelDetails}
+                  labelWidth="30%"
+                  withBorder
+                  paperProps={{
+                    sx: {
+                      borderLeft: 0,
+                      borderRight: 0,
+                      borderBottom: 0,
+                    },
+                    radius: 0,
+                  }}
+                />
+              </Accordion.Panel>
+            </Accordion.Item>
+            <Accordion.Item value="version-token">
+              <Accordion.Control>Token</Accordion.Control>
+              <Accordion.Panel>
+                <DescriptionTable
+                  items={modelToken}
                   labelWidth="30%"
                   withBorder
                   paperProps={{
