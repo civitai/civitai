@@ -234,6 +234,14 @@ export const commentNotifications = createNotificationProcessor({
   'new-image-comment': {
     displayName: 'New comments on your images',
     prepareMessage: ({ details }) => {
+      if (details.version === 2) {
+        let message = `${details.username} commented on your image`;
+        if (details.modelName) message += ` posted to the ${details.modelName} model`;
+
+        const url = `/images/${details.imageId}?postId=${details.postId}&highlight=${details.commentId}`;
+        return { message, url };
+      }
+
       // Prep message
       const message = `${details.username} commented on your ${
         details.reviewId ? 'review image' : 'example image'
@@ -252,31 +260,35 @@ export const commentNotifications = createNotificationProcessor({
       } else {
         searchParams.returnUrl = `/models/${details.modelId}`;
       }
-      const url = `/gallery/${details.imageId}?${new URLSearchParams(searchParams).toString()}`;
+      const url = `/images/${details.imageId}?${new URLSearchParams(searchParams).toString()}`;
 
       return { message, url };
     },
     prepareQuery: ({ lastSent }) => `
       WITH new_image_comment AS (
         SELECT DISTINCT
-          ic."userId" "ownerId",
+          i."userId" "ownerId",
           JSONB_BUILD_OBJECT(
+            'version', 2,
             'imageId', t."imageId",
-            'modelId', ic."modelId",
-            'modelVersionId', ic."modelVersionId",
+            'postId', i."postId",
             'commentId', c.id,
-            'reviewId', ic."reviewId",
+            'username', u.username,
             'modelName', m.name,
-            'username', u.username
+            'modelId', m.id,
+            'modelVersionId', p."modelVersionId",
+            'modelVersionName', mv.name
           ) "details"
         FROM "CommentV2" c
         JOIN "Thread" t ON t.id = c."threadId" AND t."imageId" IS NOT NULL
+        JOIN "Image" i ON i.id = t."imageId"
+        JOIN "Post" p ON p.id = i."postId"
+        LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+        LEFT JOIN "Model" m ON m.id = mv."modelId"
         JOIN "User" u ON c."userId" = u.id
-        JOIN "ImageConnection" ic ON ic."imageId" = t."imageId"
-        JOIN "Model" m ON m.id = ic."modelId"
         WHERE m."userId" > 0
           AND c."createdAt" > '${lastSent}'
-          AND c."userId" != ic."userId"
+          AND c."userId" != i."userId"
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT
