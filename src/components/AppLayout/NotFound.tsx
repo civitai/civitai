@@ -1,5 +1,5 @@
 import { Button, Container, Stack, Text, Title } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import Link from 'next/link';
 import { Meta } from '~/components/Meta/Meta';
 
 export function NotFound() {
@@ -11,7 +11,7 @@ export function NotFound() {
         <Stack align="center">
           <Title order={1}>404</Title>
           <Text size="xl">The page you are looking for doesn&apos;t exist</Text>
-          <Button component={NextLink} href="/">
+          <Button component={Link} href="/">
             Go back home
           </Button>
         </Stack>

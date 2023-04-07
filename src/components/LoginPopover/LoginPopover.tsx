@@ -1,11 +1,11 @@
 import { Popover, Stack, Group, ThemeIcon, Button, Text, PopoverProps } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import { useState, cloneElement } from 'react';
 import { create } from 'zustand';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { v4 as uuidv4 } from 'uuid';
+import Link from 'next/link';
 
 type StoreProps = {
   keys: Record<string, boolean>;
@@ -72,7 +72,7 @@ export function LoginPopover({
               )}
             </Group>
 
-            <Button size="xs" component={NextLink} href={`/login?returnUrl=${router.asPath}`}>
+            <Button size="xs" component={Link} href={`/login?returnUrl=${router.asPath}`}>
               Login
             </Button>
           </Stack>

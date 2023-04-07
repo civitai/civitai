@@ -18,7 +18,6 @@ import {
   useMantineColorScheme,
 } from '@mantine/core';
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
 import {
   IconAlbum,
   IconCircleDashed,
@@ -334,7 +333,7 @@ export function AppHeader() {
       links
         .filter(({ href, visible }) => visible !== false && href !== '/models/create')
         .map((link) => (
-          <Menu.Item key={link.href} component={NextLink} href={link.href}>
+          <Menu.Item key={link.href} component={Link} href={link.href}>
             {link.label}
           </Menu.Item>
         )),
@@ -355,7 +354,7 @@ export function AppHeader() {
               <LoginRedirect reason="upload-model" returnUrl="/models/create">
                 <Button
                   className={classes.links}
-                  component={NextLink}
+                  component={Link}
                   href="/models/create"
                   variant="filled"
                   size="xs"
@@ -375,11 +374,7 @@ export function AppHeader() {
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
           <Group spacing="xs" align="center">
             {!currentUser ? (
-              <Button
-                component={NextLink}
-                href={`/login?returnUrl=${router.asPath}`}
-                variant="default"
-              >
+              <Button component={Link} href={`/login?returnUrl=${router.asPath}`} variant="default">
                 Sign In
               </Button>
             ) : null}
@@ -428,7 +423,7 @@ export function AppHeader() {
                   <>
                     <Menu.Item
                       icon={<IconSettings stroke={1.5} />}
-                      component={NextLink}
+                      component={Link}
                       href="/user/account"
                     >
                       Account settings

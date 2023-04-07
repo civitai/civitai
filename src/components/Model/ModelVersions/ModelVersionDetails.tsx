@@ -14,13 +14,13 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
 import { IconDownload, IconHeart, IconLicense, IconMessageCircle2 } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { startCase } from 'lodash';
 import { SessionUser } from 'next-auth';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef } from 'react';
 
@@ -466,7 +466,7 @@ export function ModelVersionDetails({
                         count={version.rank?.ratingCountAllTime}
                       />
                       <Text
-                        component={NextLink}
+                        component={Link}
                         href={`/models/${model.id}/reviews`}
                         variant="link"
                         size="sm"

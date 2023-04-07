@@ -1,7 +1,7 @@
 import { Text } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
 import { IconAlertCircle } from '@tabler/icons';
+import Link from 'next/link';
 import React from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -69,7 +69,7 @@ export function EarlyAccessAlert({ versionId, modelType, deadline }: Props) {
       {`This ${getDisplayName(
         modelType
       ).toLowerCase()} is in "Early Access" to collect feedback from `}{' '}
-      <Text variant="link" component={NextLink} href="/pricing">
+      <Text variant="link" component={Link} href="/pricing">
         Supporter Tier members
       </Text>
       {`. It will be publicly available in `}

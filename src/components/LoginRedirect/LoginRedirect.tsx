@@ -12,6 +12,7 @@ export type Props = {
 export function LoginRedirect({ children, reason, returnUrl }: Props) {
   const router = useRouter();
   const { data: session } = useSession();
+  console.log(children);
   return !session
     ? React.cloneElement(children, {
         ...children.props,

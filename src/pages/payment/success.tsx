@@ -9,8 +9,8 @@ import {
   Button,
   Center,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { IconCircleCheck, IconLayoutDashboard, IconRosette } from '@tabler/icons';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
@@ -63,12 +63,12 @@ export default function PaymentSuccess() {
         </Text>
 
         <Group grow>
-          <Button component={NextLink} href="/" size="md" leftIcon={<IconLayoutDashboard />}>
+          <Button component={Link} href="/" size="md" leftIcon={<IconLayoutDashboard />}>
             View Models
           </Button>
           <Button
             variant="light"
-            component={NextLink}
+            component={Link}
             href="/user/account"
             size="md"
             rightIcon={<IconRosette />}

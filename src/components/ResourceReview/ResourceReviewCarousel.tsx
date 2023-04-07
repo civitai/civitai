@@ -18,10 +18,10 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { NextLink } from '@mantine/next';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { MetricTimeframe } from '@prisma/client';
+import Link from 'next/link';
 
 export function ResourceReviewCarousel({
   username,
@@ -163,14 +163,14 @@ export function ResourceReviewCarousel({
           {viewMore && (
             <Carousel.Slide style={{ display: 'flex', alignItems: 'center' }}>
               {/* <Button
-            component={NextLink}
-            href={`/images?modelVersionId=${modelVersionId}&username=${username}`}
-            variant="outline"
-            fullWidth
-            className={classes.viewMore}
-          >
-            View more
-          </Button> */}
+                component={Link}
+                href={`/images?modelVersionId=${modelVersionId}&username=${username}`}
+                variant="outline"
+                fullWidth
+                className={classes.viewMore}
+              >
+                View more
+              </Button> */}
               <AspectRatio
                 ratio={1}
                 sx={(theme) => ({
@@ -180,7 +180,7 @@ export function ResourceReviewCarousel({
                 })}
               >
                 <Button
-                  component={NextLink}
+                  component={Link}
                   href={`/images?modelVersionId=${modelVersionId}&username=${username}`}
                   variant="outline"
                   fullWidth

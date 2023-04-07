@@ -5,9 +5,9 @@ import { QS } from '~/utils/qs';
 import { getHasClientHistory } from '~/store/ClientHistoryStore';
 import { create } from 'zustand';
 import { Freeze } from 'react-freeze';
-import { NextLink } from '@mantine/next';
 import { removeEmpty } from '~/utils/object-helpers';
 import useIsClient from '~/hooks/useIsClient';
+import Link from 'next/link';
 
 const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
 const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLightbox'));
@@ -229,7 +229,7 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
   const resolve = registry[modal].resolve;
   const [url, as, options] = resolve(toResolve as any) as Parameters<NextRouter['push']>;
   return (
-    <NextLink
+    <Link
       href={url}
       as={as}
       {...options}
@@ -243,7 +243,7 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
       className={className}
     >
       {children}
-    </NextLink>
+    </Link>
   );
 }
 

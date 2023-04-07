@@ -13,7 +13,6 @@ import {
   CloseButton,
   Button,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { trpc } from '~/utils/trpc';
@@ -64,7 +63,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
             <Title order={3} sx={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ whiteSpace: 'nowrap' }}>Review:</span>{' '}
               <Text
-                component={NextLink}
+                component={Link}
                 href={getModelWithVersionUrl(data)}
                 variant="link"
                 lineClamp={1}

@@ -1,5 +1,5 @@
 import { Group, Input, Stack, Text } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import Link from 'next/link';
 import { useEffect } from 'react';
 import { z } from 'zod';
 
@@ -145,7 +145,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   <>
                     {`This puts your model in the "Early Access" list of models
                   available to `}
-                    <Text component={NextLink} href="/pricing" variant="link" target="_blank">
+                    <Text component={Link} href="/pricing" variant="link" target="_blank">
                       Supporter Tier members
                     </Text>
                     {

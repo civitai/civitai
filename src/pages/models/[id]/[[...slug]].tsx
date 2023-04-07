@@ -19,7 +19,6 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
 import {
   IconArrowsSort,
@@ -659,7 +658,7 @@ export default function ModelDetailsV2({
           <Group spacing={4} noWrap>
             {isOwner || isModerator ? (
               <Button
-                component={NextLink}
+                component={Link}
                 href={`/models/${model.id}/model-versions/create`}
                 // variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                 variant="light"
@@ -743,7 +742,7 @@ export default function ModelDetailsV2({
                     <Title order={2}>Gallery</Title>
                     <LoginRedirect reason="create-review">
                       <Button
-                        component={NextLink}
+                        component={Link}
                         className={classes.discussionActionButton}
                         variant="outline"
                         size="xs"

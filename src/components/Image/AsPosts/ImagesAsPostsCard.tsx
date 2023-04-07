@@ -28,11 +28,11 @@ import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { trpc } from '~/utils/trpc';
-import { NextLink } from '@mantine/next';
 import { useImageFilters } from '~/providers/FiltersProvider';
 import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseImagesQuery } from '~/components/Image/image.utils';
+import Link from 'next/link';
 
 export function ImagesAsPostsCard({
   data,
@@ -122,7 +122,7 @@ export function ImagesAsPostsCard({
                         <ActionIcon
                           color="red"
                           variant="outline"
-                          component={NextLink}
+                          component={Link}
                           href={`/posts/${data.postId}/edit`}
                         >
                           <IconExclamationMark />

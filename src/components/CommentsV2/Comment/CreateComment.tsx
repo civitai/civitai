@@ -1,5 +1,4 @@
 import { Alert, Center, Group, Text } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import router from 'next/router';
 import { CommentForm } from './CommentForm';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -7,6 +6,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { useCommentsContext } from '~/components/CommentsV2/CommentsProvider';
 import { IconLock } from '@tabler/icons';
+import Link from 'next/link';
 
 type CreateCommentProps = {
   onCancel?: () => void;
@@ -24,12 +24,7 @@ export function CreateComment({ onCancel, autoFocus, replyTo }: CreateCommentPro
         <Group align="center" position="center" spacing="xs">
           <Text size="sm">
             You must{' '}
-            <Text
-              variant="link"
-              component={NextLink}
-              href={`/login?returnUrl=${router.asPath}`}
-              inline
-            >
+            <Text variant="link" component={Link} href={`/login?returnUrl=${router.asPath}`} inline>
               sign in
             </Text>{' '}
             to add a comment

@@ -1,12 +1,14 @@
 import { Anchor, AnchorProps } from '@mantine/core';
-import { NextLink } from '@mantine/next';
-import { NextLinkProps } from '@mantine/next/lib/NextLink';
+import Link from 'next/link';
+import { ComponentProps } from 'react';
+
+type NextLinkProps = ComponentProps<typeof Link>;
 
 export const AnchorNoTravel = (props: NextLinkProps & AnchorProps) => {
   return (
     <Anchor
       variant="text"
-      component={NextLink}
+      component={Link}
       {...props}
       onClick={(e) => {
         if (e.target !== e.currentTarget) {

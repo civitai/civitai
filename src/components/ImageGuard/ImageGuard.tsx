@@ -12,7 +12,6 @@ import {
   Menu,
   HoverCard,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { Prisma } from '@prisma/client';
 import {
   IconDotsVertical,
@@ -39,6 +38,7 @@ import { useImageStore } from '~/store/images.store';
 import { isDefined } from '~/utils/type-guards';
 import Router, { useRouter } from 'next/router';
 import { trpc } from '~/utils/trpc';
+import Link from 'next/link';
 
 export type ImageGuardConnect = {
   entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post';
@@ -533,7 +533,7 @@ function ImageGuardPopover({ children }: { children: React.ReactElement }) {
               </Text>
             </Group>
 
-            <Button size="xs" component={NextLink} href={`/login?returnUrl=${router.asPath}`}>
+            <Button size="xs" component={Link} href={`/login?returnUrl=${router.asPath}`}>
               Login
             </Button>
           </Stack>

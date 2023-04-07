@@ -14,8 +14,8 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { IconInfoCircle, IconPhotoOff } from '@tabler/icons';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 
 import { useQueryImages } from '~/components/Image/image.utils';
@@ -166,19 +166,11 @@ export function ModelCarousel({
           </Stack>
           <Group grow w="100%">
             {currentUser ? (
-              <Button
-                component={NextLink}
-                href="/user/account#content-moderation"
-                variant="outline"
-              >
+              <Button component={Link} href="/user/account#content-moderation" variant="outline">
                 Adjust Settings
               </Button>
             ) : (
-              <Button
-                component={NextLink}
-                href={`/login?returnUrl=${router.asPath}`}
-                variant="outline"
-              >
+              <Button component={Link} href={`/login?returnUrl=${router.asPath}`} variant="outline">
                 Log In
               </Button>
             )}

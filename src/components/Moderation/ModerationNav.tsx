@@ -1,6 +1,6 @@
 import { ActionIcon, Menu } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { IconBadge } from '@tabler/icons';
+import Link from 'next/link';
 import { useMemo } from 'react';
 
 export function ModerationNav() {
@@ -12,7 +12,7 @@ export function ModerationNav() {
         { label: 'Image Tags', href: '/moderator/image-tags' },
         { label: 'Models', href: '/moderator/models' },
       ].map((link) => (
-        <Menu.Item key={link.href} component={NextLink} href={link.href}>
+        <Menu.Item key={link.href} component={Link} href={link.href}>
           {link.label}
         </Menu.Item>
       )),

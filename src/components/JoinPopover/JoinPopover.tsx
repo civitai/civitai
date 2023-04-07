@@ -1,10 +1,10 @@
 import { Popover, Stack, Group, ThemeIcon, Button, Text } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons';
 import { useState, cloneElement } from 'react';
 import { create } from 'zustand';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { v4 as uuidv4 } from 'uuid';
+import Link from 'next/link';
 
 type StoreProps = {
   keys: Record<string, boolean>;
@@ -68,7 +68,7 @@ export function JoinPopover({
               )}
             </Group>
 
-            <Button size="xs" component={NextLink} href={`/pricing`}>
+            <Button size="xs" component={Link} href={`/pricing`}>
               Join Now
             </Button>
           </Stack>

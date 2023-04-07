@@ -10,7 +10,7 @@ import {
   Text,
 } from '@mantine/core';
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
+import Link from 'next/link';
 import { useState } from 'react';
 import { env } from '~/env/client.mjs';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -78,7 +78,7 @@ export function AppFooter() {
         )}
         <Group spacing={0} sx={{ flexWrap: 'nowrap' }}>
           <Button
-            component={NextLink}
+            component={Link}
             href="/pricing"
             {...buttonProps}
             variant="subtle"
@@ -88,7 +88,7 @@ export function AppFooter() {
             Support Us ❤️
           </Button>
           <Button
-            component={NextLink}
+            component={Link}
             prefetch={false}
             href="/content/tos"
             {...buttonProps}
@@ -97,7 +97,7 @@ export function AppFooter() {
             Terms of Service
           </Button>
           <Button
-            component={NextLink}
+            component={Link}
             prefetch={false}
             href="/content/privacy"
             {...buttonProps}

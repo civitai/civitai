@@ -10,11 +10,11 @@ import {
   Title,
   Button,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { IconCircleCheck, IconExclamationMark, IconHome } from '@tabler/icons';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { BuiltInProviderType } from 'next-auth/providers';
 import { getProviders, signIn } from 'next-auth/react';
+import Link from 'next/link';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { SocialButton } from '~/components/Social/SocialButton';
 import { dbRead } from '~/server/db/client';
@@ -86,7 +86,7 @@ export default function LinkRole({
                 >{`We've updated your Discord account with the latest data from Civitai`}</Text>
               </Group>
             </Alert>
-            <Button size="lg" leftIcon={<IconHome />} component={NextLink} href="/">
+            <Button size="lg" leftIcon={<IconHome />} component={Link} href="/">
               Back to the models!
             </Button>
           </Stack>

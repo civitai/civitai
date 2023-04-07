@@ -8,7 +8,6 @@ import {
   ActionIcon,
   createStyles,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import {
   IconAlertTriangle,
   IconDotsVertical,
@@ -19,6 +18,7 @@ import {
   IconChevronRight,
   IconFileSettings,
 } from '@tabler/icons';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
@@ -202,7 +202,7 @@ export function ModelVersionList({
                     </Menu.Item>
                   )}
                   <Menu.Item
-                    // component={NextLink}
+                    // component={Link}
                     icon={<IconEdit size={14} stroke={1.5} />}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -227,7 +227,7 @@ export function ModelVersionList({
                   </Menu.Item>
                   {version.posts.length > 0 && (
                     <Menu.Item
-                      component={NextLink}
+                      component={Link}
                       icon={<IconPhotoEdit size={14} stroke={1.5} />}
                       onClick={(e) => e.stopPropagation()}
                       href={`/posts/${version.posts[0].id}/edit`}

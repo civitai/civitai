@@ -13,8 +13,8 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { closeAllModals } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 import { z } from 'zod';
@@ -132,7 +132,7 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
                         You must be logged in to add a comment
                       </Text>
                       <Button
-                        component={NextLink}
+                        component={Link}
                         href={`/login?returnUrl=${router.asPath}`}
                         size="xs"
                         onClick={() => closeAllModals()}

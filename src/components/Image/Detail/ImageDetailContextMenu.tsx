@@ -9,7 +9,7 @@ import { ToggleLockComments } from '~/components/CommentsV2';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { useRouter } from 'next/router';
-import { NextLink } from '@mantine/next';
+import Link from 'next/link';
 
 /*
 TODO.gallery
@@ -54,7 +54,7 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
       <Menu.Dropdown>
         {image.postId && (
           <Menu.Item
-            component={NextLink}
+            component={Link}
             icon={<IconPencil size={14} stroke={1.5} />}
             href={`/posts/${image.postId}/edit`}
           >
