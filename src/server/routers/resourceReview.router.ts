@@ -1,14 +1,15 @@
 import {
+  createResourceReviewSchema,
   getRatingTotalsSchema,
-  getResourceReviewsInfinite,
+  getResourceReviewsInfiniteSchema,
   updateResourceReviewSchema,
+  getResourceReviewPagedSchema,
+  getUserResourceReviewSchema,
 } from './../schema/resourceReview.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  createResourceReviewHandler,
   deleteResourceReviewHandler,
-  getRatingTotalsHandler,
-  getResourceReviewHandler,
-  getResourceReviewsInfiniteHandler,
   updateResourceReviewHandler,
   upsertResourceReviewHandler,
 } from './../controllers/resourceReview.controller';
@@ -16,6 +17,13 @@ import { dbRead } from '~/server/db/client';
 import { upsertResourceReviewSchema } from '~/server/schema/resourceReview.schema';
 import { middleware, publicProcedure, router, protectedProcedure } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import {
+  getPagedResourceReviews,
+  getRatingTotals,
+  getResourceReview,
+  getResourceReviewsInfinite,
+  getUserResourceReview,
+} from '~/server/services/resourceReview.service';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -24,14 +32,12 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 
   const userId = ctx.user.id;
   let ownerId = userId;
-  if (id) {
-    const isModerator = ctx?.user?.isModerator;
+  const isModerator = ctx?.user?.isModerator;
+  if (!isModerator && id) {
     ownerId =
       (await dbRead.resourceReview.findUnique({ where: { id }, select: { userId: true } }))
         ?.userId ?? 0;
-    if (!isModerator) {
-      if (ownerId !== userId) throw throwAuthorizationError();
-    }
+    if (ownerId !== userId) throw throwAuthorizationError();
   }
 
   return next({
@@ -44,15 +50,26 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 });
 
 export const resourceReviewRouter = router({
-  get: publicProcedure.input(getByIdSchema).query(getResourceReviewHandler),
+  get: publicProcedure.input(getByIdSchema).query(({ input }) => getResourceReview(input)),
+  getUserResourceReview: protectedProcedure
+    .input(getUserResourceReviewSchema)
+    .query(({ input, ctx }) => getUserResourceReview({ ...input, userId: ctx.user.id })),
   getInfinite: publicProcedure
-    .input(getResourceReviewsInfinite)
-    .query(getResourceReviewsInfiniteHandler),
-  getRatingTotals: publicProcedure.input(getRatingTotalsSchema).query(getRatingTotalsHandler),
+    .input(getResourceReviewsInfiniteSchema)
+    .query(({ input }) => getResourceReviewsInfinite(input)),
+  getPaged: publicProcedure
+    .input(getResourceReviewPagedSchema)
+    .query(({ input }) => getPagedResourceReviews(input)),
+  getRatingTotals: publicProcedure
+    .input(getRatingTotalsSchema)
+    .query(({ input }) => getRatingTotals(input)),
   upsert: protectedProcedure
     .input(upsertResourceReviewSchema)
     .use(isOwnerOrModerator)
     .mutation(upsertResourceReviewHandler),
+  create: protectedProcedure
+    .input(createResourceReviewSchema)
+    .mutation(createResourceReviewHandler),
   update: protectedProcedure
     .input(updateResourceReviewSchema)
     .use(isOwnerOrModerator)

@@ -10,8 +10,6 @@ import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { publicApiContext } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
-import { getAllModelsWithVersionsSelect } from '~/server/selectors/model.selector';
-import { getModel } from '~/server/services/model.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';

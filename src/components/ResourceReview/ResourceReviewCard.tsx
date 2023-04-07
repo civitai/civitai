@@ -2,8 +2,8 @@ import { Card, Stack, Group, Rating, Badge, Center, Text, Button, ScrollArea } f
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { IconPhoto, IconMessageCircle2 } from '@tabler/icons';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { ResourceReviewInfiniteModel } from '~/server/controllers/resourceReview.controller';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { ResourceReviewInfiniteModel } from '~/types/router';
 
 export function ResourceReviewCard({ data }: { data: ResourceReviewInfiniteModel }) {
   return (

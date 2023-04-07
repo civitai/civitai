@@ -7,6 +7,7 @@ import { IconCloudOff } from '@tabler/icons';
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { ResourceReviewCard } from '~/components/ResourceReview/ResourceReviewCard';
 
+// TODO.Briant - determine if this is needed, along with trpc.resourceReview.getInfinite
 export function ResourceReviewGrid({
   modelId,
   limit = 8,

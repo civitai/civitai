@@ -1,7 +1,7 @@
 import { Card, Group, Rating, Stack, Text, Divider, Button } from '@mantine/core';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { trpc } from '~/utils/trpc';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { IconChevronDown } from '@tabler/icons';
 import { InputRTE, useForm, Form } from '~/libs/form';
 import { z } from 'zod';
@@ -16,6 +16,7 @@ type EditResourceReviewProps = {
   details?: string | null;
   createdAt?: Date | null;
   name?: string | null;
+  onSuccess?: (id: number) => void;
 };
 
 const schema = z.object({
@@ -32,6 +33,7 @@ export function EditResourceReview({
   details: initialDetails,
   createdAt,
   name,
+  onSuccess,
 }: EditResourceReviewProps) {
   const [id, setId] = useState(initialId ?? undefined);
   const [rating, setRating] = useState(initialRating ?? undefined);
@@ -40,6 +42,7 @@ export function EditResourceReview({
 
   const [editDetail, setEditDetail] = useState(false);
   const toggleEditDetail = () => setEditDetail((state) => !state);
+  const queryUtils = trpc.useContext();
 
   const handleRatingChange = (rating: number) => {
     if (!modelVersionId || !modelId) return;
@@ -50,6 +53,7 @@ export function EditResourceReview({
         onSuccess: async (response, request) => {
           setRating(rating);
           setId(response.id);
+          queryUtils.resourceReview.invalidate();
         },
       }
     );
@@ -69,6 +73,10 @@ export function EditResourceReview({
       }
     );
   };
+
+  useEffect(() => {
+    form.reset({ details });
+  }, [details]); // eslint-disable-line
 
   return (
     <Card p={8} withBorder>

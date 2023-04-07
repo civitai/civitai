@@ -5,6 +5,7 @@ import { openCivitaiLinkModal } from '~/components/CivitaiLink/CivitaiLinkWizard
 import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal';
 import { openReportModal } from '~/components/Modals/ReportModal';
 import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
+import { openResourceReviewEditModal } from '~/components/ResourceReview/EditResourceReviewModal';
 import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
 
 const DynamicOnboardingModal = dynamic(
@@ -15,6 +16,9 @@ const BlockModelTagsModal = dynamic(() => import('~/components/Modals/BlockModel
 const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'));
 const RunStrategyModal = dynamic(() => import('~/components/Modals/RunStrategyModal'));
 const CivitaiLinkWizard = dynamic(() => import('~/components/CivitaiLink/CivitaiLinkWizard'));
+const ResourceReviewEdit = dynamic(
+  () => import('~/components/ResourceReview/EditResourceReviewModal')
+);
 const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
 );
@@ -40,6 +44,10 @@ const registry = {
   'civitai-link-wizard': {
     Component: CivitaiLinkWizard,
     fn: openCivitaiLinkModal,
+  },
+  resourceReviewEdit: {
+    Component: ResourceReviewEdit,
+    fn: openResourceReviewEditModal,
   },
 };
 

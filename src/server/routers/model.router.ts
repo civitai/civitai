@@ -50,6 +50,7 @@ import { checkFileExists, getS3Client } from '~/utils/s3-utils';
 import { prepareFile } from '~/utils/file-helpers';
 import { getAllHiddenForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
 import { BrowsingMode } from '~/server/common/enums';
+import { getSimpleModelWithVersions } from '~/server/services/model.service';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -173,6 +174,9 @@ export const modelRouter = router({
     .input(toggleModelLockSchema)
     .use(isOwnerOrModerator)
     .mutation(toggleModelLockHandler),
+  getSimple: publicProcedure
+    .input(getByIdSchema)
+    .query(({ input }) => getSimpleModelWithVersions(input)),
   requestReview: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
