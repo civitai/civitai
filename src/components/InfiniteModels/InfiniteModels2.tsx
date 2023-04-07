@@ -94,10 +94,15 @@ export function InfiniteModels2({ columnWidth = 300, delayNsfw = false }: Infini
           <MasonryColumns
             columnWidth={308}
             data={models}
-            pick={(data) => ({
-              width: data.image?.width ?? 450,
-              height: data.image?.height ?? 450,
-            })}
+            pick={(data) => {
+              const width = data.image?.width ?? 450;
+              const height = data.image?.height ?? 450;
+              const aspectRatio = width / height;
+              return {
+                width,
+                height: height + (aspectRatio >= 1 ? 60 : 0),
+              };
+            }}
             render={AmbientModelCard2}
           />
           {hasNextPage && !isLoading && !isRefetching && (
