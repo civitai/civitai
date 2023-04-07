@@ -113,6 +113,7 @@ export const getVotableTagsHandler = async ({
     const results = await getVotableTags({
       ...input,
       userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
     });
 
     return results;

@@ -99,6 +99,7 @@
     "next-plausible": "^3.7.2",
     "nodemailer": "^6.8.0",
     "playfab-sdk": "^2.122.230320",
+    "prom-client": "^14.2.0",
     "query-string": "^7.1.1",
     "rate-limiter-flexible": "^2.4.1",
     "react": "18.2.0",

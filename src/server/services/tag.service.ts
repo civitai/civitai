@@ -133,7 +133,8 @@ export const getVotableTags = async ({
   type,
   id,
   take = 20,
-}: GetVotableTagsSchema & { userId?: number }) => {
+  isModerator = false,
+}: GetVotableTagsSchema & { userId?: number; isModerator?: boolean }) => {
   let results: VotableTagModel[] = [];
   if (type === 'model') {
     const tags = await dbRead.modelTag.findMany({
@@ -188,7 +189,11 @@ export const getVotableTags = async ({
       }
     }
     results = results.filter(
-      (tag) => tag.type !== 'Moderation' || tag.score > 0 || (tag.vote && tag.vote > 0)
+      (tag) =>
+        tag.type !== 'Moderation' ||
+        tag.score > 0 ||
+        (tag.vote && tag.vote > 0) ||
+        (tag.needsReview && isModerator)
     );
   }
 

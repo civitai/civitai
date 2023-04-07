@@ -11,12 +11,12 @@ import {
   Box,
   Divider,
   Loader,
-  Center,
 } from '@mantine/core';
 import { useDebouncedValue, getHotkeyHandler, useClickOutside } from '@mantine/hooks';
 import { IconPlus, IconX } from '@tabler/icons';
 import { useEffect, useState, useMemo } from 'react';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 type TagProps = {
@@ -44,14 +44,14 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
   const setTags = useEditPostContext((state) => state.setTags);
 
   const { mutate, isLoading } = trpc.post.removeTag.useMutation({
-    onMutate({ id }) {
-      setTags((tags) => tags.filter((x) => x.id !== id));
+    onMutate({ tagId }) {
+      setTags((tags) => tags.filter((x) => x.id !== tagId));
     },
   });
 
   const handleRemoveTag = (tag: TagProps) => {
     if (tag.id) {
-      mutate({ postId, id: tag.id }, { onError: () => setTags((tags) => [...tags, tag]) });
+      mutate({ id: postId, tagId: tag.id }, { onError: () => setTags((tags) => [...tags, tag]) });
     } else {
       setTags((tags) => tags.filter((x) => x.name.toLowerCase() !== tag.name.toLowerCase()));
     }
@@ -115,14 +115,24 @@ function TagPicker() {
         return [...tags.filter((x) => !!x.id && x.id !== response.id), response];
       });
     },
-    onError: async () => {
-      setTags((tags) => tags.filter((x) => !!x.id));
-    },
   });
 
   const handleAddTag = (tag: TagProps) => {
+    const prevTags = tags;
     setTags((tags) => [...tags, tag]);
-    mutate({ postId, ...tag });
+    mutate(
+      { id: postId, tagId: tag.id, name: tag.name },
+      {
+        onError(error) {
+          showErrorNotification({
+            title: 'Failed to add tag',
+            error: new Error(error.message),
+            reason: 'Unable to add tag, please try again.',
+          });
+          setTags(prevTags);
+        },
+      }
+    );
   };
 
   useEffect(() => {

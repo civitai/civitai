@@ -61,7 +61,7 @@ export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
     const model = await getModel({
-      input,
+      ...input,
       user: ctx.user,
       select: { ...modelWithDetailsSelect, meta: true },
     });
@@ -70,6 +70,15 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     }
 
     const features = getFeatureFlags({ user: ctx.user });
+    const modelVersionIds = model.modelVersions.map((version) => version.id);
+    const posts = await dbRead.post.findMany({
+      where: {
+        modelVersionId: { in: modelVersionIds },
+        userId: model.user.id,
+      },
+      select: { id: true, modelVersionId: true },
+      orderBy: { id: 'asc' },
+    });
 
     return {
       ...model,
@@ -105,12 +114,9 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           )
           .filter(isDefined);
 
-        // Oldest post first so that we use it as the showcase
-        const posts = version.posts.sort((a, b) => a.id - b.id);
-
         return {
           ...version,
-          posts,
+          posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
           hashes,
           earlyAccessDeadline,
           canDownload,
@@ -296,10 +302,7 @@ export const upsertModelHandler = async ({
     const model = await upsertModel({ ...input, userId });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
-    return {
-      ...model,
-      tagsOnModels: model.tagsOnModels?.map(({ tag }) => tag),
-    };
+    return model;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -357,7 +360,8 @@ export const publishModelHandler = async ({
       );
 
     const republishing = model.status !== ModelStatus.Draft;
-    const { needsReview, unpublishedReason, unpublishedAt, ...meta } = model.meta as ModelMeta;
+    const { needsReview, unpublishedReason, unpublishedAt, ...meta } =
+      (model.meta as ModelMeta | null) || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
 
     return updatedModel;
@@ -376,18 +380,19 @@ export const unpublishModelHandler = async ({ input }: { input: UnpublishModelSc
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
-    const meta = model.meta as ModelMeta;
+    const meta = (model.meta as ModelMeta | null) || {};
     const updatedModel = await updateModelById({
       id,
       data: {
         status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
+        publishedAt: null,
         meta: reason
           ? { ...meta, unpublishedReason: reason, unpublishedAt: new Date().toISOString() }
           : undefined,
         modelVersions: {
           updateMany: {
             where: { status: ModelStatus.Published },
-            data: { status: ModelStatus.Unpublished },
+            data: { status: ModelStatus.Unpublished, publishedAt: null },
           },
         },
       },
@@ -643,7 +648,7 @@ export const getModelDetailsForReviewHandler = async ({
 }) => {
   try {
     const model = getModel({
-      input: { id },
+      id,
       user: ctx.user,
       select: {
         poi: true,
@@ -763,7 +768,7 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
         'Cannot request a review for this model because it is not in the correct status'
       );
 
-    const meta = model.meta as ModelMeta;
+    const meta = (model.meta as ModelMeta | null) || {};
     const updatedModel = await upsertModel({
       ...model,
       meta: { ...meta, needsReview: true },

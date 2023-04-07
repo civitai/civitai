@@ -20,6 +20,7 @@ export const modelWebhooks = createWebhookProcessor({
         },
         select: getAllModelsWithVersionsSelect,
       });
+      if (!models.length) return [];
 
       const modelVersionIds = models.flatMap((model) => model.modelVersions.map((v) => v.id));
       const images = await getImagesForModelVersion({ modelVersionIds });
@@ -65,6 +66,10 @@ export const modelWebhooks = createWebhookProcessor({
           .filter((x) => x),
       }));
 
+      console.log(
+        lastSent,
+        results.map((x) => x.name)
+      );
       return results;
     },
   },
@@ -83,6 +88,7 @@ export const modelWebhooks = createWebhookProcessor({
         },
         select: getAllModelsWithVersionsSelect,
       });
+      if (!models.length) return [];
 
       const modelVersionIds = models.flatMap((model) => model.modelVersions.map((v) => v.id));
       const images = await getImagesForModelVersion({ modelVersionIds });
@@ -128,6 +134,7 @@ export const modelWebhooks = createWebhookProcessor({
           .filter((x) => x),
       }));
 
+      console.log(results.map((x) => x.name));
       return results;
     },
   },

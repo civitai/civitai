@@ -28,8 +28,14 @@ export function ResourceReviewMenu({
   reviewId,
   userId,
   size = 'sm',
+  review,
   ...props
-}: { reviewId: number; userId: number; size?: MantineNumberSize } & MenuProps) {
+}: {
+  reviewId: number;
+  userId: number;
+  size?: MantineNumberSize;
+  review: { id: number; rating: number; details?: string; modelId: number; modelVersionId: number };
+} & MenuProps) {
   const currentUser = useCurrentUser();
 
   const isMod = currentUser?.isModerator ?? false;
@@ -60,6 +66,12 @@ export function ResourceReviewMenu({
                 </Menu.Item>
               )}
             </DeleteResourceReviewButton>
+            <Menu.Item
+              icon={<IconEdit size={14} stroke={1.5} />}
+              onClick={() => openContext('resourceReviewEdit', review)}
+            >
+              Edit review
+            </Menu.Item>
             {/* {((!review.locked && !isMuted) || isMod) && (
               <Menu.Item
                 icon={<IconEdit size={14} stroke={1.5} />}

@@ -100,7 +100,7 @@ for (const t of Object.keys(ModelHashType)) hashTypeMap[t.toLowerCase()] = t;
 async function unpublish(modelVersionId: number) {
   await dbWrite.modelVersion.update({
     where: { id: modelVersionId },
-    data: { status: ModelStatus.Draft },
+    data: { status: ModelStatus.Draft, publishedAt: null },
   });
 
   const { modelId } =
@@ -125,7 +125,7 @@ async function unpublish(modelVersionId: number) {
     if (modelVersionCount?._count.modelVersions === 0)
       await dbWrite.model.update({
         where: { id: modelId },
-        data: { status: ModelStatus.Unpublished },
+        data: { status: ModelStatus.Unpublished, publishedAt: null },
       });
   }
 }

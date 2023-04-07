@@ -1,5 +1,6 @@
 import { NextApiRequest } from 'next';
 import { isProd } from '~/env/other';
+import { PaginationInput } from '~/server/schema/base.schema';
 import { QS } from '~/utils/qs';
 
 export const DEFAULT_PAGE_SIZE = 20;
@@ -60,4 +61,24 @@ export function getPaginationLinks({
     : undefined;
 
   return { nextPage, prevPage, baseUrl };
+}
+
+export async function getPagedData<TQuery extends PaginationInput, TData>(
+  { page, limit, ...rest }: TQuery,
+  fn: (
+    args: { skip?: number; take?: number } & Omit<TQuery, 'page' | 'limit'>
+  ) => Promise<{ items: TData; count?: number }>
+) {
+  const take = !page ? undefined : limit;
+  const skip = !page ? undefined : (page - 1) * limit;
+
+  const { items, count } = await fn({ skip, take, ...rest });
+
+  return {
+    currentPage: page,
+    pageSize: take,
+    totalPages: !!take && !!count ? Math.ceil(count / take) : 1,
+    totalItems: count,
+    items,
+  };
 }

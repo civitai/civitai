@@ -30,8 +30,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, input, next }) => {
   const { id } = input as { id: number };
 
   const modelId = (await getVersionById({ id, select: { modelId: true } }))?.modelId ?? 0;
-  const ownerId =
-    (await getModel({ input: { id: modelId }, select: { userId: true } }))?.userId ?? -1;
+  const ownerId = (await getModel({ id: modelId, select: { userId: true } }))?.userId ?? -1;
 
   if (userId !== ownerId) throw throwAuthorizationError();
 

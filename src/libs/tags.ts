@@ -16,6 +16,7 @@ export type VotableTagModel = {
   downVotes: number;
   automated?: boolean;
   vote?: number;
+  needsReview?: boolean;
 };
 
 const tagNameOverrides = {

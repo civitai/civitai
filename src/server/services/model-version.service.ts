@@ -152,6 +152,7 @@ export const publishModelVersionById = async ({ id }: GetByIdInput) => {
     where: { id },
     data: {
       status: ModelStatus.Published,
+      publishedAt,
       model: { update: { lastVersionAt: publishedAt } },
       posts: { updateMany: { where: { publishedAt: null }, data: { publishedAt } } },
     },

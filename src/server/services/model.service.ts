@@ -32,17 +32,18 @@ import {
   prepareUpdateImage,
 } from '~/server/selectors/image.selector';
 import { modelWithDetailsSelect } from '~/server/selectors/model.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { ingestNewImages } from '~/server/services/image.service';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
-  input: { id },
+  id,
   user,
   select,
-}: {
-  input: GetByIdInput;
+}: GetByIdInput & {
   user?: SessionUser;
   select: TSelect;
 }) => {
@@ -313,7 +314,7 @@ export const upsertModel = ({
 ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) => {
   if (!id)
     return dbWrite.model.create({
-      select: modelWithDetailsSelect,
+      select: { id: true },
       data: {
         ...data,
         userId,
@@ -336,7 +337,7 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
     });
   else
     return dbWrite.model.update({
-      select: modelWithDetailsSelect,
+      select: { id: true },
       where: { id },
       data: {
         ...data,
@@ -702,7 +703,7 @@ export const publishModelById = async ({
             ? {
                 updateMany: {
                   where: { id: { in: versionIds } },
-                  data: { status: ModelStatus.Published },
+                  data: { status: ModelStatus.Published, publishedAt },
                 },
               }
             : undefined,
@@ -754,4 +755,22 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
 
 export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
   await dbWrite.model.update({ where: { id }, data: { locked } });
+};
+
+export const getSimpleModelWithVersions = async ({
+  id,
+  user,
+}: GetByIdInput & { user?: SessionUser }) => {
+  const model = await getModel({
+    id,
+    user,
+    select: {
+      id: true,
+      name: true,
+      createdAt: true,
+      user: { select: userWithCosmeticsSelect },
+    },
+  });
+  if (!model) throw throwNotFoundError();
+  return model;
 };

@@ -4,7 +4,7 @@ import { immer } from 'zustand/middleware/immer';
 import { ActionIcon, Badge, Group, useMantineTheme } from '@mantine/core';
 import { useCallback, useEffect, useRef } from 'react';
 import { TagType } from '@prisma/client';
-import { IconArrowBigDown, IconArrowBigTop, IconX } from '@tabler/icons';
+import { IconArrowBigDown, IconArrowBigTop, IconFlag, IconX } from '@tabler/icons';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { getTagDisplayName } from '~/libs/tags';
 
@@ -14,6 +14,7 @@ type VotableTagProps = VotableTagConnectorInput & {
   type: TagType;
   name: string;
   score: number;
+  needsReview?: boolean;
   onChange: (changed: { name: string; vote: number }) => void;
 };
 
@@ -50,6 +51,7 @@ export function VotableTag({
   type,
   name,
   score,
+  needsReview = false,
   onChange,
 }: VotableTagProps) {
   const clickedRef = useRef(false);
@@ -64,7 +66,10 @@ export function VotableTag({
     color: isModeration ? 'red' : 'gray',
     variant: isModeration ? 'light' : 'filled',
   });
-  const badgeBorder = theme.fn.lighten(badgeColor.background ?? theme.colors.gray[4], 0.05);
+  const badgeBorder = theme.fn.lighten(
+    needsReview ? theme.colors.yellow[8] : badgeColor.background ?? theme.colors.gray[4],
+    0.05
+  );
   const badgeBg = theme.fn.rgba(badgeColor.background ?? theme.colors.gray[4], 0.3);
   const progressBg = theme.fn.rgba(
     badgeColor.background ?? theme.colors.gray[4],
@@ -139,6 +144,14 @@ export function VotableTag({
               />
             </ActionIcon>
           </LoginPopover>
+        )}
+        {needsReview && (
+          <IconFlag
+            size={12}
+            strokeWidth={4}
+            color={theme.colors.yellow[4]}
+            style={{ marginRight: 2 }}
+          />
         )}
         <span title={`Score: ${score}`} style={{ cursor: 'default', zIndex: 10 }}>
           {getTagDisplayName(name)}

@@ -1,67 +1,19 @@
+import { GetResourceReviewPagedInput } from './../schema/resourceReview.schema';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
-  GetRatingTotalsInput,
-  GetResourceReviewsInfiniteInput,
+  CreateResourceReviewInput,
   UpdateResourceReviewInput,
   UpsertResourceReviewInput,
 } from '../schema/resourceReview.schema';
 import { throwDbError } from '~/server/utils/errorHandling';
-import { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
 import {
-  getResourceReview,
   deleteResourceReview,
-  getRatingTotals,
-  getResourceReviews,
-  getResourceReviewsInfinite,
   upsertResourceReview,
   updateResourceReview,
+  createResourceReview,
+  getPagedResourceReviews,
 } from '~/server/services/resourceReview.service';
 import { Context } from '~/server/createContext';
-
-export const getResourceReviewHandler = async ({ input }: { input: GetByIdInput }) => {
-  try {
-    return await getResourceReview(input);
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
-export const getResourceReviewsHandler = async ({ input }: { input: GetResourceReviewsInput }) => {
-  try {
-    return await getResourceReviews(input);
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
-export type ResourceReviewInfiniteModel = AsyncReturnType<
-  typeof getResourceReviewsInfiniteHandler
->['items'][0];
-export const getResourceReviewsInfiniteHandler = async ({
-  input,
-}: {
-  input: GetResourceReviewsInfiniteInput;
-}) => {
-  try {
-    return await getResourceReviewsInfinite(input);
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
-export const getRatingTotalsHandler = async ({
-  input,
-  ctx,
-}: {
-  input: GetRatingTotalsInput;
-  ctx: Context;
-}) => {
-  try {
-    return await getRatingTotals({ ...input });
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
 
 export const upsertResourceReviewHandler = async ({
   input,
@@ -72,6 +24,20 @@ export const upsertResourceReviewHandler = async ({
 }) => {
   try {
     return await upsertResourceReview({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const createResourceReviewHandler = async ({
+  input,
+  ctx,
+}: {
+  input: CreateResourceReviewInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await createResourceReview({ ...input, userId: ctx.user.id });
   } catch (error) {
     throw throwDbError(error);
   }

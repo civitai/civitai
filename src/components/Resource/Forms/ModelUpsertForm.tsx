@@ -273,7 +273,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
 }
 
 type Props = {
-  onSubmit: (data: ModelUpsertInput) => void;
+  onSubmit: (data: { id?: number }) => void;
   children: React.ReactNode | ((data: { loading: boolean }) => React.ReactNode);
   model?: Partial<ModelUpsertInput>;
 };

@@ -123,10 +123,18 @@ const registry = {
     Component: ImageDetailModal,
     resolve: ({ imageId, ...args }: React.ComponentProps<typeof ImageDetailModal>) => {
       const slug = Router.query.slug ?? 'placeholder';
+      const postSlug = Router.query.postSlug ?? 'placeholder';
       const { tags, ...prevRouterParams } = Router.query;
       return [
         {
-          query: { ...prevRouterParams, slug, imageId, ...args, modal: 'imageDetailModal' },
+          query: {
+            ...prevRouterParams,
+            slug,
+            postSlug,
+            imageId,
+            ...args,
+            modal: 'imageDetailModal',
+          },
         },
         {
           pathname: `/images/${imageId}`,
