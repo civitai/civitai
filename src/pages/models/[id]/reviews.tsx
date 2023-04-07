@@ -106,7 +106,7 @@ export default function ModelReviews() {
   ) : !!versions?.length ? (
     <Select
       placeholder="Showing all versions"
-      clearable
+      clearable={versions && versions.length > 1}
       data={versions.map((version) => ({ label: version.name, value: version.id.toString() }))}
       value={(router.query.modelVersionId as string) ?? null}
       onChange={handleModelVersionChange}
@@ -213,34 +213,32 @@ function ReviewCard(review: ResourceReviewPagedModel) {
         </Group>
         <Group spacing="xs">
           <Rating value={review.rating} readOnly />
-          {review.helper?.imageCount && (
-            <RoutedContextLink modal="resourceReviewModal" reviewId={review.id}>
-              <Badge
-                px={4}
-                leftSection={
-                  <Center>
-                    <IconPhoto size={14} />
-                  </Center>
-                }
-              >
-                {review.helper?.imageCount}
-              </Badge>
-            </RoutedContextLink>
-          )}
-          {review.thread?._count.comments && (
-            <RoutedContextLink modal="resourceReviewModal" reviewId={review.id}>
-              <Badge
-                px={4}
-                leftSection={
-                  <Center>
-                    <IconMessage size={14} />
-                  </Center>
-                }
-              >
-                {review.thread._count.comments}
-              </Badge>
-            </RoutedContextLink>
-          )}
+
+          <RoutedContextLink modal="resourceReviewModal" reviewId={review.id}>
+            <Badge
+              px={4}
+              leftSection={
+                <Center>
+                  <IconPhoto size={14} />
+                </Center>
+              }
+            >
+              {review.helper?.imageCount ?? '0'}
+            </Badge>
+          </RoutedContextLink>
+
+          <RoutedContextLink modal="resourceReviewModal" reviewId={review.id}>
+            <Badge
+              px={4}
+              leftSection={
+                <Center>
+                  <IconMessage size={14} />
+                </Center>
+              }
+            >
+              {review.thread._count.comments ?? '0'}
+            </Badge>
+          </RoutedContextLink>
         </Group>
         {review.details && (
           <ContentClamp maxHeight={300}>

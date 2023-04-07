@@ -467,7 +467,7 @@ export function ModelVersionDetails({
                       />
                       <Text
                         component={NextLink}
-                        href={`/models/${model.id}/reviews`}
+                        href={`/models/${model.id}/reviews?modelVersionId=${version.id}`}
                         variant="link"
                         size="sm"
                         onClick={(e) => {

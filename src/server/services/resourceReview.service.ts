@@ -163,9 +163,7 @@ export const updateResourceReview = ({ id, rating, details }: UpdateResourceRevi
 
 export const getPagedResourceReviews = async (input: GetResourceReviewPagedInput) => {
   return await getPagedData(input, async ({ skip, take, modelId, modelVersionId, username }) => {
-    const AND: Prisma.Enumerable<Prisma.ResourceReviewWhereInput> = [
-      { modelId, modelVersionId, details: { not: null } },
-    ];
+    const AND: Prisma.Enumerable<Prisma.ResourceReviewWhereInput> = [{ modelId, modelVersionId }];
     if (username) AND.push({ user: { username } });
 
     const [count, items] = await dbRead.$transaction([
