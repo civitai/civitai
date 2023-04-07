@@ -3,9 +3,18 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isNumber } from '~/utils/type-guards';
 import { ModelVersionWizard } from '~/components/Resource/Wizard/ModelVersionWizard';
 import { InferGetServerSidePropsType } from 'next';
-import { ModelStatus } from '@prisma/client';
+import { ModelStatus, ModelType } from '@prisma/client';
 
-export const getServerSideProps = createServerSideProps({
+type Modal = {
+  id: number;
+  name: string;
+  type: ModelType;
+  userId: number;
+  status: ModelStatus;
+  deletedAt: Date | null;
+};
+
+export const getServerSideProps = createServerSideProps<{ modelId: number; model: Modal }>({
   resolver: async ({ session, ctx }) => {
     const { id } = ctx.params as { id: string };
     if (!session)
@@ -44,5 +53,10 @@ export const getServerSideProps = createServerSideProps({
 export default function NewModelVersion({
   model,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  return <ModelVersionWizard data={model} />;
+  return (
+    <ModelVersionWizard
+      // @ts-expect-error - The type of the `model` does not match the type of the `data`
+      data={model}
+    />
+  );
 }
