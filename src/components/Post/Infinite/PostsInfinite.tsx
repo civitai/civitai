@@ -37,7 +37,7 @@ export default function PostsInfinite({
   );
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.post.getInfinite.useInfiniteQuery(
-      { ...filters },
+      { ...filters, tags: filters.tags ?? undefined },
       {
         getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
         getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),

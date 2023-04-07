@@ -43,7 +43,7 @@ export function EditUserResourceReview({
         onSuccess: (response, request) => {
           if (request.details) {
             toggleEditDetail();
-            form.reset({ details: request.details });
+            form.reset({ details: request.details as string });
           }
         },
       }
