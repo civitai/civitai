@@ -144,6 +144,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
                   key={post.id}
                   href={`/posts/${post.id}/${post.title ? slugit(post.title) : ''}`}
                   passHref
+                  legacyBehavior
                 >
                   <Button component="a" size="xs" variant="light" compact>
                     {post.title ? post.title : `From: ${formatDate(post.publishedAt as Date)}`}

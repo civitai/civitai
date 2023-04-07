@@ -62,7 +62,7 @@ export default function ModeratorModels() {
                   }`,
                 })}
               >
-                <Link href={`/models/${model.id}/${slugit(model.name)}`} passHref>
+                <Link href={`/models/${model.id}/${slugit(model.name)}`} passHref legacyBehavior>
                   <Anchor size="md" target="_blank" lineClamp={1}>
                     {model.name} <IconExternalLink size={16} stroke={1.5} />
                   </Anchor>

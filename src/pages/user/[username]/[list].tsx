@@ -60,7 +60,7 @@ export default function UserLists() {
       <Grid gutter="xl">
         <Grid.Col span={12}>
           <Group spacing="xl">
-            <Link href={`/user/${username}`} passHref>
+            <Link href={`/user/${username}`} passHref legacyBehavior>
               <ActionIcon component="a">
                 <IconArrowLeft />
               </ActionIcon>
@@ -101,7 +101,7 @@ export default function UserLists() {
                     {data.following.length > 0 ? (
                       data.following.map((user) => (
                         <List.Item key={user.id} p={8}>
-                          <Link href={`/user/${user.username}`} passHref>
+                          <Link href={`/user/${user.username}`} passHref legacyBehavior>
                             <Anchor variant="text">
                               <Group position="apart">
                                 <UserAvatar user={user} withUsername />
@@ -133,7 +133,7 @@ export default function UserLists() {
                     {data.followers.length > 0 ? (
                       data.followers.map((user) => (
                         <List.Item key={user.id} p={8}>
-                          <Link href={`/user/${user.username}`} passHref>
+                          <Link href={`/user/${user.username}`} passHref legacyBehavior>
                             <Anchor variant="text">
                               <Group position="apart">
                                 <UserAvatar user={user} withUsername />
@@ -166,7 +166,7 @@ export default function UserLists() {
                       {data.hidden.length > 0 ? (
                         data.hidden.map((user) => (
                           <List.Item key={user.id} p={8}>
-                            <Link href={`/user/${user.username}`} passHref>
+                            <Link href={`/user/${user.username}`} passHref legacyBehavior>
                               <Anchor variant="text">
                                 <Group position="apart">
                                   <UserAvatar user={user} withUsername />

@@ -126,8 +126,9 @@ export function CategoryTags() {
         </ActionIcon>
       </Box>
       <Group className={classes.tagsGroup} spacing={8} noWrap>
-        <Link href={router.asPath} shallow>
+        <Link href={router.asPath} shallow passHref legacyBehavior>
           <Button
+            component="a"
             className={classes.tag}
             variant={
               !router.query.tag ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'
@@ -146,8 +147,11 @@ export function CategoryTags() {
               href={!active ? `/?tag=${encodeURIComponent(tag.name)}` : router.asPath}
               as={router.asPath}
               shallow
+              passHref
+              legacyBehavior
             >
               <Button
+                component="a"
                 className={classes.tag}
                 variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
                 color={active ? 'blue' : 'gray'}

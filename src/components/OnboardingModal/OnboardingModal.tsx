@@ -16,7 +16,6 @@ import {
   Badge,
 } from '@mantine/core';
 import { ContextModalProps } from '@mantine/modals';
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 

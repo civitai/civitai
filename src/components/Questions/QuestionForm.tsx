@@ -101,7 +101,7 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
           <Text size="xl">
             You are not able to create/edit a question because your account has been muted
           </Text>
-          <Link href="/" passHref>
+          <Link href="/" passHref legacyBehavior>
             <Button component="a">Go back home</Button>
           </Link>
         </Stack>

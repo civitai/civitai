@@ -35,7 +35,7 @@ export default createRoutedContext({
             </Center>
           ) : modelVersion ? (
             <Stack spacing="xl">
-              <Link href={`/models/${modelVersion?.model.id}`} passHref shallow>
+              <Link href={`/models/${modelVersion?.model.id}`} passHref shallow legacyBehavior>
                 <Anchor size="xs">
                   <Group spacing={4}>
                     <IconArrowLeft size={12} />

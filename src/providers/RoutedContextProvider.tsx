@@ -6,10 +6,8 @@ import { getHasClientHistory } from '~/store/ClientHistoryStore';
 import { create } from 'zustand';
 import { Freeze } from 'react-freeze';
 import { NextLink } from '@mantine/next';
-import Link from 'next/link';
 import { removeEmpty } from '~/utils/object-helpers';
 import useIsClient from '~/hooks/useIsClient';
-import { Anchor } from '@mantine/core';
 
 const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
 const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLightbox'));

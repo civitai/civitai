@@ -10,9 +10,5 @@ export function UserLink({
   deletedAt?: Date | null;
 }) {
   if (deletedAt || !username) return <>{children}</>;
-  return (
-    <Link href={`/user/${username}`} passHref>
-      {children}
-    </Link>
-  );
+  return <Link href={`/user/${username}`}>{children}</Link>;
 }

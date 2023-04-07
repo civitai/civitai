@@ -49,7 +49,7 @@ export function CreatorList({ items }: Props) {
             : theme.colors.orange[5]; // Bronze
 
         return (
-          <Link key={creator.id} href={`/user/${creator.username}`} passHref>
+          <Link key={creator.id} href={`/user/${creator.username}`} passHref legacyBehavior>
             <Anchor variant="text" id={`${rankPosition}`}>
               <Paper
                 className={cx(classes.creatorCard, Number(position) === rankPosition && 'active')}

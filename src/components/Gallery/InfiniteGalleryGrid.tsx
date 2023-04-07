@@ -9,7 +9,6 @@ import {
   useScrollToIndex,
   useMasonry,
 } from 'masonic';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef, useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';

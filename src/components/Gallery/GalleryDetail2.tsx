@@ -37,7 +37,6 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageDetailContextMenu } from '~/components/Image/Detail/ImageDetailContextMenu';
-import Link from 'next/link';
 import { GalleryResources } from '~/components/Gallery/GalleryResources';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { VotableTags } from '~/components/VotableTags/VotableTags';

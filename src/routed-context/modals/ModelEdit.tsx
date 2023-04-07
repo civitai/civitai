@@ -51,7 +51,7 @@ export default createRoutedContext({
             </Center>
           ) : data ? (
             <Stack spacing="xl">
-              <Link href={`/models/${modelId}`} passHref shallow>
+              <Link href={`/models/${modelId}`} passHref shallow legacyBehavior>
                 <Anchor size="sm">
                   <Group spacing={4}>
                     <IconArrowLeft size={18} strokeWidth={1.5} />

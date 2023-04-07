@@ -21,6 +21,7 @@ export function ImageConnectionLink({
           : `/models/${modelId}`
       }
       passHref
+      legacyBehavior
     >
       <Anchor size="xs" target="_blank">
         {children ? (

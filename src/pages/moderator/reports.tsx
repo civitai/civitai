@@ -215,10 +215,8 @@ export default function Reports() {
         header: 'Reported by',
         enableSorting: false,
         Cell: ({ row: { original: report } }) => (
-          <Link href={`/user/${report.user.username}`} passHref>
-            <Text variant="link" component="a" target="_blank">
-              {report.user.username}
-            </Text>
+          <Link href={`/user/${report.user.username}`} target="_blank">
+            <Text variant="link">{report.user.username}</Text>
           </Link>
         ),
       },
@@ -361,7 +359,7 @@ function ReportDrawer({
       {report && (
         <Stack>
           {href && (
-            <Link href={href} passHref>
+            <Link href={href} passHref legacyBehavior>
               <Anchor size="sm" target="_blank">
                 <Group spacing={4}>
                   <Text inherit>View {type}</Text>

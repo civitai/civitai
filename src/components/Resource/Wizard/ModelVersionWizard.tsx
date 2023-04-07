@@ -86,7 +86,7 @@ export function ModelVersionWizard({ data }: Props) {
   return (
     <Container size="sm">
       <Stack spacing="xl" py="xl">
-        <Link href={`/models/${modelVersion?.model.id}`} passHref>
+        <Link href={`/models/${modelVersion?.model.id}`} passHref legacyBehavior>
           <Anchor size="xs">
             <Group spacing={4} noWrap>
               <IconArrowLeft size={12} />

@@ -120,7 +120,7 @@ export function UserDraftModels({ enabled = false }: Props) {
                 return (
                   <tr key={model.id}>
                     <td>
-                      <Link href={getModelWizardUrl(model)} passHref>
+                      <Link href={getModelWizardUrl(model)} passHref legacyBehavior>
                         <Anchor target="_blank" lineClamp={2}>
                           {model.name} <IconExternalLink size={16} stroke={1.5} />
                         </Anchor>

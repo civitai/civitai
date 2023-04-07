@@ -308,7 +308,7 @@ export function AppHeader() {
         .filter(({ visible }) => visible !== false)
         .map((link) => {
           const item = (
-            <Link key={link.href} href={link.href} passHref>
+            <Link key={link.href} href={link.href} passHref legacyBehavior>
               <Anchor
                 variant="text"
                 className={cx(classes.link, { [classes.linkActive]: router.asPath === link.href })}
@@ -346,7 +346,7 @@ export function AppHeader() {
       <Grid className={classes.header} m={0} gutter="xs" align="center">
         <Grid.Col span="auto" pl={0}>
           <Group spacing="xs" noWrap>
-            <Link href="/" passHref>
+            <Link href="/" passHref legacyBehavior>
               <Anchor variant="text" onClick={() => closeBurger()}>
                 <Logo />
               </Anchor>
@@ -498,7 +498,7 @@ export function AppHeader() {
                             )}
                           </BlurToggle>
                         )}
-                        <Link href="/user/account" passHref>
+                        <Link href="/user/account" passHref legacyBehavior>
                           <ActionIcon
                             variant="default"
                             component="a"

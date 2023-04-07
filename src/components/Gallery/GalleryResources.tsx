@@ -34,8 +34,8 @@ export function GalleryResources({ imageId, modelId, reviewId }: Props) {
   const isFavorite = favoriteModels.find((id) => modelId === id);
 
   return (
-    <Link href={`/models/${connections?.model?.id}`} passHref>
-      <Card component="a" p={8} sx={{ backgroundColor: theme.colors.dark[7] }} withBorder>
+    <Link href={`/models/${connections?.model?.id}`}>
+      <Card p={8} sx={{ backgroundColor: theme.colors.dark[7] }} withBorder>
         {isLoading ? (
           <Stack spacing="xs">
             <Skeleton height={16} radius="md" />

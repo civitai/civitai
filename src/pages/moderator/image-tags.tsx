@@ -308,7 +308,7 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
                   placeholder="empty"
                 />
                 {image.postId && (
-                  <Link href={`/posts/${image.postId}`} passHref>
+                  <Link href={`/posts/${image.postId}`} passHref legacyBehavior>
                     <ActionIcon
                       component="a"
                       variant="transparent"

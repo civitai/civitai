@@ -86,7 +86,7 @@ export default function ModelEditPage({ modelId }: Props) {
         </Center>
       ) : (
         <Stack spacing="xl">
-          <Link href={`/models/${modelId}`} passHref>
+          <Link href={`/models/${modelId}`} passHref legacyBehavior>
             <Anchor size="xs">
               <Group spacing={4}>
                 <IconArrowLeft size={12} />

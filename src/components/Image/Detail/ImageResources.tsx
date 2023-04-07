@@ -18,7 +18,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { cloneElement, useMemo } from 'react';
+import { useMemo } from 'react';
 
 const useStyles = createStyles(() => ({
   statBadge: {
@@ -182,9 +182,8 @@ const Wrapper = ({
       href={`/models/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
         resource.modelVersionId
       }`}
-      passHref
     >
-      {cloneElement(children, { component: 'a' })}
+      {children}
     </Link>
   );
 };

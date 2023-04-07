@@ -164,7 +164,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
           <Stack spacing={0}>
             <Group spacing={8} align="center">
               {!comment.user.deletedAt ? (
-                <Link href={`/user/${comment.user.username}`} passHref>
+                <Link href={`/user/${comment.user.username}`} passHref legacyBehavior>
                   <Anchor variant="text" size="sm" weight="bold">
                     <Username {...comment.user} />
                   </Anchor>

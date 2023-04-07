@@ -32,78 +32,72 @@ export function PostsCard({
   return (
     <InView triggerOnce>
       {({ inView, ref }) => (
-        <Link href={`/posts/${id}`} passHref>
-          <MasonryCard
-            withBorder
-            shadow="sm"
-            p={0}
-            height={height}
-            ref={ref}
-            component="a"
-            onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
-              if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
-            }}
-          >
-            {inView && (
-              <>
-                <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} />
-                <ImageGuard
-                  images={[image]}
-                  connect={{ entityId: id, entityType: 'post' }}
-                  render={(image) => (
-                    <ImageGuard.Content>
-                      {({ safe }) => (
-                        <>
-                          <ImageGuard.ToggleConnect
-                            sx={(theme) => ({
-                              backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
-                              color: 'white',
-                              backdropFilter: 'blur(7px)',
-                              boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
-                            })}
+        <Link
+          ref={ref}
+          href={`/posts/${id}`}
+          onClick={(e) => {
+            if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
+          }}
+        >
+          {inView && (
+            <MasonryCard withBorder shadow="sm" p={0} height={height}>
+              <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} />
+              <ImageGuard
+                images={[image]}
+                connect={{ entityId: id, entityType: 'post' }}
+                render={(image) => (
+                  <ImageGuard.Content>
+                    {({ safe }) => (
+                      <>
+                        <ImageGuard.ToggleConnect
+                          sx={(theme) => ({
+                            backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
+                            color: 'white',
+                            backdropFilter: 'blur(7px)',
+                            boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
+                          })}
+                        />
+                        {!safe ? (
+                          <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                            <MediaHash {...image} />
+                          </AspectRatio>
+                        ) : (
+                          <EdgeImage
+                            src={image.url}
+                            name={image.name ?? image.id.toString()}
+                            alt={image.name ?? undefined}
+                            width={450}
+                            placeholder="empty"
+                            style={{ width: '100%', zIndex: 2, position: 'relative' }}
                           />
-                          {!safe ? (
-                            <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
-                              <MediaHash {...image} />
-                            </AspectRatio>
-                          ) : (
-                            <EdgeImage
-                              src={image.url}
-                              name={image.name ?? image.id.toString()}
-                              alt={image.name ?? undefined}
-                              width={450}
-                              placeholder="empty"
-                              style={{ width: '100%', zIndex: 2, position: 'relative' }}
-                            />
+                        )}
+                        <div className={classes.footer}>
+                          {title && (
+                            <Text className={classes.title} lineClamp={2}>
+                              {title}
+                            </Text>
                           )}
-                          <div className={classes.footer}>
-                            {title && (
-                              <Text className={classes.title} lineClamp={2}>
-                                {title}
-                              </Text>
-                            )}
-                            <Reactions
-                              entityId={image.id}
-                              entityType="image"
-                              reactions={image.reactions}
-                              metrics={{
-                                likeCount: image.likeCount,
-                                dislikeCount: image.dislikeCount,
-                                heartCount: image.heartCount,
-                                laughCount: image.laughCount,
-                                cryCount: image.cryCount,
-                              }}
-                              readonly={!safe}
-                            />
-                          </div>
-                        </>
-                      )}
-                    </ImageGuard.Content>
-                  )}
-                />
-              </>
-            )}
-          </MasonryCard>
+                          <Reactions
+                            entityId={image.id}
+                            entityType="image"
+                            reactions={image.reactions}
+                            metrics={{
+                              likeCount: image.likeCount,
+                              dislikeCount: image.dislikeCount,
+                              heartCount: image.heartCount,
+                              laughCount: image.laughCount,
+                              cryCount: image.cryCount,
+                            }}
+                            readonly={!safe}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </ImageGuard.Content>
+                )}
+              />
+            </MasonryCard>
+          )}
         </Link>
       )}
     </InView>
