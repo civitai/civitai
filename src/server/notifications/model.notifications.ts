@@ -127,12 +127,13 @@ export const modelNotifications = createNotificationProcessor({
           JSONB_BUILD_OBJECT(
             'modelId', mv."modelId",
             'modelName', m.name,
-            'versionName', mv.name
+            'versionName', mv.name,
+            'modelVersionId', mv.id
           ) "details"
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
-        JOIN "ModelEngagement" fm ON m.id = fm."modelId" AND mv."createdAt" >= fm."createdAt" AND fm.type = 'Favorite'
-        WHERE mv."createdAt" > '${lastSent}'
+        JOIN "ModelEngagement" fm ON m.id = fm."modelId" AND mv."publishedAt" >= fm."createdAt" AND fm.type = 'Favorite'
+        WHERE mv."publishedAt" > '${lastSent}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT

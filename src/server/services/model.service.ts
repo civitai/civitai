@@ -703,7 +703,7 @@ export const publishModelById = async ({
             ? {
                 updateMany: {
                   where: { id: { in: versionIds } },
-                  data: { status: ModelStatus.Published },
+                  data: { status: ModelStatus.Published, publishedAt },
                 },
               }
             : undefined,

@@ -400,6 +400,7 @@ model ModelVersion {
   epochs               Int?
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
+  publishedAt          DateTime?
   status               ModelStatus @default(Draft)
   fromImport           Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId         Int?

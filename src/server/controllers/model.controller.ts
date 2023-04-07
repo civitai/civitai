@@ -385,13 +385,14 @@ export const unpublishModelHandler = async ({ input }: { input: UnpublishModelSc
       id,
       data: {
         status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
+        publishedAt: null,
         meta: reason
           ? { ...meta, unpublishedReason: reason, unpublishedAt: new Date().toISOString() }
           : undefined,
         modelVersions: {
           updateMany: {
             where: { status: ModelStatus.Published },
-            data: { status: ModelStatus.Unpublished },
+            data: { status: ModelStatus.Unpublished, publishedAt: null },
           },
         },
       },
