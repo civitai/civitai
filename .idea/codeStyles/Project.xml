@@ -1,0 +1,144 @@
+<component name="ProjectCodeStyleConfiguration">
+  <code_scheme name="Project" version="173">
+    <option name="LINE_SEPARATOR" value="&#10;" />
+    <CssCodeStyleSettings>
+      <option name="HEX_COLOR_LOWER_CASE" value="true" />
+      <option name="HEX_COLOR_LONG_FORMAT" value="true" />
+      <option name="ENFORCE_QUOTES_ON_FORMAT" value="true" />
+    </CssCodeStyleSettings>
+    <HTMLCodeStyleSettings>
+      <option name="HTML_UNIFORM_INDENT" value="true" />
+      <option name="HTML_KEEP_WHITESPACES" value="true" />
+      <option name="HTML_SPACE_INSIDE_EMPTY_TAG" value="true" />
+      <option name="HTML_QUOTE_STYLE" value="Single" />
+      <option name="HTML_ENFORCE_QUOTES" value="true" />
+    </HTMLCodeStyleSettings>
+    <JSCodeStyleSettings version="0">
+      <option name="FORCE_SEMICOLON_STYLE" value="true" />
+      <option name="SPACE_BEFORE_FUNCTION_LEFT_PARENTH" value="false" />
+      <option name="USE_DOUBLE_QUOTES" value="false" />
+      <option name="FORCE_QUOTE_STYlE" value="true" />
+      <option name="ENFORCE_TRAILING_COMMA" value="WhenMultiline" />
+      <option name="JSX_ATTRIBUTE_VALUE" value="Based on type" />
+      <option name="SPACES_WITHIN_OBJECT_LITERAL_BRACES" value="true" />
+      <option name="SPACES_WITHIN_IMPORTS" value="true" />
+    </JSCodeStyleSettings>
+    <LessCodeStyleSettings>
+      <option name="HEX_COLOR_LOWER_CASE" value="true" />
+      <option name="HEX_COLOR_LONG_FORMAT" value="true" />
+      <option name="ENFORCE_QUOTES_ON_FORMAT" value="true" />
+    </LessCodeStyleSettings>
+    <TypeScriptCodeStyleSettings version="0">
+      <option name="JSDOC_INCLUDE_TYPES" value="true" />
+      <option name="FORCE_SEMICOLON_STYLE" value="true" />
+      <option name="SPACE_BEFORE_FUNCTION_LEFT_PARENTH" value="false" />
+      <option name="USE_PUBLIC_MODIFIER" value="true" />
+      <option name="PREFER_AS_TYPE_CAST" value="true" />
+      <option name="USE_DOUBLE_QUOTES" value="false" />
+      <option name="FORCE_QUOTE_STYlE" value="true" />
+      <option name="PREFER_EXPLICIT_TYPES_VARS_FIELDS" value="true" />
+      <option name="PREFER_EXPLICIT_TYPES_FUNCTION_RETURNS" value="true" />
+      <option name="PREFER_EXPLICIT_TYPES_FUNCTION_EXPRESSION_RETURNS" value="true" />
+      <option name="ENFORCE_TRAILING_COMMA" value="WhenMultiline" />
+      <option name="SPACES_WITHIN_OBJECT_LITERAL_BRACES" value="true" />
+      <option name="SPACES_WITHIN_IMPORTS" value="true" />
+      <option name="USE_CHAINED_CALLS_GROUP_INDENTS" value="true" />
+      <option name="SPACE_WITHIN_TYPE_ASSERTION" value="true" />
+    </TypeScriptCodeStyleSettings>
+    <VueCodeStyleSettings>
+      <option name="INTERPOLATION_NEW_LINE_AFTER_START_DELIMITER" value="false" />
+      <option name="INTERPOLATION_NEW_LINE_BEFORE_END_DELIMITER" value="false" />
+    </VueCodeStyleSettings>
+    <codeStyleSettings language="CSS">
+      <indentOptions>
+        <option name="INDENT_SIZE" value="2" />
+        <option name="CONTINUATION_INDENT_SIZE" value="2" />
+        <option name="TAB_SIZE" value="2" />
+      </indentOptions>
+      <arrangement>
+        <rules>
+          <section>
+            <rule>
+              <match>
+                <NAME>.*</NAME>
+              </match>
+              <order>BY_NAME</order>
+            </rule>
+          </section>
+        </rules>
+      </arrangement>
+    </codeStyleSettings>
+    <codeStyleSettings language="EditorConfig">
+      <option name="ALIGN_GROUP_FIELD_DECLARATIONS" value="true" />
+      <option name="SPACE_AFTER_COLON" value="true" />
+    </codeStyleSettings>
+    <codeStyleSettings language="HTML">
+      <option name="SOFT_MARGINS" value="100" />
+      <indentOptions>
+        <option name="INDENT_SIZE" value="2" />
+        <option name="CONTINUATION_INDENT_SIZE" value="2" />
+        <option name="TAB_SIZE" value="2" />
+      </indentOptions>
+    </codeStyleSettings>
+    <codeStyleSettings language="JAVA">
+      <option name="KEEP_FIRST_COLUMN_COMMENT" value="false" />
+      <option name="KEEP_SIMPLE_LAMBDAS_IN_ONE_LINE" value="true" />
+      <indentOptions>
+        <option name="INDENT_SIZE" value="2" />
+        <option name="CONTINUATION_INDENT_SIZE" value="2" />
+        <option name="TAB_SIZE" value="2" />
+        <option name="SMART_TABS" value="true" />
+      </indentOptions>
+    </codeStyleSettings>
+    <codeStyleSettings language="JavaScript">
+      <option name="SOFT_MARGINS" value="100" />
+      <indentOptions>
+        <option name="INDENT_SIZE" value="2" />
+        <option name="CONTINUATION_INDENT_SIZE" value="2" />
+        <option name="TAB_SIZE" value="2" />
+      </indentOptions>
+    </codeStyleSettings>
+    <codeStyleSettings language="LESS">
+      <indentOptions>
+        <option name="CONTINUATION_INDENT_SIZE" value="2" />
+        <option name="TAB_SIZE" value="2" />
+      </indentOptions>
+    </codeStyleSettings>
+    <codeStyleSettings language="SASS">
+      <indentOptions>
+        <option name="CONTINUATION_INDENT_SIZE" value="2" />
+        <option name="TAB_SIZE" value="2" />
+      </indentOptions>
+    </codeStyleSettings>
+    <codeStyleSettings language="SCSS">
+      <indentOptions>
+        <option name="CONTINUATION_INDENT_SIZE" value="2" />
+        <option name="TAB_SIZE" value="2" />
+      </indentOptions>
+    </codeStyleSettings>
+    <codeStyleSettings language="Stylus">
+      <indentOptions>
+        <option name="CONTINUATION_INDENT_SIZE" value="2" />
+        <option name="TAB_SIZE" value="2" />
+      </indentOptions>
+    </codeStyleSettings>
+    <codeStyleSettings language="TypeScript">
+      <option name="CLASS_BRACE_STYLE" value="5" />
+      <option name="ALIGN_MULTILINE_PARAMETERS" value="false" />
+      <option name="IF_BRACE_FORCE" value="3" />
+      <option name="WRAP_ON_TYPING" value="1" />
+      <option name="SOFT_MARGINS" value="100" />
+      <indentOptions>
+        <option name="INDENT_SIZE" value="2" />
+        <option name="CONTINUATION_INDENT_SIZE" value="2" />
+        <option name="TAB_SIZE" value="2" />
+      </indentOptions>
+    </codeStyleSettings>
+    <codeStyleSettings language="Vue">
+      <option name="SOFT_MARGINS" value="100" />
+      <indentOptions>
+        <option name="CONTINUATION_INDENT_SIZE" value="2" />
+      </indentOptions>
+    </codeStyleSettings>
+  </code_scheme>
+</component>

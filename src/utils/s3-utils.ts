@@ -1,15 +1,15 @@
 import { env } from '~/env/server.mjs';
 import {
-  S3Client,
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
   GetObjectCommand,
-  PutObjectCommand,
-  PutBucketCorsCommand,
   GetObjectCommandInput,
   HeadObjectCommand,
-  CreateMultipartUploadCommand,
+  PutBucketCorsCommand,
+  PutObjectCommand,
+  S3Client,
   UploadPartCommand,
-  CompleteMultipartUploadCommand,
-  AbortMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getDeliveryWorkerStatus } from './delivery-worker';
@@ -83,6 +83,7 @@ export async function getMultipartPutUrl(key: string, size: number, s3: S3Client
   if (!s3) s3 = getS3Client();
 
   const deliveryWorkerStatus = await getDeliveryWorkerStatus();
+  console.log({ deliveryWorkerStatus });
   const bucket = deliveryWorkerStatus.current?.name ?? env.S3_UPLOAD_BUCKET;
   const { UploadId } = await s3.send(
     new CreateMultipartUploadCommand({ Bucket: bucket, Key: key })

@@ -6,7 +6,7 @@ import {
   ModelStatus,
   ModelType,
 } from '@prisma/client';
-import React, { createContext, useContext, useEffect } from 'react';
+import React, { createContext, useContext } from 'react';
 import { z } from 'zod';
 
 import { constants } from '~/server/common/constants';
@@ -14,12 +14,14 @@ import {
   BrowsingMode,
   ImageResource,
   ImageSort,
+  ModelKind,
   ModelSort,
   QuestionSort,
   QuestionStatus,
 } from '~/server/common/enums';
 
 export const modelFilterSchema = z.object({
+  kind: z.nativeEnum(ModelKind).optional(),
   sort: z.nativeEnum(ModelSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),
   types: z.nativeEnum(ModelType).array().optional(),

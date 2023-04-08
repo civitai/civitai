@@ -3,7 +3,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
-import { dbWrite, dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import requestIp from 'request-ip';
@@ -13,8 +13,8 @@ import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import { getJoinLink } from '~/utils/join-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
-import { getDownloadUrl } from '~/utils/delivery-worker';
 import { playfab } from '~/server/playfab/client';
+import { getGetUrl } from '~/utils/s3-utils';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -181,8 +181,11 @@ export default RateLimitedEndpoint(
 
     const fileName = getDownloadFilename({ model: modelVersion.model, modelVersion, file });
     try {
-      const { url } = await getDownloadUrl(file.url, fileName);
-      res.redirect(url);
+      const { url: fileUrl } = await getGetUrl(file.url, { fileName });
+      res.redirect(fileUrl);
+      // TODO: Use this when we have a Delivery Worker
+      // const { url } = await getDownloadUrl(file.url, fileName);
+      // res.redirect(url);
     } catch (err: any) {
       console.error(`Error downloading file: ${file.url} - ${err.message}`);
       return res.status(500).json({ error: 'Error downloading file' });

@@ -83,7 +83,8 @@ SELECT
   mr."commentCountAllTime" "modelCommentCount",
   mr."favoriteCountAllTime" "modelFavoriteCount",
   m.type "modelType",
-  i."postId" "postId"
+  i."postId" "postId",
+  i.hash
 FROM
   "ImageResource" ir
   JOIN "Image" i ON i.id = ir."imageId"

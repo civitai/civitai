@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dataSource name="postgres@localhost">
+  <database-model serializer="dbm" dbms="POSTGRES" family-id="POSTGRES" format-version="4.45">
+    <root id="1">
+      <ServerVersion>15.2</ServerVersion>
+    </root>
+    <database id="2" parent="1" name="postgres">
+      <Current>1</Current>
+    </database>
+    <database id="3" parent="1" name="template0"/>
+    <database id="4" parent="1" name="template1"/>
+    <schema id="5" parent="2" name="information_schema"/>
+    <schema id="6" parent="2" name="pg_catalog"/>
+    <schema id="7" parent="2" name="public">
+      <Current>1</Current>
+    </schema>
+  </database-model>
+</dataSource>

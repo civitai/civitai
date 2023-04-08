@@ -1,3 +1,9 @@
+export enum ModelKind {
+  StableDiffusion = 'Stable Diffusion',
+  LLM = 'LLM',
+  Other = 'Other',
+}
+
 export enum UploadType {
   Image = 'image',
   TrainingImages = 'training-images',

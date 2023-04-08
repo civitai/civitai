@@ -1,9 +1,10 @@
-import { ImageSort, PostSort, QuestionSort, BrowsingMode } from './enums';
+import { BrowsingMode, ImageSort, ModelKind, PostSort, QuestionSort } from './enums';
 import { MetricTimeframe } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 
 export const constants = {
   modelFilterDefaults: {
+    kind: ModelKind.StableDiffusion,
     sort: ModelSort.HighestRated,
     period: MetricTimeframe.AllTime,
   },
