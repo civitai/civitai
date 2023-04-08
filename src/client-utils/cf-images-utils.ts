@@ -28,6 +28,7 @@ export function getEdgeUrl(src: string, { name, ...variantParams }: Omit<EdgeUrl
 
   name = name ?? src;
   if (name.includes('.')) name = name.split('.').slice(0, -1).join('.') + '.jpeg';
+  else name = name + '.jpeg';
 
   return [env.NEXT_PUBLIC_IMAGE_LOCATION, src, params.toString(), name].join('/');
 }
