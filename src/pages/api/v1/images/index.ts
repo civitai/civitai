@@ -54,6 +54,9 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       width: image.width,
       height: image.height,
       nsfw: image.nsfw,
+      meta: image.meta,
+      createdAt: image.createdAt,
+      postId: image.postId,
     })),
     metadata: {
       ...metadata,
