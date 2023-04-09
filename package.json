@@ -2,6 +2,13 @@
   "name": "model-share",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "npm@9.6.0",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.6.0",
+    "pnpm": ">=999.0.0",
+    "yarn": ">=999.0.0"
+  },
   "scripts": {
     "start": "next start",
     "dev": "next dev",
