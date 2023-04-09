@@ -32,7 +32,7 @@ export function EditPostControls() {
   );
 }
 
-function ManagePostStatus() {
+export function ManagePostStatus() {
   const router = useRouter();
   const returnUrl = router.query.returnUrl as string;
   const currentUser = useCurrentUser();

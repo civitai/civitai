@@ -133,9 +133,11 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
       <Container>
         <Stack>
           <Group spacing={4}>
-            <Text size="md" mr="xs" weight={500} lh="1.1">
-              Related posts
-            </Text>
+            {!!relatedPosts?.items.length && (
+              <Text size="md" mr="xs" weight={500} lh="1.1">
+                Related posts
+              </Text>
+            )}
             {loadingRelatedPosts && !relatedPosts ? (
               <Loader variant="dots" />
             ) : (

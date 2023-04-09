@@ -79,7 +79,7 @@ export function ImagesAsPostsCard({
     );
     queryUtils.image.getInfinite.setInfiniteData(filters, () => {
       return {
-        pages: [{ items: data.images, nextCursor: undefined }],
+        pages: [{ items: data.images, nextCursor: undefined, count: undefined }],
         pageParams: [],
       };
     });

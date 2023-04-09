@@ -15,6 +15,8 @@ import { ModelStatus } from '@prisma/client';
 import { IconExternalLink } from '@tabler/icons';
 import Link from 'next/link';
 import { useState } from 'react';
+import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
+import { formatDate } from '~/utils/date-helpers';
 
 import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -52,23 +54,45 @@ export default function ModeratorModels() {
       ) : !!data?.items.length ? (
         <Stack>
           <List listStyleType="none" spacing="md">
-            {data?.items.map((model) => (
-              <List.Item
-                key={model.id}
-                sx={(theme) => ({
-                  padding: theme.spacing.sm,
-                  border: `1px solid ${
-                    theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-                  }`,
-                })}
-              >
-                <Link href={`/models/${model.id}/${slugit(model.name)}`} passHref>
-                  <Anchor size="md" target="_blank" lineClamp={1}>
-                    {model.name} <IconExternalLink size={16} stroke={1.5} />
-                  </Anchor>
-                </Link>
-              </List.Item>
-            ))}
+            {data?.items.map((model) => {
+              const unpublishedAt =
+                model.meta && model.meta.unpublishedAt ? new Date(model.meta.unpublishedAt) : null;
+              return (
+                <List.Item
+                  key={model.id}
+                  sx={(theme) => ({
+                    padding: theme.spacing.sm,
+                    border: `1px solid ${
+                      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+                    }`,
+                  })}
+                >
+                  <Stack spacing={4}>
+                    {unpublishedAt && (
+                      <Text size="xs" color="dimmed">
+                        Unpublished at: {formatDate(unpublishedAt)}
+                      </Text>
+                    )}
+                    <Link href={`/models/${model.id}/${slugit(model.name)}`} passHref>
+                      <Anchor size="md" target="_blank" lineClamp={1}>
+                        {model.name} <IconExternalLink size={16} stroke={1.5} />
+                      </Anchor>
+                    </Link>
+                    {model.meta && model.meta.unpublishedReason && (
+                      <Text size="sm">
+                        <Text weight={500} size="sm" span>
+                          Reason initially unpublished:
+                        </Text>{' '}
+                        {
+                          unpublishReasons[model.meta.unpublishedReason as UnpublishReason]
+                            .optionLabel
+                        }
+                      </Text>
+                    )}
+                  </Stack>
+                </List.Item>
+              );
+            })}
           </List>
           {pagination.totalPages > 1 && (
             <Group position="apart">

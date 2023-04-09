@@ -29,5 +29,10 @@ export function getEdgeUrl(src: string, { name, ...variantParams }: Omit<EdgeUrl
   // TODO: Use this when we have a R2 cache with CF worker
   // Official's R2 cache solution disabled
   // return [env.NEXT_PUBLIC_IMAGE_LOCATION, src, params.toString(), `${name ?? src}.jpeg`].join('/');
-  return [env.NEXT_PUBLIC_IMAGE_LOCATION, src, params.toString()].join('/');
+  // return [env.NEXT_PUBLIC_IMAGE_LOCATION, src, params.toString()].join('/');
+  name = name ?? src;
+  if (name.includes('.')) name = name.split('.').slice(0, -1).join('.') + '.jpeg';
+  else name = name + '.jpeg';
+
+  return [env.NEXT_PUBLIC_IMAGE_LOCATION, src, params.toString(), name].join('/');
 }

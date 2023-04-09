@@ -39,6 +39,7 @@ import { useImageStore } from '~/store/images.store';
 import { isDefined } from '~/utils/type-guards';
 import Router, { useRouter } from 'next/router';
 import { trpc } from '~/utils/trpc';
+import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 
 export type ImageGuardConnect = {
   entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post';
@@ -225,6 +226,8 @@ ImageGuard.Report = function ReportImage({
 }: {
   position?: 'static' | 'top-left' | 'top-right';
 }) {
+  const router = useRouter();
+  const currentUser = useCurrentUser();
   const { image, showReportNsfw, isOwner, isModerator } = useImageGuardContentContext();
   const [needsReview, setNeedsReview] = useState(image.needsReview);
 
@@ -238,7 +241,7 @@ ImageGuard.Report = function ReportImage({
     });
     setNeedsReview(false);
   };
-  if (!showReportNsfw) return null;
+  // if (!showReportNsfw) return null;
 
   const handleClick = (e: React.SyntheticEvent) => {
     e.preventDefault();
@@ -295,6 +298,34 @@ ImageGuard.Report = function ReportImage({
     );
   }
 
+  const menuItems: React.ReactElement[] = [];
+  if (!isOwner && !!currentUser)
+    menuItems.push(
+      <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleClick} key="report">
+        Report image
+      </Menu.Item>
+    );
+
+  if ((isOwner || isModerator) && image.postId)
+    menuItems.push(
+      <Menu.Item
+        icon={<IconPencil size={14} stroke={1.5} />}
+        onClick={handleEditClick}
+        key="edit-post"
+      >
+        Edit Image Post
+      </Menu.Item>
+    );
+
+  if (image.postId && !router.query.postId)
+    menuItems.push(
+      <RoutedContextLink modal="postDetailModal" postId={image.postId} key="view-post">
+        <Menu.Item icon={<IconEye size={14} stroke={1.5} />}>View Post</Menu.Item>
+      </RoutedContextLink>
+    );
+
+  if (!menuItems) return null;
+
   return (
     <Group
       spacing={4}
@@ -307,39 +338,28 @@ ImageGuard.Report = function ReportImage({
       }}
     >
       {NeedsReviewBadge}
-      <Menu position="left-start" withArrow offset={-5}>
-        <Menu.Target>
-          <ActionIcon
-            variant="transparent"
-            p={0}
-            onClick={(e: React.MouseEvent) => {
-              e.preventDefault();
-              e.stopPropagation();
-            }}
-            sx={{ width: 30 }}
-          >
-            <IconDotsVertical
-              size={26}
-              color="#fff"
-              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-            />
-          </ActionIcon>
-        </Menu.Target>
-        <Menu.Dropdown>
-          {!isOwner && (
-            <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleClick}>
-              Report image
-            </Menu.Item>
-          )}
-          {(isOwner || isModerator) && image.postId && (
-            <>
-              <Menu.Item icon={<IconPencil size={14} stroke={1.5} />} onClick={handleEditClick}>
-                Edit Image Post
-              </Menu.Item>
-            </>
-          )}
-        </Menu.Dropdown>
-      </Menu>
+      {!!menuItems.length && (
+        <Menu position="left-start" withArrow offset={-5}>
+          <Menu.Target>
+            <ActionIcon
+              variant="transparent"
+              p={0}
+              onClick={(e: React.MouseEvent) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              sx={{ width: 30 }}
+            >
+              <IconDotsVertical
+                size={26}
+                color="#fff"
+                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+              />
+            </ActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>{menuItems}</Menu.Dropdown>
+        </Menu>
+      )}
     </Group>
   );
 };

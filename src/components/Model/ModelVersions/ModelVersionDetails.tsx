@@ -60,7 +60,7 @@ import { openEtherscan } from '~/utils/chain';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
-import { removeTags, splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, removeTags, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ModelVersionDetails({
@@ -128,7 +128,7 @@ export function ModelVersionDetails({
       value: (
         <Group spacing={0} noWrap position="apart">
           <Badge radius="sm" px={5}>
-            {splitUppercase(model.type)} {model.checkpointType}
+            {getDisplayName(model.type)} {model.checkpointType}
           </Badge>
           {version.status !== ModelStatus.Published ? (
             <Badge color="yellow" radius="sm">
@@ -542,7 +542,7 @@ export function ModelVersionDetails({
                       />
                       <Text
                         component={NextLink}
-                        href={`/models/${model.id}/reviews`}
+                        href={`/models/${model.id}/reviews?modelVersionId=${version.id}`}
                         variant="link"
                         size="sm"
                         onClick={(e) => {

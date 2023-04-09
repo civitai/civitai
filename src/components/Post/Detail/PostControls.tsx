@@ -1,10 +1,19 @@
 import { ActionIcon, Menu, useMantineTheme } from '@mantine/core';
 import { IconDotsVertical, IconTrash, IconEdit } from '@tabler/icons';
 import { useRouter } from 'next/router';
+import React from 'react';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
-export function PostControls({ postId, userId }: { postId: number; userId: number }) {
+export function PostControls({
+  postId,
+  userId,
+  children,
+}: {
+  postId: number;
+  userId: number;
+  children: React.ReactElement;
+}) {
   const router = useRouter();
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
@@ -16,11 +25,7 @@ export function PostControls({ postId, userId }: { postId: number; userId: numbe
 
   return (
     <Menu position="bottom-end" transition="pop-top-right">
-      <Menu.Target>
-        <ActionIcon variant="outline">
-          <IconDotsVertical size={16} />
-        </ActionIcon>
-      </Menu.Target>
+      <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown>
         {/* TODO.posts - reports */}
         {isOwnerOrModerator && (
