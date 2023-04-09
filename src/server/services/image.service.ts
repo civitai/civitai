@@ -821,8 +821,14 @@ export const getAllImages = async ({
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)} ${Prisma.raw(includeRank && optionalRank ? 'NULLS LAST' : '')}
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
-      LIMIT ${limit + (cursor ? 1 : 0)}
+      LIMIT ${limit + 1}
   `;
+
+  let nextCursor: bigint | undefined;
+  if (rawImages.length > limit) {
+    const nextItem = rawImages.pop();
+    nextCursor = nextItem?.cursorId;
+  }
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
   if (include?.includes('tags')) {
@@ -935,12 +941,6 @@ export const getAllImages = async ({
       tags: tagsVar?.filter((x) => x.imageId === i.id),
     })
   );
-
-  let nextCursor: bigint | undefined;
-  if (images.length > limit) {
-    const nextItem = rawImages.pop();
-    nextCursor = nextItem?.cursorId;
-  }
 
   let count: number | undefined;
   if (include?.includes('count')) {
