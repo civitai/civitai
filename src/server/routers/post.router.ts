@@ -56,6 +56,32 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   });
 });
 
+// TODO.hotfix: added this middleware to allow editing images and check if it's the owner
+const isImageOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
+  if (!ctx.user) throw throwAuthorizationError();
+
+  const { id } = input as { id: number };
+
+  const userId = ctx.user.id;
+  let ownerId = userId;
+  if (id) {
+    const isModerator = ctx?.user?.isModerator;
+    ownerId =
+      (await dbWrite.image.findUnique({ where: { id }, select: { userId: true } }))?.userId ?? 0;
+    if (!isModerator) {
+      if (ownerId !== userId) throw throwAuthorizationError();
+    }
+  }
+
+  return next({
+    ctx: {
+      // infers the `user` as non-nullable
+      user: ctx.user,
+      ownerId,
+    },
+  });
+});
+
 export const postRouter = router({
   getInfinite: publicProcedure
     .input(postsQuerySchema)
@@ -79,7 +105,7 @@ export const postRouter = router({
     .mutation(addPostImageHandler),
   updateImage: protectedProcedure
     .input(updatePostImageSchema)
-    .use(isOwnerOrModerator)
+    .use(isImageOwnerOrModerator)
     .mutation(updatePostImageHandler),
   reorderImages: protectedProcedure
     .input(reorderPostImagesSchema)
