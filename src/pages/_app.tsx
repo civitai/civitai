@@ -23,7 +23,7 @@ import { CustomModalsProvider } from './../providers/CustomModalsProvider';
 import { TosProvider } from '~/providers/TosProvider';
 import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
 import { MaintenanceMode } from '~/components/MaintenanceMode/MaintenanceMode';
-import { ImageProcessingProvider } from '~/components/ImageProcessing';
+// import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { FeatureFlags } from '~/server/services/feature-flags.service';
@@ -103,18 +103,18 @@ function MyApp(props: CustomAppProps) {
         <CookiesProvider value={cookies}>
           <FiltersProvider value={filters}>
             <FeatureFlagsProvider flags={flags}>
-              <ImageProcessingProvider>
-                <CivitaiLinkProvider>
-                  <CustomModalsProvider>
-                    <NotificationsProvider>
-                      <FreezeProvider>
-                        <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                      </FreezeProvider>
-                      <RoutedContextProvider2 />
-                    </NotificationsProvider>
-                  </CustomModalsProvider>
-                </CivitaiLinkProvider>
-              </ImageProcessingProvider>
+              {/* <ImageProcessingProvider> */}
+              <CivitaiLinkProvider>
+                <CustomModalsProvider>
+                  <NotificationsProvider>
+                    <FreezeProvider>
+                      <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                    </FreezeProvider>
+                    <RoutedContextProvider2 />
+                  </NotificationsProvider>
+                </CustomModalsProvider>
+              </CivitaiLinkProvider>
+              {/* </ImageProcessingProvider> */}
             </FeatureFlagsProvider>
           </FiltersProvider>
         </CookiesProvider>

@@ -484,6 +484,7 @@ const getReportLink = (report: ReportDetail) => {
   if (report.model) return `/models/${report.model.id}`;
   else if (report.review)
     return `/models/${report.review.modelId}/?modal=reviewThread&reviewId=${report.review.id}`;
+  else if (report.resourceReview) return `/reviews/${report.resourceReview.id}`;
   else if (report.comment)
     return `/models/${report.comment.modelId}/?modal=commentThread&commentId=${
       report.comment.parentId ?? report.comment.id

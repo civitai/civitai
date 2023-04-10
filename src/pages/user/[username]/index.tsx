@@ -50,32 +50,37 @@ import { sortDomainLinks } from '~/utils/domain-link';
 import { showErrorNotification } from '~/utils/notifications';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
+import { removeEmpty } from '~/utils/object-helpers';
+import { userPageQuerySchema } from '~/server/schema/user.schema';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ssg, ctx }) => {
-    const username = postgresSlugify(ctx.query.username as string);
-    if (username) await ssg?.user.getCreator.prefetch({ username });
+    const { username, id } = userPageQuerySchema.parse(ctx.query);
+    if (id || username) await ssg?.user.getCreator.prefetch({ id, username });
 
     return {
-      props: {
+      props: removeEmpty({
+        id,
         username,
-      },
+      }),
     };
   },
 });
 
 export default function UserPage({
+  id,
   username,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
 
-  const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery({ username });
+  console.log({ id, username });
+
+  const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery({ id, username });
 
   const { models: uploads } = user?._count ?? { models: 0 };
   const stats = user?.stats;
@@ -89,10 +94,10 @@ export default function UserPage({
   });
   const toggleMuteMutation = trpc.user.toggleMute.useMutation({
     async onMutate() {
-      await queryUtils.user.getCreator.cancel({ username });
+      await queryUtils.user.getCreator.cancel({ id, username });
 
-      const prevUser = queryUtils.user.getCreator.getData({ username });
-      queryUtils.user.getCreator.setData({ username }, () =>
+      const prevUser = queryUtils.user.getCreator.getData({ id, username });
+      queryUtils.user.getCreator.setData({ id, username }, () =>
         prevUser
           ? {
               ...prevUser,
@@ -104,7 +109,7 @@ export default function UserPage({
       return { prevUser };
     },
     onError(_error, _vars, context) {
-      queryUtils.user.getCreator.setData({ username }, context?.prevUser);
+      queryUtils.user.getCreator.setData({ id, username }, context?.prevUser);
       showErrorNotification({
         error: new Error('Unable to mute user, please try again.'),
       });
@@ -115,10 +120,10 @@ export default function UserPage({
   };
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onMutate() {
-      await queryUtils.user.getCreator.cancel({ username });
+      await queryUtils.user.getCreator.cancel({ id, username });
 
-      const prevUser = queryUtils.user.getCreator.getData({ username });
-      queryUtils.user.getCreator.setData({ username }, () =>
+      const prevUser = queryUtils.user.getCreator.getData({ id, username });
+      queryUtils.user.getCreator.setData({ id, username }, () =>
         prevUser
           ? {
               ...prevUser,
@@ -130,7 +135,7 @@ export default function UserPage({
       return { prevUser };
     },
     onError(_error, _vars, context) {
-      queryUtils.user.getCreator.setData({ username }, context?.prevUser);
+      queryUtils.user.getCreator.setData({ id, username }, context?.prevUser);
       showErrorNotification({
         error: new Error('Unable to ban user, please try again.'),
       });

@@ -33,6 +33,7 @@ import { PostSort } from '~/server/common/enums';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
+  const isModelPage = !!router.query.id && !router.pathname.includes('/reviews');
   const inModal = !!router.query.modal;
 
   const { data, isLoading } = trpc.resourceReview.get.useQuery({ id: reviewId });
@@ -69,7 +70,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
                 variant="link"
                 lineClamp={1}
                 sx={{ cursor: 'pointer' }}
-                shallow={inModal}
+                shallow={isModelPage}
               >
                 {data.model.name} - {data.modelVersion.name}
               </Text>
@@ -133,9 +134,11 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
       <Container>
         <Stack>
           <Group spacing={4}>
-            <Text size="md" mr="xs" weight={500} lh="1.1">
-              Related posts
-            </Text>
+            {!!relatedPosts?.items.length && (
+              <Text size="md" mr="xs" weight={500} lh="1.1">
+                Related posts
+              </Text>
+            )}
             {loadingRelatedPosts && !relatedPosts ? (
               <Loader variant="dots" />
             ) : (

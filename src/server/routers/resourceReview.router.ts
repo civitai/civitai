@@ -23,7 +23,9 @@ import {
   getResourceReview,
   getResourceReviewsInfinite,
   getUserResourceReview,
+  toggleExcludeResourceReview,
 } from '~/server/services/resourceReview.service';
+import { moderatorProcedure } from '~/server/trpc';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -78,4 +80,7 @@ export const resourceReviewRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteResourceReviewHandler),
+  toggleExclude: moderatorProcedure
+    .input(getByIdSchema)
+    .mutation(({ input }) => toggleExcludeResourceReview(input)),
 });

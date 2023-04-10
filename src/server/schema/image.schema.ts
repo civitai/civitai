@@ -177,28 +177,40 @@ export const ingestImageSchema = z.object({
 });
 
 // #region [new schemas]
+const imageInclude = z.enum(['tags', 'count', 'cosmetics']);
+export type ImageInclude = z.infer<typeof imageInclude>;
 export type GetInfiniteImagesInput = z.infer<typeof getInfiniteImagesSchema>;
-export const getInfiniteImagesSchema = z.object({
-  limit: z.number().min(0).max(200).default(100),
-  cursor: z.union([z.bigint(), z.number()]).optional(),
-  postId: z.number().optional(),
-  modelId: z.number().optional(),
-  modelVersionId: z.number().optional(),
-  reviewId: z.number().optional(),
-  username: usernameSchema.optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
-  prioritizedUserIds: z.array(z.number()).optional(),
-  excludedImageIds: z.array(z.number()).optional(),
-  period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
-  sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
-  tags: z.array(z.number()).optional(),
-  generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
-  withTags: z.boolean().optional(),
-  browsingMode: z.nativeEnum(BrowsingMode).optional(),
-  needsReview: z.boolean().optional(),
-  tagReview: z.boolean().optional(),
-});
+export const getInfiniteImagesSchema = z
+  .object({
+    limit: z.number().min(0).max(200).default(100),
+    cursor: z.union([z.bigint(), z.number()]).optional(),
+    skip: z.number().optional(),
+    postId: z.number().optional(),
+    modelId: z.number().optional(),
+    modelVersionId: z.number().optional(),
+    reviewId: z.number().optional(),
+    username: usernameSchema.optional(),
+    excludedTagIds: z.array(z.number()).optional(),
+    excludedUserIds: z.array(z.number()).optional(),
+    prioritizedUserIds: z.array(z.number()).optional(),
+    excludedImageIds: z.array(z.number()).optional(),
+    period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
+    sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
+    tags: z.array(z.number()).optional(),
+    generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
+    withTags: z.boolean().optional(),
+    browsingMode: z.nativeEnum(BrowsingMode).optional(),
+    needsReview: z.boolean().optional(),
+    tagReview: z.boolean().optional(),
+    include: z.array(imageInclude).optional().default(['cosmetics']),
+  })
+  .transform((value) => {
+    if (value.withTags) {
+      if (!value.include) value.include = [];
+      value.include.push('tags');
+    }
+    return value;
+  });
 
 export type GetImageInput = z.infer<typeof getImageSchema>;
 export const getImageSchema = z.object({

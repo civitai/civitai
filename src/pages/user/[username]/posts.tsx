@@ -4,13 +4,15 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Container } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
+import { userPageQuerySchema } from '~/server/schema/user.schema';
 
 export default function UserPosts() {
   const router = useRouter();
-  const username = router.query.username as string;
+  const { id, username } = userPageQuerySchema.parse(router.query);
   const currentUser = useCurrentUser();
 
-  if (!currentUser?.isModerator && username !== currentUser?.username) return <NotFound />;
+  if (!username || (!currentUser?.isModerator && username !== currentUser?.username))
+    return <NotFound />;
 
   return (
     <Container fluid style={{ maxWidth: 2500 }}>

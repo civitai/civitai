@@ -118,6 +118,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     AND.push({ OR: statusVisibleOr });
   }
   if (sessionUser?.isModerator) {
+    if (status?.includes(ModelStatus.Unpublished)) status.push(ModelStatus.UnpublishedViolation);
     AND.push({ status: status && status.length > 0 ? { in: status } : ModelStatus.Published });
   }
 
@@ -738,7 +739,7 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
   const { take, skip } = getPagination(limit, page);
   const where: Prisma.ModelFindManyArgs['where'] = {
     userId,
-    status: { not: ModelStatus.Published },
+    status: { notIn: [ModelStatus.Published, ModelStatus.Deleted] },
   };
 
   const items = await dbRead.model.findMany({

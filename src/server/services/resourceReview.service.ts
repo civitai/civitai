@@ -163,9 +163,7 @@ export const updateResourceReview = ({ id, rating, details }: UpdateResourceRevi
 
 export const getPagedResourceReviews = async (input: GetResourceReviewPagedInput) => {
   return await getPagedData(input, async ({ skip, take, modelId, modelVersionId, username }) => {
-    const AND: Prisma.Enumerable<Prisma.ResourceReviewWhereInput> = [
-      { modelId, modelVersionId, details: { not: null } },
-    ];
+    const AND: Prisma.Enumerable<Prisma.ResourceReviewWhereInput> = [{ modelId, modelVersionId }];
     if (username) AND.push({ user: { username } });
 
     const [count, items] = await dbRead.$transaction([
@@ -179,5 +177,16 @@ export const getPagedResourceReviews = async (input: GetResourceReviewPagedInput
       }),
     ]);
     return { items, count };
+  });
+};
+
+export const toggleExcludeResourceReview = async ({ id }: GetByIdInput) => {
+  const item = await dbRead.resourceReview.findUnique({ where: { id }, select: { exclude: true } });
+  if (!item) throw throwNotFoundError();
+
+  await dbWrite.resourceReview.update({
+    where: { id },
+    data: { exclude: !item.exclude },
+    select: { id: true },
   });
 };

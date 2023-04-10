@@ -3,6 +3,21 @@ import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
 import { getAllQuerySchema } from '~/server/schema/base.schema';
+import { removeEmpty } from '~/utils/object-helpers';
+import { postgresSlugify } from '~/utils/string-helpers';
+import { numericString } from '~/utils/zod-helpers';
+
+export const userPageQuerySchema = z
+  .object({
+    username: z.string(),
+    id: numericString().optional(),
+  })
+  .transform((props) => {
+    // we're doing this to handle edge cases where a user hasn't finished onboarding and don't have a username
+    // when a user doesn't have a username, the url becomes `/users/null?id`
+    const username = !props.id ? postgresSlugify(props.username) : undefined;
+    return removeEmpty({ ...props, username });
+  });
 
 export const usernameSchema = z
   .string()

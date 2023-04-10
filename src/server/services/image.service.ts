@@ -6,6 +6,8 @@ import {
   GetImageInput,
 } from './../schema/image.schema';
 import {
+  CosmeticSource,
+  CosmeticType,
   ImageGenerationProcess,
   ModelStatus,
   Prisma,
@@ -36,6 +38,8 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { VotableTagModel } from '~/libs/tags';
 import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getTagsNeedingReview } from '~/server/services/system-cache';
+import { redis } from '~/server/redis/client';
+import { hashify } from '~/utils/string-helpers';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -599,6 +603,7 @@ export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][
 export const getAllImages = async ({
   limit,
   cursor,
+  skip,
   postId,
   modelId,
   modelVersionId,
@@ -613,10 +618,10 @@ export const getAllImages = async ({
   tags,
   generation,
   reviewId,
-  withTags,
   prioritizedUserIds,
   needsReview,
   tagReview,
+  include,
 }: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean }) => {
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
@@ -654,8 +659,9 @@ export const getAllImages = async ({
   }
 
   // Filter to specific model/review content
+  const prioritizeUser = !!prioritizedUserIds?.length;
   const optionalRank = !!(modelId || modelVersionId || reviewId || username);
-  if (modelId || modelVersionId || reviewId) {
+  if (!prioritizeUser && (modelId || modelVersionId || reviewId)) {
     const irhAnd = [Prisma.sql`irr."imageId" = i.id`];
     if (modelVersionId) irhAnd.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
     if (modelId) irhAnd.push(Prisma.sql`mv."modelId" = ${modelId}`);
@@ -737,12 +743,14 @@ export const getAllImages = async ({
 
   const [cursorProp, cursorDirection] = orderBy?.split(' ');
   if (cursor) {
+    if (skip) throw new Error('Cannot use skip with cursor');
+
     const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
     if (cursorProp)
       AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
   }
 
-  if (!!prioritizedUserIds?.length) {
+  if (prioritizeUser) {
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
     if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
 
@@ -757,6 +765,27 @@ export const getAllImages = async ({
   }
 
   const includeRank = cursorProp?.startsWith('r.');
+
+  const queryFrom = Prisma.sql`
+    FROM "Image" i
+    JOIN "User" u ON u.id = i."userId"
+    JOIN "Post" p ON p.id = i."postId"
+    ${Prisma.raw(
+      includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id` : ''
+    )}
+    LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+    ${
+      !userId
+        ? Prisma.sql``
+        : Prisma.sql`LEFT JOIN (
+      SELECT "imageId", jsonb_agg(reaction) "reactions"
+      FROM "ImageReaction"
+      WHERE "userId" = ${userId}
+      GROUP BY "imageId"
+    ) ir ON ir."imageId" = i.id`
+    }
+    WHERE ${Prisma.join(AND, ' AND ')}
+  `;
 
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
     SELECT
@@ -790,30 +819,20 @@ export const getAllImages = async ({
       COALESCE(im."commentCount", 0) "commentCount",
       ${Prisma.raw(!userId ? 'null' : 'ir.reactions')} "reactions",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
-    FROM "Image" i
-    JOIN "User" u ON u.id = i."userId"
-    JOIN "Post" p ON p.id = i."postId"
-    ${Prisma.raw(
-      includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id` : ''
-    )}
-    LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
-    ${
-      !userId
-        ? Prisma.sql``
-        : Prisma.sql`LEFT JOIN (
-      SELECT "imageId", jsonb_agg(reaction) "reactions"
-      FROM "ImageReaction"
-      WHERE "userId" = ${userId}
-      GROUP BY "imageId"
-    ) ir ON ir."imageId" = i.id`
-    }
-    WHERE ${Prisma.join(AND, ' AND ')}
-    ORDER BY ${Prisma.raw(orderBy)} ${Prisma.raw(includeRank && optionalRank ? 'NULLS LAST' : '')}
-    LIMIT ${limit + 1}
+      ${queryFrom}
+      ORDER BY ${Prisma.raw(orderBy)} ${Prisma.raw(includeRank && optionalRank ? 'NULLS LAST' : '')}
+      ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
+      LIMIT ${limit + 1}
   `;
 
+  let nextCursor: bigint | undefined;
+  if (rawImages.length > limit) {
+    const nextItem = rawImages.pop();
+    nextCursor = nextItem?.cursorId;
+  }
+
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
-  if (withTags) {
+  if (include?.includes('tags')) {
     const imageIds = rawImages.map((i) => i.id);
     const rawTags = await dbRead.imageTag.findMany({
       where: { imageId: { in: imageIds } },
@@ -853,19 +872,34 @@ export const getAllImages = async ({
   }
 
   // Get user cosmetics
-  const users = [...new Set(rawImages.map((i) => i.userId))];
-  const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
-    where: { userId: { in: users }, equippedAt: { not: null } },
-    select: {
-      userId: true,
-      cosmetic: { select: { id: true, data: true, type: true, source: true, name: true } },
-    },
-  });
-  const userCosmetics = userCosmeticsRaw.reduce((acc, { userId, cosmetic }) => {
-    acc[userId] = acc[userId] ?? [];
-    acc[userId].push(cosmetic);
-    return acc;
-  }, {} as Record<number, (typeof userCosmeticsRaw)[0]['cosmetic'][]>);
+  const includeCosmetics = include?.includes('cosmetics');
+  let userCosmetics:
+    | Record<
+        number,
+        {
+          type: CosmeticType;
+          id: number;
+          data: Prisma.JsonValue;
+          source: CosmeticSource;
+          name: string;
+        }[]
+      >
+    | undefined;
+  if (includeCosmetics) {
+    const users = [...new Set(rawImages.map((i) => i.userId))];
+    const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
+      where: { userId: { in: users }, equippedAt: { not: null } },
+      select: {
+        userId: true,
+        cosmetic: { select: { id: true, data: true, type: true, source: true, name: true } },
+      },
+    });
+    userCosmetics = userCosmeticsRaw.reduce((acc, { userId, cosmetic }) => {
+      acc[userId] = acc[userId] ?? [];
+      acc[userId].push(cosmetic);
+      return acc;
+    }, {} as Record<number, (typeof userCosmeticsRaw)[0]['cosmetic'][]>);
+  }
 
   const images: Array<
     ImageV2Model & {
@@ -894,7 +928,7 @@ export const getAllImages = async ({
         username,
         image: userImage,
         deletedAt,
-        cosmetics: userCosmetics[creatorId]?.map((cosmetic) => ({ cosmetic })) ?? [],
+        cosmetics: userCosmetics?.[creatorId]?.map((cosmetic) => ({ cosmetic })) ?? [],
       },
       stats: {
         cryCountAllTime: cryCount,
@@ -909,14 +943,26 @@ export const getAllImages = async ({
     })
   );
 
-  let nextCursor: bigint | undefined;
-  if (images.length > limit) {
-    const nextItem = rawImages.pop();
-    nextCursor = nextItem?.cursorId;
+  let count: number | undefined;
+  if (include?.includes('count')) {
+    const whereHash = hashify(queryFrom.text + queryFrom.values);
+    const countCache = await redis.get(`system:image-count:${whereHash}`);
+    if (countCache) count = Number(countCache);
+    else {
+      const [countResult] = await dbRead.$queryRaw<{ count: number }[]>`
+        SELECT COUNT(*) "count"
+        ${queryFrom}
+      `;
+      count = Number(countResult.count);
+      await redis.set(`system:image-count:${whereHash}`, count, {
+        EX: 60 * 5,
+      });
+    }
   }
 
   return {
     nextCursor,
+    count,
     items: images,
   };
 };
