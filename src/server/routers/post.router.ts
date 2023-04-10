@@ -37,21 +37,17 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   const { id } = input as { id: number };
 
   const userId = ctx.user.id;
-  let ownerId = userId;
-  if (id) {
-    const isModerator = ctx?.user?.isModerator;
-    ownerId =
-      (await dbWrite.post.findUnique({ where: { id }, select: { userId: true } }))?.userId ?? 0;
-    if (!isModerator) {
-      if (ownerId !== userId) throw throwAuthorizationError();
-    }
+  const isModerator = ctx?.user?.isModerator;
+  if (!isModerator && !!id) {
+    const ownerId = (await dbWrite.post.findUnique({ where: { id }, select: { userId: true } }))
+      ?.userId;
+    if (ownerId !== userId) throw throwAuthorizationError();
   }
 
   return next({
     ctx: {
       // infers the `user` as non-nullable
       user: ctx.user,
-      ownerId,
     },
   });
 });
@@ -63,21 +59,17 @@ const isImageOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => 
   const { id } = input as { id: number };
 
   const userId = ctx.user.id;
-  let ownerId = userId;
-  if (id) {
-    const isModerator = ctx?.user?.isModerator;
-    ownerId =
-      (await dbWrite.image.findUnique({ where: { id }, select: { userId: true } }))?.userId ?? 0;
-    if (!isModerator) {
-      if (ownerId !== userId) throw throwAuthorizationError();
-    }
+  const isModerator = ctx?.user?.isModerator;
+  if (!isModerator && !!id) {
+    const ownerId = (await dbWrite.image.findUnique({ where: { id }, select: { userId: true } }))
+      ?.userId;
+    if (ownerId !== userId) throw throwAuthorizationError();
   }
 
   return next({
     ctx: {
       // infers the `user` as non-nullable
       user: ctx.user,
-      ownerId,
     },
   });
 });

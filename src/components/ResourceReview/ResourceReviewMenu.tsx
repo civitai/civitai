@@ -1,4 +1,4 @@
-import { ActionIcon, MantineNumberSize, Menu, MenuProps, Text } from '@mantine/core';
+import { ActionIcon, MantineNumberSize, Menu, MenuProps, Text, Loader } from '@mantine/core';
 import { closeAllModals, closeModal, openConfirmModal } from '@mantine/modals';
 import {
   IconBan,
@@ -13,6 +13,7 @@ import {
   IconTrash,
 } from '@tabler/icons';
 import { SessionUser } from 'next-auth';
+import { ToggleLockComments } from '~/components/CommentsV2';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -152,6 +153,19 @@ export function ResourceReviewMenu({
                 Unexclude from average
               </Menu.Item>
             )}
+            <ToggleLockComments entityId={reviewId} entityType="review">
+              {({ toggle, locked, isLoading }) => {
+                return (
+                  <Menu.Item
+                    icon={isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />}
+                    onClick={toggle}
+                    disabled={isLoading}
+                  >
+                    {locked ? 'Unlock' : 'Lock'} Comments
+                  </Menu.Item>
+                );
+              }}
+            </ToggleLockComments>
           </>
         )}
       </Menu.Dropdown>
