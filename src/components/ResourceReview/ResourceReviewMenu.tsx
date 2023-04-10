@@ -108,9 +108,6 @@ export function ResourceReviewMenu({
   };
   const handleUnexcludeReview = () => excludeMutation.mutate({ id: review.id });
 
-  // temp - remove when other controls are in place
-  if (!isOwner && !isMod) return null;
-
   return (
     <Menu position="bottom-end" withinPortal {...props}>
       <Menu.Target>
@@ -167,6 +164,21 @@ export function ResourceReviewMenu({
               }}
             </ToggleLockComments>
           </>
+        )}
+        {!isOwner && (
+          <LoginRedirect reason="report-review">
+            <Menu.Item
+              icon={<IconFlag size={14} stroke={1.5} />}
+              onClick={() =>
+                openContext('report', {
+                  entityType: ReportEntity.ResourceReview,
+                  entityId: reviewId,
+                })
+              }
+            >
+              Report
+            </Menu.Item>
+          </LoginRedirect>
         )}
       </Menu.Dropdown>
     </Menu>

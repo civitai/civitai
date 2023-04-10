@@ -99,6 +99,20 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
             },
           },
         },
+        resourceReview: {
+          select: {
+            resourceReview: {
+              select: {
+                id: true,
+                user: { select: simpleUserSelect },
+                nsfw: true,
+                tosViolation: true,
+                modelId: true,
+                modelVersionId: true,
+              },
+            },
+          },
+        },
         comment: {
           select: {
             comment: {
@@ -142,6 +156,7 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
           model: item.model?.model,
           review: item.review?.review,
           comment: item.comment?.comment,
+          resourceReview: item.resourceReview?.resourceReview,
           image: item.image && {
             ...item.image.image,
             modelId: item.image.image.connections?.modelId,

@@ -1,7 +1,6 @@
 import { Menu, Loader } from '@mantine/core';
 import { closeModal, openConfirmModal } from '@mantine/modals';
 import { useState } from 'react';
-import { useGalleryDetailContext } from '../../Gallery/GalleryDetailProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { IconTrash, IconBan, IconLock, IconPencil } from '@tabler/icons';
