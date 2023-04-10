@@ -12,10 +12,11 @@ export const userPageQuerySchema = z
     username: z.string(),
   })
   .transform((props) => {
-    const isNumber = isNumeric(props.username);
-    const username = !isNumber ? postgresSlugify(props.username) : undefined;
-    const id = isNumber ? Number(props.username) : undefined;
-    return removeEmpty({ ...props, username, id });
+    // const isNumber = isNumeric(props.username);
+    // const username = !isNumber ? postgresSlugify(props.username) : undefined;
+    // const id = isNumber ? Number(props.username) : undefined;
+    const username = postgresSlugify(props.username);
+    return removeEmpty({ ...props, username });
   });
 
 export const usernameSchema = z
