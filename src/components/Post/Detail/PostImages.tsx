@@ -69,6 +69,7 @@ export function PostImages({
                     boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
                   })}
                 />
+                <ImageGuard.Report />
                 <ImageGuard.Content>
                   {({ safe }) => (
                     <>

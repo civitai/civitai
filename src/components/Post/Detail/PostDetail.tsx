@@ -1,4 +1,4 @@
-import { Container, Stack, Title, Group, Badge } from '@mantine/core';
+import { Container, Stack, Title, Group, Badge, CloseButton, ActionIcon } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PostComments } from '~/components/Post/Detail/PostComments';
@@ -6,39 +6,19 @@ import { trpc } from '~/utils/trpc';
 import { PostControls } from '~/components/Post/Detail/PostControls';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { PostImages } from '~/components/Post/Detail/PostImages';
-import Router from 'next/router';
-import { useEffect } from 'react';
-import { QS } from '~/utils/qs';
 import { Meta } from '~/components/Meta/Meta';
 import { truncate } from 'lodash-es';
 import { removeTags } from '~/utils/string-helpers';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { NavigateBack } from '~/components/BackButton/BackButton';
+import { IconDotsVertical } from '@tabler/icons';
+import { useRouter } from 'next/router';
 
 export function PostDetail({ postId }: { postId: number }) {
+  const router = useRouter();
   const { data: post, isLoading: postLoading } = trpc.post.get.useQuery({ id: postId });
   const { data: { items: images } = { items: [] }, isLoading: imagesLoading } =
     trpc.image.getInfinite.useQuery({ postId });
-
-  // when a user navigates back in their browser, set the previous url with the query string post={postId}
-  useEffect(() => {
-    Router.beforePopState(({ as, url }) => {
-      if (as === '/posts' || as.startsWith('/posts?')) {
-        const [route, queryString] = as.split('?');
-        const [, otherQueryString] = url.split('?');
-        const queryParams = QS.parse(queryString);
-        const otherParams = QS.parse(otherQueryString);
-        Router.replace(
-          { pathname: route, query: { ...queryParams, ...otherParams, post: postId } },
-          as,
-          { shallow: true }
-        );
-        return false;
-      }
-      return true;
-    });
-
-    return () => Router.beforePopState(() => true);
-  }, [postId]); // Add any state variables to dependencies array if needed.
 
   if (postLoading) return <PageLoader />;
   if (!post) return <NotFound />;
@@ -60,7 +40,18 @@ export function PostDetail({ postId }: { postId: number }) {
             ) : (
               <span></span>
             )}
-            <PostControls postId={post.id} userId={post.user.id} />
+            <Group spacing="xs">
+              <PostControls postId={post.id} userId={post.user.id}>
+                <ActionIcon variant="outline">
+                  <IconDotsVertical size={16} />
+                </ActionIcon>
+              </PostControls>
+              {router.query.modal && (
+                <NavigateBack url="/posts">
+                  {({ onClick }) => <CloseButton onClick={onClick} size="lg" />}
+                </NavigateBack>
+              )}
+            </Group>
           </Group>
 
           <PostImages postId={post.id} images={images} isLoading={imagesLoading} />

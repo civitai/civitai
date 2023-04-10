@@ -1267,6 +1267,7 @@ export const updateMetricsJob = createJob(
           SELECT DISTINCT
               r.id
           FROM recent_engagements r
+          JOIN "Image" i ON i.id = r.id
           WHERE r.id IS NOT NULL
       )
 
@@ -1468,9 +1469,9 @@ export const updateMetricsJob = createJob(
     // --------------------------------------------
     const shouldUpdateFastRanks =
       lastRankFastDate.getTime() + RANK_FAST_UPDATE_DELAY <= new Date().getTime();
+    await refreshVersionModelRank();
     if (shouldUpdateFastRanks) {
       await refreshModelRank();
-      await refreshVersionModelRank();
       await refreshTagRank();
       log('Updated fast ranks');
       await dbWrite?.keyValue.upsert({
