@@ -48,15 +48,23 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
   res.status(200).json({
     items: items.map((image) => ({
-      url: getEdgeUrl(image.url, { width: 450 }),
       id: image.id,
+      url: getEdgeUrl(image.url, { width: image.width ?? 450 }),
       hash: image.hash,
       width: image.width,
       height: image.height,
       nsfw: image.nsfw,
-      meta: image.meta,
       createdAt: image.createdAt,
       postId: image.postId,
+      stats: {
+        cryCount: image.stats?.cryCountAllTime ?? 0,
+        laughCount: image.stats?.laughCountAllTime ?? 0,
+        likeCount: image.stats?.likeCountAllTime ?? 0,
+        dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
+        heartCount: image.stats?.heartCountAllTime ?? 0,
+        commentCount: image.stats?.commentCountAllTime ?? 0,
+      },
+      meta: image.meta,
     })),
     metadata: {
       ...metadata,
