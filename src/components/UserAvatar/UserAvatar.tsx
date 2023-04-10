@@ -90,7 +90,7 @@ export function UserAvatar({
   );
 
   return linkToProfile && !userDeleted ? (
-    <Link href={`/user/${user.username}`} passHref>
+    <Link href={`/user/${user.username ?? user.id}`} passHref>
       <Anchor
         variant="text"
         className={classes.link}

@@ -3,6 +3,20 @@ import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
 import { getAllQuerySchema } from '~/server/schema/base.schema';
+import { isNumeric } from '~/utils/number-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
+import { postgresSlugify } from '~/utils/string-helpers';
+
+export const userPageQuerySchema = z
+  .object({
+    username: z.string(),
+  })
+  .transform((props) => {
+    const isNumber = isNumeric(props.username);
+    const username = !isNumber ? postgresSlugify(props.username) : undefined;
+    const id = isNumber ? Number(props.username) : undefined;
+    return removeEmpty({ ...props, username, id });
+  });
 
 export const usernameSchema = z
   .string()

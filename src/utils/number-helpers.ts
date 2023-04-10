@@ -78,3 +78,7 @@ export function numberWithCommas(value: number | string | undefined) {
     ? `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
     : '';
 }
+
+export function isNumeric(value?: string | string[]) {
+  return !isNaN(Number(value));
+}
