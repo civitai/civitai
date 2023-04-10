@@ -53,7 +53,7 @@ export function EditResourceReview({
         onSuccess: async (response, request) => {
           setRating(rating);
           setId(response.id);
-          queryUtils.resourceReview.invalidate();
+          await queryUtils.resourceReview.invalidate();
         },
       }
     );
