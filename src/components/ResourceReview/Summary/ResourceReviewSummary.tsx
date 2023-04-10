@@ -106,7 +106,7 @@ ResourceReviewSummary.Totals = function Totals() {
   ) : (
     <div className={classes.grid}>
       {ratings.map((rating) => {
-        const progress = (totals ? totals[rating] / count : 0) * 100;
+        const progress = (totals && count ? totals[rating] / count : 0) * 100;
         const rounded = Math.ceil(progress);
         return (
           <Fragment key={rating}>
