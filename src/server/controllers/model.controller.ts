@@ -168,6 +168,7 @@ export const getModelsInfiniteHandler = async ({
       },
       modelVersions: {
         orderBy: { index: 'asc' },
+        where: { status: ModelStatus.Published },
         take: 1,
         select: {
           id: true,

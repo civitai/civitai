@@ -25,6 +25,7 @@ import { z } from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { BaseModel, constants } from '~/server/common/constants';
 import { setCookie } from '~/utils/cookies-helpers';
+import { useModelFilters } from '~/providers/FiltersProvider';
 
 type FilterProps = z.input<typeof modelFilterSchema>;
 
@@ -100,20 +101,21 @@ export const useInfiniteModelsFilters = () => {
     period = constants.modelFilterDefaults.period,
     baseModels,
     types,
-    browsingMode,
     status,
     checkpointType,
     earlyAccess,
   } = useCookies().models;
 
   const filters = useFilters((state) => state.filters);
+  // TODO.hotfix: uses the new cookie filters to prevent fetching the same models because of browsingMode
+  const modelFilters = useModelFilters();
   return {
+    ...modelFilters,
     limit: 100,
     sort,
     period,
     types,
     baseModels,
-    browsingMode,
     status,
     checkpointType,
     earlyAccess,

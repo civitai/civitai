@@ -622,7 +622,8 @@ export const getAllImages = async ({
   needsReview,
   tagReview,
   include,
-}: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean }) => {
+  nsfw,
+}: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean; nsfw?: boolean }) => {
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
 
@@ -659,8 +660,9 @@ export const getAllImages = async ({
   }
 
   // Filter to specific model/review content
+  const prioritizeUser = !!prioritizedUserIds?.length;
   const optionalRank = !!(modelId || modelVersionId || reviewId || username);
-  if (modelId || modelVersionId || reviewId) {
+  if (!prioritizeUser && (modelId || modelVersionId || reviewId)) {
     const irhAnd = [Prisma.sql`irr."imageId" = i.id`];
     if (modelVersionId) irhAnd.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
     if (modelId) irhAnd.push(Prisma.sql`mv."modelId" = ${modelId}`);
@@ -686,7 +688,7 @@ export const getAllImages = async ({
   if (tags?.length) {
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "TagsOnImage" toi
-      WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(tags)})
+      WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(tags)}) AND NOT toi.disabled
     )`);
   }
 
@@ -726,7 +728,7 @@ export const getAllImages = async ({
           SELECT 1 FROM "TagsOnImage" toi
           WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join([
             ...new Set(excludedTagIds),
-          ])})
+          ])}) AND NOT toi.disabled
         )`,
         ],
         ' AND '
@@ -734,6 +736,10 @@ export const getAllImages = async ({
     ];
     if (userId) OR.push(Prisma.sql`i."userId" = ${userId}`);
     AND.push(Prisma.sql`(${Prisma.join(OR, ' OR ')})`);
+  }
+
+  if (nsfw !== undefined) {
+    AND.push(Prisma.sql`i."nsfw" = ${nsfw}`);
   }
 
   // TODO Briant: turn this back on when we have support for separate period filters
@@ -749,7 +755,7 @@ export const getAllImages = async ({
       AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
   }
 
-  if (!!prioritizedUserIds?.length) {
+  if (prioritizeUser) {
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
     if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
 

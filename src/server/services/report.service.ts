@@ -157,6 +157,14 @@ export const createReport = async ({
           },
         });
         break;
+      case ReportEntity.ResourceReview:
+        await tx.resourceReviewReport.create({
+          data: {
+            resourceReview: { connect: { id } },
+            report,
+          },
+        });
+        break;
       default:
         throw new Error('unhandled report type');
     }
@@ -251,5 +259,18 @@ export const getImageReports = <TSelect extends Prisma.ImageReportSelect>({
   return dbRead.imageReport.findMany({
     select,
     where: { imageId },
+  });
+};
+
+export const getResourceReviewReports = <TSelect extends Prisma.ResourceReviewReportSelect>({
+  resourceReviewId,
+  select,
+}: {
+  resourceReviewId: number;
+  select: TSelect;
+}) => {
+  return dbRead.resourceReviewReport.findMany({
+    select,
+    where: { resourceReviewId },
   });
 };
