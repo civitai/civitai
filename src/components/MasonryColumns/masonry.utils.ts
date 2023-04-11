@@ -3,7 +3,7 @@ import {
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
 import { useWindowEvent } from '@mantine/hooks';
-import { useLayoutEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { createDebouncer } from '~/utils/debouncer';
 
 // don't know if I need memoized
@@ -102,7 +102,7 @@ export const useContainerWidth = (elementRef: React.MutableRefObject<HTMLElement
   );
 
   // using the extra `container?.offsetWidth` dependency because of rapid changes in offsetWidth value on initialize
-  useLayoutEffect(() => {
+  useEffect(() => {
     const { current } = elementRef;
     if (!current?.offsetWidth) return;
     setWidth(current.offsetWidth);

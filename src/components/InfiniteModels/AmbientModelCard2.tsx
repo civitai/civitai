@@ -27,7 +27,7 @@ import {
 } from '@tabler/icons';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { InView } from 'react-intersection-observer';
 
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
@@ -161,6 +161,8 @@ const useStyles = createStyles((theme) => {
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
 export function AmbientModelCard2({ data, width, height }: Props) {
+  const router = useRouter();
+  const modelId = router.query.model ? Number(router.query.model) : undefined;
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   const theme = useMantineTheme();
@@ -321,6 +323,12 @@ export function AmbientModelCard2({ data, width, height }: Props) {
 
   const isNew = data.createdAt > aDayAgo;
   const isUpdated = !isNew && data.lastVersionAt && data.lastVersionAt > aDayAgo;
+
+  useEffect(() => {
+    if (!modelId || modelId !== data.id) return;
+    const elem = document.getElementById(`${modelId}`);
+    if (elem) elem.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+  }, [modelId, data.id]);
 
   return (
     <InView rootMargin="600px">

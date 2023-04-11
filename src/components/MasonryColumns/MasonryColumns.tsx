@@ -16,6 +16,7 @@ type Props<TData> = {
   render: React.ComponentType<MasonryRenderItemProps<TData>>;
   imageDimensions: MasonryImageDimensionsFn<TData>;
   adjustHeight?: MasonryAdjustHeightFn;
+  itemKey?: (data: TData, index: number) => string | number;
 };
 
 export function MasonryColumns<TData>({
@@ -23,6 +24,7 @@ export function MasonryColumns<TData>({
   render: RenderComponent,
   imageDimensions,
   adjustHeight,
+  itemKey = defaultGetItemKey,
 }: Props<TData>) {
   const { columnWidth, columnGap, rowGap, maxItemHeight, maxSingleColumnWidth } =
     useMasonryContext();
@@ -49,11 +51,14 @@ export function MasonryColumns<TData>({
     <div className={classes.columns}>
       {columns.map((items, colIndex) => (
         <div key={colIndex} className={classes.column}>
-          {items.map(({ height, data }, index) => (
-            <Fragment key={index}>
-              {createRenderElement(RenderComponent, index, data, columnWidth, height)}
-            </Fragment>
-          ))}
+          {items.map(({ height, data }, index) => {
+            const key = itemKey(data, index);
+            return (
+              <div key={key} id={key !== index ? key.toString() : undefined}>
+                {createRenderElement(RenderComponent, index, data, columnWidth, height)}
+              </div>
+            );
+          })}
         </div>
       ))}
     </div>
@@ -102,3 +107,7 @@ const createRenderElement = trieMemoize(
     <RenderComponent index={index} data={data} width={columnWidth} height={columnHeight} />
   )
 );
+
+function defaultGetItemKey<TData>(_: TData, i: number) {
+  return i;
+}
