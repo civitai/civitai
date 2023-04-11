@@ -99,6 +99,7 @@ export function InfiniteModels2({ columnWidth = 300, delayNsfw = false }: Infini
               return { width, height };
             }}
             adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
+            maxItemHeight={600}
             render={AmbientModelCard2}
             itemId={(data) => data.id}
           />
