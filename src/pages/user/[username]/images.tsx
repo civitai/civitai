@@ -3,18 +3,20 @@ import { useRouter } from 'next/router';
 import { Container, Group, Stack } from '@mantine/core';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
-import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { BrowsingMode } from '~/server/common/enums';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { userPageQuerySchema } from '~/server/schema/user.schema';
 
 export default function UserImages() {
   const router = useRouter();
-  const username = router.query.username as string;
+  const { username, id } = userPageQuerySchema.parse(router.query);
   const currentUser = useCurrentUser();
   const browsingMode = currentUser?.username === username ? BrowsingMode.All : undefined;
 
-  if (!currentUser?.isModerator && username !== currentUser?.username) return <NotFound />;
+  // currently not showing any content if the username is undefined
+  if (!username || (!currentUser?.isModerator && username !== currentUser?.username))
+    return <NotFound />;
 
   return (
     <Container fluid style={{ maxWidth: 2500 }}>

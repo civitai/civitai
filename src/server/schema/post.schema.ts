@@ -59,6 +59,7 @@ export const addPostTagSchema = z.object({
 // consider moving image creation to post service?
 export type AddPostImageInput = z.infer<typeof addPostImageSchema>;
 export const addPostImageSchema = z.object({
+  // userId: z.number(),
   name: z.string().nullish(),
   url: z.string().url().or(z.string().uuid()),
   hash: z.string().nullish(),

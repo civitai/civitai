@@ -179,3 +179,14 @@ export const getPagedResourceReviews = async (input: GetResourceReviewPagedInput
     return { items, count };
   });
 };
+
+export const toggleExcludeResourceReview = async ({ id }: GetByIdInput) => {
+  const item = await dbRead.resourceReview.findUnique({ where: { id }, select: { exclude: true } });
+  if (!item) throw throwNotFoundError();
+
+  await dbWrite.resourceReview.update({
+    where: { id },
+    data: { exclude: !item.exclude },
+    select: { id: true },
+  });
+};

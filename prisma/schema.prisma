@@ -571,12 +571,22 @@ model Report {
   previouslyReviewedCount Int          @default(0)
   alsoReportedBy          Int[]        @default([]) // UserIds
 
-  status    ReportStatus
-  model     ModelReport?
-  review    ReviewReport?
-  comment   CommentReport?
-  commentV2 CommentV2Report?
-  image     ImageReport?
+  status         ReportStatus
+  model          ModelReport?
+  review         ReviewReport?
+  comment        CommentReport?
+  commentV2      CommentV2Report?
+  image          ImageReport?
+  resourceReview ResourceReviewReport?
+}
+
+model ResourceReviewReport {
+  resourceReviewId Int
+  resourceReview   ResourceReview @relation(fields: [resourceReviewId], references: [id], onDelete: Cascade)
+  reportId         Int            @unique
+  report           Report         @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, resourceReviewId])
 }
 
 model ModelReport {
@@ -667,6 +677,7 @@ model ResourceReview {
   metadata       Json?
   reactions      ResourceReviewReaction[]
   helper         ResourceReviewHelper?
+  reports        ResourceReviewReport[]
 
   @@unique([modelVersionId, userId])
   @@index([modelVersionId], type: Hash)

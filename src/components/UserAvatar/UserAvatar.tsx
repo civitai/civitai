@@ -89,8 +89,11 @@ export function UserAvatar({
     </Group>
   );
 
+  let href = `/user/${user.username}`;
+  if (!user.username) href += `?id=${user.id}`;
+
   return linkToProfile && !userDeleted ? (
-    <Link href={`/user/${user.username}`} passHref>
+    <Link href={href} passHref>
       <Anchor
         variant="text"
         className={classes.link}

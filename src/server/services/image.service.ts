@@ -659,8 +659,9 @@ export const getAllImages = async ({
   }
 
   // Filter to specific model/review content
+  const prioritizeUser = !!prioritizedUserIds?.length;
   const optionalRank = !!(modelId || modelVersionId || reviewId || username);
-  if (modelId || modelVersionId || reviewId) {
+  if (!prioritizeUser && (modelId || modelVersionId || reviewId)) {
     const irhAnd = [Prisma.sql`irr."imageId" = i.id`];
     if (modelVersionId) irhAnd.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
     if (modelId) irhAnd.push(Prisma.sql`mv."modelId" = ${modelId}`);
@@ -749,7 +750,7 @@ export const getAllImages = async ({
       AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
   }
 
-  if (!!prioritizedUserIds?.length) {
+  if (prioritizeUser) {
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
     if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
 
