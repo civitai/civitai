@@ -13,6 +13,7 @@ import {
   Text,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
+import { ModelStatus } from '@prisma/client';
 import { IconAlertCircle, IconExternalLink, IconTrash } from '@tabler/icons';
 import Link from 'next/link';
 import { useState } from 'react';
@@ -72,16 +73,19 @@ export function UserDraftModels({ enabled = false }: Props) {
       await queryUtils.model.getMyDraftModels.invalidate();
     },
   });
-  const handleDeleteModel = (modelId: number) => {
+  const handleDeleteModel = (model: (typeof items)[number]) => {
+    const permaDelete = model.status === ModelStatus.Draft;
+
     openConfirmModal({
       title: 'Delete model',
-      children:
-        'Are you sure you want to delete this model? This action is destructive and you will have to contact support to restore your data.',
+      children: `Are you sure you want to delete this model? This action is destructive and you will ${
+        permaDelete ? 'not be able' : 'have to contact support'
+      } to restore your data.`,
       centered: true,
       labels: { confirm: 'Delete Model', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       onConfirm: () => {
-        deleteMutation.mutate({ id: modelId });
+        deleteMutation.mutate({ id: model.id, permanently: model.status === ModelStatus.Draft });
       },
     });
   };
@@ -152,7 +156,7 @@ export function UserDraftModels({ enabled = false }: Props) {
                           color="red"
                           variant="subtle"
                           size="sm"
-                          onClick={() => handleDeleteModel(model.id)}
+                          onClick={() => handleDeleteModel(model)}
                         >
                           <IconTrash />
                         </ActionIcon>

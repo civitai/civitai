@@ -1,4 +1,4 @@
-import { ActionIcon, MantineNumberSize, Menu, MenuProps, Text } from '@mantine/core';
+import { ActionIcon, MantineNumberSize, Menu, MenuProps, Text, Loader } from '@mantine/core';
 import { closeAllModals, closeModal, openConfirmModal } from '@mantine/modals';
 import {
   IconBan,
@@ -13,6 +13,7 @@ import {
   IconTrash,
 } from '@tabler/icons';
 import { SessionUser } from 'next-auth';
+import { ToggleLockComments } from '~/components/CommentsV2';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -107,9 +108,6 @@ export function ResourceReviewMenu({
   };
   const handleUnexcludeReview = () => excludeMutation.mutate({ id: review.id });
 
-  // temp - remove when other controls are in place
-  if (!isOwner && !isMod) return null;
-
   return (
     <Menu position="bottom-end" withinPortal {...props}>
       <Menu.Target>
@@ -152,7 +150,35 @@ export function ResourceReviewMenu({
                 Unexclude from average
               </Menu.Item>
             )}
+            <ToggleLockComments entityId={reviewId} entityType="review">
+              {({ toggle, locked, isLoading }) => {
+                return (
+                  <Menu.Item
+                    icon={isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />}
+                    onClick={toggle}
+                    disabled={isLoading}
+                  >
+                    {locked ? 'Unlock' : 'Lock'} Comments
+                  </Menu.Item>
+                );
+              }}
+            </ToggleLockComments>
           </>
+        )}
+        {!isOwner && (
+          <LoginRedirect reason="report-review">
+            <Menu.Item
+              icon={<IconFlag size={14} stroke={1.5} />}
+              onClick={() =>
+                openContext('report', {
+                  entityType: ReportEntity.ResourceReview,
+                  entityId: reviewId,
+                })
+              }
+            >
+              Report
+            </Menu.Item>
+          </LoginRedirect>
         )}
       </Menu.Dropdown>
     </Menu>
