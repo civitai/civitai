@@ -74,6 +74,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   };
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
 
+  console.log({ model, version, defaultValues, formValues: form.getValues() });
+
   const skipTrainedWords = !isTextualInversion && (form.watch('skipTrainedWords') ?? false);
   const trainedWords = form.watch('trainedWords') ?? [];
   const { isDirty } = form.formState;
@@ -87,7 +89,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     },
   });
   const handleSubmit = async (data: Schema) => {
-    if (isDirty) {
+    if (isDirty || !version?.id) {
       const result = await upsertVersionMutation.mutateAsync({
         ...data,
         modelId: model?.id ?? -1,
