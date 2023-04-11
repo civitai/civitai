@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 
 import { showErrorNotification } from '~/utils/notifications';
+import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 import { trpc } from '~/utils/trpc';
 
 const { openModal, Modal } = createContextModal<{ modelId: number }>({
@@ -13,7 +14,7 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
 
     const { data: blockedTags = [] } = trpc.user.getTags.useQuery({ type: 'Hide' });
     const { data, isLoading } = trpc.tag.getAll.useQuery({
-      limit: 0,
+      limit: 200,
       entityType: ['Model'],
       modelId,
     });
@@ -28,8 +29,7 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
       async onSuccess() {
         context.close();
 
-        await queryUtils.model.getAll.invalidate();
-        await queryUtils.user.getTags.invalidate({ type: 'Hide' });
+        await invalidateModeratedContent(queryUtils);
       },
       onError(error) {
         showErrorNotification({ error: new Error(error.message) });
@@ -60,7 +60,12 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
                 const selected = selectedTags.includes(String(tag.id));
 
                 return (
-                  <Chip key={tag.id} color={selected ? 'red' : undefined} value={String(tag.id)}>
+                  <Chip
+                    key={tag.id}
+                    color={selected ? 'red' : undefined}
+                    radius="xs"
+                    value={String(tag.id)}
+                  >
                     {tag.name}
                   </Chip>
                 );

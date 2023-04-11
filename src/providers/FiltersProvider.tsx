@@ -112,8 +112,7 @@ export const FiltersProvider = ({
 
 const useSharedFilters = (type: FilterSubTypes) => {
   const period = useFiltersContext((state) => state.period);
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
-  return { period, browsingMode };
+  return { period };
 };
 
 export const useModelFilters = () => {

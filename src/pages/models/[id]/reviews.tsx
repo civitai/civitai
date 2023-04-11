@@ -162,7 +162,7 @@ export default function ModelReviews() {
             <Stack spacing="xl" style={{ position: 'relative' }}>
               <LoadingOverlay visible={refetchingResourceReviews} />
               {resourceReviews?.items.map((review) => (
-                <ReviewCard key={review.id} {...review} />
+                <ReviewCard key={review.id} creatorId={model?.user.id} {...review} />
               ))}
               {resourceReviews && (
                 <Pagination
@@ -179,9 +179,10 @@ export default function ModelReviews() {
   );
 }
 
-function ReviewCard(review: ResourceReviewPagedModel) {
+function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creatorId?: number }) {
   // TODO - add version name next to days ago
   const currentUser = useCurrentUser();
+  const isCreator = creatorId === review.user.id;
   const isOwnerOrModerator =
     (currentUser?.id === review.user.id || currentUser?.isModerator) ?? false;
   return (
@@ -247,7 +248,7 @@ function ReviewCard(review: ResourceReviewPagedModel) {
               {review.thread?._count.comments ?? '0'}
             </Badge>
           </RoutedContextLink>
-          {review.exclude && <Badge color="red">Excluded from average</Badge>}
+          {(review.exclude || isCreator) && <Badge color="red">Excluded from average</Badge>}
         </Group>
         {review.details && (
           <ContentClamp maxHeight={300}>
