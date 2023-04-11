@@ -351,11 +351,11 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                 if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
               }}
             >
-              {image && inView && (
+              {inView && (
                 <>
                   <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} />
                   <ImageGuard
-                    images={[image]}
+                    images={image ? [image] : []}
                     connect={{ entityId: id, entityType: 'model' }}
                     render={(image) => (
                       <Box sx={{ position: 'relative' }}>
