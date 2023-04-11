@@ -321,7 +321,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
     let remaining = limit;
 
     while (true) {
-      // TODO Optimize: override the select statement to exclude repeated elements like creator data
       const { nextCursor, items } = await getAllImages({
         ...input,
         cursor,
@@ -360,15 +359,14 @@ export const getImagesAsPostsInfiniteHandler = async ({
         id: true,
         modelVersionId: true,
       },
+      orderBy: { rating: 'desc' },
     });
 
     // Prepare the results
     const results = Object.values(posts).map((images) => {
       const [image] = images;
       const user = image.user;
-      const review = reviews.find(
-        (review) => review.userId === user.id && review.modelVersionId === image.modelVersionId
-      );
+      const review = reviews.find((review) => review.userId === user.id);
       const createdAt = images.map((image) => image.createdAt).sort()[0];
       if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       return {

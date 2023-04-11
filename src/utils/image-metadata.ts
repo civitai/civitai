@@ -193,6 +193,7 @@ function automaticEncoder({ prompt, negativePrompt, resources, ...other }: Image
   const fineDetails = [];
   for (const [k, v] of Object.entries(other)) {
     const key = automaticSDEncodeMap.get(k) ?? k;
+    if (key === 'hashes') continue;
     fineDetails.push(`${key}: ${v}`);
   }
   if (fineDetails.length > 0) lines.push(fineDetails.join(', '));
@@ -214,7 +215,6 @@ const blockedRegex = blocked.map((word) => ({
   word,
   regex: tokenRegex(word),
 }));
-console.log(blockedRegex.find((x) => x.word === 'loli'));
 const blockedNSFWRegex = blockedNSFW.map((word) => ({
   word,
   regex: tokenRegex(word),
