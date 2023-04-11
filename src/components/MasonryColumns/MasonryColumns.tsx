@@ -1,7 +1,7 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
 import { createStyles } from '@mantine/core';
-import React, { Fragment } from 'react';
+import React from 'react';
 import { useMasonryColumns } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import {
@@ -16,7 +16,8 @@ type Props<TData> = {
   render: React.ComponentType<MasonryRenderItemProps<TData>>;
   imageDimensions: MasonryImageDimensionsFn<TData>;
   adjustHeight?: MasonryAdjustHeightFn;
-  itemKey?: (data: TData, index: number) => string | number;
+  maxItemHeight?: number;
+  itemId?: (data: TData) => string | number;
 };
 
 export function MasonryColumns<TData>({
@@ -24,10 +25,10 @@ export function MasonryColumns<TData>({
   render: RenderComponent,
   imageDimensions,
   adjustHeight,
-  itemKey = defaultGetItemKey,
+  maxItemHeight,
+  itemId,
 }: Props<TData>) {
-  const { columnWidth, columnGap, rowGap, maxItemHeight, maxSingleColumnWidth } =
-    useMasonryContext();
+  const { columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
   const { columnCount } = useMasonryContainerContext();
 
   const { classes } = useStyles({
@@ -52,9 +53,9 @@ export function MasonryColumns<TData>({
       {columns.map((items, colIndex) => (
         <div key={colIndex} className={classes.column}>
           {items.map(({ height, data }, index) => {
-            const key = itemKey(data, index);
+            const key = itemId?.(data) ?? index;
             return (
-              <div key={key} id={key !== index ? key.toString() : undefined}>
+              <div key={key} id={key.toString()}>
                 {createRenderElement(RenderComponent, index, data, columnWidth, height)}
               </div>
             );

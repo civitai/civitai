@@ -100,7 +100,7 @@ export function InfiniteModels2({ columnWidth = 300, delayNsfw = false }: Infini
             }}
             adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
             render={AmbientModelCard2}
-            itemKey={(data) => data.id}
+            itemId={(data) => data.id}
           />
           {hasNextPage && !isLoading && !isRefetching && (
             <Center ref={ref}>

@@ -6,7 +6,6 @@ type LayoutState = {
   rowGap: number;
   maxColumnCount: number;
   maxSingleColumnWidth?: number;
-  maxItemHeight?: number;
 };
 
 const MasonryContext = createContext<LayoutState | null>(null);
@@ -19,7 +18,6 @@ export const useMasonryContext = () => {
 type Props = {
   columnWidth: number;
   maxColumnCount: number;
-  maxItemHeight?: number;
   gap?: number;
   columnGap?: number;
   rowGap?: number;
@@ -31,7 +29,6 @@ export function MasonryProvider({
   children,
   columnWidth,
   maxColumnCount,
-  maxItemHeight,
   gap = 16,
   columnGap = gap,
   rowGap = gap,
@@ -45,7 +42,6 @@ export function MasonryProvider({
         rowGap,
         maxColumnCount,
         maxSingleColumnWidth,
-        maxItemHeight,
       }}
     >
       {children}

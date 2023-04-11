@@ -1,9 +1,6 @@
 import { createStyles, Container, ContainerProps } from '@mantine/core';
 import React, { CSSProperties, useRef, createContext, useContext } from 'react';
-import {
-  useColumnCount,
-  useContainerWidth,
-} from '~/components/MasonryColumns/masonry.utils';
+import { useColumnCount, useContainerWidth } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 
 type MasonryContainerProps = ContainerProps;
