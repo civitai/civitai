@@ -214,7 +214,11 @@ function ReviewCard(review: ResourceReviewPagedModel) {
         <Group spacing="xs">
           <Rating value={review.rating} readOnly />
 
-          <RoutedContextLink modal="resourceReviewModal" reviewId={review.id}>
+          <RoutedContextLink
+            modal="resourceReviewModal"
+            reviewId={review.id}
+            style={{ display: 'flex' }}
+          >
             <Badge
               px={4}
               leftSection={
@@ -227,7 +231,11 @@ function ReviewCard(review: ResourceReviewPagedModel) {
             </Badge>
           </RoutedContextLink>
 
-          <RoutedContextLink modal="resourceReviewModal" reviewId={review.id}>
+          <RoutedContextLink
+            modal="resourceReviewModal"
+            reviewId={review.id}
+            style={{ display: 'flex' }}
+          >
             <Badge
               px={4}
               leftSection={
@@ -239,6 +247,7 @@ function ReviewCard(review: ResourceReviewPagedModel) {
               {review.thread?._count.comments ?? '0'}
             </Badge>
           </RoutedContextLink>
+          {review.exclude && <Badge color="red">Excluded from average</Badge>}
         </Group>
         {review.details && (
           <ContentClamp maxHeight={300}>
