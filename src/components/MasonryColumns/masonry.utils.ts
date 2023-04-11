@@ -1,36 +1,12 @@
+import {
+  MasonryAdjustHeightFn,
+  MasonryImageDimensionsFn,
+} from '~/components/MasonryColumns/masonry.types';
 import { useWindowEvent } from '@mantine/hooks';
 import { useLayoutEffect, useMemo, useState } from 'react';
 import { createDebouncer } from '~/utils/debouncer';
 
 // don't know if I need memoized
-export const useColumnCountOriginal = (
-  width = 0,
-  columnWidth = 0,
-  gutter = 8,
-  columnCount?: number,
-  maxColumnCount?: number
-) =>
-  useMemo(
-    () => getColumnCountOriginal(width, columnWidth, gutter, columnCount, maxColumnCount),
-    [width, columnWidth, gutter, columnCount, maxColumnCount]
-  );
-
-const getColumnCountOriginal = (
-  width = 0,
-  columnWidth = 0,
-  gutter = 8,
-  columnCount?: number,
-  maxColumnCount?: number
-) => {
-  if (width === 0) return [0, 0];
-  const count =
-    columnCount ||
-    Math.min(Math.floor((width + gutter) / (columnWidth + gutter)), maxColumnCount || Infinity) ||
-    1;
-  const combinedWidth = count * columnWidth + (count - 1) * gutter;
-  return [count, combinedWidth];
-};
-
 export const useColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) =>
   useMemo(
     () => getColumnCount(width, columnWidth, gutter, maxColumnCount),
@@ -45,13 +21,6 @@ const getColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?:
   const combinedWidth = count * columnWidth + (count - 1) * gutter;
   return [count, combinedWidth];
 };
-
-export type MasonryImageDimensionsFn<TData> = (data: TData) => { height: number; width: number };
-export type MasonryAdjustHeightFn = (args: {
-  imageRatio: number;
-  width: number;
-  height: number;
-}) => number;
 
 export const useMasonryColumns = <TData>(
   data: TData[],

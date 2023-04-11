@@ -2,18 +2,18 @@ import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
 import { createStyles } from '@mantine/core';
 import React, { Fragment } from 'react';
+import { useMasonryColumns } from '~/components/MasonryColumns/masonry.utils';
+import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import {
+  MasonryRenderItemProps,
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,
-  useMasonryColumns,
-} from '~/components/MasonryColumns/masonry.utils';
-import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
-import { RenderComponentProps } from '~/components/MasonryColumns/masonry.types';
+} from '~/components/MasonryColumns/masonry.types';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 
 type Props<TData> = {
   data: TData[];
-  render: React.ComponentType<RenderComponentProps<TData>>;
+  render: React.ComponentType<MasonryRenderItemProps<TData>>;
   imageDimensions: MasonryImageDimensionsFn<TData>;
   adjustHeight?: MasonryAdjustHeightFn;
 };

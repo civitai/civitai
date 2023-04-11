@@ -1,4 +1,4 @@
-export interface RenderComponentProps<Item> {
+export interface MasonryRenderItemProps<Item> {
   /**
    * The index of the cell in the `items` prop array.
    */
@@ -13,3 +13,10 @@ export interface RenderComponentProps<Item> {
   height: number;
   data: Item;
 }
+
+export type MasonryImageDimensionsFn<TData> = (data: TData) => { height: number; width: number };
+export type MasonryAdjustHeightFn = (args: {
+  imageRatio: number;
+  width: number;
+  height: number;
+}) => number;
