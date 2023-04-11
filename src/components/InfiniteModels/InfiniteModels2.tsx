@@ -85,24 +85,20 @@ export function InfiniteModels2({ columnWidth = 300, delayNsfw = false }: Infini
   return (
     <>
       {isLoading ? (
-        <Center>
+        <Center p="xl">
           <Loader size="xl" />
         </Center>
       ) : !!models.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
           <MasonryColumns
-            columnWidth={308}
             data={models}
-            pick={(data) => {
+            imageDimensions={(data) => {
               const width = data.image?.width ?? 450;
               const height = data.image?.height ?? 450;
-              const aspectRatio = width / height;
-              return {
-                width,
-                height: height + (aspectRatio >= 1 ? 60 : 0),
-              };
+              return { width, height };
             }}
+            adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
             render={AmbientModelCard2}
           />
           {hasNextPage && !isLoading && !isRefetching && (

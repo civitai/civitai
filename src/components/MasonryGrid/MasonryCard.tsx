@@ -24,10 +24,10 @@ const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
       <Card
         ref={ref}
         style={{
-          background,
           height,
           ...style,
         }}
+        sx={{ background }}
         {...props}
       >
         {children}

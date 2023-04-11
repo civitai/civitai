@@ -18,6 +18,9 @@ import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { TagSort } from '~/server/common/enums';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { useRef } from 'react';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerAuthSession(context);
@@ -63,35 +66,36 @@ function Home() {
         }`}
         description="Civitai is a platform for Stable Diffusion AI Art models. We have a collection of over 1,700 models from 250+ creators. We also have a collection of 1200 reviews from the community along with 12,000+ images with prompts to get you started."
       />
-      <Container size="xl">
-        {username && typeof username === 'string' && <Title>Models by {username}</Title>}
-        {favorites && <Title>Your Liked Models</Title>}
-        {hidden && <Title>Your Hidden Models</Title>}
-        <Stack spacing="xs">
-          <Announcements
-            sx={(theme) => ({
-              marginBottom: -35,
-              [theme.fn.smallerThan('md')]: {
-                marginBottom: -5,
-              },
-            })}
-          />
-          <HomeContentToggle sx={showMobile} />
-          <Group position="apart" spacing={0}>
-            <Group>
-              <HomeContentToggle sx={hideMobile} />
-              <InfiniteModelsSort />
+      <MasonryProvider columnWidth={308} maxColumnCount={7} maxSingleColumnWidth={450}>
+        <MasonryContainer fluid>
+          {username && typeof username === 'string' && <Title>Models by {username}</Title>}
+          {favorites && <Title>Your Liked Models</Title>}
+          {hidden && <Title>Your Hidden Models</Title>}
+          <Stack spacing="xs">
+            <Announcements
+              sx={(theme) => ({
+                marginBottom: -35,
+                [theme.fn.smallerThan('md')]: {
+                  marginBottom: -5,
+                },
+              })}
+            />
+            <HomeContentToggle sx={showMobile} />
+            <Group position="apart" spacing={0}>
+              <Group>
+                <HomeContentToggle sx={hideMobile} />
+                <InfiniteModelsSort />
+              </Group>
+              <Group spacing={4}>
+                <InfiniteModelsPeriod />
+                <InfiniteModelsFilter />
+              </Group>
             </Group>
-            <Group spacing={4}>
-              <InfiniteModelsPeriod />
-              <InfiniteModelsFilter />
-            </Group>
-          </Group>
-          <CategoryTags />
-          {/* <InfiniteModels delayNsfw /> */}
-          <InfiniteModels2 delayNsfw />
-        </Stack>
-      </Container>
+            <CategoryTags />
+            <InfiniteModels2 delayNsfw />
+          </Stack>
+        </MasonryContainer>
+      </MasonryProvider>
     </>
   );
 }
