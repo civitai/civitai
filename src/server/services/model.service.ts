@@ -34,6 +34,7 @@ import {
 import { modelWithDetailsSelect } from '~/server/selectors/model.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { ingestNewImages } from '~/server/services/image.service';
+import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -87,6 +88,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     browsingMode,
     ids,
     needsReview,
+    earlyAccess,
   },
   select,
   user: sessionUser,
@@ -191,6 +193,9 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
   if (needsReview && sessionUser?.isModerator) {
     AND.push({ meta: { path: ['needsReview'], equals: true } });
+  }
+  if (earlyAccess) {
+    AND.push({ earlyAccessDeadline: { gte: new Date() } });
   }
 
   const hideNSFWModels = browsingMode === BrowsingMode.SFW || !canViewNsfw;
@@ -774,4 +779,45 @@ export const getSimpleModelWithVersions = async ({
   });
   if (!model) throw throwNotFoundError();
   return model;
+};
+
+export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
+  const model = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      publishedAt: true,
+      modelVersions: {
+        where: { status: ModelStatus.Published },
+        select: { id: true, earlyAccessTimeFrame: true, createdAt: true },
+      },
+    },
+  });
+  if (!model) throw throwNotFoundError();
+
+  const { modelVersions } = model;
+  const nextEarlyAccess = modelVersions.find(
+    (v) =>
+      v.earlyAccessTimeFrame > 0 &&
+      isEarlyAccess({
+        earlyAccessTimeframe: v.earlyAccessTimeFrame,
+        versionCreatedAt: v.createdAt,
+        publishedAt: model.publishedAt,
+      })
+  );
+
+  if (nextEarlyAccess) {
+    await updateModelById({
+      id,
+      data: {
+        earlyAccessDeadline: getEarlyAccessDeadline({
+          earlyAccessTimeframe: nextEarlyAccess.earlyAccessTimeFrame,
+          versionCreatedAt: nextEarlyAccess.createdAt,
+          publishedAt: model.publishedAt,
+        }),
+      },
+    });
+  } else {
+    await updateModelById({ id, data: { earlyAccessDeadline: null } });
+  }
 };

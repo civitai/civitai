@@ -206,7 +206,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
           {data.status}
         </Badge>
       )}
-      {data.status === ModelStatus.Published && data.earlyAccess && (
+      {data.status === ModelStatus.Published && data.earlyAccessDeadline && (
         <Badge
           className={cx(classes.floatingBadge, classes.earlyAccessBadge)}
           radius="sm"
