@@ -65,6 +65,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
         commentCount: image.stats?.commentCountAllTime ?? 0,
       },
       meta: image.meta,
+      username: image.user.username,
     })),
     metadata: {
       ...metadata,
