@@ -209,11 +209,12 @@ const encoders = {
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const blockedBoth = '\\(|\\)|\\[|\\]|\\{|\\}|:|\\|';
 const tokenRegex = (word: string) =>
-  new RegExp(`(^|\\s|${blockedBoth})${escapeRegex(word)}(\\s|,|$|${blockedBoth})`, 'm');
+  new RegExp(`(^|\\s|,|${blockedBoth})${escapeRegex(word)}(\\s|,|$|${blockedBoth})`, 'm');
 const blockedRegex = blocked.map((word) => ({
   word,
   regex: tokenRegex(word),
 }));
+console.log(blockedRegex.find((x) => x.word === 'loli'));
 const blockedNSFWRegex = blockedNSFW.map((word) => ({
   word,
   regex: tokenRegex(word),

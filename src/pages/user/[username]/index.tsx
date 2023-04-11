@@ -78,8 +78,6 @@ export default function UserPage({
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
 
-  console.log({ id, username });
-
   const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery({ id, username });
 
   const { models: uploads } = user?._count ?? { models: 0 };

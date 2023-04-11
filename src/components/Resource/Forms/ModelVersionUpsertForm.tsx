@@ -87,7 +87,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     },
   });
   const handleSubmit = async (data: Schema) => {
-    if (isDirty) {
+    if (isDirty || !version?.id) {
       const result = await upsertVersionMutation.mutateAsync({
         ...data,
         modelId: model?.id ?? -1,
