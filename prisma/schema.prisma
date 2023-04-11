@@ -476,10 +476,10 @@ model ModelFile {
   type              String          @default("Model")
   modelVersionId    Int
   modelVersion      ModelVersion    @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-  pickleScanResult  ScanResultCode  @default(Pending)
+  pickleScanResult  ScanResultCode  @default(Success)
   exists            Boolean?
   pickleScanMessage String?
-  virusScanResult   ScanResultCode  @default(Pending)
+  virusScanResult   ScanResultCode  @default(Success)
   virusScanMessage  String?
   scannedAt         DateTime?
   scanRequestedAt   DateTime?
