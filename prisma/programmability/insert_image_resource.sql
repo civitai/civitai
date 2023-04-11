@@ -17,7 +17,7 @@ BEGIN
 
 		UNION
 
-		SELECT i.id, mv.id model_version_id, CONCAT(m.name,' - ', mv.name), mf.hash, false as detected
+		SELECT i.id, mv.id model_version_id, CONCAT(m.name,' - ', mv.name), LOWER(mf.hash) "hash", false as detected
 		FROM "Image" i
 		JOIN "Post" p ON i."postId" = p.id
 		JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
@@ -37,11 +37,13 @@ BEGIN
 		  irh.name,
 		  irh.hash,
 		  irh.detected,
-			row_number() OVER (PARTITION BY irh.id, irh.hash ORDER BY mf.id) row_number
+			row_number() OVER (PARTITION BY irh.id, irh.hash ORDER BY IIF(irh.detected,0,1), mf.id) row_number
 		FROM image_resource_hashes irh
 		LEFT JOIN "ModelFileHash" mfh ON LOWER(mfh.hash) = LOWER(irh.hash)
 		LEFT JOIN "ModelFile" mf ON mf.id = mfh."fileId"
-		WHERE irh.name != 'vae'
+		LEFT JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+		LEFT JOIN "Model" m ON m.id = mv."modelId"
+		WHERE irh.name != 'vae' AND m.status != 'Deleted'
 	)
 	INSERT INTO "ImageResource"("imageId", "modelVersionId", name, hash, detected)
 	SELECT
