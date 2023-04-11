@@ -28,6 +28,7 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
           <Anchor
             href="https://github.com/AUTOMATIC1111/stable-diffusion-webui-wildcards"
             rel="nofollow"
+            target="_blank"
           >
             additional extension in Automatic 1111
           </Anchor>{' '}
@@ -37,7 +38,11 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
       {isLoCon && (
         <AlertWithIcon icon={<IconAlertCircle />}>
           This is a LyCORIS (LoCon/LoHA) model, and requires an{' '}
-          <Anchor href="https://github.com/KohakuBlueleaf/a1111-sd-webui-locon" rel="nofollow">
+          <Anchor
+            href="https://github.com/KohakuBlueleaf/a1111-sd-webui-locon"
+            rel="nofollow"
+            target="_blank"
+          >
             additional extension in Automatic 1111
           </Anchor>{' '}
           to work.
