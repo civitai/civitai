@@ -15,6 +15,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ModerationCard } from '~/components/Account/ModerationCard';
+import { filterProviders } from '~/utils/account';
 
 export default function Account({ providers }: Props) {
   const { apiKeys } = useFeatureFlags();
@@ -93,7 +94,7 @@ export const getServerSideProps = createServerSideProps({
 
     return {
       props: {
-        providers,
+        providers: filterProviders(providers),
       },
     };
   },

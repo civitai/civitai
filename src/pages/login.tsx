@@ -16,6 +16,7 @@ import { SignInError } from '~/components/SignInError/SignInError';
 import { SocialButton } from '~/components/Social/SocialButton';
 
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { filterProviders } from '~/utils/account';
 import { loginRedirectReasons, LoginRedirectReason } from '~/utils/login-helpers';
 
 export default function Login({
@@ -63,8 +64,12 @@ export default function Login({
                 })
               : null}
             <EthereumLogin callbackUrl={returnUrl} />
-            <Divider label="Or" labelPosition="center" />
-            <EmailLogin />
+            {false && (
+              <>
+                <Divider label="Or" labelPosition="center" />
+                <EmailLogin />
+              </>
+            )}
           </Stack>
           {error && (
             <SignInError
@@ -107,6 +112,6 @@ export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
   const csrfToken = await getCsrfToken();
 
   return {
-    props: { providers, csrfToken },
+    props: { providers: filterProviders(providers), csrfToken },
   };
 };

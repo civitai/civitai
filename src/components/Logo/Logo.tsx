@@ -5,13 +5,7 @@ export function Logo({ ...props }: LogoProps) {
 
   return (
     <Box className={classes.root} {...props}>
-      <svg
-        className={classes.svg}
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 800 200"
-        width="800"
-        height="200"
-      >
+      <svg className={classes.svg} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200">
         <defs>
           <style>
             {`.cls-1 { font-family: "Segoe UI", Arial, sans-serif; font-size: 120px; }
