@@ -1043,7 +1043,6 @@ export const getImagesForModelVersion = async ({
     const excludedTagsOr: Prisma.Sql[] = [
       Prisma.join(
         [
-          Prisma.sql`i."scannedAt" IS NOT NULL`,
           Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i.id AND toi.disabled = false AND toi."tagId" IN (${Prisma.join(
             excludedTagIds
           )}) )`,
