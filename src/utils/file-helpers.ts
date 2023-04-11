@@ -13,9 +13,9 @@ const unscannedFile = {
   scanRequestedAt: null,
   rawScanResult: Prisma.JsonNull,
   virusScanMessage: null,
-  virusScanResult: ScanResultCode.Pending,
+  virusScanResult: ScanResultCode.Success,
   pickleScanMessage: null,
-  pickleScanResult: ScanResultCode.Pending,
+  pickleScanResult: ScanResultCode.Success,
 };
 
 export function prepareFile(file: ModelFileInput) {
