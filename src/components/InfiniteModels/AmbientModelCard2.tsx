@@ -26,7 +26,6 @@ import {
   IconDotsVertical,
 } from '@tabler/icons';
 import dayjs from 'dayjs';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
 import React, { useState, useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
@@ -347,7 +346,7 @@ export function AmbientModelCard2({ data, width, height }: Props) {
                 }}
               >
                 {/* <Freeze freeze={!inView}> */}
-                {inView && image && (
+                {inView && (
                   <>
                     <LoadingOverlay
                       visible={loading}
@@ -355,7 +354,7 @@ export function AmbientModelCard2({ data, width, height }: Props) {
                       loaderProps={{ variant: 'dots' }}
                     />
                     <ImageGuard
-                      images={[image]}
+                      images={image ? [image] : []}
                       connect={{ entityId: id, entityType: 'model' }}
                       render={(image) => (
                         <Box sx={{ position: 'relative' }}>
