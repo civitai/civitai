@@ -1,3 +1,6 @@
+import memoizeOne from '@essentials/memoize-one';
+import OneKeyMap from '@essentials/one-key-map';
+import trieMemoize from 'trie-memoize';
 import { createStyles } from '@mantine/core';
 import React, { Fragment, useMemo, useRef } from 'react';
 import {
@@ -43,7 +46,7 @@ type MasonryColumnsProps<TData> = LayoutProps & {
 export function MasonryColumns<TData>({
   data,
   pick,
-  render,
+  render: RenderComponent,
   // width,
   columnWidth,
   columnCount,
@@ -58,7 +61,6 @@ export function MasonryColumns<TData>({
   const { classes } = useStyles({ columnCount: colCount, columnWidth, columnGap, rowGap });
 
   const columns = useMasonryColumns(data, columnWidth, colCount, pick);
-  const RenderComponent = render;
 
   return (
     <div ref={containerRef} className={classes.columns}>
@@ -67,7 +69,7 @@ export function MasonryColumns<TData>({
           <div key={colIndex} className={classes.column}>
             {items.map(({ height, data }, index) => (
               <Fragment key={index}>
-                <RenderComponent data={data} index={index} width={columnWidth} height={height} />
+                {createRenderElement(RenderComponent, index, data, columnWidth, height)}
               </Fragment>
             ))}
           </div>
@@ -98,4 +100,12 @@ const useStyles = createStyles(
       rowGap,
     },
   })
+);
+
+// supposedly ~5.5x faster than createElement without the memo
+const createRenderElement = trieMemoize(
+  [OneKeyMap, {}, WeakMap, OneKeyMap, OneKeyMap],
+  (RenderComponent, index, data, columnWidth, columnHeight) => (
+    <RenderComponent index={index} data={data} width={columnWidth} height={columnHeight} />
+  )
 );
