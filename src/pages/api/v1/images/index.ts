@@ -13,7 +13,7 @@ import {
   getPaginationLinks,
   getPagingData,
 } from '~/server/utils/pagination-helpers';
-import { numericString } from '~/utils/zod-helpers';
+import { booleanString, numericString } from '~/utils/zod-helpers';
 
 export const config = {
   api: {
@@ -30,6 +30,7 @@ const imagesEndpointSchema = z.object({
   username: usernameSchema.optional(),
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
+  nsfw: booleanString().optional(),
 });
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
