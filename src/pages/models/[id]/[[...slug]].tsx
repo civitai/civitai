@@ -89,6 +89,7 @@ import { useQueryImages } from '~/components/Image/image.utils';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
+import { getAssignedTokens } from '~/server/services/model.service';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -112,8 +113,13 @@ export const getServerSideProps = createServerSideProps({
 
     await ssg?.model.getById.prefetch({ id });
 
+    const tokens = await getAssignedTokens({ id }).catch(() => null);
+
     return {
-      props: { id },
+      props: {
+        id,
+        tokens,
+      },
     };
   },
 });

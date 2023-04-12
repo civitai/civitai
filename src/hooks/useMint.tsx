@@ -1,6 +1,6 @@
 import { usePrepareContractWrite, useContractWrite, useWaitForTransaction } from 'wagmi';
 import { BigNumber } from 'ethers';
-import Factory from '~/contract/abi/Factory.json';
+import FactoryABI from '~/contract/abi/Factory.json';
 import { factoryContract } from '~/contract';
 
 /**
@@ -25,17 +25,17 @@ export function useMintERC20Token(
     isError: isPrepareError,
   } = usePrepareContractWrite({
     address: factoryContract,
-    abi: Factory.abi,
+    abi: FactoryABI,
     functionName: 'deployNewERC20Token',
     args: [
-      // BigNumber.from(modelId),
+      BigNumber.from(modelId),
       modelName,
       modelSymbol,
       parseInt(modelDecimals) || 18,
       BigNumber.from(modelInitialSupply || 0),
     ],
     enabled:
-      // Boolean(modelId) &&
+      Boolean(modelId) &&
       Boolean(modelName) &&
       Boolean(modelSymbol) &&
       Boolean(modelDecimals) &&
@@ -73,15 +73,15 @@ export function useMintERC721Token(modelId: string, modelName: string, modelSymb
     isError: isPrepareError,
   } = usePrepareContractWrite({
     address: factoryContract,
-    abi: Factory.abi,
+    abi: FactoryABI,
     functionName: 'deployNewERC721Token',
     args: [
-      // BigNumber.from(modelId),
+      BigNumber.from(modelId),
       modelName,
       modelSymbol,
     ],
     enabled:
-      // Boolean(modelId) &&
+      Boolean(modelId) &&
       Boolean(modelName) && Boolean(modelSymbol),
   });
   const { data, error, isError, write } = useContractWrite(config);

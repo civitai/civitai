@@ -9,9 +9,12 @@ import {
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
+import { constants } from 'ethers';
 import { isEmpty } from 'lodash-es';
 import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
+import { factoryContract } from '~/contract';
+import { Factory__factory } from '~/contract/types';
 
 import { env } from '~/env/server.mjs';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
@@ -38,6 +41,7 @@ import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
+import { getDefaultProvider } from '~/utils/chain-provider';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -774,4 +778,17 @@ export const getSimpleModelWithVersions = async ({
   });
   if (!model) throw throwNotFoundError();
   return model;
+};
+
+export const getAssignedTokens = async ({ id }: GetByIdInput) => {
+  const provider = getDefaultProvider();
+  const factory = Factory__factory.connect(factoryContract, provider);
+
+  const erc20Address = await factory.assignedERC20Token(id);
+  const erc721Address = await factory.assignedERC721Token(id);
+
+  return {
+    erc20: erc20Address !== constants.AddressZero ? erc20Address : null,
+    erc721: erc721Address !== constants.AddressZero ? erc721Address : null,
+  };
 };

@@ -87,6 +87,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),
   NEXT_PUBLIC_WALLET_CONNECT_ID: z.string(),
   NEXT_PUBLIC_CHAIN_ID: z.string().regex(/^\d+$/),
+  NEXT_PUBLIC_CHAIN_RPC_URL: z.string(),
 });
 
 /**
@@ -102,5 +103,6 @@ export const clientEnv = {
   NEXT_PUBLIC_GIT_HASH: process.env.NEXT_PUBLIC_GIT_HASH,
   NEXT_PUBLIC_CIVITAI_LINK: process.env.NEXT_PUBLIC_CIVITAI_LINK,
   NEXT_PUBLIC_WALLET_CONNECT_ID: process.env.NEXT_PUBLIC_WALLET_CONNECT_ID,
-  NEXT_PUBLIC_CHAIN_ID: process.env.NEXT_PUBLIC_CHAIN_ID
+  NEXT_PUBLIC_CHAIN_ID: process.env.NEXT_PUBLIC_CHAIN_ID,
+  NEXT_PUBLIC_CHAIN_RPC_URL: process.env.NEXT_PUBLIC_CHAIN_RPC_URL
 };

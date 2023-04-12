@@ -29,17 +29,32 @@ import type {
 
 export interface FactoryInterface extends utils.Interface {
   functions: {
-    "deployNewERC20Token(string,string,uint8,uint256)": FunctionFragment;
-    "deployNewERC721Token(string,string)": FunctionFragment;
+    "assignedERC20Token(uint256)": FunctionFragment;
+    "assignedERC721Token(uint256)": FunctionFragment;
+    "deployNewERC20Token(uint256,string,string,uint8,uint256)": FunctionFragment;
+    "deployNewERC721Token(uint256,string,string)": FunctionFragment;
   };
 
   getFunction(
-    nameOrSignatureOrTopic: "deployNewERC20Token" | "deployNewERC721Token"
+    nameOrSignatureOrTopic:
+      | "assignedERC20Token"
+      | "assignedERC721Token"
+      | "deployNewERC20Token"
+      | "deployNewERC721Token"
   ): FunctionFragment;
 
   encodeFunctionData(
+    functionFragment: "assignedERC20Token",
+    values: [PromiseOrValue<BigNumberish>]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "assignedERC721Token",
+    values: [PromiseOrValue<BigNumberish>]
+  ): string;
+  encodeFunctionData(
     functionFragment: "deployNewERC20Token",
     values: [
+      PromiseOrValue<BigNumberish>,
       PromiseOrValue<string>,
       PromiseOrValue<string>,
       PromiseOrValue<BigNumberish>,
@@ -48,9 +63,21 @@ export interface FactoryInterface extends utils.Interface {
   ): string;
   encodeFunctionData(
     functionFragment: "deployNewERC721Token",
-    values: [PromiseOrValue<string>, PromiseOrValue<string>]
+    values: [
+      PromiseOrValue<BigNumberish>,
+      PromiseOrValue<string>,
+      PromiseOrValue<string>
+    ]
   ): string;
 
+  decodeFunctionResult(
+    functionFragment: "assignedERC20Token",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "assignedERC721Token",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(
     functionFragment: "deployNewERC20Token",
     data: BytesLike
@@ -61,8 +88,8 @@ export interface FactoryInterface extends utils.Interface {
   ): Result;
 
   events: {
-    "ERC20TokenCreated(address)": EventFragment;
-    "ERC721TokenCreated(address)": EventFragment;
+    "ERC20TokenCreated(uint256,address)": EventFragment;
+    "ERC721TokenCreated(uint256,address)": EventFragment;
   };
 
   getEvent(nameOrSignatureOrTopic: "ERC20TokenCreated"): EventFragment;
@@ -70,10 +97,11 @@ export interface FactoryInterface extends utils.Interface {
 }
 
 export interface ERC20TokenCreatedEventObject {
+  modelId: BigNumber;
   tokenAddress: string;
 }
 export type ERC20TokenCreatedEvent = TypedEvent<
-  [string],
+  [BigNumber, string],
   ERC20TokenCreatedEventObject
 >;
 
@@ -81,10 +109,11 @@ export type ERC20TokenCreatedEventFilter =
   TypedEventFilter<ERC20TokenCreatedEvent>;
 
 export interface ERC721TokenCreatedEventObject {
+  modelId: BigNumber;
   tokenAddress: string;
 }
 export type ERC721TokenCreatedEvent = TypedEvent<
-  [string],
+  [BigNumber, string],
   ERC721TokenCreatedEventObject
 >;
 
@@ -118,7 +147,18 @@ export interface Factory extends BaseContract {
   removeListener: OnEvent<this>;
 
   functions: {
+    assignedERC20Token(
+      arg0: PromiseOrValue<BigNumberish>,
+      overrides?: CallOverrides
+    ): Promise<[string]>;
+
+    assignedERC721Token(
+      arg0: PromiseOrValue<BigNumberish>,
+      overrides?: CallOverrides
+    ): Promise<[string]>;
+
     deployNewERC20Token(
+      modelId: PromiseOrValue<BigNumberish>,
       name: PromiseOrValue<string>,
       symbol: PromiseOrValue<string>,
       decimals: PromiseOrValue<BigNumberish>,
@@ -127,13 +167,25 @@ export interface Factory extends BaseContract {
     ): Promise<ContractTransaction>;
 
     deployNewERC721Token(
+      modelId: PromiseOrValue<BigNumberish>,
       name: PromiseOrValue<string>,
       symbol: PromiseOrValue<string>,
       overrides?: Overrides & { from?: PromiseOrValue<string> }
     ): Promise<ContractTransaction>;
   };
 
+  assignedERC20Token(
+    arg0: PromiseOrValue<BigNumberish>,
+    overrides?: CallOverrides
+  ): Promise<string>;
+
+  assignedERC721Token(
+    arg0: PromiseOrValue<BigNumberish>,
+    overrides?: CallOverrides
+  ): Promise<string>;
+
   deployNewERC20Token(
+    modelId: PromiseOrValue<BigNumberish>,
     name: PromiseOrValue<string>,
     symbol: PromiseOrValue<string>,
     decimals: PromiseOrValue<BigNumberish>,
@@ -142,13 +194,25 @@ export interface Factory extends BaseContract {
   ): Promise<ContractTransaction>;
 
   deployNewERC721Token(
+    modelId: PromiseOrValue<BigNumberish>,
     name: PromiseOrValue<string>,
     symbol: PromiseOrValue<string>,
     overrides?: Overrides & { from?: PromiseOrValue<string> }
   ): Promise<ContractTransaction>;
 
   callStatic: {
+    assignedERC20Token(
+      arg0: PromiseOrValue<BigNumberish>,
+      overrides?: CallOverrides
+    ): Promise<string>;
+
+    assignedERC721Token(
+      arg0: PromiseOrValue<BigNumberish>,
+      overrides?: CallOverrides
+    ): Promise<string>;
+
     deployNewERC20Token(
+      modelId: PromiseOrValue<BigNumberish>,
       name: PromiseOrValue<string>,
       symbol: PromiseOrValue<string>,
       decimals: PromiseOrValue<BigNumberish>,
@@ -157,6 +221,7 @@ export interface Factory extends BaseContract {
     ): Promise<string>;
 
     deployNewERC721Token(
+      modelId: PromiseOrValue<BigNumberish>,
       name: PromiseOrValue<string>,
       symbol: PromiseOrValue<string>,
       overrides?: CallOverrides
@@ -164,19 +229,38 @@ export interface Factory extends BaseContract {
   };
 
   filters: {
-    "ERC20TokenCreated(address)"(
+    "ERC20TokenCreated(uint256,address)"(
+      modelId?: PromiseOrValue<BigNumberish> | null,
       tokenAddress?: null
     ): ERC20TokenCreatedEventFilter;
-    ERC20TokenCreated(tokenAddress?: null): ERC20TokenCreatedEventFilter;
+    ERC20TokenCreated(
+      modelId?: PromiseOrValue<BigNumberish> | null,
+      tokenAddress?: null
+    ): ERC20TokenCreatedEventFilter;
 
-    "ERC721TokenCreated(address)"(
+    "ERC721TokenCreated(uint256,address)"(
+      modelId?: PromiseOrValue<BigNumberish> | null,
       tokenAddress?: null
     ): ERC721TokenCreatedEventFilter;
-    ERC721TokenCreated(tokenAddress?: null): ERC721TokenCreatedEventFilter;
+    ERC721TokenCreated(
+      modelId?: PromiseOrValue<BigNumberish> | null,
+      tokenAddress?: null
+    ): ERC721TokenCreatedEventFilter;
   };
 
   estimateGas: {
+    assignedERC20Token(
+      arg0: PromiseOrValue<BigNumberish>,
+      overrides?: CallOverrides
+    ): Promise<BigNumber>;
+
+    assignedERC721Token(
+      arg0: PromiseOrValue<BigNumberish>,
+      overrides?: CallOverrides
+    ): Promise<BigNumber>;
+
     deployNewERC20Token(
+      modelId: PromiseOrValue<BigNumberish>,
       name: PromiseOrValue<string>,
       symbol: PromiseOrValue<string>,
       decimals: PromiseOrValue<BigNumberish>,
@@ -185,6 +269,7 @@ export interface Factory extends BaseContract {
     ): Promise<BigNumber>;
 
     deployNewERC721Token(
+      modelId: PromiseOrValue<BigNumberish>,
       name: PromiseOrValue<string>,
       symbol: PromiseOrValue<string>,
       overrides?: Overrides & { from?: PromiseOrValue<string> }
@@ -192,7 +277,18 @@ export interface Factory extends BaseContract {
   };
 
   populateTransaction: {
+    assignedERC20Token(
+      arg0: PromiseOrValue<BigNumberish>,
+      overrides?: CallOverrides
+    ): Promise<PopulatedTransaction>;
+
+    assignedERC721Token(
+      arg0: PromiseOrValue<BigNumberish>,
+      overrides?: CallOverrides
+    ): Promise<PopulatedTransaction>;
+
     deployNewERC20Token(
+      modelId: PromiseOrValue<BigNumberish>,
       name: PromiseOrValue<string>,
       symbol: PromiseOrValue<string>,
       decimals: PromiseOrValue<BigNumberish>,
@@ -201,6 +297,7 @@ export interface Factory extends BaseContract {
     ): Promise<PopulatedTransaction>;
 
     deployNewERC721Token(
+      modelId: PromiseOrValue<BigNumberish>,
       name: PromiseOrValue<string>,
       symbol: PromiseOrValue<string>,
       overrides?: Overrides & { from?: PromiseOrValue<string> }
