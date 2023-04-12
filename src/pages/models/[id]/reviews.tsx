@@ -162,7 +162,7 @@ export default function ModelReviews() {
             <Stack spacing="xl" style={{ position: 'relative' }}>
               <LoadingOverlay visible={refetchingResourceReviews} />
               {resourceReviews?.items.map((review) => (
-                <ReviewCard key={review.id} {...review} />
+                <ReviewCard key={review.id} creatorId={model?.user.id} {...review} />
               ))}
               {resourceReviews && (
                 <Pagination
@@ -179,9 +179,10 @@ export default function ModelReviews() {
   );
 }
 
-function ReviewCard(review: ResourceReviewPagedModel) {
+function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creatorId?: number }) {
   // TODO - add version name next to days ago
   const currentUser = useCurrentUser();
+  const isCreator = creatorId === review.user.id;
   const isOwnerOrModerator =
     (currentUser?.id === review.user.id || currentUser?.isModerator) ?? false;
   return (
@@ -214,7 +215,11 @@ function ReviewCard(review: ResourceReviewPagedModel) {
         <Group spacing="xs">
           <Rating value={review.rating} readOnly />
 
-          <RoutedContextLink modal="resourceReviewModal" reviewId={review.id}>
+          <RoutedContextLink
+            modal="resourceReviewModal"
+            reviewId={review.id}
+            style={{ display: 'flex' }}
+          >
             <Badge
               px={4}
               leftSection={
@@ -227,7 +232,11 @@ function ReviewCard(review: ResourceReviewPagedModel) {
             </Badge>
           </RoutedContextLink>
 
-          <RoutedContextLink modal="resourceReviewModal" reviewId={review.id}>
+          <RoutedContextLink
+            modal="resourceReviewModal"
+            reviewId={review.id}
+            style={{ display: 'flex' }}
+          >
             <Badge
               px={4}
               leftSection={
@@ -239,6 +248,7 @@ function ReviewCard(review: ResourceReviewPagedModel) {
               {review.thread?._count.comments ?? '0'}
             </Badge>
           </RoutedContextLink>
+          {(review.exclude || isCreator) && <Badge color="red">Excluded from average</Badge>}
         </Group>
         {review.details && (
           <ContentClamp maxHeight={300}>

@@ -6,6 +6,8 @@ import {
   InfiniteModelsPeriod,
   InfiniteModelsFilter,
 } from '~/components/InfiniteModels/InfiniteModelsFilters';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -51,18 +53,20 @@ export default function TagPage({
           </Center>
         </Box>
       )}
-      <Container size="xl">
-        <Stack spacing="xs">
-          <Group position="apart">
-            <InfiniteModelsSort />
-            <Group spacing="xs">
-              <InfiniteModelsPeriod />
-              <InfiniteModelsFilter />
+      <MasonryProvider columnWidth={308} maxColumnCount={7} maxSingleColumnWidth={450}>
+        <MasonryContainer fluid>
+          <Stack spacing="xs">
+            <Group position="apart">
+              <InfiniteModelsSort />
+              <Group spacing="xs">
+                <InfiniteModelsPeriod />
+                <InfiniteModelsFilter />
+              </Group>
             </Group>
-          </Group>
-          <InfiniteModels />
-        </Stack>
-      </Container>
+            <InfiniteModels />
+          </Stack>
+        </MasonryContainer>
+      </MasonryProvider>
     </>
   );
 }

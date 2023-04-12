@@ -193,6 +193,7 @@ function automaticEncoder({ prompt, negativePrompt, resources, ...other }: Image
   const fineDetails = [];
   for (const [k, v] of Object.entries(other)) {
     const key = automaticSDEncodeMap.get(k) ?? k;
+    if (key === 'hashes') continue;
     fineDetails.push(`${key}: ${v}`);
   }
   if (fineDetails.length > 0) lines.push(fineDetails.join(', '));
@@ -209,7 +210,7 @@ const encoders = {
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const blockedBoth = '\\(|\\)|\\[|\\]|\\{|\\}|:|\\|';
 const tokenRegex = (word: string) =>
-  new RegExp(`(^|\\s|${blockedBoth})${escapeRegex(word)}(\\s|,|$|${blockedBoth})`, 'm');
+  new RegExp(`(^|\\s|,|${blockedBoth})${escapeRegex(word)}(\\s|,|$|${blockedBoth})`, 'm');
 const blockedRegex = blocked.map((word) => ({
   word,
   regex: tokenRegex(word),

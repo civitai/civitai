@@ -35,11 +35,11 @@ const labelDictionary: Record<keyof ImageMetaProps, string> = {
   sampler: 'Sampler',
   seed: 'Seed',
   Model: 'Model',
+  'Clip skip': 'Clip skip',
 };
 
 export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
   const { copied, copy } = useClipboard();
-  // TODO only show keys in our meta list
   const metas = useMemo(() => {
     const long: MetaDisplay[] = [];
     const short: MetaDisplay[] = [];
@@ -52,7 +52,8 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
       else if (value.length > 14 || key === 'Model') medium.push({ label, value });
       else short.push({ label, value });
     }
-    return { long, medium, short };
+    const hasControlNet = Object.keys(meta).some((x) => x.startsWith('ControlNet'));
+    return { long, medium, short, hasControlNet };
   }, [meta]);
 
   return (
@@ -87,9 +88,12 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
               {label}
             </Text>
             {label === 'Prompt' && (
-              <Badge size="xs" radius="sm">
-                {generationProcess === 'txt2imgHiRes' ? 'txt2img + Hi-Res' : generationProcess}
-              </Badge>
+              <>
+                <Badge size="xs" radius="sm">
+                  {generationProcess === 'txt2imgHiRes' ? 'txt2img + Hi-Res' : generationProcess}
+                  {metas.hasControlNet && ' + ControlNet'}
+                </Badge>
+              </>
             )}
           </Group>
           <Code block sx={{ whiteSpace: 'normal', maxHeight: 150, overflowY: 'auto' }}>

@@ -1,6 +1,5 @@
 import { create } from 'zustand';
-import { useEffect } from 'react';
-import { CheckpointType, MetricTimeframe, ModelStatus, ModelType } from '@prisma/client';
+import { ModelType, MetricTimeframe, CheckpointType, ModelStatus } from '@prisma/client';
 import { BrowsingMode, ModelKind, ModelSort } from '~/server/common/enums';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
@@ -25,7 +24,6 @@ import { z } from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { BaseModel, constants } from '~/server/common/constants';
 import { setCookie } from '~/utils/cookies-helpers';
-import { useModelFilters } from '~/providers/FiltersProvider';
 
 type FilterProps = z.input<typeof modelFilterSchema>;
 
@@ -107,9 +105,9 @@ export const useInfiniteModelsFilters = () => {
 
   const filters = useFilters((state) => state.filters);
   // TODO.hotfix: uses the new cookie filters to prevent fetching the same models because of browsingMode
-  const modelFilters = useModelFilters();
+  // const modelFilters = useModelFilters();
   return {
-    ...modelFilters,
+    // ...modelFilters,
     limit: 100,
     sort,
     period,
@@ -165,37 +163,27 @@ export function InfiniteModelsFilter() {
   const { classes } = useStyles();
   const cookies = useCookies().models;
   const user = useCurrentUser();
-  const defaultBrowsingMode = user?.showNsfw ? BrowsingMode.NSFW : BrowsingMode.SFW;
   const setTypes = useFilters((state) => state.setTypes);
   const types = useFilters((state) => state.filters.types ?? cookies.types ?? []);
   const setStatus = useFilters((state) => state.setStatus);
   const status = useFilters((state) => state.filters.status ?? cookies.status ?? []);
   const setBaseModels = useFilters((state) => state.setBaseModels);
   const baseModels = useFilters((state) => state.filters.baseModels ?? cookies.baseModels ?? []);
-  const browsingMode = useFilters((state) => state.filters.browsingMode ?? cookies.browsingMode);
-  const setBrowsingMode = useFilters((state) => state.setBrowsingMode);
   const setCheckpointType = useFilters((state) => state.setCheckpointType);
   const checkpointType = useFilters(
     (state) => state.filters.checkpointType ?? cookies.checkpointType ?? 'all'
   );
-  const showNSFWToggle = !user || user.showNsfw;
   const showCheckpointType = !types?.length || types.includes('Checkpoint');
-
-  useEffect(() => {
-    if (browsingMode === undefined) setBrowsingMode(defaultBrowsingMode);
-  }, [browsingMode, defaultBrowsingMode, setBrowsingMode]);
 
   const filterLength =
     types.length +
     baseModels.length +
     status.length +
-    (showNSFWToggle && browsingMode !== defaultBrowsingMode ? 1 : 0) +
     (showCheckpointType && checkpointType !== 'all' ? 1 : 0);
   const handleClear = () => {
     setTypes([]);
     setBaseModels([]);
     setStatus([]);
-    setBrowsingMode(defaultBrowsingMode);
     setCheckpointType(undefined);
   };
 
@@ -225,33 +213,6 @@ export function InfiniteModelsFilter() {
       </Popover.Target>
       <Popover.Dropdown maw={350} w="100%">
         <Stack spacing={0}>
-          {/* {showNSFWToggle && (
-            <>
-              <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} />
-              <SegmentedControl
-                my={5}
-                value={browsingMode ?? 'SFW'}
-                size="xs"
-                color="blue"
-                styles={(theme) => ({
-                  root: {
-                    border: `1px solid ${
-                      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-                    }`,
-                    background: 'none',
-                  },
-                })}
-                data={[
-                  { label: 'Safe', value: 'SFW' },
-                  { label: 'Adult', value: 'NSFW' },
-                  { label: 'Everything', value: 'All' },
-                ]}
-                onChange={(value) => {
-                  setBrowsingMode(value as BrowsingMode, true);
-                }}
-              />
-            </>
-          )} */}
           {user?.isModerator && (
             <>
               <Divider label="Model status" labelProps={{ weight: 'bold' }} />

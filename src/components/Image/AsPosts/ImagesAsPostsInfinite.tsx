@@ -1,14 +1,32 @@
-import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { trpc } from '~/utils/trpc';
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useMemo, useState, useEffect } from 'react';
 import { useImageFilters } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
-import { Paper, Stack, Text, LoadingOverlay } from '@mantine/core';
+import {
+  Paper,
+  Stack,
+  Text,
+  LoadingOverlay,
+  Button,
+  Group,
+  Title,
+  Center,
+  Loader,
+  ThemeIcon,
+} from '@mantine/core';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { InView, useInView } from 'react-intersection-observer';
+import { useInView } from 'react-intersection-observer';
 import { useRouter } from 'next/router';
 import { parseImagesQuery } from '~/components/Image/image.utils';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { NextLink } from '@mantine/next';
+import { IconPlus, IconCloudOff } from '@tabler/icons';
+import { SortFilter, PeriodFilter } from '~/components/Filters';
+import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 
 type ModelVersionsProps = { id: number; name: string };
 type ImagesAsPostsInfiniteState = {
@@ -24,18 +42,19 @@ export const useImagesAsPostsInfiniteContext = () => {
 };
 
 type ImagesAsPostsInfiniteProps = ImagesAsPostsInfiniteState & {
-  columnWidth?: number;
+  selectedVersionId?: number;
+  modelId: number;
 };
 
 const LIMIT = 50;
 export default function ImagesAsPostsInfinite({
-  columnWidth = 300,
   modelId,
   username,
   modelVersions,
+  selectedVersionId,
 }: ImagesAsPostsInfiniteProps) {
   const router = useRouter();
-  // const { ref, inView } = useInView({ triggerOnce: true });
+  const { ref, inView } = useInView();
   const isMobile = useIsMobile();
   const globalFilters = useImageFilters();
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
@@ -58,21 +77,100 @@ export default function ImagesAsPostsInfinite({
 
   const items = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
+  // #region [infinite data fetching]
+  useEffect(() => {
+    if (inView) {
+      fetchNextPage?.();
+    }
+  }, [fetchNextPage, inView]);
+  // #endregion
+
   return (
-    // <div ref={ref}>
-    //   {inView ? (
     <ImagesAsPostsInfiniteContext.Provider value={{ modelId, username, modelVersions }}>
-      <MasonryGrid2
-        data={items}
-        hasNextPage={hasNextPage}
-        isRefetching={isRefetching}
-        isFetchingNextPage={isFetchingNextPage}
-        fetchNextPage={fetchNextPage}
-        columnWidth={columnWidth}
-        render={ImagesAsPostsCard}
-        filters={filters}
-      />
-      {isLoading && (
+      <MasonryProvider columnWidth={308} maxColumnCount={6} maxSingleColumnWidth={450}>
+        <MasonryContainer fluid>
+          <Stack spacing="md">
+            <Group spacing="xs" align="flex-end">
+              <Title order={2}>Gallery</Title>
+              <LoginRedirect reason="create-review">
+                <Button
+                  component={NextLink}
+                  variant="outline"
+                  size="xs"
+                  leftIcon={<IconPlus size={16} />}
+                  href={`/posts/create?modelId=${modelId}${
+                    selectedVersionId ? `&modelVersionId=${selectedVersionId}` : ''
+                  }&returnUrl=${router.asPath}`}
+                >
+                  Add post
+                </Button>
+              </LoginRedirect>
+            </Group>
+            {/* IMAGES */}
+            <Group position="apart" spacing={0}>
+              <SortFilter type="image" />
+              <Group spacing={4}>
+                <PeriodFilter />
+                {/* <ImageFiltersDropdown /> */}
+              </Group>
+            </Group>
+            <ImageCategories />
+            {isLoading ? (
+              <Paper style={{ minHeight: 200, position: 'relative' }}>
+                <LoadingOverlay visible zIndex={10} />
+              </Paper>
+            ) : !!items.length ? (
+              <div style={{ position: 'relative' }}>
+                <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
+                <MasonryColumns
+                  data={items}
+                  imageDimensions={(data) => {
+                    const tallestImage = data.images.sort((a, b) => {
+                      const aHeight = a.height ?? 0;
+                      const bHeight = b.height ?? 0;
+                      const aAspectRatio = aHeight > 0 ? (a.width ?? 0) / aHeight : 0;
+                      const bAspectRatio = bHeight > 0 ? (b.width ?? 0) / bHeight : 0;
+                      if (aAspectRatio < 1 && bAspectRatio >= 1) return -1;
+                      if (bAspectRatio < 1 && aAspectRatio <= 1) return 1;
+                      if (aHeight === bHeight) return 0;
+                      return aHeight > bHeight ? -1 : 1;
+                    })[0];
+
+                    const width = tallestImage?.width ?? 450;
+                    const height = tallestImage?.height ?? 450;
+                    return { width, height };
+                  }}
+                  adjustHeight={({ height }, data) =>
+                    height + 57 + (data.images.length > 1 ? 8 : 0)
+                  }
+                  maxItemHeight={600}
+                  render={ImagesAsPostsCard}
+                  itemId={(data) => data.images.map((x) => x.id).join('_')}
+                />
+                {hasNextPage && !isLoading && !isRefetching && (
+                  <Center ref={ref}>
+                    <Loader />
+                  </Center>
+                )}
+              </div>
+            ) : (
+              <Stack align="center" py="lg">
+                <ThemeIcon size={128} radius={100}>
+                  <IconCloudOff size={80} />
+                </ThemeIcon>
+                <Text size={32} align="center">
+                  No results found
+                </Text>
+                <Text align="center">
+                  {"Try adjusting your search or filters to find what you're looking for"}
+                </Text>
+              </Stack>
+            )}
+          </Stack>
+        </MasonryContainer>
+      </MasonryProvider>
+
+      {/* {isLoading && (
         <Paper style={{ minHeight: 200, position: 'relative' }}>
           <LoadingOverlay visible zIndex={10} />
         </Paper>
@@ -86,11 +184,7 @@ export default function ImagesAsPostsInfinite({
             </Text>
           </Stack>
         </Paper>
-      )}
+      )} */}
     </ImagesAsPostsInfiniteContext.Provider>
-    //   ) : (
-    //     <div style={{ height: 200 }} />
-    //   )}
-    // </div>
   );
 }

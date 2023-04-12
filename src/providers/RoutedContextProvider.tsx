@@ -4,12 +4,12 @@ import Router, { NextRouter, useRouter } from 'next/router';
 import { QS } from '~/utils/qs';
 import { getHasClientHistory } from '~/store/ClientHistoryStore';
 import { create } from 'zustand';
-import { Freeze } from 'react-freeze';
 import { NextLink } from '@mantine/next';
 import Link from 'next/link';
 import { removeEmpty } from '~/utils/object-helpers';
 import useIsClient from '~/hooks/useIsClient';
 import { Anchor } from '@mantine/core';
+import { Freeze } from '~/components/Freeze/Freeze';
 
 const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
 const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLightbox'));
@@ -290,35 +290,12 @@ export const useFreezeStore = create<{
     }),
 }));
 
-let observer: MutationObserver | undefined;
-
 export function FreezeProvider({ children }: { children: React.ReactElement }) {
   const freeze = useFreezeStore((state) => state.freeze);
   // const placeholder = useFreezeStore((state) => state.placeholder);
 
-  useEffect(() => {
-    if (observer) return;
-    observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        if (mutation.type !== 'attributes' || mutation.attributeName !== 'style') continue;
-        const target = mutation.target as HTMLElement;
-        if (target.getAttribute('style')?.includes('display: none !important;'))
-          target.setAttribute('style', '');
-      }
-    });
-
-    const fetchFreezeBlockInterval = setInterval(() => {
-      const freezeBlockEl = document.getElementById('freezeBlock');
-      if (!freezeBlockEl || !observer) return;
-      observer.observe(freezeBlockEl, {
-        attributeFilter: ['style'],
-      });
-      clearInterval(fetchFreezeBlockInterval);
-    }, 1000);
-  }, []);
-
   return (
-    <Freeze freeze={freeze} placeholder={null}>
+    <Freeze freeze={freeze}>
       <div id="freezeBlock">{children}</div>
     </Freeze>
   );

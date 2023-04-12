@@ -1,16 +1,17 @@
-import { Center, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Center, Loader, Stack, Text, ThemeIcon, LoadingOverlay } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons';
 import { useRouter } from 'next/router';
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
 import { z } from 'zod';
 
-import { AmbientModelCard } from '~/components/InfiniteModels/AmbientModelCard';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
-import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { usernameSchema } from '~/server/schema/user.schema';
 import { trpc } from '~/utils/trpc';
 import { removeEmpty } from '~/utils/object-helpers';
+import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { AmbientModelCard } from '~/components/InfiniteModels/AmbientModelCard';
+import { useInView } from 'react-intersection-observer';
 
 type InfiniteModelsProps = {
   columnWidth?: number;
@@ -34,7 +35,7 @@ export function InfiniteModels({ columnWidth = 300, delayNsfw = false }: Infinit
   const result = filterSchema.safeParse(router.query);
   const currentUser = useCurrentUser();
   const queryParams = result.success ? result.data : {};
-  const modelId = router.query.model ? Number(router.query.model) : undefined;
+  const { ref, inView } = useInView();
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.model.getAll.useInfiniteQuery(removeEmpty({ ...filters, ...queryParams }), {
@@ -72,27 +73,41 @@ export function InfiniteModels({ columnWidth = 300, delayNsfw = false }: Infinit
     [data, isAuthenticated] //eslint-disable-line
   );
 
+  // #region [infinite data fetching]
+  useEffect(() => {
+    if (inView) {
+      fetchNextPage?.();
+    }
+  }, [fetchNextPage, inView]);
+  // #endregion
+
   return (
     <>
       {isLoading ? (
-        <Center>
+        <Center p="xl">
           <Loader size="xl" />
         </Center>
       ) : !!models.length ? (
-        <MasonryGrid2
-          columnWidth={columnWidth}
-          data={models}
-          hasNextPage={hasNextPage}
-          isFetchingNextPage={isFetchingNextPage}
-          isRefetching={isRefetching}
-          fetchNextPage={fetchNextPage}
-          scrollToIndex={(data) => data.findIndex((x) => x.id === modelId)}
-          render={AmbientModelCard}
-          filters={{
-            ...filters,
-            ...queryParams,
-          }}
-        />
+        <div style={{ position: 'relative' }}>
+          <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
+          <MasonryColumns
+            data={models}
+            imageDimensions={(data) => {
+              const width = data.image?.width ?? 450;
+              const height = data.image?.height ?? 450;
+              return { width, height };
+            }}
+            adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
+            maxItemHeight={600}
+            render={AmbientModelCard}
+            itemId={(data) => data.id}
+          />
+          {hasNextPage && !isLoading && !isRefetching && (
+            <Center ref={ref}>
+              <Loader />
+            </Center>
+          )}
+        </div>
       ) : (
         <Stack align="center" py="lg">
           <ThemeIcon size={128} radius={100}>

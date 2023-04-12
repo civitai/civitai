@@ -54,6 +54,8 @@ import { trpc } from '~/utils/trpc';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -374,27 +376,31 @@ export default function UserPage({
             </Container>
           </Box>
         )}
-        <Container size="xl">
-          <Tabs.Panel value="published">
-            <Stack spacing="xs">
-              <Group position="apart">
-                <InfiniteModelsSort />
-                <Group spacing="xs">
-                  <InfiniteModelsPeriod />
-                  <InfiniteModelsFilter />
+        <Tabs.Panel value="published">
+          <MasonryProvider columnWidth={308} maxColumnCount={7} maxSingleColumnWidth={450}>
+            <MasonryContainer fluid>
+              <Stack spacing="xs">
+                <Group position="apart">
+                  <InfiniteModelsSort />
+                  <Group spacing="xs">
+                    <InfiniteModelsPeriod />
+                    <InfiniteModelsFilter />
+                  </Group>
                 </Group>
-              </Group>
-              <InfiniteModels />
-            </Stack>
-          </Tabs.Panel>
-          <Tabs.Panel value="draft">
+                <InfiniteModels />
+              </Stack>
+            </MasonryContainer>
+          </MasonryProvider>
+        </Tabs.Panel>
+        <Tabs.Panel value="draft">
+          <Container size="xl">
             <Stack spacing={0}>
               <Title order={3}>Draft models</Title>
               <Text color="dimmed">Incomplete models not yet published</Text>
             </Stack>
             <UserDraftModels enabled={!!currentUser && isSameUser} />
-          </Tabs.Panel>
-        </Container>
+          </Container>
+        </Tabs.Panel>
       </Tabs>
     </>
   );
