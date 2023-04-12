@@ -184,7 +184,8 @@ function MyApp(props: CustomAppProps) {
 
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
-  const isClient = appContext.ctx?.req?.url?.startsWith('/_next/data');
+  const url = appContext.ctx?.req?.url;
+  const isClient = !url || url?.startsWith('/_next/data');
   // if (isClient) return initialProps;
 
   const { pageProps, ...appProps } = initialProps;
