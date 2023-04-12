@@ -89,7 +89,7 @@ export function ImagesAsPostsCard({
   const carouselKey = useMemo(() => `${imageIdsString}_${cardWidth}`, [imageIdsString, cardWidth]);
 
   return (
-    <InView>
+    <InView rootMargin="600px">
       {({ inView, ref }) => (
         <MasonryCard
           withBorder

@@ -15,8 +15,11 @@ export interface MasonryRenderItemProps<Item> {
 }
 
 export type MasonryImageDimensionsFn<TData> = (data: TData) => { height: number; width: number };
-export type MasonryAdjustHeightFn = (args: {
-  imageRatio: number;
-  width: number;
-  height: number;
-}) => number;
+export type MasonryAdjustHeightFn<TData> = (
+  args: {
+    imageRatio: number;
+    width: number;
+    height: number;
+  },
+  data: TData
+) => number;

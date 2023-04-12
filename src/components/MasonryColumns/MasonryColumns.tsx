@@ -15,7 +15,7 @@ type Props<TData> = {
   data: TData[];
   render: React.ComponentType<MasonryRenderItemProps<TData>>;
   imageDimensions: MasonryImageDimensionsFn<TData>;
-  adjustHeight?: MasonryAdjustHeightFn;
+  adjustHeight?: MasonryAdjustHeightFn<TData>;
   maxItemHeight?: number;
   itemId?: (data: TData) => string | number;
 };
@@ -108,7 +108,3 @@ const createRenderElement = trieMemoize(
     <RenderComponent index={index} data={data} width={columnWidth} height={columnHeight} />
   )
 );
-
-function defaultGetItemKey<TData>(_: TData, i: number) {
-  return i;
-}

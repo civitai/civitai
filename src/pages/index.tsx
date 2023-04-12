@@ -5,7 +5,6 @@ import { Announcements } from '~/components/Announcements/Announcements';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
-import { InfiniteModels2 } from '~/components/InfiniteModels/InfiniteModels2';
 import {
   InfiniteModelsFilter,
   InfiniteModelsPeriod,
@@ -92,7 +91,7 @@ function Home() {
               </Group>
             </Group>
             <CategoryTags />
-            <InfiniteModels2 delayNsfw />
+            <InfiniteModels delayNsfw />
           </Stack>
         </MasonryContainer>
       </MasonryProvider>

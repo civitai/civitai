@@ -27,7 +27,7 @@ export const useMasonryColumns = <TData>(
   columnWidth: number,
   columnCount: number,
   imageDimensions: MasonryImageDimensionsFn<TData>,
-  adjustDimensions?: MasonryAdjustHeightFn,
+  adjustDimensions?: MasonryAdjustHeightFn<TData>,
   maxItemHeight?: number
 ) =>
   useMemo(
@@ -53,7 +53,7 @@ const getMasonryColumns = <TData>(
   columnWidth: number,
   columnCount: number,
   imageDimensions: MasonryImageDimensionsFn<TData>,
-  adjustHeight?: MasonryAdjustHeightFn,
+  adjustHeight?: MasonryAdjustHeightFn<TData>,
   maxItemHeight?: number
 ): ColumnItem<TData>[][] => {
   // Track the height of each column.
@@ -68,11 +68,14 @@ const getMasonryColumns = <TData>(
 
     const ratioHeight = (originalHeight / originalWidth) * columnWidth;
     const adjustedHeight =
-      adjustHeight?.({
-        imageRatio: columnWidth / ratioHeight,
-        width: columnWidth,
-        height: ratioHeight,
-      }) ?? ratioHeight;
+      adjustHeight?.(
+        {
+          imageRatio: columnWidth / ratioHeight,
+          width: columnWidth,
+          height: ratioHeight,
+        },
+        item
+      ) ?? ratioHeight;
     const height = maxItemHeight ? Math.min(adjustedHeight, maxItemHeight) : adjustedHeight;
 
     // look for the shortest column on each iteration

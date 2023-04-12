@@ -16,6 +16,7 @@ import {
   Paper,
   Center,
   Anchor,
+  Box,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -738,7 +739,7 @@ export default function ModelDetailsV2({
                   </Group>
                   <ModelDiscussionV2 modelId={model.id} />
                 </Stack>
-                <Stack spacing="md" ref={gallerySectionRef} id="gallery">
+                {/* <Stack spacing="md" ref={gallerySectionRef} id="gallery">
                   <Group spacing="xs" align="flex-end">
                     <Title order={2}>Gallery</Title>
                     <LoginRedirect reason="create-review">
@@ -756,17 +757,16 @@ export default function ModelDetailsV2({
                       </Button>
                     </LoginRedirect>
                   </Group>
-                  {/* IMAGES */}
                   <Group position="apart" spacing={0}>
                     <SortFilter type="image" />
                     <Group spacing={4}>
                       <PeriodFilter />
-                      {/* <ImageFiltersDropdown /> */}
+                      <ImageFiltersDropdown />
                     </Group>
                   </Group>
                   <ImageCategories />
-                  <ImagesAsPostsInfinite modelId={model.id} modelVersions={model.modelVersions} />
-                </Stack>
+
+                </Stack> */}
               </>
             ) : (
               <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
@@ -787,6 +787,15 @@ export default function ModelDetailsV2({
           <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />
         ) : null}
       </Container>
+      {isClient && !loadingImages && !model.locked && (
+        <Box ref={gallerySectionRef} id="gallery" mt="md">
+          <ImagesAsPostsInfinite
+            modelId={model.id}
+            selectedVersionId={selectedVersion.id}
+            modelVersions={model.modelVersions}
+          />
+        </Box>
+      )}
     </>
   );
 }
