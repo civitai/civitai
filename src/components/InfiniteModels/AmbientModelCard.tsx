@@ -333,18 +333,18 @@ export function AmbientModelCard({ data, width, height }: Props) {
   return (
     <InView rootMargin="600px">
       {({ ref, inView }) => (
-        <MasonryCard ref={ref} withBorder shadow="sm" height={height} p={0}>
-          {inView && (
-            <Indicator
-              disabled={!isNew && !isUpdated}
-              withBorder
-              size={24}
-              radius="sm"
-              label={isNew ? 'New' : 'Updated'}
-              color="red"
-              styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
-              sx={{ opacity: isHidden ? 0.1 : undefined }}
-            >
+        <Indicator
+          disabled={!isNew && !isUpdated}
+          withBorder
+          size={24}
+          radius="sm"
+          label={isNew ? 'New' : 'Updated'}
+          color="red"
+          styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
+          sx={{ opacity: isHidden ? 0.1 : undefined }}
+        >
+          <MasonryCard ref={ref} withBorder shadow="sm" height={height} p={0}>
+            {inView && (
               <NextLink
                 href={`/models/${id}/${slugit(name)}`}
                 className={classes.link}
@@ -522,9 +522,9 @@ export function AmbientModelCard({ data, width, height }: Props) {
                 )}
                 {/* </Freeze> */}
               </NextLink>
-            </Indicator>
-          )}
-        </MasonryCard>
+            )}
+          </MasonryCard>
+        </Indicator>
       )}
     </InView>
   );
