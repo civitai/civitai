@@ -87,6 +87,7 @@ export const useFilters = create<{
 );
 
 export const useInfiniteModelsFilters = () => {
+  const currentUser = useCurrentUser();
   const {
     sort = constants.modelFilterDefaults.sort,
     period = constants.modelFilterDefaults.period,
@@ -97,10 +98,7 @@ export const useInfiniteModelsFilters = () => {
   } = useCookies().models;
 
   const filters = useFilters((state) => state.filters);
-  // TODO.hotfix: uses the new cookie filters to prevent fetching the same models because of browsingMode
-  // const modelFilters = useModelFilters();
   return {
-    // ...modelFilters,
     limit: 100,
     sort,
     period,
@@ -109,6 +107,7 @@ export const useInfiniteModelsFilters = () => {
     status,
     checkpointType,
     ...filters,
+    authed: currentUser ? true : undefined,
   };
 };
 
