@@ -38,6 +38,7 @@ const { hostname } = new URL(env.NEXTAUTH_URL);
 const cookieName = `${cookiePrefix}civitai-token`;
 
 export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
+  debug: true,
   adapter: PrismaAdapter(dbWrite),
   session: {
     strategy: 'jwt',
@@ -75,6 +76,7 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
     },
     async session({ session, token }) {
       if (req.url !== '/api/auth/session?update') {
+        console.log(req.url);
         token = await refreshToken(token);
       }
       session.user = (token.user ? token.user : session.user) as Session['user'];
