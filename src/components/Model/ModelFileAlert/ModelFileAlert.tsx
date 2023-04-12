@@ -39,7 +39,7 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
         <AlertWithIcon icon={<IconAlertCircle />}>
           This is a LyCORIS (LoCon/LoHA) model, and requires an{' '}
           <Anchor
-            href="https://github.com/KohakuBlueleaf/a1111-sd-webui-locon"
+            href="https://github.com/KohakuBlueleaf/a1111-sd-webui-lycoris"
             rel="nofollow"
             target="_blank"
           >
