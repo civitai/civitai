@@ -148,8 +148,8 @@ export default function ImagesAsPostsInfinite({
                   itemId={(data) => data.images.map((x) => x.id).join('_')}
                 />
                 {hasNextPage && !isLoading && !isRefetching && (
-                  <Center ref={ref}>
-                    <Loader />
+                  <Center ref={ref} sx={{ height: 36 }} mt="md">
+                    {inView && <Loader />}
                   </Center>
                 )}
               </div>
