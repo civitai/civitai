@@ -181,7 +181,7 @@ const registry = {
   },
 };
 
-export function openRoutedContext<TName extends keyof typeof registry>(
+export async function openRoutedContext<TName extends keyof typeof registry>(
   modal: TName,
   props: React.ComponentProps<(typeof registry)[TName]['Component']>,
   optionsOverride?: { replace?: boolean }
@@ -189,7 +189,7 @@ export function openRoutedContext<TName extends keyof typeof registry>(
   useFreezeStore.getState().setFreeze(true);
   const resolve = registry[modal].resolve;
   const [url, as, options] = resolve(props as any) as Parameters<NextRouter['push']>;
-  Router.push(url, as, { ...options, ...optionsOverride });
+  await Router.push(url, as, { ...options, ...optionsOverride });
 }
 
 export function closeRoutedContext() {

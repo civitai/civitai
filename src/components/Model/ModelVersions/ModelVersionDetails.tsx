@@ -1,5 +1,6 @@
 import {
   Accordion,
+  Anchor,
   Badge,
   Box,
   Button,
@@ -12,11 +13,18 @@ import {
   Stack,
   Text,
   Tooltip,
+  UnstyledButton,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
-import { IconDownload, IconHeart, IconLicense, IconMessageCircle2 } from '@tabler/icons';
+import {
+  IconChevronDown,
+  IconDownload,
+  IconHeart,
+  IconLicense,
+  IconMessageCircle2,
+} from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { startCase } from 'lodash';
@@ -47,7 +55,7 @@ import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/Resou
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { RoutedContextLink, openRoutedContext } from '~/providers/RoutedContextProvider';
 import { CAROUSEL_LIMIT, ModelFileType } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile, getFileDisplayName } from '~/server/utils/model-helpers';
@@ -55,7 +63,7 @@ import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
-import { getDisplayName, removeTags, splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ModelVersionDetails({
@@ -68,7 +76,6 @@ export function ModelVersionDetails({
 }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
   const queryUtils = trpc.useContext();
-  const router = useRouter();
 
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
@@ -256,6 +263,8 @@ export function ModelVersionDetails({
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
   const showRequestReview =
     isOwner && !user?.isModerator && model.status === ModelStatus.UnpublishedViolation;
+  const deleted = !!model.deletedAt && model.status === ModelStatus.Deleted;
+  const showEditButton = isOwnerOrMod && !deleted && !showRequestReview;
 
   return (
     <Grid gutter="xl">
@@ -403,7 +412,40 @@ export function ModelVersionDetails({
             })}
           >
             <Accordion.Item value="version-details">
-              <Accordion.Control>Details</Accordion.Control>
+              <Accordion.Control>
+                <Group position="apart">
+                  Details
+                  {showEditButton && (
+                    <Menu withinPortal>
+                      <Menu.Target>
+                        <Anchor size="sm" onClick={(e) => e.stopPropagation()}>
+                          Edit
+                        </Anchor>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        <Menu.Item
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            await openRoutedContext('modelEdit', { modelId: model.id });
+                          }}
+                        >
+                          Edit Model Details
+                        </Menu.Item>
+                        <Menu.Item
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            await openRoutedContext('modelVersionEdit', {
+                              modelVersionId: version.id,
+                            });
+                          }}
+                        >
+                          Edit Version Details
+                        </Menu.Item>
+                      </Menu.Dropdown>
+                    </Menu>
+                  )}
+                </Group>
+              </Accordion.Control>
               <Accordion.Panel>
                 <DescriptionTable
                   items={modelDetails}

@@ -15,7 +15,6 @@ import {
   Title,
   Paper,
   Center,
-  Anchor,
   Box,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
@@ -23,7 +22,6 @@ import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
 import {
-  IconArrowsSort,
   IconBan,
   IconClock,
   IconDotsVertical,
@@ -40,6 +38,7 @@ import {
   IconLock,
   IconLockOff,
   IconMessageCircleOff,
+  IconArrowsLeftRight,
 } from '@tabler/icons';
 import truncate from 'lodash/truncate';
 import { InferGetServerSidePropsType } from 'next';
@@ -89,6 +88,7 @@ import { useQueryImages } from '~/components/Image/image.utils';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
+import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -517,14 +517,6 @@ export default function ModelDetailsV2({
                         >
                           Edit Model
                         </Menu.Item>
-                        {versionCount > 1 && (
-                          <Menu.Item
-                            icon={<IconArrowsSort size={14} stroke={1.5} />}
-                            onClick={toggle}
-                          >
-                            Reorder Versions
-                          </Menu.Item>
-                        )}
                       </>
                     )}
                     {(!currentUser || !isOwner || isModerator) && (
@@ -658,18 +650,27 @@ export default function ModelDetailsV2({
             )}
           </Stack>
           <Group spacing={4} noWrap>
-            {isOwner || isModerator ? (
-              <Button
-                component={NextLink}
-                href={`/models/${model.id}/model-versions/create`}
-                // variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                variant="light"
-                color="blue"
-                leftIcon={<IconPlus size={16} />}
-                compact
-              >
-                Add Version
-              </Button>
+            {isOwner ? (
+              <>
+                <ButtonTooltip label="Add Version">
+                  <ActionIcon
+                    component={NextLink}
+                    href={`/models/${model.id}/model-versions/create`}
+                    variant="light"
+                    color="blue"
+                  >
+                    <IconPlus size={14} />
+                  </ActionIcon>
+                </ButtonTooltip>
+
+                {versionCount > 1 && (
+                  <ButtonTooltip label="Rearrange Versions">
+                    <ActionIcon onClick={toggle}>
+                      <IconArrowsLeftRight size={14} />
+                    </ActionIcon>
+                  </ButtonTooltip>
+                )}
+              </>
             ) : null}
             <ModelVersionList
               versions={model.modelVersions}
@@ -791,7 +792,7 @@ export default function ModelDetailsV2({
         <Box ref={gallerySectionRef} id="gallery" mt="md">
           <ImagesAsPostsInfinite
             modelId={model.id}
-            selectedVersionId={selectedVersion.id}
+            selectedVersionId={selectedVersion?.id}
             modelVersions={model.modelVersions}
           />
         </Box>

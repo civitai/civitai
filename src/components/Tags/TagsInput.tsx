@@ -56,7 +56,7 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
 
   return (
     <Input.Wrapper {...props}>
-      <Group mt={5}>
+      <Group mt={5} spacing={8}>
         {value.map((tag, index) => (
           <Badge
             key={tag.id ?? index}
@@ -70,7 +70,7 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
                 variant="transparent"
                 onClick={() => handleRemoveTag(index)}
               >
-                <IconX />
+                <IconX size={12} />
               </ActionIcon>
             }
           >
@@ -79,7 +79,7 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
         ))}
         <Badge
           // size="lg"
-          radius="xs"
+          // radius="xs"
           className={classes.badge}
           classNames={{ inner: classes.inner }}
           onClick={!adding ? open : undefined}
@@ -95,7 +95,7 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
           leftSection={
             adding && (
               <Center>
-                <IconPlus />
+                <IconPlus size={14} />
               </Center>
             )
           }
@@ -149,7 +149,7 @@ export function TagsInput({ value = [], onChange, target, ...props }: TagsInputP
               autoFocus
             />
           ) : (
-            <IconPlus />
+            <IconPlus size={16} />
           )}
         </Badge>
       </Group>
