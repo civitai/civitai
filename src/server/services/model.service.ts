@@ -16,6 +16,7 @@ import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
+import { Context } from '~/server/createContext';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { playfab } from '~/server/playfab/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
@@ -758,17 +759,15 @@ export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
   await dbWrite.model.update({ where: { id }, data: { locked } });
 };
 
-export const getSimpleModelWithVersions = async ({
-  id,
-  user,
-}: GetByIdInput & { user?: SessionUser }) => {
+export const getSimpleModelWithVersions = async ({ id, ctx }: GetByIdInput & { ctx?: Context }) => {
   const model = await getModel({
     id,
-    user,
+    user: ctx?.user,
     select: {
       id: true,
       name: true,
       createdAt: true,
+      locked: true,
       user: { select: userWithCosmeticsSelect },
     },
   });

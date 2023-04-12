@@ -546,7 +546,7 @@ export default function ModelDetailsV2({
                         </Menu.Item>
                       </>
                     )}
-                    {isModerator && (
+                    {isOwner && (
                       <ToggleLockModel modelId={model.id} locked={model.locked}>
                         {({ onClick }) => (
                           <Menu.Item
@@ -711,7 +711,6 @@ export default function ModelDetailsV2({
                         <>
                           <LoginRedirect reason="create-comment">
                             <Button
-                              className={classes.discussionActionButton}
                               leftIcon={<IconMessage size={16} />}
                               variant="outline"
                               onClick={() => openRoutedContext('commentEdit', {})}
@@ -725,7 +724,6 @@ export default function ModelDetailsV2({
                         !isMuted && (
                           <JoinPopover message="You must be a Supporter Tier member to join this discussion">
                             <Button
-                              className={classes.discussionActionButton}
                               leftIcon={<IconClock size={16} />}
                               variant="outline"
                               size="xs"
