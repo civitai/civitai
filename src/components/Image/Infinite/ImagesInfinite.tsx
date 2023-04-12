@@ -76,8 +76,8 @@ export default function ImagesInfinite({
             itemId={(data) => data.id}
           />
           {hasNextPage && !isLoading && !isRefetching && (
-            <Center ref={ref}>
-              <Loader />
+            <Center ref={ref} sx={{ height: 36 }} mt="md">
+              {inView && <Loader />}
             </Center>
           )}
         </div>
