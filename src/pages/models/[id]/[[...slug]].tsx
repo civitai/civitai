@@ -546,7 +546,7 @@ export default function ModelDetailsV2({
                         </Menu.Item>
                       </>
                     )}
-                    {isModerator && (
+                    {isOwner && (
                       <ToggleLockModel modelId={model.id} locked={model.locked}>
                         {({ onClick }) => (
                           <Menu.Item

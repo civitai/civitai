@@ -465,7 +465,8 @@ export function ModelVersionDetails({
             <Accordion.Item
               value="version-files"
               sx={(theme) => ({
-                margin: `${theme.spacing.md}px 0`,
+                marginTop: theme.spacing.md,
+                marginBottom: !model.locked ? theme.spacing.md : undefined,
                 borderColor: !filesCount ? `${theme.colors.red[4]} !important` : undefined,
               })}
             >

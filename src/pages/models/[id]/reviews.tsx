@@ -1,38 +1,42 @@
 import {
+  Alert,
+  Badge,
+  Card,
+  Center,
   Container,
+  Divider,
+  Grid,
+  Group,
+  Loader,
+  LoadingOverlay,
+  Pagination,
+  Paper,
+  Rating,
   Select,
   Skeleton,
   Stack,
-  Title,
   Text,
-  Grid,
-  Rating,
-  Divider,
-  Group,
-  Badge,
-  Center,
-  Pagination,
-  LoadingOverlay,
-  Card,
-  Alert,
-  Loader,
+  ThemeIcon,
+  Title,
 } from '@mantine/core';
 import { useRouter } from 'next/router';
+
+import { IconMessage, IconMessageCircleOff, IconPhoto } from '@tabler/icons';
+import { BackButton } from '~/components/BackButton/BackButton';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { removeEmpty } from '~/utils/object-helpers';
-import { trpc } from '~/utils/trpc';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { IconPhoto, IconMessage } from '@tabler/icons';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ResourceReviewPagedModel } from '~/types/router';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { EditUserResourceReview } from '~/components/ResourceReview/EditUserResourceReview';
 import { ResourceReviewMenu } from '~/components/ResourceReview/ResourceReviewMenu';
+import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { ResourceReviewPagedModel } from '~/types/router';
+import { removeEmpty } from '~/utils/object-helpers';
+import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -100,7 +104,14 @@ export default function ModelReviews() {
     router.replace({ query: { ...router.query, page } }, undefined, { shallow: true });
   };
 
-  const Model = loadingModel ? <Skeleton height={44} /> : <Title>{model?.name}</Title>;
+  const Model = loadingModel ? (
+    <Skeleton height={44} />
+  ) : (
+    <Group spacing="xs">
+      <BackButton url={`/models/${modelId}?modelVersionId=${modelVersionId}`} />
+      <Title>{model?.name}</Title>
+    </Group>
+  );
   const Versions = loadingVersions ? (
     <Skeleton height={36} />
   ) : !!versions?.length ? (
@@ -110,7 +121,6 @@ export default function ModelReviews() {
       data={versions.map((version) => ({ label: version.name, value: version.id.toString() }))}
       value={(router.query.modelVersionId as string) ?? null}
       onChange={handleModelVersionChange}
-      // variant="unstyled"
     />
   ) : null;
 
@@ -145,46 +155,58 @@ export default function ModelReviews() {
     <Container size="md">
       {Model}
       <Divider my="md" />
-      <Grid gutter="xl">
-        <Grid.Col sm={12} md={4}>
-          <Stack>
-            {Versions}
-            {Summary}
-            {UserReview}
-          </Stack>
-        </Grid.Col>
-        <Grid.Col sm={12} md={8}>
-          {loadingResourceReviews ? (
-            <Center p="xl">
-              <Loader />
-            </Center>
-          ) : (
-            <Stack spacing="xl" style={{ position: 'relative' }}>
-              <LoadingOverlay visible={refetchingResourceReviews} />
-              {resourceReviews?.items.map((review) => (
-                <ReviewCard key={review.id} creatorId={model?.user.id} {...review} />
-              ))}
-              {resourceReviews && (
-                <Pagination
-                  page={page}
-                  onChange={handlePaginationChange}
-                  total={resourceReviews.totalPages}
-                />
-              )}
+      {model?.locked ? (
+        <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
+          <Center>
+            <Group spacing="xs">
+              <ThemeIcon color="gray" size="xl" radius="xl">
+                <IconMessageCircleOff />
+              </ThemeIcon>
+              <Text size="lg" color="dimmed">
+                Reviews are turned off for this model.
+              </Text>
+            </Group>
+          </Center>
+        </Paper>
+      ) : (
+        <Grid gutter="xl">
+          <Grid.Col sm={12} md={4}>
+            <Stack>
+              {Versions}
+              {Summary}
+              {UserReview}
             </Stack>
-          )}
-        </Grid.Col>
-      </Grid>
+          </Grid.Col>
+          <Grid.Col sm={12} md={8}>
+            {loadingResourceReviews ? (
+              <Center p="xl">
+                <Loader />
+              </Center>
+            ) : (
+              <Stack spacing="xl" style={{ position: 'relative' }}>
+                <LoadingOverlay visible={refetchingResourceReviews} />
+                {resourceReviews?.items.map((review) => (
+                  <ReviewCard key={review.id} creatorId={model?.user.id} {...review} />
+                ))}
+                {resourceReviews && resourceReviews.totalPages > 1 && (
+                  <Pagination
+                    page={page}
+                    onChange={handlePaginationChange}
+                    total={resourceReviews.totalPages}
+                  />
+                )}
+              </Stack>
+            )}
+          </Grid.Col>
+        </Grid>
+      )}
     </Container>
   );
 }
 
 function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creatorId?: number }) {
-  // TODO - add version name next to days ago
-  const currentUser = useCurrentUser();
   const isCreator = creatorId === review.user.id;
-  const isOwnerOrModerator =
-    (currentUser?.id === review.user.id || currentUser?.isModerator) ?? false;
+
   return (
     <Card withBorder shadow="sm">
       <Stack key={review.id} spacing={4}>
