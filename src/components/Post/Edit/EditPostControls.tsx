@@ -36,6 +36,8 @@ export function ManagePostStatus() {
   const router = useRouter();
   const returnUrl = router.query.returnUrl as string;
   const currentUser = useCurrentUser();
+  const queryUtils = trpc.useContext();
+
   const id = useEditPostContext((state) => state.id);
   const tags = useEditPostContext((state) => state.tags);
   const title = useEditPostContext((state) => state.title);
@@ -54,8 +56,10 @@ export function ManagePostStatus() {
     mutate(
       { id, publishedAt },
       {
-        onSuccess: () => {
+        onSuccess: async () => {
           setPublishedAt(publishedAt);
+          await queryUtils.image.getImagesAsPostsInfinite.invalidate();
+
           if (returnUrl) router.push(returnUrl);
           else router.push(`/user/${currentUser.username}/posts`);
         },

@@ -129,6 +129,7 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
         {
           onSuccess: async () => {
             await queryUtils.post.getEdit.invalidate({ id });
+            await queryUtils.image.getImagesAsPostsInfinite.invalidate();
           },
         }
       );
