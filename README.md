@@ -7,7 +7,7 @@
 
 <br />
 <div align="center">
-  <a href="https://civitai.com/">
+  <a href="https://testing.agentswap.net/">
     <img src="media/logo.png" alt="Civitai Logo" width="120" height="auto">
   </a>
 </div>
@@ -36,6 +36,7 @@ We've built this project using a combination of modern web technologies, includi
 - **Front-end + Back-end:** NextJS
 - **UI Kit:** [Mantine](https://mantine.dev/)
 - **Storage:** Cloudflare
+- **Ethereum:** Web3modal wagmi Ethers.js
 
 ## Getting Started
 
@@ -105,15 +106,15 @@ Support this project by becoming a sponsor. Your logo will show up here with a l
 Apache License 2.0 - Please have a look at the [LICENSE](/LICENSE) for more details.
 
 
-[contributors-shield]: https://img.shields.io/github/contributors/civitai/civitai.svg?style=for-the-badge
-[contributors-url]: https://github.com/civitai/civitai/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/civitai/civitai.svg?style=for-the-badge
-[forks-url]: https://github.com/civitai/civitai/network/members
-[stars-shield]: https://img.shields.io/github/stars/civitai/civitai.svg?style=for-the-badge
-[stars-url]: https://github.com/civitai/civitai/stargazers
-[issues-shield]: https://img.shields.io/github/issues/civitai/civitai.svg?style=for-the-badge
-[issues-url]: https://github.com/civitai/civitai/issues
-[license-shield]: https://img.shields.io/github/license/civitai/civitai.svg?style=for-the-badge
-[license-url]: https://github.com/civitai/civitai/blob/master/LICENSE
+[contributors-shield]: https://img.shields.io/github/contributors/agentswap/civitai.svg?style=for-the-badge
+[contributors-url]: https://github.com/agentswap/civitai/graphs/contributors
+[forks-shield]: https://img.shields.io/github/forks/agentswap/civitai.svg?style=for-the-badge
+[forks-url]: https://github.com/agentswap/civitai/network/members
+[stars-shield]: https://img.shields.io/github/stars/agentswap/civitai.svg?style=for-the-badge
+[stars-url]: https://github.com/agentswap/civitai/stargazers
+[issues-shield]: https://img.shields.io/github/issues/agentswap/civitai.svg?style=for-the-badge
+[issues-url]: https://github.com/agentswap/civitai/issues
+[license-shield]: https://img.shields.io/github/license/agentswap/civitai.svg?style=for-the-badge
+[license-url]: https://github.com/agentswap/civitai/blob/master/LICENSE
 [discord-shield]: https://img.shields.io/discord/1037799583784370196?style=for-the-badge
 [discord-url]: https://discord.gg/UwX5wKwm6c
