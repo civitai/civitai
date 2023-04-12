@@ -20,8 +20,8 @@ import {
   Title,
 } from '@mantine/core';
 import { useRouter } from 'next/router';
+import { IconLock, IconMessage, IconMessageCircleOff, IconPhoto } from '@tabler/icons';
 
-import { IconMessage, IconMessageCircleOff, IconPhoto } from '@tabler/icons';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -64,6 +64,7 @@ export default function ModelReviews() {
     ...router.query,
   });
   const { modelId, modelVersionId, page } = queryParams;
+  const isMuted = currentUser?.muted ?? false;
 
   const { data: model, isLoading: loadingModel } = trpc.model.getSimple.useQuery({
     id: modelId,
@@ -83,7 +84,7 @@ export default function ModelReviews() {
     isRefetching: refetchingCurrentUserReview,
   } = trpc.resourceReview.getUserResourceReview.useQuery(
     { modelVersionId: modelVersionId ?? 0 },
-    { enabled: !!currentUser && !!modelVersionId }
+    { enabled: !!currentUser && !isMuted && !!modelVersionId }
   );
 
   const handleModelVersionChange = (value: string | null) => {
@@ -174,7 +175,13 @@ export default function ModelReviews() {
             <Stack>
               {Versions}
               {Summary}
-              {UserReview}
+              {!isMuted ? (
+                UserReview
+              ) : (
+                <Alert color="yellow" icon={<IconLock />}>
+                  You cannot add reviews because you have been muted
+                </Alert>
+              )}
             </Stack>
           </Grid.Col>
           <Grid.Col sm={12} md={8}>
