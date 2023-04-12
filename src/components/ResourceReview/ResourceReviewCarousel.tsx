@@ -9,6 +9,7 @@ import {
   useMantineTheme,
   Button,
   Container,
+  Text,
 } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 import { IconInfoCircle } from '@tabler/icons';
@@ -193,6 +194,9 @@ export function ResourceReviewCarousel({
             </Carousel.Slide>
           )}
         </Carousel>
+        <Text size="xs" color="dimmed" mt="xs" mb="-xs">
+          Images this user generated with this resource
+        </Text>
       </Container>
     </Box>
   );
