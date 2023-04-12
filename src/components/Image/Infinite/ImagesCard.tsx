@@ -14,24 +14,10 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { IconInfoCircle } from '@tabler/icons';
 import { useRouter } from 'next/router';
 
-export function ImagesCard({
-  data: image,
-  width: cardWidth,
-}: {
-  data: ImagesInfiniteModel;
-  width: number;
-}) {
+export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
   const router = useRouter();
   const { classes } = useStyles();
   const { modelId, postId, username, modelVersionId } = useImagesInfiniteContext();
-
-  const height = useMemo(() => {
-    if (!image.width || !image.height) return 300;
-    const width = cardWidth > 0 ? cardWidth : 300;
-    const aspectRatio = image.width / image.height;
-    const imageHeight = Math.floor(width / aspectRatio);
-    return Math.min(imageHeight, 600);
-  }, [cardWidth, image.width, image.height]);
 
   const tags = useMemo(() => {
     if (!image.tags) return undefined;
@@ -41,7 +27,7 @@ export function ImagesCard({
   const showVotes = tags && Array.isArray(tags) && !!tags.length;
 
   return (
-    <InView triggerOnce>
+    <InView rootMargin="600px">
       {({ inView, ref }) => (
         <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
           {inView && (

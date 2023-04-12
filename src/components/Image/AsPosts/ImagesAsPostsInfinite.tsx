@@ -54,7 +54,7 @@ export default function ImagesAsPostsInfinite({
   selectedVersionId,
 }: ImagesAsPostsInfiniteProps) {
   const router = useRouter();
-  const { ref, inView } = useInView({ triggerOnce: true });
+  const { ref, inView } = useInView();
   const isMobile = useIsMobile();
   const globalFilters = useImageFilters();
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);

@@ -8,33 +8,37 @@ import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 
 export default function ImagesPage() {
   return (
-    <Container size="xl">
-      <Stack spacing="xs">
-        <Announcements
-          sx={(theme) => ({
-            marginBottom: -35,
-            [theme.fn.smallerThan('md')]: {
-              marginBottom: -5,
-            },
-          })}
-        />
-        <HomeContentToggle sx={showMobile} />
-        <Group position="apart" spacing={0}>
-          <Group>
-            <HomeContentToggle sx={hideMobile} />
-            <SortFilter type="image" />
+    <MasonryProvider columnWidth={308} maxColumnCount={7} maxSingleColumnWidth={450}>
+      <MasonryContainer fluid>
+        <Stack spacing="xs">
+          <Announcements
+            sx={(theme) => ({
+              marginBottom: -35,
+              [theme.fn.smallerThan('md')]: {
+                marginBottom: -5,
+              },
+            })}
+          />
+          <HomeContentToggle sx={showMobile} />
+          <Group position="apart" spacing={0}>
+            <Group>
+              <HomeContentToggle sx={hideMobile} />
+              <SortFilter type="image" />
+            </Group>
+            <Group spacing={4}>
+              <PeriodFilter />
+              {/* <ImageFiltersDropdown /> */}
+            </Group>
           </Group>
-          <Group spacing={4}>
-            <PeriodFilter />
-            {/* <ImageFiltersDropdown /> */}
-          </Group>
-        </Group>
-        <ImageCategories />
-        <ImagesInfinite />
-      </Stack>
-    </Container>
+          <ImageCategories />
+          <ImagesInfinite />
+        </Stack>
+      </MasonryContainer>
+    </MasonryProvider>
   );
 }
