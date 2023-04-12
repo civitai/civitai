@@ -1,6 +1,6 @@
 import { useRouter } from 'next/router';
 
-import { Container, Group, Stack } from '@mantine/core';
+import { Group, Stack } from '@mantine/core';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

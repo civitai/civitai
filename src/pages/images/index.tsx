@@ -1,12 +1,10 @@
-import { Container, Stack, Group } from '@mantine/core';
+import { Stack, Group } from '@mantine/core';
 import { SortFilter, PeriodFilter } from '~/components/Filters';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { Announcements } from '~/components/Announcements/Announcements';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { NotFound } from '~/components/AppLayout/NotFound';
 import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
