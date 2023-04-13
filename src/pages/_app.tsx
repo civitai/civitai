@@ -188,7 +188,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const isClient = !url || url?.startsWith('/_next/data');
 
   const { pageProps, ...appProps } = initialProps;
-  const colorScheme = getCookie('mantine-color-scheme', appContext.ctx);
+  const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
   const filters = parseFiltersCookie(cookies);
@@ -205,7 +205,9 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       ...appProps,
     };
   } else {
-    const session = !isClient ? await getSession(appContext.ctx) : undefined;
+    const hasAuthCookie =
+      !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
+    const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
     const flags = getFeatureFlags({ user: session?.user });
     // Pass this via the request so we can use it in SSR
     if (session) {
