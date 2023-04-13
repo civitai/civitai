@@ -33,7 +33,6 @@ import {
   publishModelById,
   restoreModelById,
   toggleLockModel,
-  updateModel,
   updateModelById,
   upsertModel,
 } from '~/server/services/model.service';
