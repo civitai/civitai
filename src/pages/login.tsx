@@ -17,6 +17,7 @@ import { SocialButton } from '~/components/Social/SocialButton';
 
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { filterProviders } from '~/utils/account';
 import { loginRedirectReasons, LoginRedirectReason } from '~/utils/login-helpers';
 
 export default function Login({ providers }: Props) {
@@ -110,7 +111,7 @@ export const getServerSideProps = createServerSideProps({
     const csrfToken = await getCsrfToken();
 
     return {
-      props: { providers, csrfToken },
+      props: { providers: filterProviders(providers), csrfToken },
     };
   },
 });

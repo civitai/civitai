@@ -17,15 +17,12 @@ export const filterProviders = (providers: NextAuthProviders): NextAuthProviders
     return providers;
   }
 
-  const filteredProviders: any = {};
+  const filteredProviders: unknown = Object.fromEntries(
+    Object.entries(providers).filter(
+      ([key]) =>
+        !(['discord', 'google', 'reddit'] as OAuthProviderType[]).includes(key as OAuthProviderType)
+    )
+  );
 
-  Object.entries(providers).forEach(([key, value]) => {
-    if (
-      !(['discord', 'google', 'reddit'] as OAuthProviderType[]).includes(key as OAuthProviderType)
-    ) {
-      filteredProviders[key] = value;
-    }
-  });
-
-  return filteredProviders;
+  return filteredProviders as NextAuthProviders;
 };

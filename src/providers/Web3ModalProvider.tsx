@@ -4,11 +4,15 @@ import { Fragment } from 'react';
 import { configureChains, createClient, WagmiConfig } from 'wagmi';
 import { mainnet, goerli } from 'wagmi/chains';
 import { env } from '~/env/client.mjs';
+import { infuraProvider } from 'wagmi/providers/infura';
 
 export const chains = [mainnet, goerli];
 const projectId = env.NEXT_PUBLIC_WALLET_CONNECT_ID;
 
-const { provider } = configureChains(chains, [w3mProvider({ projectId })]);
+const { provider } = configureChains(chains, [
+  infuraProvider({ apiKey: env.NEXT_PUBLIC_INFURA_API_KEY }),
+  w3mProvider({ projectId }),
+]);
 const wagmiClient = createClient({
   autoConnect: true,
   connectors: w3mConnectors({ projectId, version: 1, chains }),

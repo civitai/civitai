@@ -11,7 +11,10 @@ export const serverSchema = z.object({
   DATABASE_URL: z.string().url(),
   DATABASE_REPLICA_URL: z.string().url(),
   REDIS_URL: z.string().url(),
-  REDIS_TIMEOUT: z.preprocess((x) => x ? parseInt(String(x)) : 5000, z.number().optional()),
+  REDIS_TIMEOUT: z.preprocess(
+    (x) => (x ? parseInt(String(x)) : 5000),
+    z.number().optional()
+  ),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(
@@ -39,8 +42,8 @@ export const serverSchema = z.object({
   EMAIL_FROM: z.string(),
   S3_UPLOAD_KEY: z.string(),
   S3_ORIGINS: z.preprocess((value) => {
-    const str = String(value);
-    return str.split(',');
+    const str = String(value)
+    return str.split(',')
   }, z.array(z.string().url()).optional()),
   S3_UPLOAD_SECRET: z.string(),
   S3_UPLOAD_REGION: z.string(),
@@ -72,7 +75,8 @@ export const serverSchema = z.object({
   PLAYFAB_TITLE_ID: z.string().optional(),
   PLAYFAB_SECRET_KEY: z.string().optional(),
   TRPC_ORIGINS: stringArray().optional(),
-});
+  CHAIN_RPC_URL: z.string(),
+})
 
 /**
  * Specify your client-side environment variables schema here.
@@ -87,8 +91,8 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),
   NEXT_PUBLIC_WALLET_CONNECT_ID: z.string(),
   NEXT_PUBLIC_CHAIN_ID: z.string().regex(/^\d+$/),
-  NEXT_PUBLIC_CHAIN_RPC_URL: z.string(),
-});
+  NEXT_PUBLIC_INFURA_API_KEY: z.string(),
+})
 
 /**
  * You can't destruct `process.env` as a regular object, so you have to do
@@ -104,5 +108,5 @@ export const clientEnv = {
   NEXT_PUBLIC_CIVITAI_LINK: process.env.NEXT_PUBLIC_CIVITAI_LINK,
   NEXT_PUBLIC_WALLET_CONNECT_ID: process.env.NEXT_PUBLIC_WALLET_CONNECT_ID,
   NEXT_PUBLIC_CHAIN_ID: process.env.NEXT_PUBLIC_CHAIN_ID,
-  NEXT_PUBLIC_CHAIN_RPC_URL: process.env.NEXT_PUBLIC_CHAIN_RPC_URL
+  NEXT_PUBLIC_INFURA_API_KEY: process.env.NEXT_PUBLIC_INFURA_API_KEY
 };

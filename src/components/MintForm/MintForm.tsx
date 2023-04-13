@@ -6,7 +6,7 @@ import { useForm, Form, InputText, InputSelect } from '~/libs/form';
 import { IconGavel, IconWallet } from '@tabler/icons';
 import { chain } from '~/contract';
 import { useRouter } from 'next/router';
-import { TokenStandard } from '~/types/mint';
+import { TokenStandard, type TokensProps } from '~/types/mint';
 import { useMintERC20Token, useMintERC721Token } from '~/hooks/useMint';
 import { useMemo } from 'react';
 
@@ -73,16 +73,30 @@ const renderErrorText = ({
   }
 };
 
-export function MintForm() {
+type Props = {
+  tokens: TokensProps;
+};
+
+export function MintForm({ tokens }: Props) {
   const router = useRouter();
   const modelId = router.query.id as string;
+
+  const defaultTokenStandardSelectValue = useMemo(() => {
+    if (!tokens?.erc20) {
+      return TokenStandard.ERC20;
+    }
+    if (!tokens?.erc721) {
+      return TokenStandard.ERC721;
+    }
+    return undefined;
+  }, [tokens?.erc20, tokens?.erc721]);
 
   const { address, isConnected } = useAccount();
   const { connectWallet } = useWeb3ModalHelper();
   const form = useForm({
     schema,
     defaultValues: {
-      tokenStandard: TokenStandard.ERC20,
+      tokenStandard: defaultTokenStandardSelectValue,
       name: '',
       symbol: '',
       decimals: '18',
@@ -129,6 +143,17 @@ export function MintForm() {
     [modelTokenStandard]
   );
 
+  const validTokenStandardSelectData = useMemo(() => {
+    const data = [];
+    if (!tokens?.erc20) {
+      data.push({ value: TokenStandard.ERC20, label: TokenStandard.ERC20 });
+    }
+    if (!tokens?.erc721) {
+      data.push({ value: TokenStandard.ERC721, label: TokenStandard.ERC721 });
+    }
+    return data;
+  }, [tokens?.erc20, tokens?.erc721]);
+
   const onSubmit = async (data: z.infer<typeof schema>) => {
     console.log(data);
     // Connect wallet
@@ -154,10 +179,7 @@ export function MintForm() {
             name="tokenStandard"
             label="Token standards"
             placeholder="Pick one"
-            data={[
-              { value: TokenStandard.ERC20, label: TokenStandard.ERC20 },
-              { value: TokenStandard.ERC721, label: TokenStandard.ERC721 },
-            ]}
+            data={validTokenStandardSelectData}
           />
           <InputText name="name" label="Name" placeholder="eg: name" withAsterisk />
           <InputText name="symbol" label="Symbol" placeholder="eg: symbol" withAsterisk />

@@ -132,6 +132,7 @@ type ModelVersionDetail = ModelById['modelVersions'][number];
 
 export default function ModelDetailsV2({
   id,
+  tokens,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
 
@@ -700,6 +701,7 @@ export default function ModelDetailsV2({
               version={selectedVersion}
               user={currentUser}
               isFavorite={isFavorite}
+              tokens={tokens}
               onFavoriteClick={handleToggleFavorite}
               onBrowseClick={() => {
                 if (!gallerySectionRef.current) return;

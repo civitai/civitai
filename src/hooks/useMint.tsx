@@ -75,14 +75,8 @@ export function useMintERC721Token(modelId: string, modelName: string, modelSymb
     address: factoryContract,
     abi: FactoryABI,
     functionName: 'deployNewERC721Token',
-    args: [
-      BigNumber.from(modelId),
-      modelName,
-      modelSymbol,
-    ],
-    enabled:
-      Boolean(modelId) &&
-      Boolean(modelName) && Boolean(modelSymbol),
+    args: [BigNumber.from(modelId), modelName, modelSymbol],
+    enabled: Boolean(modelId) && Boolean(modelName) && Boolean(modelSymbol),
   });
   const { data, error, isError, write } = useContractWrite(config);
 

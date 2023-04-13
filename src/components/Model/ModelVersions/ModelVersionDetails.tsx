@@ -23,7 +23,7 @@ import { DefaultErrorShape } from '@trpc/server';
 import { startCase } from 'lodash';
 import { SessionUser } from 'next-auth';
 import { useRouter } from 'next/router';
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -50,12 +50,13 @@ import { RunButton } from '~/components/RunStrategy/RunButton';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { RoutedContextLink, openRoutedContext } from '~/providers/RoutedContextProvider';
+import { useTokenInfo } from '~/hooks/useTokenInfo';
+import { useTokenInfoTable } from '~/hooks/useTokenInfoTable';
 import { CAROUSEL_LIMIT, ModelFileType } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile, getFileDisplayName } from '~/server/utils/model-helpers';
+import { type TokensProps } from '~/types/mint';
 import { ModelById } from '~/types/router';
-import { shortenIfAddress } from '~/utils/address';
-import { openEtherscan } from '~/utils/chain';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -67,6 +68,7 @@ export function ModelVersionDetails({
   version,
   user,
   isFavorite,
+  tokens,
   onFavoriteClick,
   onBrowseClick,
 }: Props) {
@@ -119,6 +121,8 @@ export function ModelVersionDetails({
     await queryUtils.modelVersion.getById.invalidate({ id: version.id });
     await queryUtils.image.getInfinite.invalidate();
   };
+
+  const tokenInfo = useTokenInfo(tokens);
 
   const modelDetails: DescriptionTableProps['items'] = [
     {
@@ -178,43 +182,12 @@ export function ModelVersionDetails({
     },
   ];
 
-  const modelToken: DescriptionTableProps['items'] = [
-    {
-      label: 'Name',
-      value: (
-        <Text
-          style={{
-            cursor: 'pointer',
-          }}
-          td="underline"
-          onClick={() => openEtherscan('', 'token')}
-        >
-          ERC720 Name
-        </Text>
-      ),
-      visible: true,
-    },
-    {
-      label: 'Symbol',
-      value: 'ERC721 Symbol',
-      visible: true,
-    },
-    {
-      label: 'Address',
-      value: (
-        <Text
-          style={{
-            cursor: 'pointer',
-          }}
-          td="underline"
-          onClick={() => openEtherscan('', 'token')}
-        >
-          {shortenIfAddress('')}
-        </Text>
-      ),
-      visible: true,
-    },
-  ];
+  const { keys: modelTokenKeys, values: modelTokenValues } = useTokenInfoTable(tokenInfo);
+
+  const isShowMint = useMemo(
+    () => !tokens || Object.values(tokens).some((token) => !token),
+    [tokens]
+  );
 
   const getFileDetails = (file: ModelById['modelVersions'][number]['files'][number]) => (
     <Group position="apart" noWrap spacing={0}>
@@ -429,7 +402,7 @@ export function ModelVersionDetails({
             modelType={model.type}
             deadline={version.earlyAccessDeadline}
           />
-          {isOwnerOrMod && (
+          {isOwnerOrMod && isShowMint && (
             <Stack sx={{ flex: 1 }} spacing={4}>
               <Button
                 leftIcon={<IconGavel size={16} />}
@@ -437,7 +410,7 @@ export function ModelVersionDetails({
               >
                 <Text align="center">Start Mint</Text>
               </Button>
-              {isShowMintForm && <MintForm />}
+              {isShowMintForm && <MintForm tokens={tokens} />}
             </Stack>
           )}
 
@@ -510,24 +483,28 @@ export function ModelVersionDetails({
                 />
               </Accordion.Panel>
             </Accordion.Item>
-            <Accordion.Item value="version-token">
-              <Accordion.Control>Token</Accordion.Control>
-              <Accordion.Panel>
-                <DescriptionTable
-                  items={modelToken}
-                  labelWidth="30%"
-                  withBorder
-                  paperProps={{
-                    sx: {
-                      borderLeft: 0,
-                      borderRight: 0,
-                      borderBottom: 0,
-                    },
-                    radius: 0,
-                  }}
-                />
-              </Accordion.Panel>
-            </Accordion.Item>
+
+            {modelTokenValues?.map((token, index) => (
+              <Accordion.Item value={`version-token_${index}`} key={index}>
+                <Accordion.Control>Token {modelTokenKeys[index]}</Accordion.Control>
+                <Accordion.Panel>
+                  <DescriptionTable
+                    items={token}
+                    labelWidth="30%"
+                    withBorder
+                    paperProps={{
+                      sx: {
+                        borderLeft: 0,
+                        borderRight: 0,
+                        borderBottom: 0,
+                      },
+                      radius: 0,
+                    }}
+                  />
+                </Accordion.Panel>
+              </Accordion.Item>
+            ))}
+
             <Accordion.Item
               value="version-files"
               sx={(theme) => ({
@@ -734,5 +711,6 @@ type Props = {
   onFavoriteClick: VoidFunction;
   user?: SessionUser | null;
   isFavorite?: boolean;
+  tokens: TokensProps;
   onBrowseClick?: VoidFunction;
 };
