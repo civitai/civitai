@@ -1,34 +1,35 @@
-import { trpc } from '~/utils/trpc';
-import { createContext, useContext, useMemo, useState, useEffect } from 'react';
-import { useImageFilters } from '~/providers/FiltersProvider';
-import { removeEmpty } from '~/utils/object-helpers';
-import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
 import {
+  Button,
+  Center,
+  Group,
+  Loader,
+  LoadingOverlay,
   Paper,
   Stack,
   Text,
-  LoadingOverlay,
-  Button,
-  Group,
-  Title,
-  Center,
-  Loader,
   ThemeIcon,
+  Title,
 } from '@mantine/core';
-import { useIsMobile } from '~/hooks/useIsMobile';
-import { useInView } from 'react-intersection-observer';
-import { useRouter } from 'next/router';
-import { parseImagesQuery } from '~/components/Image/image.utils';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { NextLink } from '@mantine/next';
-import { IconPlus, IconCloudOff } from '@tabler/icons';
-import { SortFilter, PeriodFilter } from '~/components/Filters';
+import { IconCloudOff, IconPlus, IconStar } from '@tabler/icons';
+import { useRouter } from 'next/router';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { useInView } from 'react-intersection-observer';
+
+import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
 import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
+import { parseImagesQuery } from '~/components/Image/image.utils';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { useImageFilters } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
+import { removeEmpty } from '~/utils/object-helpers';
+import { trpc } from '~/utils/trpc';
 
 type ModelVersionsProps = { id: number; name: string };
 type ImagesAsPostsInfiniteState = {
@@ -89,6 +90,9 @@ export default function ImagesAsPostsInfinite({
   // #endregion
 
   const isMuted = currentUser?.muted ?? false;
+  const addPostLink = `/posts/create?modelId=${modelId}${
+    selectedVersionId ? `&modelVersionId=${selectedVersionId}` : ''
+  }&returnUrl=${router.asPath}`;
 
   return (
     <ImagesAsPostsInfiniteContext.Provider value={{ modelId, username, modelVersions }}>
@@ -102,19 +106,30 @@ export default function ImagesAsPostsInfinite({
             <Group spacing="xs" align="flex-end">
               <Title order={2}>Gallery</Title>
               {!isMuted && (
-                <LoginRedirect reason="create-review">
-                  <Button
-                    component={NextLink}
-                    variant="outline"
-                    size="xs"
-                    leftIcon={<IconPlus size={16} />}
-                    href={`/posts/create?modelId=${modelId}${
-                      selectedVersionId ? `&modelVersionId=${selectedVersionId}` : ''
-                    }&returnUrl=${router.asPath}`}
-                  >
-                    Add Post
-                  </Button>
-                </LoginRedirect>
+                <Group>
+                  <LoginRedirect reason="create-review">
+                    <Button
+                      component={NextLink}
+                      variant="outline"
+                      size="xs"
+                      leftIcon={<IconPlus size={16} />}
+                      href={addPostLink}
+                    >
+                      Add Post
+                    </Button>
+                  </LoginRedirect>
+                  <LoginRedirect reason="create-review">
+                    <Button
+                      component={NextLink}
+                      leftIcon={<IconStar size={16} />}
+                      href={addPostLink + '&reviewing=true'}
+                      variant="outline"
+                      size="xs"
+                    >
+                      Add Review
+                    </Button>
+                  </LoginRedirect>
+                </Group>
               )}
             </Group>
             {/* IMAGES */}

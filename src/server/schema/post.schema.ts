@@ -32,6 +32,7 @@ export const postsQuerySchema = postsFilterSchema.extend({
 export type PostCreateInput = z.infer<typeof postCreateSchema>;
 export const postCreateSchema = z.object({
   modelVersionId: z.number().optional(),
+  title: z.string().trim().optional(),
 });
 
 export type PostUpdateInput = z.infer<typeof postUpdateSchema>;
