@@ -21,7 +21,6 @@ import { useEffect, useState } from 'react';
 import { z } from 'zod';
 
 import { Form, InputCheckbox, InputSwitch, InputText, useForm } from '~/libs/form';
-import { reloadSession } from '~/utils/next-auth-helpers';
 import { trpc } from '~/utils/trpc';
 import { toStringList } from '~/utils/array-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -86,7 +85,7 @@ export default function OnboardingModal() {
   const { mutate: completeOnboarding, isLoading: completeOnboardingLoading } =
     trpc.user.completeOnboarding.useMutation({
       async onSuccess() {
-        await reloadSession();
+        user?.refresh();
         await invalidateModeratedContent(utils);
         // context.closeModal(id);
       },

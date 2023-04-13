@@ -9,7 +9,7 @@ import {
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
-import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
+import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -53,7 +53,11 @@ export default function TagPage({
           </Center>
         </Box>
       )}
-      <MasonryProvider columnWidth={308} maxColumnCount={7} maxSingleColumnWidth={450}>
+      <MasonryProvider
+        columnWidth={constants.cardSizes.model}
+        maxColumnCount={7}
+        maxSingleColumnWidth={450}
+      >
         <MasonryContainer fluid>
           <Stack spacing="xs">
             <Group position="apart">

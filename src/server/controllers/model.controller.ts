@@ -63,7 +63,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const model = await getModel({
       ...input,
       user: ctx.user,
-      select: { ...modelWithDetailsSelect, meta: true },
+      select: { ...modelWithDetailsSelect, meta: true, earlyAccessDeadline: true },
     });
     if (!model) {
       throw throwNotFoundError(`No model with id ${input.id}`);
@@ -157,6 +157,7 @@ export const getModelsInfiniteHandler = async ({
       lastVersionAt: true,
       publishedAt: true,
       locked: true,
+      earlyAccessDeadline: true,
       rank: {
         select: {
           [`downloadCount${input.period}`]: true,
@@ -217,13 +218,13 @@ export const getModelsInfiniteHandler = async ({
         if (!image && !showImageless) return null;
 
         const rank = model.rank; // NOTE: null before metrics kick in
-        const earlyAccess =
-          !version ||
-          isEarlyAccess({
-            versionCreatedAt: version.createdAt,
-            publishedAt,
-            earlyAccessTimeframe: version.earlyAccessTimeFrame,
-          });
+        // const earlyAccess =
+        //   !version ||
+        //   isEarlyAccess({
+        //     versionCreatedAt: version.createdAt,
+        //     publishedAt,
+        //     earlyAccessTimeframe: version.earlyAccessTimeFrame,
+        //   });
         return {
           ...model,
           hashes: hashes.map((hash) => hash.hash.toLowerCase()),
@@ -235,7 +236,7 @@ export const getModelsInfiniteHandler = async ({
             rating: rank?.[`rating${input.period}`] ?? 0,
           },
           image: image as (typeof images)[0] | undefined,
-          earlyAccess,
+          // earlyAccess,
         };
       })
       .filter(isDefined),

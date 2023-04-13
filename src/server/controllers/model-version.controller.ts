@@ -1,7 +1,9 @@
+import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { BaseModel } from '~/server/common/constants';
 
 import { Context } from '~/server/createContext';
+import { dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetModelVersionSchema,
@@ -15,6 +17,8 @@ import {
   deleteVersionById,
   publishModelVersionById,
 } from '~/server/services/model-version.service';
+import { updateModelEarlyAccessDeadline, updateModelById } from '~/server/services/model.service';
+import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
@@ -112,6 +116,13 @@ export const upsertModelVersionHandler = async ({ input }: { input: ModelVersion
     const version = await upsertModelVersion({ ...input });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
+    // Just update early access deadline if updating the model version
+    if (input.id)
+      await updateModelEarlyAccessDeadline({ id: version.modelId }).catch((e) => {
+        console.error('Unable to update model early access deadline');
+        console.error(e);
+      });
+
     return version;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -124,6 +135,11 @@ export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput
     const version = await deleteVersionById(input);
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
+    await updateModelEarlyAccessDeadline({ id: version.modelId }).catch((e) => {
+      console.error('Unable to update model early access deadline');
+      console.error(e);
+    });
+
     return version;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -134,6 +150,12 @@ export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput
 export const publishModelVersionHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     const version = await publishModelVersionById(input);
+
+    await updateModelEarlyAccessDeadline({ id: version.modelId }).catch((e) => {
+      console.error('Unable to update model early access deadline');
+      console.error(e);
+    });
+
     return version;
   } catch (error) {
     if (error instanceof TRPCError) throw error;

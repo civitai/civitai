@@ -1,6 +1,5 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import { User } from '@prisma/client';
-import { NextApiRequest, NextApiResponse } from 'next';
 import NextAuth, { Session, type NextAuthOptions } from 'next-auth';
 import DiscordProvider from 'next-auth/providers/discord';
 import GithubProvider from 'next-auth/providers/github';
@@ -37,8 +36,7 @@ const cookiePrefix = useSecureCookies ? '__Secure-' : '';
 const { hostname } = new URL(env.NEXTAUTH_URL);
 const cookieName = `${cookiePrefix}civitai-token`;
 
-export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
-  debug: true,
+export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(dbWrite),
   session: {
     strategy: 'jwt',
@@ -60,8 +58,8 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
 
       return true;
     },
-    async jwt({ token, user }) {
-      if (req.url === '/api/auth/session?update') {
+    async jwt({ token, user, trigger }) {
+      if (trigger === 'update') {
         await invalidateSession(Number(token.sub));
         const user = await getSessionUser({ userId: Number(token.sub) });
         token.user = user;
@@ -74,9 +72,8 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
 
       return token;
     },
-    async session({ session, token }) {
-      if (req.url !== '/api/auth/session?update') {
-        console.log(req.url);
+    async session({ session, token, trigger }) {
+      if (trigger === 'update') {
         token = await refreshToken(token);
       }
       session.user = (token.user ? token.user : session.user) as Session['user'];
@@ -140,35 +137,6 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
     signIn: '/login',
     error: '/login',
   },
-});
-
-const oldCookieName = `${cookiePrefix}next-auth.session-token`;
-const authOptions = async (req: NextApiRequest, res: NextApiResponse) => {
-  // Disabling because it seems it may be causing issues
-  // const cookies = getCookies({ req, res });
-  // const oldToken = cookies[oldCookieName];
-  // const currentToken = cookies[cookieName];
-  // if (oldToken && !currentToken) {
-  //   setCookie(cookieName, oldToken, {
-  //     res,
-  //     req,
-  //     maxAge: 30 * 24 * 60 * 60,
-  //     httpOnly: true,
-  //     sameSite: 'lax',
-  //     path: '/',
-  //     secure: useSecureCookies,
-  //     domain: hostname == 'localhost' ? hostname : '.' + hostname,
-  //   });
-  //   deleteCookie(oldCookieName, {
-  //     res,
-  //     req,
-  //     path: '/',
-  //     secure: useSecureCookies,
-  //     domain: hostname,
-  //   });
-  // }
-
-  return NextAuth(req, res, createAuthOptions(req));
 };
 
-export default authOptions;
+export default NextAuth(authOptions);

@@ -12,7 +12,6 @@ const schema = z.array(runStrategySchema);
 
 export default PartnerEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse, partner: Partner) {
-    console.log(partner.id);
     const results = schema.safeParse(req.body);
     if (!results.success) return res.status(420).json({ error: `Invalid supported model format` });
 

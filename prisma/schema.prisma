@@ -300,29 +300,30 @@ enum CheckpointType {
 }
 
 model Model {
-  id             Int             @id @default(autoincrement())
-  name           String          @db.Citext
-  description    String?
-  type           ModelType
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  lastVersionAt  DateTime?
-  nsfw           Boolean         @default(false)
-  tosViolation   Boolean         @default(false)
-  poi            Boolean         @default(false)
-  userId         Int
-  user           User            @relation("creator", fields: [userId], references: [id])
-  status         ModelStatus     @default(Draft)
-  publishedAt    DateTime?
-  fromImport     Import?         @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
-  fromImportId   Int?            @unique
-  meta           Json            @default("{}")
-  deletedAt      DateTime?
-  deletedBy      Int?
-  deletedByUser  User?           @relation("deletedBy", fields: [deletedBy], references: [id], onDelete: SetNull)
-  checkpointType CheckpointType?
-  locked         Boolean         @default(false)
-  underAttack    Boolean         @default(false)
+  id                  Int             @id @default(autoincrement())
+  name                String          @db.Citext
+  description         String?
+  type                ModelType
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  lastVersionAt       DateTime?
+  nsfw                Boolean         @default(false)
+  tosViolation        Boolean         @default(false)
+  poi                 Boolean         @default(false)
+  userId              Int
+  user                User            @relation("creator", fields: [userId], references: [id])
+  status              ModelStatus     @default(Draft)
+  publishedAt         DateTime?
+  fromImport          Import?         @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImportId        Int?            @unique
+  meta                Json            @default("{}")
+  deletedAt           DateTime?
+  deletedBy           Int?
+  deletedByUser       User?           @relation("deletedBy", fields: [deletedBy], references: [id], onDelete: SetNull)
+  checkpointType      CheckpointType?
+  locked              Boolean         @default(false)
+  underAttack         Boolean         @default(false)
+  earlyAccessDeadline DateTime?
 
   // Licensing
   allowNoCredit         Boolean       @default(true)

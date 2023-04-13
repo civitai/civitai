@@ -1,5 +1,5 @@
-import { FeatureFlags } from '~/server/services/feature-flags.service';
 import { createContext, useContext, useState } from 'react';
+import { FeatureFlags } from '~/server/services/feature-flags.service';
 
 const FeatureFlagsCtx = createContext<FeatureFlags>({} as FeatureFlags);
 

@@ -9,11 +9,10 @@ import { SignInError } from '~/components/SignInError/SignInError';
 import { SocialButton } from '~/components/Social/SocialButton';
 
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { loginRedirectReasons, LoginRedirectReason } from '~/utils/login-helpers';
 
-export default function Login({
-  providers,
-}: InferGetServerSidePropsType<typeof getServerSideProps>) {
+export default function Login({ providers }: Props) {
   const router = useRouter();
   const {
     error,
@@ -80,22 +79,23 @@ type Props = {
   csrfToken: NextAuthCsrfToken;
 };
 
-export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
-  const session = await getServerAuthSession(ctx);
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ session }) => {
+    if (session) {
+      return {
+        redirect: {
+          destination: '/',
+          permanent: false,
+        },
+      };
+    }
 
-  if (session) {
+    const providers = await getProviders();
+    const csrfToken = await getCsrfToken();
+
     return {
-      redirect: {
-        destination: '/',
-        permanent: false,
-      },
+      props: { providers, csrfToken },
     };
-  }
-
-  const providers = await getProviders();
-  const csrfToken = await getCsrfToken();
-
-  return {
-    props: { providers, csrfToken },
-  };
-};
+  },
+});

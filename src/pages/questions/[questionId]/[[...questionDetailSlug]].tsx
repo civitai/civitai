@@ -1,11 +1,10 @@
 import { Container, createStyles, Group, Stack, Title } from '@mantine/core';
-import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
+import { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
 import { QuestionForm } from '~/components/Questions/QuestionForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
@@ -16,55 +15,59 @@ import { slugit } from '~/utils/string-helpers';
 import React from 'react';
 import { QuestionDetails } from '~/components/Questions/QuestionDetails';
 import truncate from 'lodash/truncate';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
-export const getServerSideProps: GetServerSideProps<{
+export const getServerSideProps = createServerSideProps<{
   id: number;
   title: string;
-}> = async (context) => {
-  const params = (context.params ?? {}) as {
-    questionId: string;
-    questionDetailSlug: string[] | undefined;
-  };
-  const questionId = Number(params.questionId);
-  const questionTitle = params.questionDetailSlug?.[0];
-  if (!isNumber(questionId))
-    return {
-      notFound: true,
+}>({
+  useSSG: true,
+  resolver: async ({ ssg, ctx }) => {
+    const params = (ctx.params ?? {}) as {
+      questionId: string;
+      questionDetailSlug: string[] | undefined;
     };
-
-  if (!questionTitle) {
-    const question = await dbRead.question.findUnique({
-      where: { id: questionId },
-      select: { title: true },
-    });
-    if (question?.title) {
-      const [pathname, query] = context.resolvedUrl.split('?');
-      let destination = `${pathname}/${slugit(question.title)}`;
-      if (query) destination += `?${query}`;
+    const questionId = Number(params.questionId);
+    const questionTitle = params.questionDetailSlug?.[0];
+    if (!isNumber(questionId))
       return {
-        redirect: {
-          permanent: false,
-          destination,
-        },
+        notFound: true,
+      };
+
+    if (!questionTitle) {
+      const question = await dbRead.question.findUnique({
+        where: { id: questionId },
+        select: { title: true },
+      });
+      if (question?.title) {
+        const [pathname, query] = ctx.resolvedUrl.split('?');
+        let destination = `${pathname}/${slugit(question.title)}`;
+        if (query) destination += `?${query}`;
+        return {
+          redirect: {
+            permanent: false,
+            destination,
+          },
+        };
+      }
+      return {
+        notFound: true,
       };
     }
+
+    if (ssg) {
+      await ssg.question.getById.prefetch({ id: questionId });
+      await ssg.answer.getAll.prefetch({ questionId });
+    }
+
     return {
-      notFound: true,
+      props: {
+        id: questionId,
+        title: questionTitle,
+      },
     };
-  }
-
-  const ssg = await getServerProxySSGHelpers(context);
-  await ssg.question.getById.prefetch({ id: questionId });
-  await ssg.answer.getAll.prefetch({ questionId });
-
-  return {
-    props: {
-      trpcState: ssg.dehydrate(),
-      id: questionId,
-      title: questionTitle,
-    },
-  };
-};
+  },
+});
 
 export default function QuestionPage(
   props: InferGetServerSidePropsType<typeof getServerSideProps>
