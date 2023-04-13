@@ -1,27 +1,27 @@
-import { GetServerSideProps } from 'next';
 import { QuestionForm } from '~/components/Questions/QuestionForm';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export default function QuestionCreate() {
   return <QuestionForm />;
 }
 
-export const getServerSideProps: GetServerSideProps = async (ctx) => {
-  const session = await getServerAuthSession(ctx);
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ session }) => {
+    if (!session) {
+      return {
+        redirect: {
+          destination: '/login',
+          permanent: false,
+        },
+      };
+    }
 
-  if (!session) {
-    return {
-      redirect: {
-        destination: '/login',
-        permanent: false,
-      },
-    };
-  }
+    if (session.user?.bannedAt)
+      return {
+        redirect: { destination: '/', permanent: false },
+      };
 
-  if (session.user?.bannedAt)
-    return {
-      redirect: { destination: '/', permanent: false },
-    };
-
-  return { props: { session } };
-};
+    return { props: { session } };
+  },
+});

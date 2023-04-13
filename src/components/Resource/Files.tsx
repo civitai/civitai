@@ -379,12 +379,12 @@ function FileEditForm({
       case 'safetensors':
         return ['Model', 'VAE'].includes(value);
       case 'pt':
-        return ['Model', 'Negative', 'Text Encoder', 'VAE'].includes(value);
+        return ['Model', 'Negative', 'VAE'].includes(value);
       case 'zip':
         return ['Training Data', 'Archive'].includes(value);
       case 'yml':
       case 'yaml':
-        return ['Config'].includes(value);
+        return ['Config', 'Text Encoder'].includes(value);
       case 'bin':
         return ['Model', 'Negative'].includes(value);
       default:

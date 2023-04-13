@@ -1,5 +1,5 @@
 import { Container, Grid, Stack, Title, Group, Badge } from '@mantine/core';
-import { useIsMutating, useQueryClient } from '@tanstack/react-query';
+import { useIsMutating } from '@tanstack/react-query';
 import { EditPostControls } from '~/components/Post/Edit/EditPostControls';
 import { EditPostDetail } from '~/components/Post/Edit/EditPostDetail';
 import { EditPostImages } from '~/components/Post/Edit/EditPostImages';

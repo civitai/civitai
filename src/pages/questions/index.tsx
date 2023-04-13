@@ -9,30 +9,27 @@ import { constants } from '~/server/common/constants';
 import { parseCookies } from '~/providers/CookiesProvider';
 import { openContextModal } from '@mantine/modals';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
-export const getServerSideProps: GetServerSideProps = async (context) => {
-  const page = context.query.page ? Number(context.query.page) : 1;
-  const {
-    sort = constants.questionFilterDefaults.sort,
-    period = constants.questionFilterDefaults.period,
-    status,
-  } = parseCookies(context.req.cookies).questions;
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  resolver: async ({ ssg, ctx }) => {
+    const page = ctx.query.page ? Number(ctx.query.page) : 1;
+    const {
+      sort = constants.questionFilterDefaults.sort,
+      period = constants.questionFilterDefaults.period,
+      status,
+    } = parseCookies(ctx.req.cookies).questions;
 
-  const ssg = await getServerProxySSGHelpers(context);
-  await ssg.question.getPaged.prefetch({
-    page,
-    limit: constants.questionFilterDefaults.limit,
-    sort,
-    period,
-    status,
-  });
-
-  return {
-    props: {
-      trpcState: ssg.dehydrate(),
-    },
-  };
-};
+    await ssg?.question.getPaged.prefetch({
+      page,
+      limit: constants.questionFilterDefaults.limit,
+      sort,
+      period,
+      status,
+    });
+  },
+});
 
 const openModal = () =>
   openContextModal({

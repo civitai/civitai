@@ -103,8 +103,8 @@ export function InfiniteModels({ columnWidth = 300, delayNsfw = false }: Infinit
             itemId={(data) => data.id}
           />
           {hasNextPage && !isLoading && !isRefetching && (
-            <Center ref={ref}>
-              <Loader />
+            <Center ref={ref} sx={{ height: 36 }} mt="md">
+              {inView && <Loader />}
             </Center>
           )}
         </div>

@@ -19,7 +19,6 @@ import { useState } from 'react';
 import { z } from 'zod';
 
 import { Form, InputText, useForm } from '~/libs/form';
-import { reloadSession } from '~/utils/next-auth-helpers';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LogoBadge } from '~/components/Logo/LogoBadge';
@@ -77,7 +76,7 @@ export default function OnboardingModal() {
   const { mutate: completeOnboarding, isLoading: completeOnboardingLoading } =
     trpc.user.completeOnboarding.useMutation({
       async onSuccess() {
-        await reloadSession();
+        user?.refresh();
         await invalidateModeratedContent(utils);
       },
     });
@@ -102,7 +101,6 @@ export default function OnboardingModal() {
   const handleAcceptTOS = () => {
     acceptTOS(undefined, {
       async onSuccess() {
-        await reloadSession();
         setActiveStep((x) => x + 1);
       },
     });

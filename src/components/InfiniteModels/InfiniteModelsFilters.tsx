@@ -37,6 +37,7 @@ export const useFilters = create<{
   setBaseModels: (baseModels?: BaseModel[]) => void;
   setBrowsingMode: (browsingMode?: BrowsingMode, keep?: boolean) => void;
   setStatus: (status?: ModelStatus[]) => void;
+  setEarlyAccess: (earlyAccess?: boolean) => void;
 }>()(
   immer((set) => ({
     filters: {},
@@ -90,10 +91,17 @@ export const useFilters = create<{
         !!status?.length ? setCookie('f_status', status) : deleteCookie('f_status');
       });
     },
+    setEarlyAccess: (earlyAccess) => {
+      set((state) => {
+        state.filters.earlyAccess = earlyAccess;
+        !!earlyAccess ? setCookie('f_earlyAccess', earlyAccess) : deleteCookie('f_earlyAccess');
+      });
+    },
   }))
 );
 
 export const useInfiniteModelsFilters = () => {
+  const currentUser = useCurrentUser();
   const {
     sort = constants.modelFilterDefaults.sort,
     period = constants.modelFilterDefaults.period,
@@ -101,13 +109,11 @@ export const useInfiniteModelsFilters = () => {
     types,
     status,
     checkpointType,
+    earlyAccess,
   } = useCookies().models;
 
   const filters = useFilters((state) => state.filters);
-  // TODO.hotfix: uses the new cookie filters to prevent fetching the same models because of browsingMode
-  // const modelFilters = useModelFilters();
   return {
-    // ...modelFilters,
     limit: 100,
     sort,
     period,
@@ -115,6 +121,7 @@ export const useInfiniteModelsFilters = () => {
     baseModels,
     status,
     checkpointType,
+    earlyAccess,
     ...filters,
   };
 };
@@ -173,18 +180,24 @@ export function InfiniteModelsFilter() {
   const checkpointType = useFilters(
     (state) => state.filters.checkpointType ?? cookies.checkpointType ?? 'all'
   );
+  const setEarlyAccess = useFilters((state) => state.setEarlyAccess);
+  const earlyAccess = useFilters(
+    (state) => state.filters.earlyAccess ?? cookies.earlyAccess ?? false
+  );
   const showCheckpointType = !types?.length || types.includes('Checkpoint');
 
   const filterLength =
     types.length +
     baseModels.length +
     status.length +
-    (showCheckpointType && checkpointType !== 'all' ? 1 : 0);
+    (showCheckpointType && checkpointType !== 'all' ? 1 : 0) +
+    (earlyAccess ? 1 : 0);
   const handleClear = () => {
     setTypes([]);
     setBaseModels([]);
     setStatus([]);
     setCheckpointType(undefined);
+    setEarlyAccess(false);
   };
 
   const chipProps: Partial<ChipProps> = {
@@ -213,24 +226,24 @@ export function InfiniteModelsFilter() {
       </Popover.Target>
       <Popover.Dropdown maw={350} w="100%">
         <Stack spacing={0}>
+<Divider label="Model status" labelProps={{ weight: 'bold' }} mb={4} />
           {user?.isModerator && (
-            <>
-              <Divider label="Model status" labelProps={{ weight: 'bold' }} />
-              <Chip.Group
-                spacing={4}
-                value={status}
-                onChange={(status: ModelStatus[]) => setStatus(status)}
-                multiple
-                my={4}
-              >
-                {availableStatus.map((status) => (
-                  <Chip key={status} value={status} {...chipProps}>
-                    {status}
-                  </Chip>
-                ))}
-              </Chip.Group>
-            </>
+            <Chip.Group
+              spacing={4}
+              value={status}
+              onChange={(status: ModelStatus[]) => setStatus(status)}
+              multiple
+            >
+              {availableStatus.map((status) => (
+                <Chip key={status} value={status} {...chipProps}>
+                  {status}
+                </Chip>
+              ))}
+            </Chip.Group>
           )}
+          <Chip checked={earlyAccess} onChange={setEarlyAccess} {...chipProps}>
+            Early Access
+          </Chip>
           <Divider label="Model types" labelProps={{ weight: 'bold' }} />
           <Chip.Group
             spacing={4}

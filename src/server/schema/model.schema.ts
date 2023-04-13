@@ -74,6 +74,7 @@ export const getAllModelsSchema = licensingSchema.extend({
   excludedTagIds: z.array(z.number()).optional(),
   excludedImageIds: z.array(z.number()).optional(),
   needsReview: z.boolean().optional(),
+  earlyAccess: z.boolean().optional(),
 });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;

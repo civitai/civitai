@@ -176,7 +176,7 @@ export const modelRouter = router({
     .mutation(toggleModelLockHandler),
   getSimple: publicProcedure
     .input(getByIdSchema)
-    .query(({ input }) => getSimpleModelWithVersions(input)),
+    .query(({ input, ctx }) => getSimpleModelWithVersions({ id: input.id, ctx })),
   requestReview: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)

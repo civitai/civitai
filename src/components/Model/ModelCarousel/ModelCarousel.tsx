@@ -117,7 +117,6 @@ export function ModelCarousel({
     prioritizedUserIds: [modelUserId],
     period: 'AllTime',
     sort: ImageSort.MostReactions,
-    browsingMode: currentUser ? undefined : BrowsingMode.SFW,
     limit,
   });
 

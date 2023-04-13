@@ -220,3 +220,9 @@ export const getImageSchema = z.object({
   // browsingMode: z.nativeEnum(BrowsingMode).optional(),
 });
 // #endregion
+
+export type RemoveImageResourceSchema = z.infer<typeof removeImageResourceSchema>;
+export const removeImageResourceSchema = z.object({
+  imageId: z.number(),
+  resourceId: z.number(),
+});

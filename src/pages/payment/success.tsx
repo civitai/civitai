@@ -16,16 +16,15 @@ import { useEffect } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { enterFall, jelloVerical } from '~/libs/animations';
-import { reloadSession } from '~/utils/next-auth-helpers';
 
 export default function PaymentSuccess() {
   const router = useRouter();
   const { cid } = router.query as { cid: string };
-  const { customerId } = useCurrentUser() ?? {};
+  const { customerId, refresh } = useCurrentUser() ?? {};
 
   useEffect(() => {
-    reloadSession();
-  }, []);
+    refresh?.();
+  }, [refresh]);
 
   if (cid !== customerId?.slice(-8)) {
     router.replace('/');

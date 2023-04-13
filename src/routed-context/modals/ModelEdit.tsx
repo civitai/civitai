@@ -8,6 +8,7 @@ import {
   Loader,
   Stack,
   Text,
+  Title,
 } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons';
 import Link from 'next/link';
@@ -59,6 +60,7 @@ export default createRoutedContext({
                   </Group>
                 </Anchor>
               </Link>
+              <Title order={1}>Edit Model</Title>
               <ModelUpsertForm model={model} onSubmit={context.close}>
                 {({ loading }) => (
                   <Group mt="xl" position="right">

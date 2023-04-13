@@ -64,6 +64,10 @@ export const constants = {
     Negative: 6,
     Archive: 7,
   },
+  cardSizes: {
+    model: 320,
+    image: 320,
+  },
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;

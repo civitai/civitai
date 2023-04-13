@@ -1,24 +1,27 @@
 import {
+  ActionIcon,
+  Alert,
   Badge,
   Card,
-  createStyles,
+  CopyButton,
   Group,
   Rating,
   Skeleton,
   Stack,
   Text,
-  Alert,
-  CopyButton,
+  createStyles,
 } from '@mantine/core';
-import { IconDownload, IconMessageCircle2, IconHeart, IconStar } from '@tabler/icons';
+import { openConfirmModal } from '@mantine/modals';
+import { IconDownload, IconHeart, IconMessageCircle2, IconStar, IconX } from '@tabler/icons';
 import Link from 'next/link';
+import { cloneElement, useMemo, useState } from 'react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { cloneElement, useMemo } from 'react';
 
 const useStyles = createStyles(() => ({
   statBadge: {
@@ -30,6 +33,10 @@ const useStyles = createStyles(() => ({
 export function ImageResources({ imageId }: { imageId: number }) {
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
+  const queryUtils = trpc.useContext();
+
+  const [selectedResource, setSelectedResource] = useState<number | null>(null);
+
   const { data, isLoading } = trpc.image.getResources.useQuery({ id: imageId });
 
   const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
@@ -62,6 +69,41 @@ export function ImageResources({ imageId }: { imageId: number }) {
     return resources;
   }, [data, favoriteModels]);
 
+  const { mutate, isLoading: removingResource } = trpc.image.removeResource.useMutation();
+  const handleRemoveResource = (resourceId: number) => {
+    setSelectedResource(resourceId);
+    openConfirmModal({
+      centered: true,
+      title: 'Remove Resource',
+      children:
+        'Are you sure you want to remove this resource from this image? This action is destructive and cannot be reverted.',
+      labels: { confirm: 'Yes, remove it', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: () =>
+        mutate(
+          { id: resourceId },
+          {
+            async onSuccess() {
+              showSuccessNotification({
+                title: 'Successfully removed resource',
+                message: 'The resource was removed from the image',
+              });
+              await queryUtils.image.getResources.invalidate({ id: imageId });
+            },
+            onError(error) {
+              showErrorNotification({
+                title: 'Unable to remove resource',
+                error: new Error(error.message),
+              });
+            },
+            onSettled() {
+              setSelectedResource(null);
+            },
+          }
+        ),
+    });
+  };
+
   return (
     <Stack spacing={4}>
       {isLoading ? (
@@ -71,11 +113,16 @@ export function ImageResources({ imageId }: { imageId: number }) {
         </Stack>
       ) : !!resources.length ? (
         resources.map(({ key, isFavorite, isAvailable, ...resource }) => {
+          const removing = selectedResource === resource.id && removingResource;
+
           return (
             <Wrapper resource={resource} key={key}>
               <Card
                 p={8}
-                sx={{ backgroundColor: theme.colors.dark[7], opacity: isAvailable ? 1 : 0.3 }}
+                sx={{
+                  backgroundColor: theme.colors.dark[7],
+                  opacity: removing ? 0.3 : isAvailable ? 1 : 0.3,
+                }}
                 withBorder
               >
                 <Stack spacing="xs">
@@ -88,20 +135,38 @@ export function ImageResources({ imageId }: { imageId: number }) {
                         Unavailable
                       </Badge>
                     )}
-                    {resource.modelType && (
-                      <Badge radius="sm" size="sm">
-                        {getDisplayName(resource.modelType)}
-                      </Badge>
-                    )}
-                    {!isAvailable && resource.hash && (
-                      <CopyButton value={resource.hash}>
-                        {({ copy, copied }) => (
-                          <Badge onClick={copy} radius="sm" size="sm" sx={{ cursor: 'pointer' }}>
-                            {copied ? 'Copied...' : resource.hash}
-                          </Badge>
-                        )}
-                      </CopyButton>
-                    )}
+                    <Group spacing={4}>
+                      {resource.modelType && (
+                        <Badge radius="sm" size="sm">
+                          {getDisplayName(resource.modelType)}
+                        </Badge>
+                      )}
+                      {!isAvailable && resource.hash && (
+                        <CopyButton value={resource.hash}>
+                          {({ copy, copied }) => (
+                            <Badge onClick={copy} radius="sm" size="sm" sx={{ cursor: 'pointer' }}>
+                              {copied ? 'Copied...' : resource.hash}
+                            </Badge>
+                          )}
+                        </CopyButton>
+                      )}
+                      {currentUser?.isModerator && (
+                        <ActionIcon
+                          size="xs"
+                          color="red"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            e.nativeEvent.stopImmediatePropagation();
+
+                            handleRemoveResource(resource.id);
+                          }}
+                          disabled={removing}
+                        >
+                          <IconX size={14} stroke={1.5} />
+                        </ActionIcon>
+                      )}
+                    </Group>
                   </Group>
                   {isAvailable && (
                     <Group spacing={0} position="apart">

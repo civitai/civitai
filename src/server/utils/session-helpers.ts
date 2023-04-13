@@ -7,6 +7,7 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { Session } from 'next-auth';
 
 const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days
+const USER_DEBOUNCE_TIME = 60 * 1000;
 const log = createLogger('session-helpers', 'green');
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
@@ -15,10 +16,15 @@ declare global {
   var sessionsFetch: Promise<Record<number, Date>> | null;
 }
 
+const lastUserCheck: Record<number, number> = {};
+
 export async function refreshToken(token: JWT) {
   if (!token.user) return token;
   const user = token.user as User;
   if (!user.id) return token;
+  if (lastUserCheck[user.id] && new Date().getTime() - lastUserCheck[user.id] < USER_DEBOUNCE_TIME)
+    return token;
+  lastUserCheck[user.id] = new Date().getTime();
 
   const userDateStr = await redis.get(`session:${user.id}`);
   const userDate = userDateStr ? new Date(userDateStr) : undefined;

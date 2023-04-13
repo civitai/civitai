@@ -22,6 +22,7 @@ import { discord } from '~/server/integrations/discord';
 import { getUserDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 
 type NextAuthProviders = AsyncReturnType<typeof getProviders>;
@@ -30,43 +31,41 @@ type Props = {
   linked: boolean;
 };
 
-export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
-  const session = await getServerAuthSession(ctx);
-
-  if (!session?.user) {
-    return {
-      redirect: {
-        destination: getLoginLink({ reason: 'discord-link' }),
-        permanent: false,
-      },
-    };
-  }
-
-  const account = await dbRead.account.findFirst({
-    where: { userId: session.user.id, provider: 'discord' },
-    select: { scope: true },
-  });
-
-  const linked = account?.scope?.includes('role_connections.write') ?? false;
-  if (linked) {
-    try {
-      const metadata = await getUserDiscordMetadata(session.user.id);
-      if (metadata) await discord.pushMetadata(metadata);
-    } catch (err) {
-      console.error(err);
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ session }) => {
+    if (!session?.user) {
+      return {
+        redirect: {
+          destination: getLoginLink({ reason: 'discord-link' }),
+          permanent: false,
+        },
+      };
     }
-  }
-  const providers = !linked ? await getProviders() : null;
 
-  return {
-    props: { providers, linked },
-  };
-};
+    const account = await dbRead.account.findFirst({
+      where: { userId: session.user.id, provider: 'discord' },
+      select: { scope: true },
+    });
 
-export default function LinkRole({
-  providers,
-  linked,
-}: InferGetServerSidePropsType<typeof getServerSideProps>) {
+    const linked = account?.scope?.includes('role_connections.write') ?? false;
+    if (linked) {
+      try {
+        const metadata = await getUserDiscordMetadata(session.user.id);
+        if (metadata) await discord.pushMetadata(metadata);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    const providers = !linked ? await getProviders() : null;
+
+    return {
+      props: { providers, linked },
+    };
+  },
+});
+
+export default function LinkRole({ providers, linked }: Props) {
   return (
     <Container size="xs">
       <Paper radius="md" p="xl" withBorder>

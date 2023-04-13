@@ -1,7 +1,6 @@
 import { ActionIcon } from '@mantine/core';
 import { IconEye, IconEyeOff, TablerIconProps } from '@tabler/icons';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { reloadSession } from '~/utils/next-auth-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function BlurToggle({ children, iconProps = {} }: BlurToggleProps) {
@@ -10,7 +9,7 @@ export function BlurToggle({ children, iconProps = {} }: BlurToggleProps) {
 
   const { mutate } = trpc.user.update.useMutation({
     async onSuccess() {
-      await reloadSession();
+      user.refresh();
     },
   });
 

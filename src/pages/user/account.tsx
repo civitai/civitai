@@ -53,32 +53,9 @@ type Props = {
   providers: AsyncReturnType<typeof getProviders>;
 };
 
-// export const getServerSideProps: GetServerSideProps<Props> = async (context) => {
-//   const session = await getServerAuthSession(context);
-
-//   if (!session?.user)
-//     return {
-//       redirect: {
-//         destination: '/',
-//         permanent: false,
-//       },
-//     };
-
-//   const providers = await getProviders();
-//   const ssg = await getServerProxySSGHelpers(context);
-//   await ssg.account.getAll.prefetch();
-
-//   return {
-//     props: {
-//       trpcState: ssg.dehydrate(),
-//       providers,
-//       isDev: env.NODE_ENV === 'development', // TODO: Remove this once API Keys feature is complete
-//     },
-//   };
-// };
-
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
+  useSession: true,
   resolver: async ({ ssg, session }) => {
     if (!session?.user || session.user.bannedAt)
       return {

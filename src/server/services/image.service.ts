@@ -4,6 +4,7 @@ import {
   ingestImageSchema,
   GetInfiniteImagesInput,
   GetImageInput,
+  RemoveImageResourceSchema,
 } from './../schema/image.schema';
 import {
   CosmeticSource,
@@ -34,12 +35,17 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
 import { simpleTagSelect, imageTagSelect, ImageTag } from '~/server/selectors/tag.selector';
 import { getImageV2Select, ImageV2Model } from '~/server/selectors/imagev2.selector';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { VotableTagModel } from '~/libs/tags';
 import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getTagsNeedingReview } from '~/server/services/system-cache';
 import { redis } from '~/server/redis/client';
 import { hashify } from '~/utils/string-helpers';
+import { TRPCError } from '@trpc/server';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -989,6 +995,7 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
   return await dbRead.imageResourceHelper.findMany({
     where: { imageId: id, OR: [{ hash: { not: null } }, { modelVersionId: { not: null } }] },
     select: {
+      id: true,
       reviewId: true,
       reviewRating: true,
       reviewDetails: true,
@@ -1228,3 +1235,19 @@ export const getImagesForPosts = async ({
 //   ).sort((a, b) => b.postCount - a.postCount);
 // };
 // #endregion
+
+export const removeImageResource = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
+  if (!user?.isModerator) throw throwAuthorizationError();
+
+  try {
+    const resource = await dbWrite.imageResource.delete({
+      where: { id },
+    });
+    if (!resource) throw throwNotFoundError(`No image resource with id ${id}`);
+
+    return resource;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};

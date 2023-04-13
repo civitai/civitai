@@ -19,6 +19,7 @@ import { Factory__factory } from '~/contract/types';
 import { env } from '~/env/server.mjs';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
+import { Context } from '~/server/createContext';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { playfab } from '~/server/playfab/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
@@ -37,6 +38,7 @@ import {
 import { modelWithDetailsSelect } from '~/server/selectors/model.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { ingestNewImages } from '~/server/services/image.service';
+import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -91,6 +93,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     browsingMode,
     ids,
     needsReview,
+    earlyAccess,
   },
   select,
   user: sessionUser,
@@ -195,6 +198,9 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
   if (needsReview && sessionUser?.isModerator) {
     AND.push({ meta: { path: ['needsReview'], equals: true } });
+  }
+  if (earlyAccess) {
+    AND.push({ earlyAccessDeadline: { gte: new Date() } });
   }
 
   const hideNSFWModels = browsingMode === BrowsingMode.SFW || !canViewNsfw;
@@ -762,17 +768,15 @@ export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
   await dbWrite.model.update({ where: { id }, data: { locked } });
 };
 
-export const getSimpleModelWithVersions = async ({
-  id,
-  user,
-}: GetByIdInput & { user?: SessionUser }) => {
+export const getSimpleModelWithVersions = async ({ id, ctx }: GetByIdInput & { ctx?: Context }) => {
   const model = await getModel({
     id,
-    user,
+    user: ctx?.user,
     select: {
       id: true,
       name: true,
       createdAt: true,
+      locked: true,
       user: { select: userWithCosmeticsSelect },
     },
   });
@@ -791,4 +795,45 @@ export const getAssignedTokens = async ({ id }: GetByIdInput) => {
     erc20: erc20Address !== constants.AddressZero ? erc20Address : null,
     erc721: erc721Address !== constants.AddressZero ? erc721Address : null,
   };
+};
+
+export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
+  const model = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      publishedAt: true,
+      modelVersions: {
+        where: { status: ModelStatus.Published },
+        select: { id: true, earlyAccessTimeFrame: true, createdAt: true },
+      },
+    },
+  });
+  if (!model) throw throwNotFoundError();
+
+  const { modelVersions } = model;
+  const nextEarlyAccess = modelVersions.find(
+    (v) =>
+      v.earlyAccessTimeFrame > 0 &&
+      isEarlyAccess({
+        earlyAccessTimeframe: v.earlyAccessTimeFrame,
+        versionCreatedAt: v.createdAt,
+        publishedAt: model.publishedAt,
+      })
+  );
+
+  if (nextEarlyAccess) {
+    await updateModelById({
+      id,
+      data: {
+        earlyAccessDeadline: getEarlyAccessDeadline({
+          earlyAccessTimeframe: nextEarlyAccess.earlyAccessTimeFrame,
+          versionCreatedAt: nextEarlyAccess.createdAt,
+          publishedAt: model.publishedAt,
+        }),
+      },
+    });
+  } else {
+    await updateModelById({ id, data: { earlyAccessDeadline: null } });
+  }
 };

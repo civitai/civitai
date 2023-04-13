@@ -1,6 +1,5 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import { User } from '@prisma/client';
-import { NextApiRequest, NextApiResponse } from 'next';
 import NextAuth, { Session, type NextAuthOptions } from 'next-auth';
 import { getToken } from 'next-auth/jwt';
 import DiscordProvider from 'next-auth/providers/discord';
@@ -42,7 +41,7 @@ const cookiePrefix = useSecureCookies ? '__Secure-' : '';
 const { host, hostname } = new URL(env.NEXTAUTH_URL);
 const cookieName = `${cookiePrefix}agentswap-token`;
 
-export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
+export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(dbWrite),
   session: {
     strategy: 'jwt',
@@ -64,8 +63,8 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
 
       return true;
     },
-    async jwt({ token, user }) {
-      if (req.url === '/api/auth/session?update') {
+    async jwt({ token, user, trigger }) {
+      if (trigger === 'update') {
         await invalidateSession(Number(token.sub));
         const user = await getSessionUser({ userId: Number(token.sub) });
         token.user = user;
@@ -78,8 +77,8 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
 
       return token;
     },
-    async session({ session, token }) {
-      if (req.url !== '/api/auth/session?update') {
+    async session({ session, token, trigger }) {
+      if (trigger === 'update') {
         token = await refreshToken(token);
       }
       session.user = (token.user ? token.user : session.user) as Session['user'];
@@ -134,7 +133,7 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
         signature: { label: 'Signature', type: 'text', placeholder: '0x0' },
       },
       // @ts-expect-error - this is a bug in the types, user.id is string but it should be number
-      async authorize(credentials) {
+      async authorize(credentials, req) {
         try {
           const message = JSON.parse(credentials?.message || '{}');
           const signature = credentials?.signature || '';
@@ -180,13 +179,14 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
           }
 
           // Connect
-          const token = await getToken({ req, cookieName, secureCookie: useSecureCookies });
-          if (token) {
-            const user = await findUniqueUser(Number(token.sub));
-            if (!user) return null;
-            await createNewAccount(user.id);
-            return user;
-          }
+          // TODO: Reimplement this
+          // const token = await getToken({ req, cookieName, secureCookie: useSecureCookies });
+          // if (token) {
+          //   const user = await findUniqueUser(Number(token.sub));
+          //   if (!user) return null;
+          //   await createNewAccount(user.id);
+          //   return user;
+          // }
 
           // Sign-Up
           const newUser = await dbWrite.user.create({
@@ -219,35 +219,6 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
     signIn: '/login',
     error: '/login',
   },
-});
-
-// const oldCookieName = `${cookiePrefix}next-auth.session-token`;
-const authOptions = async (req: NextApiRequest, res: NextApiResponse) => {
-  // Disabling because it seems it may be causing issues
-  // const cookies = getCookies({ req, res });
-  // const oldToken = cookies[oldCookieName];
-  // const currentToken = cookies[cookieName];
-  // if (oldToken && !currentToken) {
-  //   setCookie(cookieName, oldToken, {
-  //     res,
-  //     req,
-  //     maxAge: 30 * 24 * 60 * 60,
-  //     httpOnly: true,
-  //     sameSite: 'lax',
-  //     path: '/',
-  //     secure: useSecureCookies,
-  //     domain: hostname == 'localhost' ? hostname : '.' + hostname,
-  //   });
-  //   deleteCookie(oldCookieName, {
-  //     res,
-  //     req,
-  //     path: '/',
-  //     secure: useSecureCookies,
-  //     domain: hostname,
-  //   });
-  // }
-
-  return NextAuth(req, res, createAuthOptions(req));
 };
 
-export default authOptions;
+export default NextAuth(authOptions);

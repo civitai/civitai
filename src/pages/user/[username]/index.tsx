@@ -56,6 +56,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { constants } from '~/server/common/constants';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -377,7 +378,11 @@ export default function UserPage({
           </Box>
         )}
         <Tabs.Panel value="published">
-          <MasonryProvider columnWidth={308} maxColumnCount={7} maxSingleColumnWidth={450}>
+          <MasonryProvider
+            columnWidth={constants.cardSizes.model}
+            maxColumnCount={7}
+            maxSingleColumnWidth={450}
+          >
             <MasonryContainer fluid>
               <Stack spacing="xs">
                 <Group position="apart">

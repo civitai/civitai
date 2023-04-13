@@ -37,35 +37,35 @@ type Props = {
   size?: 'sm' | 'md' | 'lg' | 'xl';
 } & BoxProps;
 
-const pulse = keyframes({
-  '0%': {
-    stroke: '#ff6666',
-    strokeWidth: 2,
-    opacity: 0.4,
-  },
-  '50%': {
-    stroke: '#ff3333',
-    strokeWidth: 6,
-    opacity: 0.1,
-  },
-  '100%': {
-    stroke: '#ff6666',
-    strokeWidth: 2,
-    opacity: 0.4,
-  },
-});
+// const pulse = keyframes({
+//   '0%': {
+//     stroke: '#ff6666',
+//     strokeWidth: 2,
+//     opacity: 0.4,
+//   },
+//   '50%': {
+//     stroke: '#ff3333',
+//     strokeWidth: 6,
+//     opacity: 0.1,
+//   },
+//   '100%': {
+//     stroke: '#ff6666',
+//     strokeWidth: 2,
+//     opacity: 0.4,
+//   },
+// });
 
-const pulseSize = keyframes({
-  '0%': {
-    transform: 'scale(1)',
-  },
-  '50%': {
-    transform: 'scale(1.1)',
-  },
-  '100%': {
-    transform: 'scale(1)',
-  },
-});
+// const pulseSize = keyframes({
+//   '0%': {
+//     transform: 'scale(1)',
+//   },
+//   '50%': {
+//     transform: 'scale(1.1)',
+//   },
+//   '100%': {
+//     transform: 'scale(1)',
+//   },
+// });
 
 const useStyles = createStyles((theme) => ({
   root: {
@@ -75,7 +75,7 @@ const useStyles = createStyles((theme) => ({
   svg: {
     height: 30,
     transform: 'translateZ(0)',
-    animation: `${pulseSize} 1s ease-in-out infinite`,
+    // animation: `${pulseSize} 1s ease-in-out infinite`,
 
     [`&:hover`]: {
       animation: `${wiggle()} 750ms ease-in-out infinite`,
@@ -93,6 +93,6 @@ const useStyles = createStyles((theme) => ({
     transformOrigin: 'center',
     transform: 'scale(1) translateZ(0)',
 
-    animation: `${pulse} 1s ease-in-out infinite`,
+    // animation: `${pulse} 1s ease-in-out infinite`,
   },
 }));

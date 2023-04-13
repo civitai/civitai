@@ -15,7 +15,6 @@ import {
   Title,
   Paper,
   Center,
-  Anchor,
   Box,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
@@ -23,7 +22,6 @@ import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
 import {
-  IconArrowsSort,
   IconBan,
   IconClock,
   IconDotsVertical,
@@ -40,6 +38,7 @@ import {
   IconLock,
   IconLockOff,
   IconMessageCircleOff,
+  IconArrowsLeftRight,
 } from '@tabler/icons';
 import truncate from 'lodash/truncate';
 import { InferGetServerSidePropsType } from 'next';
@@ -89,29 +88,34 @@ import { useQueryImages } from '~/components/Image/image.utils';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
+import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { getAssignedTokens } from '~/server/services/model.service';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
+  useSession: true,
   resolver: async ({ ssg, ctx, session }) => {
     const params = (ctx.params ?? {}) as { id: string; slug: string[] };
     const query = ctx.query as { modelVersionId: string };
     const id = Number(params.id);
-    const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
-    if (!isNumber(id)) return { notFound: true };
+    if (ssg) {
+      const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
+      if (!isNumber(id)) return { notFound: true };
 
-    const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(() => null);
-    if (version)
-      await ssg?.image.getInfinite.prefetchInfinite({
-        modelVersionId: version.id,
-        prioritizedUserIds: [version.model.userId],
-        period: 'AllTime',
-        sort: ImageSort.MostReactions,
-        browsingMode: session?.user ? undefined : BrowsingMode.SFW,
-        limit: CAROUSEL_LIMIT,
-      });
+      const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(
+        () => null
+      );
+      if (version)
+        await ssg.image.getInfinite.prefetchInfinite({
+          modelVersionId: version.id,
+          prioritizedUserIds: [version.model.userId],
+          period: 'AllTime',
+          sort: ImageSort.MostReactions,
+          limit: CAROUSEL_LIMIT,
+        });
 
-    await ssg?.model.getById.prefetch({ id });
+      await ssg.model.getById.prefetch({ id });
+    }
 
     const tokens = await getAssignedTokens({ id }).catch(() => null);
 
@@ -176,7 +180,6 @@ export default function ModelDetailsV2({
       prioritizedUserIds: model ? [model.user.id] : undefined,
       period: 'AllTime',
       sort: ImageSort.MostReactions,
-      browsingMode: currentUser ? undefined : BrowsingMode.SFW,
       limit: CAROUSEL_LIMIT,
     },
     {
@@ -455,7 +458,7 @@ export default function ModelDetailsV2({
                       </Text>
                     </IconBadge>
                   )}
-                  {latestVersion?.earlyAccessDeadline && (
+                  {model?.earlyAccessDeadline && (
                     <IconBadge radius="sm" color="green" size="lg" icon={<IconClock size={18} />}>
                       Early Access
                     </IconBadge>
@@ -523,14 +526,6 @@ export default function ModelDetailsV2({
                         >
                           Edit Model
                         </Menu.Item>
-                        {versionCount > 1 && (
-                          <Menu.Item
-                            icon={<IconArrowsSort size={14} stroke={1.5} />}
-                            onClick={toggle}
-                          >
-                            Reorder Versions
-                          </Menu.Item>
-                        )}
                       </>
                     )}
                     {(!currentUser || !isOwner || isModerator) && (
@@ -560,7 +555,7 @@ export default function ModelDetailsV2({
                         </Menu.Item>
                       </>
                     )}
-                    {isModerator && (
+                    {isOwner && (
                       <ToggleLockModel modelId={model.id} locked={model.locked}>
                         {({ onClick }) => (
                           <Menu.Item
@@ -664,18 +659,27 @@ export default function ModelDetailsV2({
             )}
           </Stack>
           <Group spacing={4} noWrap>
-            {isOwner || isModerator ? (
-              <Button
-                component={NextLink}
-                href={`/models/${model.id}/model-versions/create`}
-                // variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                variant="light"
-                color="blue"
-                leftIcon={<IconPlus size={16} />}
-                compact
-              >
-                Add Version
-              </Button>
+            {isOwner ? (
+              <>
+                <ButtonTooltip label="Add Version">
+                  <ActionIcon
+                    component={NextLink}
+                    href={`/models/${model.id}/model-versions/create`}
+                    variant="light"
+                    color="blue"
+                  >
+                    <IconPlus size={14} />
+                  </ActionIcon>
+                </ButtonTooltip>
+
+                {versionCount > 1 && (
+                  <ButtonTooltip label="Rearrange Versions">
+                    <ActionIcon onClick={toggle}>
+                      <IconArrowsLeftRight size={14} />
+                    </ActionIcon>
+                  </ButtonTooltip>
+                )}
+              </>
             ) : null}
             <ModelVersionList
               versions={model.modelVersions}
@@ -716,7 +720,6 @@ export default function ModelDetailsV2({
                         <>
                           <LoginRedirect reason="create-comment">
                             <Button
-                              className={classes.discussionActionButton}
                               leftIcon={<IconMessage size={16} />}
                               variant="outline"
                               onClick={() => openRoutedContext('commentEdit', {})}
@@ -730,7 +733,6 @@ export default function ModelDetailsV2({
                         !isMuted && (
                           <JoinPopover message="You must be a Supporter Tier member to join this discussion">
                             <Button
-                              className={classes.discussionActionButton}
                               leftIcon={<IconClock size={16} />}
                               variant="outline"
                               size="xs"
@@ -797,7 +799,7 @@ export default function ModelDetailsV2({
         <Box ref={gallerySectionRef} id="gallery" mt="md">
           <ImagesAsPostsInfinite
             modelId={model.id}
-            selectedVersionId={selectedVersion.id}
+            selectedVersionId={selectedVersion?.id}
             modelVersions={model.modelVersions}
           />
         </Box>

@@ -55,19 +55,21 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { MantineReactTable, MRT_ColumnDef, MRT_SortingState } from 'mantine-react-table';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
-export const getServerSideProps: GetServerSideProps = async (context) => {
-  const session = await getServerAuthSession(context);
-  if (!session?.user?.isModerator || session.user?.bannedAt) {
-    return {
-      redirect: {
-        destination: '/',
-        permanent: false,
-      },
-    };
-  }
-  return { props: {} };
-};
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ session }) => {
+    if (!session?.user?.isModerator || session.user?.bannedAt) {
+      return {
+        redirect: {
+          destination: '/',
+          permanent: false,
+        },
+      };
+    }
+  },
+});
 
 export default function Tags() {
   const queryUtils = trpc.useContext();

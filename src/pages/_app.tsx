@@ -189,8 +189,8 @@ function MyApp(props: CustomAppProps) {
 
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
-  const isClient = appContext.ctx?.req?.url?.startsWith('/_next/data');
-  // if (isClient) return initialProps;
+  const url = appContext.ctx?.req?.url;
+  const isClient = !url || url?.startsWith('/_next/data');
 
   const { pageProps, ...appProps } = initialProps;
   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx);
@@ -212,6 +212,11 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   } else {
     const session = !isClient ? await getSession(appContext.ctx) : undefined;
     const flags = getFeatureFlags({ user: session?.user });
+    // Pass this via the request so we can use it in SSR
+    if (session) {
+      (appContext.ctx.req as any)['session'] = session;
+      (appContext.ctx.req as any)['flags'] = flags;
+    }
     return {
       pageProps: {
         ...pageProps,
