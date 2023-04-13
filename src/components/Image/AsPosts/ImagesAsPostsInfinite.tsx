@@ -27,6 +27,7 @@ import { SortFilter, PeriodFilter } from '~/components/Filters';
 import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 
 type ModelVersionsProps = { id: number; name: string };
@@ -54,6 +55,7 @@ export default function ImagesAsPostsInfinite({
   modelVersions,
   selectedVersionId,
 }: ImagesAsPostsInfiniteProps) {
+  const currentUser = useCurrentUser();
   const router = useRouter();
   const { ref, inView } = useInView();
   const isMobile = useIsMobile();
@@ -67,7 +69,7 @@ export default function ImagesAsPostsInfinite({
     limit,
   });
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
+  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
@@ -86,6 +88,8 @@ export default function ImagesAsPostsInfinite({
   }, [fetchNextPage, inView]);
   // #endregion
 
+  const isMuted = currentUser?.muted ?? false;
+
   return (
     <ImagesAsPostsInfiniteContext.Provider value={{ modelId, username, modelVersions }}>
       <MasonryProvider
@@ -97,19 +101,21 @@ export default function ImagesAsPostsInfinite({
           <Stack spacing="md">
             <Group spacing="xs" align="flex-end">
               <Title order={2}>Gallery</Title>
-              <LoginRedirect reason="create-review">
-                <Button
-                  component={NextLink}
-                  variant="outline"
-                  size="xs"
-                  leftIcon={<IconPlus size={16} />}
-                  href={`/posts/create?modelId=${modelId}${
-                    selectedVersionId ? `&modelVersionId=${selectedVersionId}` : ''
-                  }&returnUrl=${router.asPath}`}
-                >
-                  Add post
-                </Button>
-              </LoginRedirect>
+              {!isMuted && (
+                <LoginRedirect reason="create-review">
+                  <Button
+                    component={NextLink}
+                    variant="outline"
+                    size="xs"
+                    leftIcon={<IconPlus size={16} />}
+                    href={`/posts/create?modelId=${modelId}${
+                      selectedVersionId ? `&modelVersionId=${selectedVersionId}` : ''
+                    }&returnUrl=${router.asPath}`}
+                  >
+                    Add Post
+                  </Button>
+                </LoginRedirect>
+              )}
             </Group>
             {/* IMAGES */}
             <Group position="apart" spacing={0}>

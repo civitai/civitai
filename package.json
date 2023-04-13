@@ -5,6 +5,7 @@
   "scripts": {
     "start": "next start",
     "dev": "next dev",
+    "boost": "next-boost",
     "release": "git checkout release && git pull && git rebase main && git push && git checkout main",
     "yolo": "npm run release",
     "build": "next build",
@@ -51,6 +52,8 @@
     "@mantine/rte": "^5.10.4",
     "@mantine/tiptap": "^5.10.4",
     "@next-auth/prisma-adapter": "^1.0.5",
+    "@next-boost/next-boost": "^0.15.2",
+    "@next-boost/redis-cache": "^0.4.0",
     "@okikio/sharedworker": "^1.0.4",
     "@prisma/client": "^4.10.1",
     "@react-hook/window-size": "^3.1.1",

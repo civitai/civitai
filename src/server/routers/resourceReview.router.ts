@@ -15,7 +15,13 @@ import {
 } from './../controllers/resourceReview.controller';
 import { dbRead } from '~/server/db/client';
 import { upsertResourceReviewSchema } from '~/server/schema/resourceReview.schema';
-import { middleware, publicProcedure, router, protectedProcedure } from '~/server/trpc';
+import {
+  middleware,
+  publicProcedure,
+  router,
+  protectedProcedure,
+  guardedProcedure,
+} from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
   getPagedResourceReviews,
@@ -65,14 +71,12 @@ export const resourceReviewRouter = router({
   getRatingTotals: publicProcedure
     .input(getRatingTotalsSchema)
     .query(({ input }) => getRatingTotals(input)),
-  upsert: protectedProcedure
+  upsert: guardedProcedure
     .input(upsertResourceReviewSchema)
     .use(isOwnerOrModerator)
     .mutation(upsertResourceReviewHandler),
-  create: protectedProcedure
-    .input(createResourceReviewSchema)
-    .mutation(createResourceReviewHandler),
-  update: protectedProcedure
+  create: guardedProcedure.input(createResourceReviewSchema).mutation(createResourceReviewHandler),
+  update: guardedProcedure
     .input(updateResourceReviewSchema)
     .use(isOwnerOrModerator)
     .mutation(updateResourceReviewHandler),
