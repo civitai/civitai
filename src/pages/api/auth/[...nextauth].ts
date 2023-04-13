@@ -1,5 +1,6 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import { User } from '@prisma/client';
+import { NextApiRequest, NextApiResponse } from 'next';
 import NextAuth, { Session, type NextAuthOptions } from 'next-auth';
 import { getToken } from 'next-auth/jwt';
 import DiscordProvider from 'next-auth/providers/discord';
@@ -41,7 +42,7 @@ const cookiePrefix = useSecureCookies ? '__Secure-' : '';
 const { host, hostname } = new URL(env.NEXTAUTH_URL);
 const cookieName = `${cookiePrefix}agentswap-token`;
 
-export const authOptions: NextAuthOptions = {
+export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   adapter: PrismaAdapter(dbWrite),
   session: {
     strategy: 'jwt',
@@ -133,7 +134,7 @@ export const authOptions: NextAuthOptions = {
         signature: { label: 'Signature', type: 'text', placeholder: '0x0' },
       },
       // @ts-expect-error - this is a bug in the types, user.id is string but it should be number
-      async authorize(credentials, req) {
+      async authorize(credentials) {
         try {
           const message = JSON.parse(credentials?.message || '{}');
           const signature = credentials?.signature || '';
@@ -179,14 +180,13 @@ export const authOptions: NextAuthOptions = {
           }
 
           // Connect
-          // TODO: Reimplement this
-          // const token = await getToken({ req, cookieName, secureCookie: useSecureCookies });
-          // if (token) {
-          //   const user = await findUniqueUser(Number(token.sub));
-          //   if (!user) return null;
-          //   await createNewAccount(user.id);
-          //   return user;
-          // }
+          const token = await getToken({ req, cookieName, secureCookie: useSecureCookies });
+          if (token) {
+            const user = await findUniqueUser(Number(token.sub));
+            if (!user) return null;
+            await createNewAccount(user.id);
+            return user;
+          }
 
           // Sign-Up
           const newUser = await dbWrite.user.create({
@@ -219,6 +219,10 @@ export const authOptions: NextAuthOptions = {
     signIn: '/login',
     error: '/login',
   },
+});
+
+const authOptions = async (req: NextApiRequest, res: NextApiResponse) => {
+  return NextAuth(req, res, createAuthOptions(req));
 };
 
-export default NextAuth(authOptions);
+export default authOptions;

@@ -226,7 +226,7 @@ export function InfiniteModelsFilter() {
       </Popover.Target>
       <Popover.Dropdown maw={350} w="100%">
         <Stack spacing={0}>
-<Divider label="Model status" labelProps={{ weight: 'bold' }} mb={4} />
+          <Divider label="Model status" labelProps={{ weight: 'bold' }} mb={4} />
           {user?.isModerator && (
             <Chip.Group
               spacing={4}
