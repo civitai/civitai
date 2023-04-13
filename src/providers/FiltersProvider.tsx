@@ -111,9 +111,8 @@ export const FiltersProvider = ({
 };
 
 const useSharedFilters = (type: FilterSubTypes) => {
-  const currentUser = useCurrentUser();
   const period = useFiltersContext((state) => state.period);
-  return { period, authed: currentUser ? true : undefined };
+  return { period };
 };
 
 export const useModelFilters = () => {

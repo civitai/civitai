@@ -39,6 +39,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { ImageSort } from '~/server/common/enums';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ImageGetInfinite } from '~/types/router';
 import { trpc } from '~/utils/trpc';

@@ -18,7 +18,6 @@ import { HiddenTagsSection } from '~/components/Account/HiddenTagsSection';
 import { HiddenUsersSection } from '~/components/Account/HiddenUsersSection';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { moderationCategories, ModerationCategory } from '~/libs/moderation';
-import { reloadSession } from '~/utils/next-auth-helpers';
 import { invalidateModeratedContentDebounced } from '~/utils/query-invalidation-utils';
 import { trpc } from '~/utils/trpc';
 
@@ -81,7 +80,7 @@ export function ModerationCard({
     async onSuccess() {
       if (!instantRefresh) return;
       invalidateModeratedContentDebounced(utils, ['tag']);
-      await reloadSession();
+      user?.refresh();
     },
   });
 

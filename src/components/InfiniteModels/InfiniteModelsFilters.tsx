@@ -107,7 +107,6 @@ export const useInfiniteModelsFilters = () => {
     status,
     checkpointType,
     ...filters,
-    authed: currentUser ? true : undefined,
   };
 };
 

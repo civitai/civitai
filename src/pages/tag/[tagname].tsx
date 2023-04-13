@@ -12,7 +12,6 @@ import { Meta } from '~/components/Meta/Meta';
 import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
-import { constants } from '~/server/common/constants';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,

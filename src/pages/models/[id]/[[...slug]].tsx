@@ -111,7 +111,6 @@ export const getServerSideProps = createServerSideProps({
           period: 'AllTime',
           sort: ImageSort.MostReactions,
           limit: CAROUSEL_LIMIT,
-          authed: session?.user ? true : undefined,
         });
 
       await ssg.model.getById.prefetch({ id });
