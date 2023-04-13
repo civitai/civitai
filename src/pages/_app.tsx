@@ -13,7 +13,7 @@ import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
 import type { Session } from 'next-auth';
-import { getSession, SessionProvider } from 'next-auth/react';
+import { getSession } from 'next-auth/react';
 import { ReactElement, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AppLayout } from '~/components/AppLayout/AppLayout';
@@ -35,6 +35,7 @@ import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvide
 import { MetaPWA } from '~/components/Meta/MetaPWA';
 import { FiltersProvider, FiltersInput, parseFiltersCookie } from '~/providers/FiltersProvider';
 import PlausibleProvider from 'next-plausible';
+import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -99,7 +100,7 @@ function MyApp(props: CustomAppProps) {
     <>
       <ClientHistoryStore />
       <RegisterCatchNavigation />
-      <SessionProvider session={session}>
+      <CivitaiSessionProvider session={session}>
         <CookiesProvider value={cookies}>
           <FiltersProvider value={filters}>
             <FeatureFlagsProvider flags={flags}>
@@ -118,7 +119,7 @@ function MyApp(props: CustomAppProps) {
             </FeatureFlagsProvider>
           </FiltersProvider>
         </CookiesProvider>
-      </SessionProvider>
+      </CivitaiSessionProvider>
     </>
   );
 
@@ -207,6 +208,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   } else {
     const hasAuthCookie =
       !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
+    console.log('hasAuthCookie', hasAuthCookie);
     const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
     const flags = getFeatureFlags({ user: session?.user });
     // Pass this via the request so we can use it in SSR
