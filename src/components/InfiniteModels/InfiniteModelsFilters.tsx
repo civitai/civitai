@@ -219,7 +219,7 @@ export function InfiniteModelsFilter() {
       </Popover.Target>
       <Popover.Dropdown maw={350} w="100%">
         <Stack spacing={0}>
-<Divider label="Model status" labelProps={{ weight: 'bold' }} mb={4} />
+          <Divider label="Model status" labelProps={{ weight: 'bold' }} mb={4} />
           {user?.isModerator && (
             <Chip.Group
               spacing={4}
@@ -234,7 +234,12 @@ export function InfiniteModelsFilter() {
               ))}
             </Chip.Group>
           )}
-          <Chip checked={earlyAccess} onChange={setEarlyAccess} {...chipProps}>
+          <Chip
+            checked={earlyAccess}
+            onChange={setEarlyAccess}
+            mt={user?.isModerator ? 4 : undefined}
+            {...chipProps}
+          >
             Early Access
           </Chip>
           <Divider label="Model types" labelProps={{ weight: 'bold' }} />
