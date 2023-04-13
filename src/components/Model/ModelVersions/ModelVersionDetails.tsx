@@ -13,18 +13,11 @@ import {
   Stack,
   Text,
   Tooltip,
-  UnstyledButton,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
-import {
-  IconChevronDown,
-  IconDownload,
-  IconHeart,
-  IconLicense,
-  IconMessageCircle2,
-} from '@tabler/icons';
+import { IconDownload, IconHeart, IconLicense, IconMessageCircle2 } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { startCase } from 'lodash';
@@ -75,6 +68,7 @@ export function ModelVersionDetails({
   onBrowseClick,
 }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
+  const router = useRouter();
   const queryUtils = trpc.useContext();
 
   // TODO.manuel: use control ref to display the show more button
@@ -509,17 +503,29 @@ export function ModelVersionDetails({
                         rating={version.rank?.ratingAllTime}
                         count={version.rank?.ratingCountAllTime}
                       />
-                      <Text
-                        component={NextLink}
-                        href={`/models/${model.id}/reviews?modelVersionId=${version.id}`}
-                        variant="link"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                        }}
-                      >
-                        See Reviews
-                      </Text>
+                      <Stack spacing={4}>
+                        <Button
+                          component={NextLink}
+                          variant="outline"
+                          size="xs"
+                          href={`/posts/create?modelId=${model.id}&modelVersionId=${version.id}&reviewing=true&returnUrl=${router.asPath}`}
+                          onClick={(e) => e.stopPropagation()}
+                          compact
+                        >
+                          Add Review
+                        </Button>
+                        <Text
+                          component={NextLink}
+                          href={`/models/${model.id}/reviews?modelVersionId=${version.id}`}
+                          variant="link"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                          }}
+                        >
+                          See Reviews
+                        </Text>
+                      </Stack>
                     </Group>
                   </Accordion.Control>
                   <Accordion.Panel px="sm" pb="sm">

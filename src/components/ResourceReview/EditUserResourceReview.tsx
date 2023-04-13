@@ -19,13 +19,15 @@ export function EditUserResourceReview({
   modelId,
   modelName,
   modelVersionId,
+  openedCommentBox = false,
 }: {
   resourceReview?: ResourceReviewModel;
   modelId: number;
   modelName?: string;
   modelVersionId: number;
+  openedCommentBox?: boolean;
 }) {
-  const [editDetail, setEditDetail] = useState(false);
+  const [editDetail, setEditDetail] = useState(openedCommentBox);
   const toggleEditDetail = () => setEditDetail((state) => !state);
 
   const createMutation = useCreateResourceReview({ modelId, modelVersionId });
