@@ -1,6 +1,14 @@
 import { increaseDate, maxDate } from '~/utils/date-helpers';
 
-export function getEarlyAccessDeadline({ versionCreatedAt, publishedAt, earlyAccessTimeframe }: { versionCreatedAt: Date, publishedAt: Date | null, earlyAccessTimeframe: number }) {
+export function getEarlyAccessDeadline({
+  versionCreatedAt,
+  publishedAt,
+  earlyAccessTimeframe,
+}: {
+  versionCreatedAt: Date;
+  publishedAt: Date | null;
+  earlyAccessTimeframe: number;
+}) {
   const deadline = increaseDate(
     publishedAt ? maxDate(versionCreatedAt, publishedAt) : versionCreatedAt,
     earlyAccessTimeframe,
@@ -10,7 +18,15 @@ export function getEarlyAccessDeadline({ versionCreatedAt, publishedAt, earlyAcc
   return deadline;
 }
 
-export function isEarlyAccess({ versionCreatedAt, publishedAt, earlyAccessTimeframe }: { versionCreatedAt: Date, publishedAt: Date | null, earlyAccessTimeframe: number }) {
+export function isEarlyAccess({
+  versionCreatedAt,
+  publishedAt,
+  earlyAccessTimeframe,
+}: {
+  versionCreatedAt: Date;
+  publishedAt: Date | null;
+  earlyAccessTimeframe: number;
+}) {
   const deadline = getEarlyAccessDeadline({ versionCreatedAt, publishedAt, earlyAccessTimeframe });
   return new Date() < deadline;
 }

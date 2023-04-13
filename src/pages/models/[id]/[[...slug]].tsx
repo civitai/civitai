@@ -452,7 +452,7 @@ export default function ModelDetailsV2({
                       </Text>
                     </IconBadge>
                   )}
-                  {latestVersion?.earlyAccessDeadline && (
+                  {model?.earlyAccessDeadline && (
                     <IconBadge radius="sm" color="green" size="lg" icon={<IconClock size={18} />}>
                       Early Access
                     </IconBadge>
