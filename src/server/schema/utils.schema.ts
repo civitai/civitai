@@ -7,8 +7,6 @@ export const getSanitizedStringSchema = (options?: santizeHtmlOptions) =>
 
     const str = String(val);
     const result = sanitizeHtml(str, options);
-    console.log('________________________');
-    console.log({ result });
     // null
     return result;
   }, z.string());
