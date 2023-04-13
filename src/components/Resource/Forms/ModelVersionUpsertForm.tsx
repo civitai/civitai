@@ -132,7 +132,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             label="Name"
             placeholder="e.g.: v1.0"
             withAsterisk
-            maxLength={10}
+            maxLength={25}
           />
           <Input.Wrapper
             label="Early Access"
