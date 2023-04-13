@@ -7,6 +7,7 @@ import { isNumber } from '~/utils/type-guards';
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   prefetch: 'always',
+  useSession: true,
   resolver: async ({ ctx, ssg, session }) => {
     const params = ctx.params as { id?: string };
     if (!session)

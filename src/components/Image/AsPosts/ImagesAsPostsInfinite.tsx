@@ -27,6 +27,7 @@ import { SortFilter, PeriodFilter } from '~/components/Filters';
 import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { constants } from '~/server/common/constants';
 
 type ModelVersionsProps = { id: number; name: string };
 type ImagesAsPostsInfiniteState = {
@@ -87,7 +88,11 @@ export default function ImagesAsPostsInfinite({
 
   return (
     <ImagesAsPostsInfiniteContext.Provider value={{ modelId, username, modelVersions }}>
-      <MasonryProvider columnWidth={308} maxColumnCount={6} maxSingleColumnWidth={450}>
+      <MasonryProvider
+        columnWidth={constants.cardSizes.image}
+        maxColumnCount={6}
+        maxSingleColumnWidth={450}
+      >
         <MasonryContainer fluid>
           <Stack spacing="md">
             <Group spacing="xs" align="flex-end">

@@ -9,6 +9,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { constants } from '~/server/common/constants';
 
 export default function UserImages() {
   const router = useRouter();
@@ -21,7 +22,11 @@ export default function UserImages() {
     return <NotFound />;
 
   return (
-    <MasonryProvider columnWidth={308} maxColumnCount={7} maxSingleColumnWidth={450}>
+    <MasonryProvider
+      columnWidth={constants.cardSizes.image}
+      maxColumnCount={7}
+      maxSingleColumnWidth={450}
+    >
       <MasonryContainer fluid>
         <Stack spacing="xs">
           <Group position="apart" spacing={0}>

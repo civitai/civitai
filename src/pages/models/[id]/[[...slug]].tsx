@@ -92,25 +92,30 @@ import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
+  useSession: true,
   resolver: async ({ ssg, ctx, session }) => {
     const params = (ctx.params ?? {}) as { id: string; slug: string[] };
     const query = ctx.query as { modelVersionId: string };
     const id = Number(params.id);
-    const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
-    if (!isNumber(id)) return { notFound: true };
+    if (ssg) {
+      const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
+      if (!isNumber(id)) return { notFound: true };
 
-    const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(() => null);
-    if (version)
-      await ssg?.image.getInfinite.prefetchInfinite({
-        modelVersionId: version.id,
-        prioritizedUserIds: [version.model.userId],
-        period: 'AllTime',
-        sort: ImageSort.MostReactions,
-        browsingMode: session?.user ? undefined : BrowsingMode.SFW,
-        limit: CAROUSEL_LIMIT,
-      });
+      const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(
+        () => null
+      );
+      if (version)
+        await ssg.image.getInfinite.prefetchInfinite({
+          modelVersionId: version.id,
+          prioritizedUserIds: [version.model.userId],
+          period: 'AllTime',
+          sort: ImageSort.MostReactions,
+          limit: CAROUSEL_LIMIT,
+          authed: session?.user ? true : undefined,
+        });
 
-    await ssg?.model.getById.prefetch({ id });
+      await ssg.model.getById.prefetch({ id });
+    }
 
     return {
       props: { id },
@@ -170,7 +175,6 @@ export default function ModelDetailsV2({
       prioritizedUserIds: model ? [model.user.id] : undefined,
       period: 'AllTime',
       sort: ImageSort.MostReactions,
-      browsingMode: currentUser ? undefined : BrowsingMode.SFW,
       limit: CAROUSEL_LIMIT,
     },
     {

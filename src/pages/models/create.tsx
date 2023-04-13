@@ -2,6 +2,7 @@ import { ModelWizard } from '~/components/Resource/Wizard/ModelWizard';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
+  useSession: true,
   resolver: async ({ session }) => {
     if (!session) {
       return {

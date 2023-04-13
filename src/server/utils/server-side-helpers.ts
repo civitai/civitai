@@ -5,6 +5,7 @@ import { appRouter } from '~/server/routers';
 import superjson from 'superjson';
 import { Session } from 'next-auth';
 import { parseBrowsingMode } from '~/server/createContext';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export const getServerProxySSGHelpers = async (
   ctx: GetServerSidePropsContext,
@@ -25,11 +26,14 @@ export const getServerProxySSGHelpers = async (
 export function createServerSideProps<P>({
   resolver,
   useSSG,
+  useSession = false,
   prefetch = 'once',
 }: CreateServerSidePropsProps<P>) {
   return async (context: GetServerSidePropsContext) => {
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
-    const session = await getServerAuthSession(context);
+    const session =
+      (context.req as any)['session'] ?? (useSession ? await getServerAuthSession(context) : null);
+    const flags = (context.req as any)['flags'] ?? getFeatureFlags({ user: session?.user });
 
     const ssg =
       useSSG && (prefetch === 'always' || !isClient)
@@ -52,6 +56,8 @@ export function createServerSideProps<P>({
 
     return {
       props: {
+        session,
+        flags,
         ...(props ?? {}),
         ...(ssg ? { trpcState: ssg.dehydrate() } : {}),
       },
@@ -67,6 +73,7 @@ type GetPropsFnResult<P> = {
 
 type CreateServerSidePropsProps<P> = {
   useSSG?: boolean;
+  useSession?: boolean;
   prefetch?: 'always' | 'once';
   resolver: (
     context: CustomGetServerSidePropsContext

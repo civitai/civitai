@@ -32,7 +32,7 @@ export const useQueryImages = (
   filters?: Partial<GetInfiniteImagesInput>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
-  filters = filters ?? {};
+  filters ??= {};
   const globalFilters = useImageFilters();
   if (!!filters.modelId) filters.modelVersionId = undefined;
 

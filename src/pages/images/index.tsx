@@ -8,10 +8,15 @@ import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
 import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { constants } from '~/server/common/constants';
 
 export default function ImagesPage() {
   return (
-    <MasonryProvider columnWidth={308} maxColumnCount={7} maxSingleColumnWidth={450}>
+    <MasonryProvider
+      columnWidth={constants.cardSizes.image}
+      maxColumnCount={7}
+      maxSingleColumnWidth={450}
+    >
       <MasonryContainer fluid>
         <Stack spacing="xs">
           <Announcements

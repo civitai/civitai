@@ -6,6 +6,7 @@ import { InferGetServerSidePropsType } from 'next';
 import { ModelStatus } from '@prisma/client';
 
 export const getServerSideProps = createServerSideProps({
+  useSession: true,
   resolver: async ({ session, ctx }) => {
     const { id } = ctx.params as { id: string };
     if (!session)
