@@ -31,7 +31,7 @@ const fileTypesByModelType: Record<ModelType, ModelFileType[]> = {
   Checkpoint: ['Model', 'Pruned Model', 'Config', 'VAE', 'Training Data'],
   AestheticGradient: ['Model', 'Training Data'],
   Hypernetwork: ['Model', 'Training Data'],
-  Controlnet: ['Model'],
+  Controlnet: ['Model', 'Config'],
   Poses: ['Archive'],
   Wildcards: ['Archive'],
   Other: ['Archive'],
