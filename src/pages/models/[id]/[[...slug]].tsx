@@ -94,7 +94,7 @@ import { parseBrowsingMode } from '~/server/createContext';
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ssg, ctx, session }) => {
+  resolver: async ({ ssg, ctx, session = null }) => {
     const params = (ctx.params ?? {}) as { id: string; slug: string[] };
     const query = ctx.query as { modelVersionId: string };
     const id = Number(params.id);
@@ -112,7 +112,7 @@ export const getServerSideProps = createServerSideProps({
           period: 'AllTime',
           sort: ImageSort.MostReactions,
           limit: CAROUSEL_LIMIT,
-          browsingMode: parseBrowsingMode(ctx.req.cookies, session ?? null),
+          browsingMode: parseBrowsingMode(ctx.req.cookies, session),
         });
 
       await ssg.model.getById.prefetch({ id });

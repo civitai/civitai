@@ -126,20 +126,20 @@ export const usePostFilters = () => {
   return { ...shared, sort, tags };
 };
 
-export const useImageFilters = () => {
-  const shared = useSharedFilters('image');
-  const sort = useFiltersContext((state) => state.image.sort);
-  // const tags = useFiltersContext((state) => state.image.tags);
-  // const excludedTags = useFiltersContext((state) => state.image.excludedTags);
-  const generation = useFiltersContext((state) => state.image.generation);
-  return { ...shared, sort, generation };
-};
+// export const useImageFilters = () => {
+//   const shared = useSharedFilters('image');
+//   const sort = useFiltersContext((state) => state.image.sort);
+//   // const tags = useFiltersContext((state) => state.image.tags);
+//   // const excludedTags = useFiltersContext((state) => state.image.excludedTags);
+//   const generation = useFiltersContext((state) => state.image.generation);
+//   return { ...shared, sort, generation };
+// };
 
-export const useQuestionFilters = () => {
-  const shared = useSharedFilters('question');
-  const sort = useFiltersContext((state) => state.question.sort);
-  return { ...shared, sort };
-};
+// export const useQuestionFilters = () => {
+//   const shared = useSharedFilters('question');
+//   const sort = useFiltersContext((state) => state.question.sort);
+//   return { ...shared, sort };
+// };
 
 // #region [merge logic]
 // issue with undefined values here: https://github.com/lodash/lodash/blob/2da024c3b4f9947a48517639de7560457cd4ec6c/.internal/assignMergeValue.js#L14
