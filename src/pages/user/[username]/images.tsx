@@ -1,13 +1,6 @@
 import { Group, Stack } from '@mantine/core';
 import { useRouter } from 'next/router';
 
-<<<<<<< Updated upstream
-import { Group, Stack } from '@mantine/core';
-import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-=======
->>>>>>> Stashed changes
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
