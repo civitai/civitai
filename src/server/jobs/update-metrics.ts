@@ -1497,7 +1497,7 @@ export const updateMetricsJob = createJob(
     }
   },
   {
-    lockExpiration: 5 * 60,
+    lockExpiration: 30 * 60,
   }
 );
 
